@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>SSX3 HUD verification fixture</title>
+<style>body{margin:0;background:#243d52;color:white;font:14px system-ui}#stage{position:relative;width:640px;height:448px}canvas{position:absolute;inset:0}#game-menu{display:none}label{margin:12px;display:inline-block}</style>
+<label>Completed letters <input id="count" type="range" min="0" max="9" value="4"></label><label>Display fraction <input id="fraction" type="range" min="0" max="1" step="0.001" value="1"></label>
+<label>Pending letters <input id="pending" type="range" min="0" max="5" value="2"></label><label>Pending phase <input id="phase" type="range" min="0" max="1" step="0.001" value="0.75"></label><label>Flash active <input id="flash" type="checkbox" checked></label>
+<label>Flash phase <input id="flash-phase" type="range" min="0" max="2" step="0.01" value="0.5"></label><label>Palette tier <input id="palette-tier" type="range" min="0" max="11" value="5"></label>
+<div id="stage"><canvas id="ui-bg" width="640" height="448"></canvas><canvas id="ui" width="640" height="448"></canvas><div id="game-menu"></div></div>
+<script type="module">
+import {OriginalUI} from './ui.js';
+const ui=new OriginalUI({});await ui.load();ui.screen='game';
+const count=document.querySelector('#count'),fraction=document.querySelector('#fraction');
+const pending=document.querySelector('#pending'),phase=document.querySelector('#phase'),flash=document.querySelector('#flash');
+const flashPhase=document.querySelector('#flash-phase'),paletteTier=document.querySelector('#palette-tier');
+function draw(){ui.draw({boostPendingCount:+pending.value,boostPendingPhase:+phase.value,boostFlashPhase:flash.checked?+flashPhase.value:-1,boostFlashPaletteTier:+paletteTier.value,boostLetterCount:+count.value,boostLetterFraction:+fraction.value,boostLetterRemoved:+count.value===0,boostStored:.8,boostPreview:.95});}
+for(const element of [pending,phase,flash,flashPhase,paletteTier])element.addEventListener('input',draw);count.addEventListener('input',draw);fraction.addEventListener('input',draw);draw();
+</script>

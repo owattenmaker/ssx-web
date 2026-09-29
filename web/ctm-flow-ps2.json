@@ -1,0 +1,1865 @@
+{
+ "source": "tools/ctm_flow_trace.py from local/ps2-capture/ctm-parity/runs (ARMSX2, SLUS_207.72, derived states)",
+ "runs": {
+  "new-career": {
+   "what": "fresh profile, Select Character (Zoe) -> Cross, neutral pad",
+   "ws": [
+    [
+     569,
+     0
+    ],
+    [
+     631,
+     10
+    ],
+    [
+     3251,
+     1
+    ],
+    [
+     3255,
+     2
+    ],
+    [
+     3256,
+     3
+    ],
+    [
+     3257,
+     4
+    ]
+   ],
+   "scripts": [
+    [
+     2350,
+     153
+    ],
+    [
+     2725,
+     163
+    ]
+   ],
+   "queued": [
+    [
+     575,
+     [
+      [],
+      [
+       29
+      ]
+     ]
+    ],
+    [
+     600,
+     [
+      [],
+      [
+       29,
+       0,
+       1
+      ]
+     ]
+    ],
+    [
+     2350,
+     [
+      [],
+      [
+       0,
+       1
+      ]
+     ]
+    ],
+    [
+     2725,
+     [
+      [],
+      [
+       1
+      ]
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     3275,
+     14
+    ]
+   ],
+   "career": [
+    [
+     25,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x0",
+      "cash": 0,
+      "earned": 0
+     }
+    ],
+    [
+     3275,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "reenter": {
+   "what": "title -> CTM -> Zoe again (new-career flag still set, Happiness visited)",
+   "ws": [
+    [
+     1543,
+     0
+    ],
+    [
+     1617,
+     10
+    ],
+    [
+     1618,
+     1
+    ],
+    [
+     1622,
+     3
+    ],
+    [
+     1624,
+     4
+    ],
+    [
+     3281,
+     11
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     1626,
+     14
+    ]
+   ],
+   "career": [
+    [
+     25,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ],
+    [
+     3300,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "start-lodge": {
+   "what": "the same Select Character with the new-career flag poked to 0 (last lodge 17)",
+   "ws": [
+    [
+     590,
+     0
+    ],
+    [
+     684,
+     10
+    ],
+    [
+     685,
+     4
+    ],
+    [
+     1078,
+     14
+    ]
+   ],
+   "scripts": [
+    [
+     1080,
+     148
+    ]
+   ],
+   "queued": [
+    [
+     1080,
+     [
+      [],
+      [
+       22,
+       23
+      ]
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     700,
+     17
+    ]
+   ],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ],
+    [
+     700,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x24000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "quit-ctm": {
+   "what": "free ride -> MCOMM -> Quit -> Yes",
+   "ws": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     15,
+     14
+    ]
+   ],
+   "career": [
+    [
+     15,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "race-q": {
+   "what": "Snow Jam qualifier from the card, computer riders poked DNF (+0x480) -> 1st",
+   "ws": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     2
+    ],
+    [
+     33,
+     3
+    ],
+    [
+     214,
+     4
+    ],
+    [
+     13741,
+     5
+    ],
+    [
+     14147,
+     7
+    ],
+    [
+     14147,
+     3
+    ],
+    [
+     14363,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     13000,
+     0
+    ]
+   ],
+   "career": [
+    [
+     13000,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 1500,
+      "earned": 1500
+     }
+    ]
+   ]
+  },
+  "to-final": {
+   "what": "results Next heat with GMM+0x70 poked 3",
+   "ws": [
+    [
+     0,
+     4
+    ],
+    [
+     32,
+     7
+    ],
+    [
+     32,
+     13
+    ],
+    [
+     524,
+     1
+    ],
+    [
+     974,
+     2
+    ]
+   ],
+   "scripts": [
+    [
+     40,
+     150
+    ],
+    [
+     160,
+     146
+    ],
+    [
+     560,
+     96
+    ],
+    [
+     981,
+     73
+    ]
+   ],
+   "queued": [
+    [
+     40,
+     [
+      [
+       4,
+       5
+      ],
+      [
+       19,
+       20
+      ]
+     ]
+    ],
+    [
+     160,
+     [
+      [
+       4,
+       5
+      ],
+      [
+       20
+      ]
+     ]
+    ],
+    [
+     560,
+     [
+      [
+       4,
+       5
+      ],
+      []
+     ]
+    ],
+    [
+     981,
+     [
+      [
+       5
+      ],
+      []
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     20,
+     0
+    ]
+   ],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 1500,
+      "earned": 1500
+     }
+    ]
+   ]
+  },
+  "race-f": {
+   "what": "Snow Jam final, computer riders DNF -> 1st, first gold",
+   "ws": [
+    [
+     0,
+     2
+    ],
+    [
+     33,
+     3
+    ],
+    [
+     213,
+     4
+    ],
+    [
+     14343,
+     5
+    ],
+    [
+     14750,
+     12
+    ],
+    [
+     15471,
+     7
+    ],
+    [
+     15471,
+     3
+    ],
+    [
+     15697,
+     4
+    ]
+   ],
+   "scripts": [
+    [
+     14780,
+     60
+    ]
+   ],
+   "queued": [
+    [
+     14371,
+     [
+      [
+       9
+      ],
+      []
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     13601,
+     0
+    ]
+   ],
+   "career": [
+    [
+     13601,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 3000,
+      "earned": 3000
+     }
+    ],
+    [
+     14341,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 13000,
+      "earned": 13000
+     }
+    ]
+   ]
+  },
+  "race-f95": {
+   "what": "the same final with earned/cash poked to 95,000 (earnings goal)",
+   "ws": [
+    [
+     1,
+     2
+    ],
+    [
+     33,
+     3
+    ],
+    [
+     214,
+     4
+    ],
+    [
+     14343,
+     5
+    ],
+    [
+     14750,
+     12
+    ],
+    [
+     15429,
+     7
+    ],
+    [
+     15429,
+     3
+    ],
+    [
+     15653,
+     4
+    ]
+   ],
+   "scripts": [
+    [
+     14782,
+     62
+    ]
+   ],
+   "queued": [
+    [
+     14376,
+     [
+      [
+       9
+      ],
+      []
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     14302,
+     0
+    ]
+   ],
+   "career": [
+    [
+     14302,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 96500,
+      "earned": 96500
+     }
+    ],
+    [
+     14346,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 106500,
+      "earned": 106500
+     }
+    ]
+   ]
+  },
+  "f95-after": {
+   "what": "rewards -> results -> Transport -> Peak 2 -> Go to this peak now? Yes",
+   "ws": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     4
+    ],
+    [
+     430,
+     7
+    ],
+    [
+     431,
+     14
+    ],
+    [
+     1065,
+     11
+    ],
+    [
+     1444,
+     10
+    ]
+   ],
+   "scripts": [
+    [
+     946,
+     149
+    ],
+    [
+     1066,
+     122
+    ],
+    [
+     3330,
+     124
+    ]
+   ],
+   "queued": [
+    [
+     946,
+     [
+      [],
+      [
+       13,
+       14
+      ]
+     ]
+    ],
+    [
+     1066,
+     [
+      [],
+      [
+       14
+      ]
+     ]
+    ],
+    [
+     1081,
+     [
+      [],
+      [
+       14,
+       30,
+       16,
+       17
+      ]
+     ]
+    ],
+    [
+     1486,
+     [
+      [],
+      [
+       30,
+       16,
+       17
+      ]
+     ]
+    ],
+    [
+     3330,
+     [
+      [],
+      [
+       16,
+       17
+      ]
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     15,
+     0
+    ]
+   ],
+   "career": [
+    [
+     15,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 106500,
+      "earned": 106500
+     }
+    ]
+   ]
+  },
+  "peak2-arr": {
+   "what": "the Peak 2 first arrival (continues f95-after)",
+   "ws": [
+    [
+     1,
+     10
+    ],
+    [
+     713,
+     1
+    ],
+    [
+     716,
+     2
+    ],
+    [
+     717,
+     3
+    ],
+    [
+     718,
+     4
+    ]
+   ],
+   "scripts": [
+    [
+     25,
+     124
+    ],
+    [
+     175,
+     137
+    ]
+   ],
+   "queued": [
+    [
+     25,
+     [
+      [],
+      [
+       16,
+       17
+      ]
+     ]
+    ],
+    [
+     175,
+     [
+      [],
+      [
+       17
+      ]
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     725,
+     15
+    ]
+   ],
+   "career": [
+    [
+     25,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 106500,
+      "earned": 106500
+     }
+    ],
+    [
+     725,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0xc001",
+      "cash": 106500,
+      "earned": 106500
+     }
+    ]
+   ]
+  },
+  "lodge-return": {
+   "what": "the lodge door prompt Yes -> lodge -> Return to Game -> Save progress? Yes",
+   "ws": [
+    [
+     1,
+     14
+    ],
+    [
+     31,
+     6
+    ]
+   ],
+   "scripts": [],
+   "queued": [
+    [
+     20,
+     [
+      [],
+      [
+       22,
+       23
+      ]
+     ]
+    ]
+   ],
+   "rides": [],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x24000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "lr-tri": {
+   "what": "no memory card -> Triangle -> the lodge exit load -> the station",
+   "ws": [
+    [
+     599,
+     0
+    ],
+    [
+     698,
+     10
+    ],
+    [
+     699,
+     4
+    ],
+    [
+     1092,
+     14
+    ]
+   ],
+   "scripts": [
+    [
+     1100,
+     148
+    ]
+   ],
+   "queued": [
+    [
+     1100,
+     [
+      [],
+      [
+       22,
+       23
+      ]
+     ]
+    ]
+   ],
+   "rides": [
+    [
+     700,
+     17
+    ]
+   ],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x24000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "lodge-quit": {
+   "what": "lodge Quit -> Yes",
+   "ws": [],
+   "scripts": [],
+   "queued": [],
+   "rides": [],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x24000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "explore-info": {
+   "what": "free ride MCOMM (menus/ctm/state-mcomm, Zoe) with 41 Happiness collectibles and 22 Peak 1 Big Challenges poked completed -> Transport: Peak 1 / All Mountain / Freeride goal / freeride list INFO (Square)",
+   "ws": [
+    [
+     0,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     15,
+     14
+    ]
+   ],
+   "career": [
+    [
+     15,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "sd-goal": {
+   "what": "Speed Demon at its last gate (peak1/bc-sd-lastgate) with 11 more Peak 1 challenges and 40 Happiness collectibles poked: the completion is the 12th challenge (Big Challenge bronze) and completes the Freeride goal",
+   "ws": [
+    [
+     0,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     50,
+     0
+    ]
+   ],
+   "career": [
+    [
+     50,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 0,
+      "earned": 0
+     }
+    ],
+    [
+     150,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 2000,
+      "earned": 2000
+     }
+    ],
+    [
+     800,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 2002,
+      "earned": 2002
+     }
+    ],
+    [
+     1050,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fefc0",
+      "visited": "0x4001",
+      "cash": 2003,
+      "earned": 2003
+     }
+    ]
+   ]
+  },
+  "pc75": {
+   "what": "Snow Jam free ride (peak1/bc-sj-arrival), the Point Challenge 75,000 offer queued in C+0x1C4 -> Yes, neutral pad",
+   "ws": [
+    [
+     0,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     20,
+     0
+    ]
+   ],
+   "career": [
+    [
+     20,
+     {
+      "new": 0,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4001",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  },
+  "dizzy": {
+   "what": "Happiness free ride (menus/ctm/state-freeride-peak1), the Dizzy Spells offer queued -> Yes, neutral pad",
+   "ws": [
+    [
+     0,
+     4
+    ]
+   ],
+   "scripts": [],
+   "queued": [],
+   "rides": [
+    [
+     20,
+     14
+    ]
+   ],
+   "career": [
+    [
+     20,
+     {
+      "new": 1,
+      "lodge": 17,
+      "locks": "0x11000fffc0",
+      "visited": "0x4000",
+      "cash": 0,
+      "earned": 0
+     }
+    ]
+   ]
+  }
+ },
+ "observed": [
+  {
+   "step": "ctm-select",
+   "frame": "new-career/sample00100.png",
+   "screen": "load",
+   "note": "Cross on Select Character -> Basic Controls load screen (no Setup Character)"
+  },
+  {
+   "step": "movie",
+   "frame": "new-career/sample00650.png",
+   "screen": "movie",
+   "letterbox": true,
+   "skip": "Press X to skip"
+  },
+  {
+   "step": "quit",
+   "frame": "quit-ctm/sample00360.png",
+   "prompt": "Quit Game",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "No"
+  },
+  {
+   "step": "quit-save",
+   "frame": "quit-ctm/sample00480.png",
+   "prompt": "Save progress before quitting?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "quit-end",
+   "frame": "quit-save-tri/sample00300.png",
+   "screen": "title",
+   "note": "after the save: Hints load, then the title screen"
+  },
+  {
+   "step": "qualifier-results",
+   "frame": "race-q/sample14400.png",
+   "title": "Snow Jam - Race",
+   "sub": "Qualifier Results",
+   "message": "Congratulations!  You've qualified for the semi final round.",
+   "items": [
+    "Next heat",
+    "Restart",
+    "Replay",
+    "Records",
+    "Quit"
+   ]
+  },
+  {
+   "step": "final-card",
+   "frame": "to-final/sample01100.png",
+   "title": "Snow Jam - Race",
+   "sub": "Final Round"
+  },
+  {
+   "step": "final-rewards",
+   "frame": "race-f/sample15600.png",
+   "title": "Snow Jam - Race",
+   "sub": "Rewards",
+   "head": "Congratulations!  You've been awarded:",
+   "lines": [
+    [
+     "Cash: $ 10,000",
+     0
+    ],
+    [
+     "Gold medal earned",
+     0
+    ],
+    [
+     "Accessory",
+     1
+    ]
+   ]
+  },
+  {
+   "step": "final-rewards-goal",
+   "frame": "race-f95/sample15800.png",
+   "lines": [
+    [
+     "Cash: $ 10,000",
+     0
+    ],
+    [
+     "Earnings goal complete!",
+     0
+    ],
+    [
+     "Peak 2 pass",
+     1
+    ],
+    [
+     "Poster",
+     1
+    ],
+    [
+     "Trading card",
+     1
+    ],
+    [
+     "Trading card",
+     1
+    ],
+    [
+     "Trading card",
+     1
+    ],
+    [
+     "Trading card",
+     1
+    ],
+    [
+     "Gold medal earned",
+     0
+    ]
+   ]
+  },
+  {
+   "step": "final-results",
+   "frame": "after-final/sample00165.png",
+   "sub": "Final Results",
+   "message": "Congratulations!  You've received a Gold medal.",
+   "items": [
+    "Transport",
+    "Restart",
+    "Replay",
+    "Records",
+    "Quit"
+   ],
+   "medal_icon": true
+  },
+  {
+   "step": "go-peak",
+   "frame": "f95-after/sample00765.png",
+   "prompt": "Go to this peak now?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "lodge-return",
+   "frame": "lodge-return/sample00980.png",
+   "prompt": "Save progress?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "lodge-quit",
+   "frame": "lodge-quit/sample00140.png",
+   "prompt": "Quit to Title screen?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "lodge-quit-save",
+   "frame": "lodge-quit/sample00260.png",
+   "prompt": "Save progress before quitting?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "explore-peak-goals",
+   "frame": "explore-info/sample00255.png",
+   "title": "Peak 1 Goals",
+   "rows": [
+    [
+     "Race",
+     "0 / 4",
+     false
+    ],
+    [
+     "Freestyle",
+     "0 / 5",
+     false
+    ],
+    [
+     "Freeride",
+     "2 / 2",
+     true
+    ],
+    [
+     "Earnings",
+     "0 / 1",
+     false
+    ]
+   ]
+  },
+  {
+   "step": "explore-all-mountain",
+   "frame": "explore-info/sample00330.png",
+   "percent": "6%",
+   "rows": [
+    [
+     "Gold Medals:",
+     "0 / 14"
+    ],
+    [
+     "Rival Challenges:",
+     "0 / 12"
+    ],
+    [
+     "Big Challenges:",
+     "22 / 88"
+    ],
+    [
+     "Collectibles:",
+     "41 / 425"
+    ],
+    [
+     "Career Highlights:",
+     "0 / 24"
+    ]
+   ]
+  },
+  {
+   "step": "explore-goal-list",
+   "frame": "explore-info/sample00540.png",
+   "goals": [
+    "Race",
+    "Freestyle",
+    "Freeride",
+    "Earnings"
+   ],
+   "ticked": [
+    false,
+    false,
+    true,
+    false
+   ]
+  },
+  {
+   "step": "explore-freeride-goal",
+   "frame": "explore-info/sample00660.png",
+   "title": "Peak 1 Freeride Goals",
+   "complete": "2/2 Complete",
+   "rows": [
+    [
+     "Challenges Complete: 22/40",
+     "Gold medal at 32",
+     true
+    ],
+    [
+     "Collectibles: 41/155",
+     "Silver Medal at 70",
+     true
+    ]
+   ]
+  },
+  {
+   "step": "explore-freeride-list",
+   "frame": "explore-info/sample00945.png",
+   "entries": [
+    {
+     "name": "Happiness",
+     "run": "Happiness",
+     "event": "Freeride",
+     "collectibles": "41 / 44",
+     "challenges": "5 / 5"
+    },
+    {
+     "name": "Green Station",
+     "run": "Green Base Station",
+     "event": "Freeride",
+     "collectibles": "0 / 5",
+     "challenges": "N/A"
+    },
+    {
+     "name": "R&B",
+     "run": "R&B",
+     "event": "Slopestyle",
+     "collectibles": "0 / 30",
+     "challenges": "1 / 8"
+    }
+   ]
+  },
+  {
+   "step": "bc-offer",
+   "frame": "pc75/sample00100.png",
+   "title": "Big Challenge",
+   "name": "Point Challenge",
+   "text": "Get 75,000 points on this race track",
+   "question": "Accept challenge?",
+   "items": [
+    "Yes",
+    "No"
+   ],
+   "focus": "Yes"
+  },
+  {
+   "step": "bc-goal-hud",
+   "frame": "pc75/sample00140.png",
+   "badge": 15,
+   "goal": "GOAL: 75000",
+   "score": "0",
+   "cash": null,
+   "go": true
+  },
+  {
+   "step": "bc-called-hud",
+   "frame": "dizzy/sample00300.png",
+   "badge": 9,
+   "clock": "00:00:57.xx",
+   "count": "COUNT: 0 / 5",
+   "called": "180",
+   "called_rgb": [
+    200,
+    0,
+    0
+   ],
+   "called_box": [
+    299,
+    381,
+    336,
+    395
+   ],
+   "cash": "$ 0"
+  },
+  {
+   "step": "bc-success-goal",
+   "frame": "sd-goal/sample00150.png",
+   "popup": [
+    "MISSION SUCCESS",
+    "$ 2,000"
+   ],
+   "cash": "$ 2,000",
+   "mail_icon": true,
+   "reward_list": false
+  }
+ ],
+ "memory": {
+  "dizzy-s200": {
+   "hud": [
+    0,
+    0,
+    0,
+    -1,
+    1,
+    0,
+    5,
+    1,
+    3547,
+    -1,
+    0,
+    -1,
+    0,
+    1,
+    4096,
+    0
+   ],
+   "active": 108181799,
+   "status": [
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0000000000000000",
+   "locks": "0x11000fffc0",
+   "cash": 0,
+   "inbox": [],
+   "collect": {}
+  },
+  "dizzy-end": {
+   "hud": [
+    0,
+    0,
+    0,
+    -1,
+    1,
+    0,
+    5,
+    1,
+    2847,
+    -1,
+    0,
+    -1,
+    0,
+    1,
+    4096,
+    0
+   ],
+   "active": 108181799,
+   "status": [
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0000000000000000",
+   "locks": "0x11000fffc0",
+   "cash": 0,
+   "inbox": [],
+   "collect": {}
+  },
+  "sd-goal-end": {
+   "hud": [
+    0,
+    0,
+    0,
+    -1,
+    0,
+    11,
+    12,
+    0,
+    -145,
+    -1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0
+   ],
+   "active": -1,
+   "status": [
+    26,
+    3,
+    3,
+    26,
+    3,
+    3,
+    26,
+    26,
+    26,
+    26,
+    26,
+    26,
+    3,
+    3,
+    26,
+    3,
+    3,
+    26,
+    26,
+    18,
+    26,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0008000000000000",
+   "locks": "0x11000fefc0",
+   "cash": 2003,
+   "inbox": [
+    [
+     249,
+     2
+    ]
+   ],
+   "collect": {
+    "14": [
+     40,
+     4294967295,
+     255
+    ]
+   }
+  },
+  "pc75-start": {
+   "hud": [
+    0,
+    1,
+    0,
+    75000,
+    0,
+    0,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0
+   ],
+   "active": 74628930,
+   "status": [
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0000000000000000",
+   "locks": "0x11000fffc0",
+   "cash": 0,
+   "inbox": [],
+   "collect": {}
+  },
+  "sd-goal-start": {
+   "hud": [
+    0,
+    0,
+    0,
+    -1,
+    1,
+    8,
+    12,
+    1,
+    -4,
+    -1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0
+   ],
+   "active": 74627175,
+   "status": [
+    26,
+    3,
+    3,
+    26,
+    3,
+    3,
+    26,
+    26,
+    26,
+    26,
+    26,
+    26,
+    3,
+    3,
+    26,
+    3,
+    3,
+    26,
+    26,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0000000000000000",
+   "locks": "0x11000fffc0",
+   "cash": 0,
+   "inbox": [],
+   "collect": {
+    "14": [
+     40,
+     4294967295,
+     255
+    ]
+   }
+  },
+  "explore-info-start": {
+   "hud": [
+    0,
+    0,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    -1,
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0
+   ],
+   "active": -1,
+   "status": [
+    26,
+    11,
+    11,
+    26,
+    11,
+    11,
+    26,
+    26,
+    26,
+    26,
+    26,
+    26,
+    11,
+    11,
+    26,
+    11,
+    11,
+    26,
+    26,
+    26,
+    26,
+    26,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3,
+    18,
+    3,
+    3,
+    18,
+    18,
+    18,
+    3,
+    3
+   ],
+   "awards": "0000000000000000",
+   "locks": "0x11000fffc0",
+   "cash": 0,
+   "inbox": [],
+   "collect": {
+    "14": [
+     41,
+     4294967295,
+     511
+    ]
+   }
+  }
+ }
+}

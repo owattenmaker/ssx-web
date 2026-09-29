@@ -1,0 +1,12 @@
+{"rules": [{"when": "stalled>2.5 and ws==4 and course>=17", "seq": [{"press": ["Down"], "wait": 0.8}, {"press": ["Cross"]}], "gap": 8}],
+ "steps": [
+ {"note": "resume at the A crossing"},
+ {"auto": "ABC1_A:0#0,A:0#0,A:0#3,A_ARA1:0#0,ARA1:0#0,ARA1:0#3,ARA1:0#4,ARA1:0#5,ARA1:0#6,ARA1:0#7"},
+ {"when": "ws==4 and course==17", "note": "in A"},
+ {"when": "course==0", "note": "course ARA1"},
+ {"when": "ws==1", "note": "event start ws1"},
+ {"when": "ws==1", "auto": null},
+ {"when": "ws==2", "note": "card ws2"},
+ {"when": "ss>=300", "save": "ara1-card"},
+ {"stop": true}
+]}

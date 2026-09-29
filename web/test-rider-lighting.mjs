@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import createCore from './runtime/core.js';
+const core=await createCore();
+process.on('uncaughtException',error=>{console.error(error instanceof Error?error:core.getExceptionMessage(error));process.exit(1);});
+const read=name=>fs.readFileSync(new URL('./public/'+name,import.meta.url));
+const put=bytes=>{const p=core._malloc(bytes.byteLength);core.HEAPU8.set(new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength),p);return p;};
+const string=name=>put(Buffer.concat([read(name),Buffer.from([0])]));
+const floats=values=>put(new Float32Array(values));
+const words=(pointer,count)=>Array.from(new Uint32Array(core.HEAPU8.buffer,pointer,count));
+const values=(pointer,count)=>Array.from(new Float32Array(core.HEAPU8.buffer,pointer,count));
+const catalog=string('assets/ARA1/local-lights.json'),tree=string('assets/ARA1/light-tree.json');core._init_rider_lighting(catalog,tree);core._free(catalog);core._free(tree);
+assert.deepEqual(values(core._rider_lighting_info(),5),[1,0,0,0,0]);
+const frames=JSON.parse(read('test-data/rider-lighting-bridge-reference.json'));
+assert.equal(frames.length,192);
+let retainedDraws=0,litDraws=0,emptyDraws=0,extraDraws=0;
+for(const [index,frame]of frames.entries()){
+ if(frame.reset)core._reset_rider_lighting();
+ const pointers=[],allocate=v=>{const p=floats(v);pointers.push(p);return p;};
+ if(frame.refresh)core._refresh_rider_lighting(allocate(frame.bounds),allocate(frame.rankPoint));
+ const before=words(core._rider_lighting_selection(),8);
+ const output=core._shade_rider_lighting(allocate(frame.environment),allocate(frame.view),allocate(frame.point),frame.rimScale,allocate(frame.constants),frame.extra.length?allocate(frame.extra):0,frame.extra.length?(frame.extra.length-3)/6:0);
+ assert.deepEqual(words(output,40),frame.expectedWords,`native/WebAssembly coefficient mismatch at draw ${index}`);
+ assert.deepEqual(words(core._rider_lighting_gpu_coefficients(),40),frame.expectedGpuWords,`GPU coefficient scaling mismatch ${index}`);
+ assert.deepEqual(words(core._rider_lighting_selection(),8),before,'Drawing must not reselect local lights');
+ assert.deepEqual(before,frame.expectedSelection,`Light resource mismatch at draw ${index}`);
+ assert.deepEqual(values(core._rider_lighting_info(),5),frame.expectedInfo,`Phase counters mismatch at draw ${index}`);
+ if(!frame.refresh)retainedDraws++;if(before.some(Boolean))litDraws++;else emptyDraws++;if(frame.extra.length)extraDraws++;
+ for(const p of pointers)core._free(p);
+}
+assert(retainedDraws>0&&litDraws>0&&emptyDraws>0&&extraDraws>0,'Reference must exercise retained/empty/lit/controller phases');
+core._reset_rider_lighting();assert.deepEqual(words(core._rider_lighting_selection(),8),Array(8).fill(0));assert.deepEqual(values(core._rider_lighting_info(),5),[1,0,0,0,0]);
+console.log('Native/WebAssembly rider lighting:',{frames:frames.length,coefficientWords:frames.length*40,retainedDraws,litDraws,emptyDraws,extraDraws});

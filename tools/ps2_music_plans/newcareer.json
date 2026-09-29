@@ -1,0 +1,12 @@
+[
+ {"when": "sample>=35", "press": ["Cross"], "hold": 6},
+ {"when": "ws==10", "note": "ws10"},
+ {"when": "ws==4 and course==14", "note": "riding on Happiness"},
+ {"when": "step>=1", "save": "happiness-riding"},
+ {"auto": "ABC1:*,ABC1_A:*,A:*"},
+ {"when": "course!=14", "note": "left ABC1"},
+ {"when": "course==17", "note": "station A"},
+ {"when": "step>=6", "auto": null},
+ {"when": "step>=45", "save": "stationA-after"},
+ {"stop": true}
+]

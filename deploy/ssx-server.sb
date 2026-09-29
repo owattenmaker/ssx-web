@@ -1,0 +1,25 @@
+;; macOS sandbox for the hosted SSX 3 server (docs/hosting.md). Run as:
+;;   sandbox-exec -f ssx-server.sb -D HOME=$HOME -D HOST_ROOT=$HOME/ssx-host -D NODE_PREFIX=/opt/homebrew/Cellar/node node .../mp-server.mjs ...
+;; The server only answers the local cloudflared on 127.0.0.1: no outbound network except loopback (it cannot reach
+;; the LAN or the tailnet), no writes outside its state/log folders, and nothing under $HOME readable except its own tree.
+(version 1)
+(allow default)
+
+;; Network: no outbound except loopback. (macOS does not enforce local-address filters on bind/inbound; the listen
+;; address is pinned to 127.0.0.1 by the launch arguments and MP_REQUIRE_LOOPBACK=1 in mp-server.mjs.)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
+
+;; Files: read nothing in the home folder except the host tree (the ancestors stay stat-able for path resolution).
+(deny file-read* (subpath (param "HOME")))
+(allow file-read* (subpath (param "HOST_ROOT")))
+(allow file-read-metadata (literal (param "HOME")) (literal "/Users"))
+
+;; Writes: only the server's state and logs (plus the per-user temp folders node may touch).
+(deny file-write* (subpath "/"))
+(allow file-write* (subpath (string-append (param "HOST_ROOT") "/state")) (subpath (string-append (param "HOST_ROOT") "/logs"))
+  (subpath "/private/var/folders") (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (literal "/dev/tty"))
+
+;; No spawning other programs.
+(deny process-exec)
+(allow process-exec (subpath (param "NODE_PREFIX")))  ; Homebrew node (any version under its Cellar)

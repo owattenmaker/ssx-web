@@ -1,0 +1,141 @@
+# Boost HUD recovery
+
+The current browser gauge artwork is static. Do not replace it with a guessed shape/colour scheme. This work recovers the source display values first; sprite geometry, colour and Tricky/Super Uber animation still need tracing.
+
+## Source update
+
+The stored boost meter is rider+2F8, Tricky timer+2F0, tier+2F4; +2E8 is not the stored meter. Score/controller117FE0 updates the HUD at1188F8..118A24 through1171A8. Score owner+1B0 points to the HUD slot bank. Slots have stride9C: preview slot+30C, stored-meter slot+3A8. Type34 hex means uninitialized.1171A8 writes type5/6, maximum=-1 and value=-input, so value/maximum recovers the normalized fraction.
+
+For initialized preview: target=min(meter+pendingReward14,1), except drain mode3 excludes pending reward. Read the old value/maximum using EE nearest DIV; approach target by the original1/60 step using EE ADD/SUB and strict comparisons. Initialized stored-meter display similarly approaches the raw meter. On initialization both values use the raw meter directly, without adding pending reward. Both step constants at GP-7A70/-7A6C are3C888889. There is no elapsed-render-time multiplier in this block.
+
+engine/boost_hud.hpp implements that block. tools/test_boost_hud_native.py executes the original block with only1171A8 intercepted, checks both call destinations/types/arguments/order and both output float bit patterns.20,000 cases pass, including initialized/uninitialized slots, mode3, preview clamp and smoothing in either direction. Source execution stops at118A28, before the next HUD feature. Log:local/boost-hud-reference.log.
+
+The browser updates this state after scoring/route progress each simulation tick. Restart initializes the slots; manual reset continues their smoothing. boost_hud_info exports preview/stored fractions, included in the native/WASM gameplay trace (now511 fields per frame). main.js passes these values into ui.draw and publishes diagnostics; ui.js does not draw the fill yet.
+
+## Asset investigation
+
+OV.LUI was read from the user's original ISO without modifying it; decompressed screens are under local/browser-ui/hud. It has38 screens. The small screen named hud (hash00006FB4) contains generic icon/widget placements, not the gameplay boost gauge. OV_1.SSH image4 is hude, containing the silver coil, orb and other HUD sprites. The current browser repeats a cropped coil as placeholder art. The source runtime renderer for slot types5/6 remains to be recovered.29AB08/29AB40 handle notification/event activity, not enough evidence for the gauge geometry.
+
+Full browser tests and4,800-frame gameplay parity pass after adding display state. This establishes display-value arithmetic, not a faithful rendered gauge.
+
+## Source draw recovery and browser rendering (2026-09-12)
+
+The earlier static-art notes above are superseded for the ordinary gauge. `tools/probe_boost_hud_draw.py` executes original21D1A0 and its placement helpers, intercepting only GPU submission379860. `local/browser-ui/hud/boost-draws.json` contains24 captures: widgets4/5/6/7 at six fill fractions. Captured single-player owner18AA570 supplies scale1.01680672 and eight middle sections. Settings4768B0 give bottom392, height242, center582, coil width50, stem background8 and preview4. UVs match OV.LUI object records in atlas page4.
+
+`tools/export_boost_hud.py` exports those full-fraction rectangles and the captured ordinary colour palette to `web/public/assets/UI/boost-gauge.json`. Run the probe before the exporter when regenerating. `web/boost-gauge.js` clips those rectangles continuously from the bottom, renders stored and preview display fractions, and modulates source texture pixels using quantized GS-style colour channels. A cached red atlas and one mutable stored-fill atlas avoid regenerating images for unchanged colours. Source projection640×480 is mapped to the existing640×448 UI canvas. Orb placement follows descriptor3; its existing atlas crop still needs independent checking.
+
+`node web/test-boost-gauge.mjs` compares128 nondegenerate quads across all24 source captures. Maximum position error0.000014782 source pixels; maximum UV error5.39e-8. These are explicitly bounded Canvas double-arithmetic differences, not bit-exact EE output. The ordinary colour ramp is transcribed from1ECD60 with captured palette4C84C8/4C84E8/4C8508; it still needs a dedicated source colour oracle. Material ordering follows the extracted order fields11..14; deferred renderer sort semantics remain to be independently verified. Tricky flash state, SUPER/UBER letters, GS blending/pixel parity and other HUD elements remain unfinished. Do not interpret the working ordinary gauge as complete HUD fidelity.
+
+Live browser verification after the production build: the authored rail fixture earned3740 points; observed stored display0.10996698 and preview0.34794602. Screenshot showed a gold lower coil and taller red preview stem with the full silver background. Game paused after inspection. The existing SUPER/UBER placeholder lettering still clips at the right edge; source letter descriptors and animation remain pending.
+
+## Original letter submission capture
+
+`tools/probe_boost_hud_letters.py` / `tests/boost_hud_letter_probe.cpp` execute21ED48 for nine inactive letters (t3=0, viewport0, scale1), including placement helpers1E91F8/1E9220/1F10F8/21E750/21E7A8. Only font submission391CB0 is intercepted. Output: `local/browser-ui/hud/boost-letters.json`; log `local/boost-hud-letter.log`. The runner rejects any missing-target dispatch diagnostics. An initial incomplete helper registration produced incorrect positions and was replaced by a successful full-helper capture; only the regenerated output is valid.
+
+Source submissions spell UBERSUPER, at UBER x552/568/584/600 y81, SUPER x544/560/576/592/608 y59. All use scale(0.6666666269,1), ARGB(.400000006,1,1,1). Descriptor indices are30+2*letter in single player. Font5A0200 has its glyph bank atA1B390 and texture handle5DE; glyph record metrics/UVs inspected against local SFNs match HUDFONT, not FEFONT. Font submission itself can add shadow and offsets; this capture ends before those GPU operations and is not a final pixel oracle.
+
+Caller1F0110..1F01D0 uses stack+33C as the first inactive letter index, draws through index8, and changes font shadow offsets around the loop. Active letters and flash use other paths;21ED48 t3=2 enables descriptor colour, outline sprite and optional glow when state+64>=0. Source upstream state mapping, font shadow geometry and active transitions remain to be recovered before replacing all placeholder lettering. No production lettering change has been made by this capture.
+
+### Active and transition letter capture
+
+The letter probe now covers modes0/1/2 for all nine letters (27 cases), with state+64=-1 to isolate non-flashing rendering. It executes1E91A8 and intercepts1F1190 at the sprite submission boundary in addition to391CB0 at the font boundary. Mode0: dim white glyph only; mode1: same glyph plus white outline; mode2: descriptor blue-green glyph ARGB(1,0,.4,.65098) plus white outline. First U outline submits position(551,80), size(14,20), scale(1,1), texture656, UV record(V0,U0,U1,V1)=(.193359375,.884765625,.974609375,.326171875). This is a submission capture, not a final GPU/pixel comparison. Exporter retains all27 cases in boost-gauge.json for subsequent renderer integration; production letters still unchanged.
+
+Activation source discovered: score update118A28..118AF4 drives HUD slot type8 at bank+4E0. Zero rider tier(+2F4) removes that slot via1179E0. Otherwise initialize its value to0, take count=min(tier,10)-1, set target=min(count*(float)1/9,1), and approach target with the separate step at GP-7A64. Count is passed in a3 to1171A8 and stored at slot+C; renderer reads it at1ECC74/84. Slot type8 dispatches1ED790. It draws active glyphs in index order, with boundaries advancing by source1/9 and a scale-pop coefficient1.80013132 (GP-56B8). Type8's smoothed fraction controls which glyphs have appeared, not merely instantaneous tier. Transition path1EF6AC..1EF7A0 uses HUD state+68 and mode1; its upstream writer remains open. Need port and source-test this state before activating letters in gameplay. Do not use instantaneous tier alone as a substitute.
+
+### Verified letter state helper
+
+`engine/boost_letter_hud.hpp` now ports the slot8 update. `tools/test_boost_letter_hud_native.py` executes original118A28..118AF4, intercepts1171A8 to reproduce its slot writes and1179E0 to observe removal, and compares20,000 cases against the helper. Ordered call count, slot identity, zero a2, removal, final count and fraction bits are checked. Cases cover tiers0..15, initialized/uninitialized slots and randomized old values/maxima. The source oracle must terminate both118AF8 and118AFC: tier-zero branch118A44 executes the118A48 load in its delay slot and jumps directly to118AFC. Stopping only118AF8 incorrectly enters the next widget's code on that path; this was caught and corrected. Runner rejects missing-target diagnostics.
+
+Exact constants: target per letter1/9=3DE38E39; smoothing step0.0066666672937572=3BDA740F (GP-7A64), distinct from the fill's1/60 step. Result matches the original final output bits across all20,000 cases; log `local/boost-letter-hud-reference.log`. This helper is not wired into the browser simulation yet. Next integrate per-tick state, reset/removal lifecycle and diagnostics, then render captured glyph/outline states and recover the separate transition/flash controller. Full glyph rasterization/shadows and browser integration remain unverified.
+
+## Browser letter integration
+
+The helper is now wired into `tick_rail_score`, immediately after boost fill display updates, using live boostState.tier. The previous removal flag controls initialization. Restart resets removed/count/fraction; tier0 removes the slot. `boost_hud_info` is now five floats: preview, stored, letterCount, letterFraction, removed. Native/browser full gameplay traces include all five (514 fields/frame), and main.js publishes the additional diagnostics.
+
+`web/boost-letters.js` selects original dormant/active submissions using the count and smoothed fraction, and implements the source ordinary scale pop about the descriptor center. `ui.js` renders captured HUDFONT glyphs and atlas outline sprites at source640×480 coordinates. Placeholder whole-word SUPER/UBER text is removed. Canvas arithmetic for scale selection is not an EE bit-exact renderer; glyph shadows, the removal transition controller, flash/glow and GS raster/blend fidelity remain unfinished. The timing helper is bit-verified; this does not extend that claim to Canvas rendering.
+
+Verification: core and production builds passed; full browser test suite passed; 4,800-frame native/browser comparison passed with five HUD fields; steady counts0..9 and removed selection checked. Live rail fixture screenshot showed both complete words within screen bounds; observed count0/fraction0/removed=true, so that live run verifies dormant lettering only. Active visual integration still needs an earned-tier gameplay capture. Game paused after inspection.
+
+### Ordinary active-loop oracle and draw-order correction
+
+`tools/test_boost_letter_draw_native.py` / `tests/boost_letter_draw_reference.cpp` execute1ED790..1ED8F4 with counts1..9 and181 progress fractions each. Only21ED48 is intercepted to capture index/mode/order/scale. Output `local/boost-letter-draw-reference.csv`; `node web/test-boost-letters.mjs` compares all1,629 cases with browser ordinary-letter selection. Active count/index/mode match; maximum scale difference2.2929524e-7 (Canvas/float arithmetic bound, not bit equivalence).
+
+The dedicated dev fixture `web/hud-preview.html` exercises the actual OriginalUI renderer with count/fraction sliders. Serve with Vite dev and open `/hud-preview.html`; it is separate from the normal gameplay entry. All-active visual inspection caught white outline sprites covering glyphs.21ED48 submits glyphs first but uses material order12 for glyphs and11 for outlines. The source probe now captures actual material order at both intercepted submissions; exported profiles carry it. UI sorts each letter's draws by that key, so outlines render before glyphs. A second screenshot confirmed readable blue-green SUPER/UBER over white outlines. Production build and both gauge/letter geometry checks passed after the correction. This is fixture-based active rendering verification, not an earned-tier or full PS2 pixel comparison.
+
+## Flash and pending-letter clocks: corrected semantics
+
+The earlier references to a generic "removal transition" were provisional and are superseded by the score-state trace: slot10 is a pending-Uber-letter preview.118AF8..118BF0 reads scorer+54 (`uberCount54`) and+5C (`activeUber5C`), limits pending letters to10-min(tier,10), and sends their count to slot10. Renderer1EF6AC..1EF7A0 draws mode1 after the active-letter prefix. Its phase drives horizontal scale `(phase-.5)*2`. Do not trigger this effect merely because letters were removed or boost expired.
+
+Single-player HUD state is owner+48 (1EC9F0..1EC9F8). Phase+64 and+68 are written in1EBC94..1EBF2C. Flash uses slot9 at score bank+57C; absent slot resets phase to-1. Widget normalized fraction exactly1 resets phase to-1 and toggles additional text via1E94E0. Otherwise a negative phase initializes to1; advancing phase uses `phase += (float)1/30 / ((1-fraction)*0.9104143977165222 +0.029972560703754425)`, wrapping while >2. Tier/count at slot+C selects one of four palettes4C8428/48/68/88. Caller branches and palette triggers are not yet ported.
+
+Pending-letter phase uses slot10 at bank+618: absent resets to-1; negative initializes to.5; otherwise add0.08791634440422058 and wrap while >1. `engine/boost_hud_clock.hpp` ports the two isolated clocks with original operation ordering. `tools/test_boost_hud_clock_native.py` executes1EBDF4..1EBE60 and1EBED4..1EBF2C with no callbacks, stops at all outgoing continuation points, and compares40,000 finite phase/fraction cases including initialization and wrapping. Exact float bits match; log `local/boost-hud-clock-reference.log`. Helpers are not yet connected to browser HUD state. Need recover slot9/10 updates and scheduling, then wire pending letters, flash palettes and glow. No visible flash/pending effect was added by this clock work.
+
+## Verified pending-letter widget update
+
+`engine/boost_pending_hud.hpp` ports118AF8..118C28. remaining=10-min(tier,10); if no active/completed Uber in the current scoring state, or remaining<=0, remove slot10. An initialized slot also requests hide29B3C0 via manager28B180 before removal1179E0. Otherwise count=min(uberCount54+(activeUber5C?1:0),remaining). Initialization writes zero to slot10 and requests show29B0E0 through28B180. Then approach min(count*(float)1/9,1) by source1/60 using original arithmetic. Return flags preserve shown/hidden lifecycle requests for integration.
+
+`tools/test_boost_pending_hud_native.py` / `tests/boost_pending_hud_reference.cpp` execute the original block and compare20,000 cases: tiers0..15, Uber counts0..11, active flag, initialized/absent slots and random old values. Exact fraction bits, count, removed/shown/hidden flags and ordered update/manager/show/hide/remove calls match. Both118C2C and118C30 are stopped because the successful update branches to118C30 after loading bank in its delay slot. Runner rejects missing-target diagnostics. Log `local/boost-pending-hud-reference.log`. Not yet integrated into simulation or renderer.
+
+Next flash widget source:118C2C onward reads slot9 (bank+57C) and rider+2F0 Tricky timer. An absent slot appears only if timer>0, initializes fraction0 and requests299638. An initialized slot is removed only when old normalized fraction==1 and timer==0, with2997B8 afterward. Otherwise its target is1-timer*GP-7A58, approached with GP-7A54. Need finish118D24 onward, capture constants and verify that helper before composing display clocks. This avoids treating stored boost meter as the flash trigger.
+
+## Tricky timer helper and composed runtime state
+
+`engine/boost_flash_hud.hpp` ports118C2C..118D4C. Absent slot9 stays absent for timer<=0; timer>0 initializes fraction0 and requests299638, without a second update that tick. Existing slot removes only when old fraction==1 and timer==0, then requests2997B8. Otherwise target=1-timer*0.05000000074505806, approached with1/60, and palette tier=min(tier,11). No target clamp is invented. `tools/test_boost_flash_hud_native.py` compares20,000 cases with original execution, including exact fraction bits and ordered lifecycle calls. Log `local/boost-flash-hud-reference.log`.
+
+Pending and flash state helpers and their phase clocks are now composed after the existing letter/fill updates in `tick_rail_score`. Inputs use live scoring.uberCount54/activeUber5C, boostState.tier and boostState.superTime. Restart resets slots and phases; pending absent resets phase-1, flash absent or fraction1 resets phase-1. Show/hide return flags are retained in state but original manager audio/text side effects remain unimplemented.
+
+`boost_hud_info` now exports12 floats: fill preview/stored, earned count/fraction/removed, pending count/phase/removed, flash phase/fraction/present, pending fraction. Native/browser trace width is521 fields/frame. Core build, full browser tests and4,800-frame trace comparison pass. This trace is cross-host consistency, not original host scheduling proof or assurance all timer/tier branches were encountered in gameplay.
+
+Renderer now draws pending mode1 letters following the active prefix; their outline X scale follows `(phase-.5)*2`, including a negative scale that reflects the sprite about its original center. It uses the original white atlas for both fill layers when flash phase>=0. Updated dev HUD fixture exposes pending count/phase and flash controls. Visual fixture check showed earned UBER, two pending letters and white fill; this is a controlled render fixture, not an earned-Uber gameplay check. Full flash colour palette/glow, orb, extra text, font shadows, pixel blending and source host scheduling remain unfinished. Production build includes the composed states and these partial effects.
+
+## Orb sprite correction
+
+The base orb now uses captured owner+538 sprite18A9FA0, not the guessed(140,49,36,36) crop. Source1EFC9C..1EFDB0 loads this sprite with descriptor3. UVs(U0,V0,U1,V1)=(.572265625,.197265625,.693359375,.318359375), equivalent to(146.5,50.5,31,31) in atlas pixels; descriptor center(582,127), size32×32. Exporter cross-checks the runtime name hash/UV against the original OV.LUI object table and fails on mismatch. The manifest stores position/size/scale and UVs; ui.js consumes them. Production build and gauge geometry check passed, with a fixture screenshot inspected. This validates the data linkage and visible rendering, not GS pixel equivalence.
+
+Orb animation recovery:1EFC58..1EFD38 tests state phase+64>=0. Active orb uses state colour+54 and multiplies width by phase for phase<1, or2-phase otherwise; alignment follows after width change. Inactive orb uses descriptor colour.1EFDB4 onward expands a glow rectangle and calls21E7E0 while phase>=0. Four source flash colours were exported from4C8428/48/68/88, but orb colour/pulse/glow are not yet wired. Need source draw capture across phase/tier before implementing them; preserve initialization palette tier0 when timer slot first appears.
+
+## Verified orb pulse and colour integration
+
+`tools/probe_boost_orb.py` / `tests/boost_orb_probe.cpp` execute1EFC58..1EFDB0 with the captured owner/settings and original placement helpers, intercepting only1F1190 sprite submission. Stop at1EFDB4 before glow preparation. Captures808 draws: four source palettes at inactive phase-1 and201 values0..2. Runner rejects missing-target callbacks. Output `local/browser-ui/hud/boost-orb.json`; log `local/boost-orb-reference.log`.
+
+`web/boost-orb.js` derives centered width and exact source ARGB palette. `node web/test-boost-orb.mjs` compares all808 cases: UV/colour/order/scales match and maximum position/size error0.0000295639 pixels (Canvas double vs originalfloat bound). `BoostGauge.drawOrb` draws this in the real HUD with four precomputed modulated atlases, avoiding new orb tint images per frame. Sprite disappears at phase0/2, is full width at1, and is white/full width for phase<0. Separate glow21E7E0 remains unfinished.
+
+`boost_hud_info` now exports13 floats: index12 is timer widget paletteTier, preserving initial tier0 rather than substituting live boost tier on its initialization frame. Gameplay trace width522. Core build, browser tests, production build and4,800-frame native/browser comparison passed. Dev fixture controls phase and palette tier; screenshot confirmed centered half-width orange orb at phase.5/tier5. This is source submission/fixture verification, not original PS2 pixel equivalence or an earned-tier gameplay trace.
+
+## Orb glow submission recovery
+
+`tools/probe_boost_orb_glow.py` extends the orb probe through21E7E0, stops at1EFE94, and intercepts21EA00 to capture glow rectangles/UV/ARGB/material. This is before final vertex packing/GPU submission.808 phase/palette cases captured in `local/browser-ui/hud/boost-orb-glow.json`; log `local/boost-orb-glow-reference.log`. Validated inactive omission, one glow draw per active case, finite payloads, UV0..1, texture handle5F5. No missing-target diagnostics.
+
+At phase0, golden orb glow submits position(564.9990234,93.9990234), size(34.00195694,66.001953125), alpha.2603548765. Phase.5: x556.9990234,width50.00195694,alpha.3801701069. Phase1: x548.9990234,width66.001953125,alpha.4999853671. Phase2 returns to phase0 bounds/alpha. Vertical center127 stays fixed. Captured material words[0,11534996,320,0,4294903285] have order10 and texture5F5. Blend bits inherit the captured material; final GS pixel fidelity is still unverified.
+
+Texture handle5F5 is renderer-owned, not OV atlas656. Owner+474 gets renderer+F50 at1EA1CC..1EA1E0; owner UV480/484/488/48C is0/0/1/1. Setter3948B0 writes renderer+F50+index*4. Direct JAL search found no caller, so trace vtable/renderer initialization or resolve runtime texture descriptor next. Do not substitute a generic radial gradient. No glow renderer has been added yet.
+
+## Original glow texture resolved
+
+Renderer vtable slot1CC resolves37D938; its lookup is descriptor=*(renderer+18F4 table +handle*4+8). Captured renderer61BA60 has table874700. Handle5F5 resolves descriptor589880, name`part`, pixels14CD880, paletteBE4280; TEX0=2000000599B04000 encodes64×64 PSMT8H. OV handle656 resolves58A780/UITPage through the same lookup, corroborating the table interpretation.
+
+`tools/export_hud_glow.py` reads the user's original `DATA/TEXTURES/PARTICLE.SSH`, selects entry`part` at78960, and asserts its4096 linear texels and1024 palette bytes exactly equal the captured runtime resource. SSH record is format2,64×64, texels at+16, palette at recorded block size+16. Palette uses CSM1 bit3/4 permutation; exported alpha doubles PS2 alpha with saturation. Outputs `web/public/assets/UI/part-glow.png` and provenance/hash metadata `part-glow.json`. Export passed and image was inspected. No disc modifications. This is the actual asset; no generated radial gradient is involved. Final GS alpha/raster equivalence remains a separate issue. Next consume this asset with the captured orb/coil/letter glow geometry and source ordering.
+
+## Orb glow rendered
+
+`boostOrbGlow` in `web/boost-orb.js` now derives the captured glow rectangle and opacity from source constants exported by `tools/export_boost_hud.py`. It pads the pulsing orb by17.00097847 per side, expands extent34.00195694 and varies alpha between.2603548765 and.4999853671 along the triangular phase. `node web/test-boost-orb-glow.mjs` compares808 captures: exact colour/UV/texture/order expectations, maximum geometry error0.0000314713 pixels and alpha error2.95785e-8. Bounds reflect Canvas double arithmetic, not EE bit equivalence.
+
+`OriginalUI.load` loads original `part-glow.png`; BoostGauge precomputes four64×64 tinted glow canvases once and draws the glow after the orb, including at phase0/2 when the orb width is zero. Uses source-over and quantized vertex alpha; final original GS blend/raster/pixel equivalence is still unverified. Production build passed and dev fixture screenshot showed the orange glow around the half-width orb. Source orb comparison also remains passing. No physics/core changes in this step. Coil and active-letter glow passes still need integration; complete Tricky HUD effects are not finished.
+
+## Coil/stem glow and flash background capture
+
+`tools/probe_boost_coil_glow.py` extends the orb/glow probe through1F0108, stops1F010C, runs original21D1A0 for both backgrounds and captures GPU379860 quad geometry/UV/RGBA plus21EA00 glow submissions. Captures808 cases in `local/browser-ui/hud/boost-coil-glow.json`; log `local/boost-coil-glow-reference.log`. Each has20 background quads. Inactive has no glow; active has five glow submissions total: orb, three horizontal coil sections, one stem. The coil/stem bounds and UV are constant across all active phases/palettes; exporter validates this and stores `coilGlows` plus `flashBackgrounds` in boost-gauge.json.
+
+Coil glow: left(542.48168945,146.40975952),size(36,249.18048096),U0..0.5; center x578.48168945,width7.03662872,U=.5 at both ends; right x585.51831055,width36,U.5..1. All V0..1. Stem glow(566.41668701,127.34336853),size(31.16660881,287.31326294),fullUV. Same phase alpha and palette as orb glow. The center is a constant-U strip; Canvas needs explicit center-column sampling instead of a zero-source-width drawImage. Final sampling/blending still needs validation.
+
+Also confirmed1EFE94..1F0040 changes backgrounds during active flash: group0 gray coil is palette-tinted; widget5 switches group1 gray stem to group3 white stem, also palette-tinted. Filled layers remain white through their separate dispatcher path. Existing production renderer has not yet applied these background substitutions or coil glows; exported source geometry is ready for that integration. Do not treat the current all-white flash branch as complete source fidelity.
+
+## Coil/stem effects integrated
+
+The renderer now consumes `flashBackgrounds` and `coilGlows`. During Tricky it tints gray coil group0 with the source palette and substitutes the palette-tinted white stem group3. Stored and preview fills remain white. Four coil/stem glow rectangles use the original part texture and source alpha, below background/fill layers; orb precedes coil glows as in source submission order. Letters render after gauge glows so overlap respects their higher source order.
+
+The constant-U=.5 middle coil strip samples a cached one-pixel center column, interpolating the two source center columns in premultiplied-alpha space once at load. No per-frame image allocation; four palette-specific columns. This is a Canvas sampling implementation, not verified GS pixel equivalence. Remaining end-cap/source filtering seams require original screenshot comparison.
+
+`node web/test-boost-coil-glow.mjs` compares808 original captures: geometry/UV and background RGBA match, maximum phase-alpha error2.95785e-8. Inactive omission and group3 flash substitution checked via captured quads. Existing gauge, orb-glow and letter comparisons pass. Production build passed, and fixture screenshot inspected showed colored coil top/stem, white fill and orange surrounding glow with no obvious center-strip gap. No core/physics changes this step. Active-letter glow remains unfinished; full gameplay fidelity goal remains open.
+
+Active-letter glow capture was completed before switching to the user's ground-steering fix: `tools/probe_boost_letter_glow.py`, `tests/boost_letter_glow_probe.cpp`, output `local/browser-ui/hud/boost-letter-glow.json`, log `local/boost-letter-glow-reference.log`. It runs original21ED48 at four palettes, three scales(1,1.2,3), ten phases and nine letters, capturing21EA00 glow requests. Capture returned successfully; detailed geometry comparison and renderer integration have not yet been performed. Resume there after steering work.

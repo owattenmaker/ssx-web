@@ -1,0 +1,27 @@
+{
+  "gameplay_clips": 497,
+  "frontend_clips": 67,
+  "wired": {
+    "ground_selection": "131878..131C04",
+    "prewind_and_release": "12EBE0..12EE30, 12EA30",
+    "air_control_and_selection": "13366C..134C6C",
+    "passive_air": "12F620, 12F730, 12FB68",
+    "normal_and_tweak_grabs": "1352A8",
+    "animation_clock_and_markers": "3135B0",
+    "sequence_completion": "103918, 312490",
+    "upper_idle_reactions": "115D48 (no opponent peers)",
+    "ordinary_landing_selection": "13A968",
+    "board_and_leg_pose": "11EB98, 11F3D8",
+    "body_presentation": "11FA10",
+    "grab_scoring": "119708, 1197D8, 117D24..117D70, 119210, 117948"
+  },
+  "not_fully_wired": [
+    "hard crash and ragdoll recovery",
+    "rail entry, balance, tricks and transfers",
+    "handplants",
+    "attacks and rider-pair interactions",
+    "earned Uber/super-Uber boost progression",
+    "full stance/orientation baking after aerial rotation",
+    "full frontend LUI animation scripting"
+  ]
+}

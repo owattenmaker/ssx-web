@@ -1,0 +1,6 @@
+[
+ {"when": "sample>=60", "press": ["Cross"], "hold": 6},
+ {"when": "ws==4 and sample>200", "note": "riding after transport"},
+ {"when": "ss>=2400", "save": "after-transport-40s"},
+ {"stop": true}
+]

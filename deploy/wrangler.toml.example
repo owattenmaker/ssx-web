@@ -1,0 +1,10 @@
+# Edge gate + cache for the hosted site (docs/hosting.md). Copy to deploy/wrangler.toml (git-ignored), set the route,
+# then: cd deploy && npx wrangler deploy
+# Secrets (never in the repo): GATE_SECRET = ~/<SSX_HOST_ROOT>/state/gate-secret, EDGE_SECRET = ~/<SSX_HOST_ROOT>/etc/edge-secret
+# on the host (npx wrangler secret put ...).
+name = "ssx-edge"
+main = "edge-worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+preview_urls = false
+routes = [ { pattern = "ssx.example.com/*", zone_name = "example.com" } ]

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>ssx3_metal</string>
+<key>CFBundleIdentifier</key><string>local.ssx3.metal-engine</string>
+<key>CFBundleName</key><string>SSX 3 Metal Engine</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+</dict></plist>

@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><title>SSX3 loading screen fixture</title>
+<style>body{margin:0;background:#243d52;overflow:hidden}#view{position:absolute;inset:0;overflow:hidden}#stage{position:absolute;left:0;top:0;width:100vw;height:70vw;transform-origin:0 0}#stage.wide{height:56.25vw}canvas,img{position:absolute;inset:0;width:100%;height:100%}img{pointer-events:none}#game-menu{display:none}</style>
+<!-- Dev fixture for web/loading-screen.js (serve with the Vite dev server):
+     ?frame=N freezes the LUI timeline, ?device=gamepad|keyboard, ?mode=Classic, ?wide=1 shows the 16:9 (Anamorphic) stretch,
+     ?ref=/x.png&opacity=.5 overlays a 640x480 PS2 frame, ?crop=x,y,w (640-wide frame units) magnifies a region. -->
+<div id="view"><div id="stage"><canvas id="ui-bg" width="640" height="448"></canvas><canvas id="ui" width="640" height="448"></canvas><div id="game-menu"></div></div></div>
+<script type="module">
+import {OriginalUI} from './ui.js';
+const q=new URL(location.href).searchParams,stage=document.querySelector('#stage');
+if(q.get('wide')==='1')stage.classList.add('wide');
+if(q.get('crop')){const [x,y,w]=q.get('crop').split(',').map(Number),s=640/w,sy=q.get('wide')==='1'?1:1;stage.style.transform=`scale(${s}) translate(${-x/640*100}vw,${-y/640*100}vw)`;}
+const ui=new OriginalUI({});await ui.load();ui.ready=true;window.previewUI=ui;
+if(q.get('mode'))ui.keyboardMode=q.get('mode');
+ui.loading.forceDevice=q.get('device');
+ui.loading.run(()=>{},[new Promise(()=>{})]);
+if(q.has('frame')){const f=Number(q.get('frame'));ui.loading.frame=()=>f;}
+if(q.get('ref')){const im=document.createElement('img');im.src=q.get('ref');im.style.opacity=q.get('opacity')||'.5';stage.appendChild(im);}
+</script>

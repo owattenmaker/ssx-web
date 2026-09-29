@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template (copy to deploy/<SSX_LABEL>.server.plist, git-ignored; set the label, the origin and the host folder if not ssx-host). Hosted SSX 3 server (docs/hosting.md): sandboxed Node on 127.0.0.1:8787, reached only through cloudflared. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.ssx.server</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/sandbox-exec</string><string>-f</string><string>__HOME__/ssx-host/etc/ssx-server.sb</string>
+    <string>-D</string><string>HOME=__HOME__</string><string>-D</string><string>HOST_ROOT=__HOME__/ssx-host</string>
+    <string>-D</string><string>NODE_PREFIX=/opt/homebrew/Cellar/node</string>
+    <string>/opt/homebrew/opt/node/bin/node</string><string>server/mp-server.mjs</string>
+    <string>--port</string><string>8787</string><string>--host</string><string>127.0.0.1</string><string>--static</string><string>dist-online,public</string>
+  </array>
+  <key>WorkingDirectory</key><string>__HOME__/ssx-host/app/web</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>MP_GATE_PASSWORD_FILE</key><string>__HOME__/ssx-host/etc/gate-password</string>
+    <key>MP_GATE_SECRET_FILE</key><string>__HOME__/ssx-host/state/gate-secret</string>
+    <key>MP_TRUST_PROXY</key><string>1</string>
+    <key>MP_EDGE_SECRET_FILE</key><string>__HOME__/ssx-host/etc/edge-secret</string>
+    <key>MP_DIAG_LOG</key><string>__HOME__/ssx-host/logs/diag.log</string>
+    <key>MP_PRECOMPRESSED</key><string>__HOME__/ssx-host/app/web/precompressed</string>
+    <key>MP_REQUIRE_LOOPBACK</key><string>1</string>
+    <key>MP_ORIGINS</key><string>https://ssx.example.com</string>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>__HOME__/ssx-host/logs/server.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/ssx-host/logs/server.log</string>
+</dict></plist>

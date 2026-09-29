@@ -1,0 +1,7 @@
+[
+ {"when": "sample>=10", "press": ["Cross"], "hold": 8},
+ {"when": "ws==2", "note": "card"},
+ {"when": "sample>=1600", "press": ["Cross"], "hold": 8},
+ {"when": "ws==4", "note": "race"},
+ {"when": "ss>=900", "stop": true}
+]

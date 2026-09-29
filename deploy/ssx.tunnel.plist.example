@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template (copy to deploy/<SSX_LABEL>.tunnel.plist, git-ignored; set the label). Cloudflare Tunnel for the site (docs/hosting.md): outbound only, forwards to 127.0.0.1:8787. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.ssx.tunnel</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/cloudflared</string><string>tunnel</string><string>--config</string><string>__HOME__/ssx-host/cloudflared/config.yml</string><string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>__HOME__/ssx-host/logs/tunnel.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/ssx-host/logs/tunnel.log</string>
+</dict></plist>

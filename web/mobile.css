@@ -1,0 +1,92 @@
+/* Phones and tablets (web/touch-controls.js, docs/mobile.md): the 4:3 frame in a console-style case with a
+   DualShock-style deck. Positions/sizes come from touch-controls.js computeLayout (inline left/top/width/height);
+   this file is the look. Everything is drawn here: no product images or logos. */
+
+/* 3D canvas upscaling for the fixed PS2-size drawing buffer (quality.js render scale "native") */
+html[data-upscale="pixelated"] #game{image-rendering:pixelated;image-rendering:crisp-edges}
+
+/* ---- the page while the touch deck is up: no scrolling, zooming, selection or callouts ---- */
+html[data-touch="1"],html[data-touch="1"] body{overscroll-behavior:none;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+html[data-touch="1"] body{position:fixed;inset:0;background:#0b0c0e}
+html[data-touch="1"] #stage{position:fixed;left:var(--fx);top:var(--fy);width:var(--fw);height:var(--fh);transform:none;z-index:1;touch-action:none}
+#touch-ui{display:none}
+html[data-touch="1"] #touch-ui{display:block;position:fixed;inset:0;z-index:0;pointer-events:none;font-family:"Helvetica Neue",Arial,system-ui,sans-serif}
+#touch-ui>*{position:absolute;box-sizing:border-box}
+#touch-ui [data-c],#touch-ui [data-zone],#touch-ui [data-act]{pointer-events:auto;touch-action:none;cursor:pointer}
+
+/* ---- console case: black gloss, fine horizontal ridges, blue trim ---- */
+.tc-strip,.tc-deck{background:
+  repeating-linear-gradient(180deg,rgba(255,255,255,.035) 0 1px,rgba(0,0,0,0) 1px 4px),
+  linear-gradient(180deg,#26282d 0%,#15161a 55%,#0f1013 100%)}
+.tc-strip{border-bottom:1px solid #2f3a52;box-shadow:0 2px 0 #0a0b0d,inset 0 -2px 0 rgba(58,110,210,.55)}
+html[data-touch-layout="below"] .tc-strip{border-top:1px solid #2f3a52;box-shadow:inset 0 2px 0 rgba(58,110,210,.45),inset 0 -1px 0 #000}
+.tc-deck{border-radius:0;box-shadow:inset 0 2px 0 rgba(58,110,210,.5),inset 0 3px 0 #0a0b0d}
+/* rounded grips of the controller body */
+.tc-deck::before,.tc-deck::after{content:"";position:absolute;bottom:-40px;width:46%;height:52%;border-radius:46% 46% 40% 40%;background:radial-gradient(ellipse at 50% 30%,rgba(255,255,255,.06),rgba(0,0,0,0) 60%),linear-gradient(180deg,#1b1c20,#0c0d0f);box-shadow:inset 0 2px 3px rgba(255,255,255,.05),0 -1px 0 #000;pointer-events:none}
+.tc-deck::before{left:-6%}.tc-deck::after{right:-6%}
+html[data-touch-orient="landscape"] .tc-deck{box-shadow:none}
+html[data-touch-orient="landscape"] .tc-deck::before,html[data-touch-orient="landscape"] .tc-deck::after{bottom:-30%;width:30%;height:70%}
+/* screen surround of the frame (a CRT-style bezel) */
+.tc-bezel{border-radius:7px;background:#050506;box-shadow:0 0 0 1px #34363d,0 0 0 3px #111215,0 0 0 4px rgba(70,120,220,.55),0 6px 14px rgba(0,0,0,.7),inset 0 0 12px #000}
+
+/* ---- shoulder buttons L1 L2 R1 R2 ---- */
+.tc-shoulder{display:flex;align-items:center;justify-content:center;border-radius:14px 14px 9px 9px;background:linear-gradient(180deg,#b9bcc3 0%,#8b8e95 55%,#6d7076 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),inset 0 -3px 0 rgba(0,0,0,.25),0 3px 0 #2b2c30,0 5px 8px rgba(0,0,0,.6);color:#26282c;font-weight:800;font-size:17px;letter-spacing:.04em;transition:transform .04s,box-shadow .04s,background .04s}
+.tc-shoulder[data-c="l2"],.tc-shoulder[data-c="r2"]{border-radius:10px 10px 14px 14px;background:linear-gradient(180deg,#a4a7ae 0%,#7d8087 60%,#63666c 100%)}
+.tc-shoulder.on{transform:translateY(3px);box-shadow:inset 0 2px 4px rgba(0,0,0,.45),0 0 0 #2b2c30,0 0 10px rgba(90,150,255,.8);background:linear-gradient(180deg,#9fb8e8,#6f86b8)}
+
+/* ---- small pills: SELECT START, the settings / fullscreen icons, the ANALOG light ---- */
+.tc-pill{display:flex;align-items:center;justify-content:center;border-radius:999px;background:linear-gradient(180deg,#7b7e85,#55585e);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 2px 0 #111,0 3px 5px rgba(0,0,0,.6);color:#e7e9ee;font-size:9.5px;font-weight:800;letter-spacing:.12em}
+.tc-pill span{transform:translateY(0)}
+.tc-pill.on{transform:translateY(2px);box-shadow:inset 0 2px 3px rgba(0,0,0,.5),0 0 8px rgba(90,150,255,.8)}
+.tc-icon{display:flex;align-items:center;justify-content:center;border-radius:50%;background:#1c1d21;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 0 0 1px #2c2e34;color:#8e939c;padding:7px}
+.tc-icon svg{width:100%;height:100%}
+.tc-icon.on{color:#9ec0ff;box-shadow:0 0 0 1px #4a78d0,0 0 8px rgba(90,150,255,.7)}
+.tc-icon[hidden]{display:none}
+.tc-analog{display:flex;align-items:center;justify-content:center;gap:6px;color:#9097a3;font-size:8.5px;font-weight:800;letter-spacing:.14em;pointer-events:none}
+.tc-analog i{width:7px;height:7px;border-radius:50%;background:#e0312f;box-shadow:0 0 6px 1px rgba(255,60,50,.9),inset 0 1px 1px rgba(255,255,255,.6)}
+
+/* ---- d-pad: grey cross in a recessed well ---- */
+.tc-dpad{border-radius:50%;background:radial-gradient(circle at 50% 45%,#0c0d0f 0 58%,#17181c 70%,#202226 100%);box-shadow:inset 0 3px 6px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.07)}
+.tc-dpad>*{position:absolute;box-sizing:border-box}
+.tc-arm{width:31%;height:37%;display:flex;align-items:center;justify-content:center;color:#3b3d42;background:linear-gradient(180deg,#bfc2c8,#8e9197);box-shadow:inset 0 1px 0 rgba(255,255,255,.55),0 2px 0 #3a3b3f,0 3px 4px rgba(0,0,0,.6);transition:transform .04s}
+.tc-arm svg{width:55%;height:55%}
+.tc-up{left:34.5%;top:6%;border-radius:6px 6px 2px 2px;clip-path:polygon(0 0,100% 0,100% 72%,50% 100%,0 72%)}
+.tc-down{left:34.5%;bottom:6%;border-radius:2px 2px 6px 6px;clip-path:polygon(50% 0,100% 28%,100% 100%,0 100%,0 28%)}
+.tc-down svg{transform:rotate(180deg)}
+.tc-left,.tc-right{width:37%;height:31%;top:34.5%}
+.tc-left{left:6%;border-radius:6px 2px 2px 6px;clip-path:polygon(0 0,72% 0,100% 50%,72% 100%,0 100%)}
+.tc-left svg{transform:rotate(-90deg)}
+.tc-right{right:6%;border-radius:2px 6px 6px 2px;clip-path:polygon(28% 0,100% 0,100% 100%,28% 100%,0 50%)}
+.tc-right svg{transform:rotate(90deg)}
+.tc-hub{left:36%;top:36%;width:28%;height:28%;border-radius:50%;background:radial-gradient(circle,#2a2c31,#131417);pointer-events:none}
+.tc-arm.on{background:linear-gradient(180deg,#a9c3f3,#6d88c2);color:#10203f;box-shadow:inset 0 2px 3px rgba(0,0,0,.45),0 0 10px rgba(90,150,255,.8)}
+.tc-up.on{transform:translateY(2px)}.tc-down.on{transform:translateY(-2px)}.tc-left.on{transform:translateX(2px)}.tc-right.on{transform:translateX(-2px)}
+
+/* ---- analog sticks: black rubber tops in round wells ---- */
+.tc-stick-zone,.tc-rstick{pointer-events:auto}
+.tc-stick-base{position:absolute;border-radius:50%;background:radial-gradient(circle at 50% 45%,#08090a 0 55%,#15161a 68%,#24262b 100%);box-shadow:inset 0 4px 8px rgba(0,0,0,.95),0 1px 0 rgba(255,255,255,.08);pointer-events:none;transition:opacity .15s}
+.tc-stick-base::before{content:"";position:absolute;inset:14%;border-radius:50%;border:1px dashed rgba(120,160,230,.18)}
+.tc-stick-nub{position:absolute;left:24%;top:24%;width:52%;height:52%;border-radius:50%;background:
+  repeating-radial-gradient(circle at 50% 50%,rgba(255,255,255,.05) 0 2px,rgba(0,0,0,0) 2px 5px),
+  radial-gradient(circle at 42% 35%,#4b4e55 0%,#26282d 55%,#141518 100%);box-shadow:0 0 0 3px #0d0e10,0 0 0 4px #303238,0 6px 10px rgba(0,0,0,.8),inset 0 2px 2px rgba(255,255,255,.12);will-change:transform}
+.tc-stick-base.on .tc-stick-nub,.tc-rstick.on .tc-stick-nub{box-shadow:0 0 0 3px #0d0e10,0 0 0 5px rgba(90,150,255,.85),0 6px 10px rgba(0,0,0,.8),inset 0 2px 2px rgba(255,255,255,.12)}
+.tc-rstick .tc-stick-base{inset:0;width:100%;height:100%}
+
+/* ---- face buttons: dark caps with the coloured symbols, in a diamond ---- */
+.tc-face{border-radius:50%;background:radial-gradient(circle,rgba(0,0,0,.35) 0 58%,rgba(0,0,0,0) 72%)}
+.tc-face-btn{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 45% 35%,#3b3d43 0%,#222328 60%,#141518 100%);box-shadow:inset 0 1px 1px rgba(255,255,255,.18),0 0 0 2px #0b0c0e,0 3px 0 #050506,0 5px 8px rgba(0,0,0,.7);transition:transform .04s,box-shadow .04s}
+.tc-glyph{display:block;width:56%;height:56%;font-style:normal}
+.tc-glyph svg{width:100%;height:100%;display:block;filter:drop-shadow(0 0 1px rgba(0,0,0,.6))}
+.tc-triangle{color:#3fd29a}.tc-circle{color:#ff5b5b}.tc-cross{color:#78a9ff}.tc-square{color:#f08ad6}
+.tc-face-btn b{position:absolute;top:100%;left:50%;transform:translate(-50%,3px);font-size:8.5px;font-weight:800;letter-spacing:.12em;color:#6f7580;white-space:nowrap;pointer-events:none}
+#touch-ui:not([data-screen="game"]) .tc-face-btn b,html[data-touch-orient="landscape"] .tc-face-btn b{visibility:hidden}
+.tc-face-btn.on{transform:translateY(3px) scale(.96);background:radial-gradient(circle at 45% 35%,#454852,#2a2c33);box-shadow:inset 0 2px 4px rgba(0,0,0,.6),0 0 0 2px #0b0c0e,0 0 0 #000,0 0 14px 2px currentColor}
+
+/* ---- prompts (web/phone-prompts.js): the game's message box on its own canvas above the page (drawn there, not in
+   CSS; this only places the canvas). Settings are the game's Options > Display & Touch screen, not a panel. ---- */
+#tc-prompt{position:fixed;inset:0;width:100%;height:100%;z-index:40;touch-action:none;cursor:pointer;-webkit-user-select:none;user-select:none}
+#tc-prompt[hidden]{display:none}
+
+/* Chord markers between neighbouring face buttons (touch-controls.js faceChords): land a thumb here for both, e.g. ✕+□ */
+.tc-chord{position:absolute;border-radius:50%;pointer-events:none;background:radial-gradient(circle,#50555f 0 34%,rgba(80,85,95,.35) 36% 62%,rgba(0,0,0,0) 64%);opacity:.8;transition:transform .06s,opacity .06s}
+.tc-chord.on{opacity:1;transform:scale(1.25);background:radial-gradient(circle,#9fb6ff 0 34%,rgba(120,150,255,.45) 36% 62%,rgba(0,0,0,0) 64%)}

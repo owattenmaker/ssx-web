@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import create from '../local/browser-validation/lighting-brightness.mjs';
+const root=new URL('../local/event-activation/',import.meta.url),input=fs.readFileSync(new URL('lighting-brightness-input.bin',root)),expected=fs.readFileSync(new URL('lighting-brightness-expected.bin',root));
+assert.equal(input.length,20000*16);assert.equal(expected.length,20000*4);
+const core=await create(),ip=core._malloc(input.length),op=core._malloc(expected.length);core.HEAPU8.set(input,ip);
+core._lighting_brightness_batch(ip,op,20000);
+const words=new Uint32Array(expected.buffer,expected.byteOffset,expected.length/4);
+for(let i=0;i<words.length;i++)assert.equal(core.HEAPU32[op/4+i],words[i],`Original brightness differs at case ${i}`);
+core._free(ip);core._free(op);console.log('20000 WASM brightness evaluations match original executable output bits, including all threshold and nonlinear fixtures.');

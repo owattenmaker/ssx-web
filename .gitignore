@@ -1,0 +1,51 @@
+local/
+.venv/
+build/
+__pycache__/
+.DS_Store
+
+# Private browser demo assets and generated runtime
+web/node_modules/
+web/dist/
+web/dist-online/
+web/public/assets/
+web/public/runtime/
+
+web/runtime/
+
+web/generated/
+
+# Hosting build outputs, test fixtures and tool builds (never in the repo)
+__pycache__/
+.DS_Store
+node_modules/
+dist/
+dist-online/
+runtime/
+runtime-bones/
+generated/
+public/assets/
+public/runtime/
+public/test-data/
+bin/
+obj/
+*.pdb
+*.dll
+*.pkl
+*.p2s
+*.iso
+.venv/
+web/public/test-data/
+*.p2s
+.claude/
+
+# Local-only deploy configuration (deploy/.gitignore lists the same; docs/hosting.md "Deploy configuration")
+deploy/.env.local
+deploy/.env
+deploy/wrangler.toml
+deploy/*.plist
+deploy/.wrangler/
+# Never synced; ignored as a safety net: agent scratch scripts, the custom rider's source material, local config
+web/.*.mjs
+sam_character/
+config/

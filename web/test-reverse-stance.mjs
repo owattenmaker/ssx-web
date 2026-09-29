@@ -1,0 +1,34 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {Quaternion,Vector3} from 'three';
+import createCore from './runtime/core.js';
+const c=await createCore(),root='public/assets/';
+const read=p=>JSON.parse(fs.readFileSync(root+p)),pointers=[];
+const put=bytes=>{const p=c._malloc(bytes.length);pointers.push(p);c.HEAPU8.set(bytes,p);return p;};
+const str=x=>put(new TextEncoder().encode(JSON.stringify(x)+'\0'));
+const settings=read('ANIMATIONS/initial.json'),packets=fs.readFileSync(root+'ANIMATIONS/animation-packets.bin');
+c._init_animation(str(read('ANIMATIONS/animation-packets.json')),str(read('RIDER_SAM/rider.json')),str(settings),put(packets),packets.length);
+const mesh=fs.readFileSync(root+'ARA1/collision.bin');c._init_world(put(mesh),mesh.length/4);
+for(const p of pointers)c._free(p);
+c._animation_use_physics(1);
+const start=read('ARA1/start.json');
+c._reset_rider(...start.position,start.heading+Math.PI);c._reset_animation();
+c._animation_tick(18,0,0,0,1,0,0,0,0,5,0,0);
+let r=new Float32Array(c.HEAPF32.buffer,c._step_rider(0,0,0,0),16);
+c._animation_tick(r[7],0,0,r[9],r[8],0,0,0,0,5,r[15],0);
+let stance=new Float32Array(c.HEAPF32.buffer,c._rider_stance_info(),9);
+assert.equal(stance[0],1);assert.equal(stance[1],1);assert.equal(stance[8],1);
+assert.equal(new Float32Array(c.HEAPF32.buffer,c._animation_info(),19)[0],21);
+const q=new Quaternion(...new Float32Array(c.HEAPF32.buffer,c._rider_orientation(),4));
+const forward=new Vector3(0,1,0).applyQuaternion(q),incoming=new Vector3(...settings.original_ground.state.velocity);
+assert(forward.dot(incoming)>0,'reverse transition leaves physics facing against travel');
+for(let tick=0;tick<120;tick++){
+ r=new Float32Array(c.HEAPF32.buffer,c._step_rider(0,0,0,0),16);
+ c._animation_tick(r[7],0,0,r[9],r[8],0,0,0,0,5,r[15],0);
+}
+assert.equal(new Float32Array(c.HEAPF32.buffer,c._rider_stance_info(),9)[8],1,'reverse stance toggles repeatedly');
+c._reset_rider(...start.position,start.heading);c._reset_animation();
+stance=new Float32Array(c.HEAPF32.buffer,c._rider_stance_info(),9);
+assert.equal(stance[0],0);assert.equal(stance[1],+settings.original_animation.default_mirror);assert.equal(stance[8],0);
+for(let k=0;k<4;k++)assert(Math.abs(stance[4+k]-settings.original_animation.default_root_rotation[k])<.000001);
+console.log('Backward travel triggers one original reverse transition, updates mirror/root state, and resets cleanly.');

@@ -1,0 +1,11 @@
+[
+ {"when": "sample>=898", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=1400", "save": "in-lodge"},
+ {"when": "sample>=3232", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=3367", "press": ["Down"], "hold": 6},
+ {"when": "sample>=3493", "press": ["Cross"], "hold": 6},
+ {"when": "ws==4", "note": "riding after lodge"},
+ {"when": "ss>=60", "save": "after-lodge-1s"},
+ {"when": "ss>=3600", "save": "after-lodge-60s"},
+ {"stop": true}
+]

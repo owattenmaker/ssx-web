@@ -1,0 +1,8 @@
+[
+ {"auto": "ARA1:0#3,ARA1:0#4,ARA1:0#5,ARA1:0#6,ARA1:0#7,ARA1_B:0#0,B:0#0,B:0#1"},
+ {"when": "course==18", "note": "course B"},
+ {"when": "ws==4 and course==18", "note": "B loaded"},
+ {"when": "ss>=900", "auto": null},
+ {"when": "ss>=2400", "save": "B-after"},
+ {"stop": true}
+]

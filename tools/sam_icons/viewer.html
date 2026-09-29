@@ -1,0 +1,34 @@
+<!doctype html><html><head><style>body{margin:0;background:#6d8fb5}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./three/three.module.js"}}</script></head><body>
+<script type="module">
+import * as T from 'three';
+const q=new URLSearchParams(location.search);
+const riders=(q.get('riders')||'sam,zoe,mac,moby').split(',');
+const scales={sam:.85,zoe:.85,mac:.85,moby:.94,psymon:.92,allegra:.83,griff:.7,luther:1,kaori:.8,elise:.96};
+const view=q.get('view')||'front', lit=q.get('lit')!=='0';
+if(q.get('bg')==='none')document.body.style.background='transparent';
+const W=+(q.get('w')||1600),H=+(q.get('h')||900);
+const renderer=new T.WebGLRenderer({antialias:true,preserveDrawingBuffer:true,alpha:true});renderer.setSize(W,H);renderer.outputColorSpace=T.SRGBColorSpace;document.body.appendChild(renderer.domElement);
+const scene=new T.Scene();scene.background=q.get('bg')==='none'?null:new T.Color(0x6d8fb5);
+scene.add(new T.HemisphereLight(0xffffff,0x8090a0,1.6));const sun=new T.DirectionalLight(0xffffff,1.8);sun.position.set(2,4,5);scene.add(sun);
+const loader=new T.TextureLoader();
+async function load(id,i){
+ const spec=q.get(id);const root=spec||('assets/RIDER_'+id.replace(/\d+$/,'').toUpperCase()+'/');
+ const d=await (await fetch(root+'world.json')).json();const rig=await (await fetch(root+'rider.json')).json();
+ const [vb,ib,cb]=await Promise.all(['vertices.bin','indices.bin','colors.bin'].map(f=>fetch(root+f).then(r=>r.arrayBuffer())));
+ const v=new Float32Array(vb),ix=new Uint32Array(ib),c=new Float32Array(cb);const n=v.length/10;
+ const pos=new Float32Array(n*3),nor=new Float32Array(n*3),uv=new Float32Array(n*2);
+ for(let k=0;k<n;k++){const sk=rig.skin[k];let b=sk[0][0];let dy=0;if(b===22||b===23)dy=-1.12;
+  pos.set([v[k*10],v[k*10+1]+dy,v[k*10+2]],k*3);nor.set([v[k*10+3],v[k*10+4],v[k*10+5]],k*3);uv.set([v[k*10+6],v[k*10+7]],k*2);}
+ const g=new T.Group();const s=scales[id.replace(/\d+$/,'')]||.85;g.scale.setScalar(s);
+ const texs={};await Promise.all(Object.entries(d.textures).map(async([k,t])=>{const tx=await loader.loadAsync(root+t.path);tx.flipY=false;tx.wrapS=tx.wrapT=T.RepeatWrapping;tx.colorSpace=T.SRGBColorSpace;texs[k]=tx;}));
+ for(const b of d.batches){const geo=new T.BufferGeometry();geo.setAttribute('position',new T.BufferAttribute(pos,3));geo.setAttribute('normal',new T.BufferAttribute(nor,3));geo.setAttribute('uv',new T.BufferAttribute(uv,2));geo.setAttribute('color',new T.BufferAttribute(c,4));geo.setIndex(new T.BufferAttribute(ix.slice(b.first_index,b.first_index+b.index_count),1));
+  const M=lit?T.MeshLambertMaterial:T.MeshBasicMaterial;const m=new M({map:texs['9-'+b.texture],vertexColors:true,side:T.DoubleSide,alphaTest:.35});g.add(new T.Mesh(geo,m));}
+ g.position.x=(i-(riders.length-1)/2)*(+(q.get('gap')||1.1));g.position.y=1.12*s;
+ const rot={front:0,side:Math.PI/2,back:Math.PI,three:Math.PI/4,left:-Math.PI/2}[view]??0;g.rotation.y=rot+(+(q.get('yaw')||0));scene.add(g);return g;
+}
+await Promise.all(riders.map(load));
+const cam=new T.PerspectiveCamera(+(q.get('fov')||30),W/H,.05,100);
+const cy=+(q.get('cy')||0.85),cd=+(q.get('cd')||6);cam.position.set(+(q.get('cx')||0),cy,cd);cam.lookAt(+(q.get('cx')||0),+(q.get('ty')||cy),0);
+renderer.render(scene,cam);window.done=true;
+</script></body></html>

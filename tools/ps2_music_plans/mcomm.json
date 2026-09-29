@@ -1,0 +1,16 @@
+[
+ {"when": "sample>=180", "press": ["Start"], "hold": 6},
+ {"when": "sample>=420", "save": "mcomm-open"},
+ {"when": "sample>=480", "press": ["Down"], "hold": 6},
+ {"when": "sample>=540", "press": ["Down"], "hold": 6},
+ {"when": "sample>=600", "press": ["Down"], "hold": 6},
+ {"when": "sample>=680", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=1000", "save": "messages"},
+ {"when": "sample>=1100", "press": ["Triangle"], "hold": 6},
+ {"when": "sample>=1300", "press": ["Up"], "hold": 6},
+ {"when": "sample>=1360", "press": ["Up"], "hold": 6},
+ {"when": "sample>=1420", "press": ["Up"], "hold": 6},
+ {"when": "sample>=1500", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=1560", "save": "returned"},
+ {"when": "sample>=2700", "stop": true}
+]

@@ -1,0 +1,5 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import {createHash} from 'node:crypto';
+const root=new URL('public/assets/SNOW_FX/',import.meta.url),asset=JSON.parse(fs.readFileSync(new URL('snow-fx.json',root))),textures=new Map(asset.textures.map(t=>[t.id,t]));
+for(const profile of asset.profiles){const p=profile.parameters,binding=asset.flipbooks.find(b=>b.emitter_index===profile.emitter_index);assert(binding);assert.equal(binding.authored_rate,p.FlipTextureRate);assert.deepEqual(binding.texture_ids,Array.from({length:p.NumFlipTextures},(_,i)=>p.TextureId+i));for(const id of binding.texture_ids)assert(textures.has(id));}
+const hashes=new Set();for(let id=14;id<=21;id++){const t=textures.get(id),bytes=fs.readFileSync(new URL(t.file,root));assert.equal(t.name,'tmb'+(id-13));assert.equal(bytes.length,t.width*t.height*4);const hash=createHash('sha256').update(bytes).digest('hex');assert.equal(hash,t.sha256);hashes.add(hash);}
+assert.equal(hashes.size,8);console.log('Eight authored tumble frames and all emitter sequence/rate bindings verified. Playback timing remains separate.');

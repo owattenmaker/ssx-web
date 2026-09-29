@@ -1,0 +1,12 @@
+[
+ {"when": "sample>=180", "press": ["Start"], "hold": 6},
+ {"when": "sample>=480", "press": ["Down"], "hold": 6},
+ {"when": "sample>=560", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=900", "shot": "map-open"},
+ {"when": "sample>=1400", "press": ["Triangle"], "hold": 6},
+ {"when": "sample>=1700", "shot": "map-back"},
+ {"when": "sample>=1800", "press": ["Up"], "hold": 6},
+ {"when": "sample>=1900", "press": ["Cross"], "hold": 6},
+ {"when": "sample>=2100", "shot": "map-returned"},
+ {"when": "sample>=2800", "stop": true}
+]

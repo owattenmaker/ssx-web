@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';import {Group,Mesh,BufferGeometry,BufferAttribute,MeshBasicMaterial,Vector3,Raycaster,DoubleSide} from 'three';import {createTerrainOverlays,markTerrainIndexRanges} from './terrain-overlays.js';import {buildTerrainPatch} from './terrain-mesh.js';
+const patch={resource:8,baseline_vertex_start:0,coefficients:Array.from({length:16},()=>[0,0,0]),textureUv:[[0,0],[0,1],[1,0],[1,1]],lightUv:[0,0,1,1]};patch.coefficients[1][0]=1;patch.coefficients[4][2]=1;
+const parent=new Group(),geometry=new BufferGeometry(),original=new Uint32Array([0,1,9,1,10,9]);geometry.setIndex(new BufferAttribute(original.slice(),1));const material=new MeshBasicMaterial(),coarse=new Mesh(geometry,material);parent.add(coarse);
+const manager=createTerrainOverlays(parent,[coarse],[patch],new Vector3(10,20,30));const generated=buildTerrainPatch(patch,16),item={index:0,resource:8,resolution:16,edges:[16,16,16,16],...generated};
+manager.commit([item]);assert.equal(manager.count,1);assert.deepEqual(Array.from(geometry.index.array),[0,0,0,1,1,1]);assert.deepEqual(Array.from(original),[0,1,9,1,10,9]);const overlay=parent.children[1];assert.equal(overlay.material,material);assert.deepEqual(overlay.position.toArray(),[-10,-20,-30]);
+manager.commit([item]);assert.equal(parent.children[1],overlay,'Unchanged mesh should be reused');
+assert.equal(overlay.matrixAutoUpdate,false,'static overlay caches its local matrix');
+parent.updateMatrixWorld();assert.deepEqual(new Vector3().setFromMatrixPosition(overlay.matrixWorld).toArray(),[-10,-20,-30]);
+parent.position.set(3,4,5);parent.updateMatrixWorld();assert.deepEqual(new Vector3().setFromMatrixPosition(overlay.matrixWorld).toArray(),[-7,-16,-25],'cached local matrix still follows a changed parent');
+assert.throws(()=>manager.commit([item,{...item,index:4}]),/identity/);assert.equal(manager.count,1);assert.equal(parent.children[1],overlay,'Failed batch changed active rendering');
+manager.clear();assert.equal(parent.children.length,1);assert.deepEqual(geometry.index.array,original);assert.equal(manager.count,0);manager.dispose();geometry.dispose();material.dispose();console.log('Terrain overlay atomicity, geometry reuse, coarse suppression and restoration pass.');
+const fs=await import('node:fs');const {planTerrainDetail}=await import('./terrain-detail.js');const {createTerrainMeshCache}=await import('./terrain-worker-core.js');
+const read=f=>fs.readFileSync(new URL('public/assets/ARA1/'+f,import.meta.url));const meta=JSON.parse(read('world.json')),data=JSON.parse(read('terrain-render.json')),raw=read('indices.bin'),all=new Uint32Array(raw.buffer,raw.byteOffset,raw.byteLength/4),world=new Group(),materials=new Map(),meshes=[];
+for(const batch of meta.batches){if(batch.instance)continue;const key=batch.texture+':'+batch.lightmap;if(!materials.has(key))materials.set(key,new MeshBasicMaterial({side:DoubleSide}));const g=new BufferGeometry();g.setIndex(new BufferAttribute(all.slice(batch.first_index,batch.first_index+batch.index_count),1));const mesh=new Mesh(g,materials.get(key));meshes.push(mesh);world.add(mesh);}
+const copies=meshes.map(m=>m.geometry.index.array.slice()),actual=createTerrainOverlays(world,meshes,data.patches,new Vector3());assert.equal(actual.mappedPatches,2238); // event residency: A_ARA1 132 + ARA1 1913 + ARA1_B 193 patches
+const sites=JSON.parse(fs.readFileSync(new URL('public/test-data/terrain-clipping-sites.json',import.meta.url))),plan=planTerrainDetail(data.patches,sites.sites[0].point,{focusResource:sites.sites[0].resource}).plan,cache=createTerrainMeshCache(data.patches);cache.validate(plan);actual.commit(plan.map(cache.get));assert.equal(actual.count,plan.length);const upload=actual.uploadStats;assert(upload.rangeBytes<upload.fullBufferBytes);console.log('Scheduled terrain index bytes:',upload);
+world.updateMatrixWorld(true);const site=sites.sites[0],refinedMesh=world.children.find(m=>m.userData.terrainRefinement===site.resource),ray=new Raycaster(new Vector3(site.point[0],site.point[1]+1,site.point[2]),new Vector3(0,-1,0));const hit=ray.intersectObject(refinedMesh)[0];assert(hit&&Math.abs(hit.point.y-site.point[1])<.03,'Committed render mesh does not match analytic clipping site');
+
+let suppressed=0;for(const m of meshes){const a=m.geometry.index.array;for(let i=0;i<a.length;i+=3)suppressed+=+(a[i]===a[i+1]&&a[i]===a[i+2]);}assert.equal(suppressed,plan.length*128,'Wrong coarse patches were suppressed');
+actual.clear();meshes.forEach((m,i)=>{assert.deepEqual(m.geometry.index.array,copies[i]);m.geometry.dispose();});for(const m of materials.values())m.dispose();console.log('Actual course overlay mapping/restoration passes:',{patches:2238,replaced:plan.length,suppressedTriangles:suppressed});
+
+const queued=new BufferAttribute(new Uint32Array(30),1),gpu=new Uint32Array(30);
+queued.array.set([7,8,9],3);markTerrainIndexRanges(queued,[3]);queued.array.set([1,2,3],18);markTerrainIndexRanges(queued,[18]);
+assert.deepEqual(queued.updateRanges,[{start:3,count:3},{start:18,count:3}]);
+for(const r of queued.updateRanges)gpu.set(queued.array.subarray(r.start,r.start+r.count),r.start);assert.deepEqual(gpu,queued.array,'Queued upload dropped an earlier edit');
+markTerrainIndexRanges(queued,[6,3,15]);assert.deepEqual(queued.updateRanges,[{start:3,count:6},{start:15,count:6}]);
+console.log('Pending terrain index updates survive multiple commits and merge adjacent/overlapping edits.');

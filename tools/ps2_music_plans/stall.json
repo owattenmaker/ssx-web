@@ -1,0 +1,6 @@
+[
+ {"auto": "ABC1_A:0#0,A:0#0,A:0#3,A_ARA1:0#0,ARA1:0#0,ARA1:0#3"},
+ {"when": "stalled>1.5 and ws==4", "shot": "stall1"},
+ {"when": "ss>=120", "save": "stall2"},
+ {"stop": true}
+]

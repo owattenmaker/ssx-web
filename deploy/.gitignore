@@ -1,0 +1,6 @@
+# Local-only deploy configuration (docs/hosting.md "Deploy configuration"): never in the repo or the code mirror.
+.env.local
+.env
+wrangler.toml
+*.plist
+.wrangler/
