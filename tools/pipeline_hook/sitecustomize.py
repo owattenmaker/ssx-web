@@ -157,7 +157,7 @@ if MODE in ('trace', 'restore'):
 
             for _name in ('split', 'rsplit', 'decode', 'hex', 'strip', 'lstrip', 'rstrip', 'splitlines', 'partition',
                           'rpartition', 'replace', 'upper', 'lower', 'translate', '__iter__', '__contains__', '__eq__', '__ne__',
-                          '__hash__', '__add__', '__mul__', '__reversed__', '__lt__', '__gt__', '__le__', '__ge__'):
+                          '__hash__', '__add__', '__mul__', '__lt__', '__gt__', '__le__', '__ge__'):
                 def _make(name):
                     base = getattr(bytes, name)
 
@@ -166,7 +166,8 @@ if MODE in ('trace', 'restore'):
                         return base(self, *a, **kw)
                     method.__name__ = name
                     return method
-                locals()[_name] = _make(_name)
+                if hasattr(bytes, _name):
+                    locals()[_name] = _make(_name)
             del _name, _make
 
         def _traced(data, key):
@@ -333,10 +334,12 @@ if MODE in ('trace', 'restore'):
         _exists, _isfile, _isdir, _stat, _listdir, _scandir = (os.path.exists, os.path.isfile, os.path.isdir, os.stat,
                                                                  os.listdir, os.scandir)
 
+        _probes = set()
+
         def _probe(path):
             rel = _rel(path) if not isinstance(path, int) else None
-            if _is_state(rel) and rel not in LOG['probes'] and len(LOG['probes']) < 100000:
-                LOG['probes'].append(rel)
+            if _is_state(rel) and len(_probes) < 100000:
+                _probes.add(rel)
 
         def stat(path, *a, **kw):
             _probe(path); return _stat(path, *a, **kw)
@@ -379,7 +382,8 @@ if MODE in ('trace', 'restore'):
                 return
             os.makedirs(os.path.join(LOGDIR, STEP), exist_ok=True)
             path = os.path.join(LOGDIR, STEP, f'{os.getpid()}-{id(LOG):x}.json')
-            with _real_open.__self__.open(path, 'w') if False else _open(path, 'w') as f:
+            LOG['probes'] = sorted(_probes)
+            with _open(path, 'w') as f:
                 json.dump(LOG, f)
         atexit.register(_dump)
 
@@ -458,13 +462,49 @@ if MODE in ('trace', 'restore'):
             def update(self, data):
                 raise RuntimeError('state pack: a restored buffer was hashed together with other data')
 
-        def _wrap(name, ctor):
-            def make(data=b'', *a, **kw):
+        class _Hash:
+            """hashlib object that answers with the recorded digest when its only input is one restored buffer."""
+
+            def __init__(self, name, ctor, kw):
+                self.name, self._ctor, self._kw = name, ctor, kw
+                self._h, self._fixed, self._fed = ctor(**kw), None, False
+
+            def update(self, data):
                 if type(data) is Restored:
-                    if name not in data._d:
-                        raise RuntimeError(f'state pack: no recorded {name} digest for a restored buffer')
-                    return _Fixed(name, data._d[name])
-                h = ctor(data, *a, **kw) if data != b'' or a or kw else ctor()
+                    if self._fed or self._fixed is not None:
+                        raise RuntimeError('state pack: a restored buffer was hashed together with other data')
+                    if self.name not in data._d:
+                        raise RuntimeError(f'state pack: no recorded {self.name} digest for a restored buffer')
+                    self._fixed = data._d[self.name]
+                    return
+                if self._fixed is not None and len(data):
+                    raise RuntimeError('state pack: a restored buffer was hashed together with other data')
+                self._fed = self._fed or bool(len(data))
+                self._h.update(data)
+
+            def hexdigest(self):
+                return self._fixed if self._fixed is not None else self._h.hexdigest()
+
+            def digest(self):
+                return bytes.fromhex(self._fixed) if self._fixed is not None else self._h.digest()
+
+            def copy(self):
+                c = _Hash(self.name, self._ctor, self._kw); c._h, c._fixed, c._fed = self._h.copy(), self._fixed, self._fed
+                return c
+
+            @property
+            def digest_size(self):
+                return self._h.digest_size
+
+            @property
+            def block_size(self):
+                return self._h.block_size
+
+        def _wrap(name, ctor):
+            def make(data=b'', **kw):
+                h = _Hash(name, ctor, kw)
+                if len(data):
+                    h.update(data)
                 return h
             return make
         for _n in ('sha256', 'sha1', 'md5'):

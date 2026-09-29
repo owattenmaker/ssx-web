@@ -283,6 +283,8 @@ static StageArg stage_builtin(int index,const StageArg* args,int count){
  case 28:stage_livecomp_property(args,count);return nil;                      // 2FF9A8 entity vt+0x120 (LiveComp 0x341FE8 properties)
  case 94:{ // 305C88: key0 avalanche id (default 0) -> 0x2D97A8 when the record's magic was good (gp+2516 = 0)
   std::array<uint32_t,1> f{0u};stage_parse(f,std::array<int32_t,1>{1},args,count);avalanche_trigger(int32_t(f[0]));return nil;}
+ case 95:{ // 305D90: key0 instance (-1: ctx+0x290; types gp+0xCB0) with an entity accepting modifiers (vt+0x84) -> 355A78 AvaSpline
+  std::array<uint32_t,1> f{0xffffffffu};stage_parse(f,std::array<int32_t,1>{1},args,count);avalanche_spline(stage_target(f[0]));return nil;}
  case 91:{ // 3050F0: key0 (0 or skip), key1 use an instance (1), key2 instance (-1: ctx+0x290), key3 distance factor (1). With an
   // instance: every rider with a camera (rider+0x87C) gets 15E360(camera, gp+0xAE8 = type 0, 1.0, |rider+0x110 - P| x key3), P the
   // translation of its entity matrix (vt+0xC4) or of instance+0x10; without one only the current player, at fade 0. Only this
@@ -339,8 +341,9 @@ static StageArg stage_builtin(int index,const StageArg* args,int count){
   if(auto* s=stage_instance(stage_target(f[0])))if(s->entity==StageNoEntity)s->entity=StageGateEntity;
   // 356DB0 with key 1 != 0: instance+8 = (flags & ~0x40) | 0x20, the static collision route (pv finishFences, web/world_bridge.cpp:
   // the flags-0 barriers before the ARA1 / ERA5 finishes, "if 43(4) or 43(5) or 43(6): builtin0(key1 1)"; PS2 apr-part4 0x122).
-  {uint32_t k1=0;for(int i=0;i<count;i++)if(args[i].key==1)k1=args[i].word0;const uint32_t t=stage_target(f[0]);
-   if(browserObjectRoutes&&k1&&t&&stage_entity_type(t)!=6)stage_set_flags(t,(stage_flags(t)&~0x40u)|0x20u);}
+  {uint32_t k1=0,k2=0;for(int i=0;i<count;i++){if(args[i].key==1)k1=args[i].word0;if(args[i].key==2)k2=args[i].word0;}const uint32_t t=stage_target(f[0]);
+   if(browserObjectRoutes&&k1&&t&&stage_entity_type(t)!=6)stage_set_flags(t,(stage_flags(t)&~0x40u)|0x20u);
+   avalanche_object(t,k1,k2);} // an avalanche piece's Object (web/avalanche_gameplay.inc, "Pieces' collision")
   return nil;}
  case 15:{ // 2FD250 -> 355DB8 RollerModifier (web/roller_gameplay.inc builds it): its 355770 predicate 361CF8 is 0
   if(auto* s=stage_instance(stage_current_instance))s->rejects=true;

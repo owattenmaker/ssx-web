@@ -43,7 +43,7 @@ void browser_reset_rollers(){
  browser_attach_set_pieces(); // chairlifts back to race tick 0
 }
 // race_begin: the original entity update precedes the rider's provider/controllers.
-void browser_avalanche_tick();void browser_avalanche_moving(std::vector<float>&,void(*)(std::vector<float>&,float,const collision_transform::Matrix&,const collision_transform::Matrix&)); // web/avalanche_gameplay.inc
+void browser_avalanche_tick();bool browser_avalanche_entity(uint32_t resource);void browser_avalanche_moving(std::vector<float>&,void(*)(std::vector<float>&,float,const collision_transform::Matrix&,const collision_transform::Matrix&)); // web/avalanche_gameplay.inc
 void advance_world_entities(){
  if(!browserBodies)return;
  advance_set_pieces();
@@ -101,10 +101,10 @@ bool browser_scripted_contact(const OriginalInstanceContactPacket& packet,const 
 bool browser_stage_livecomp_rigid(uint32_t resource); // web/stage_world.inc: a LiveComp-animated instance (0x355420: 1)
 bool browser_stage_livecomp_selected(OriginalInstanceContactPacket& packet); // web/stage_world.inc: its 0x34E698 node velocity
 bool browser_stage_frozen_magnet(uint32_t instance); // web/stage_world.inc: a collected pickup's Debounce (PositionModifier +0x44 0x360B60 = 1, +0xB4 0x360BD8 no-op)
-static bool browser_entity_rigid(uint32_t resource){if(browser_roller(resource))return false;if(chairlift_of(resource))return true; /*MultiSpline +0x44 0x360B60*/if(rail_livecomp_rigid(resource))return true; /*LiveComp 0x355420: 1*/if(browser_stage_livecomp_rigid(resource))return true;if(browser_stage_frozen_magnet(resource))return true;if(spline_piece_of(resource))return true; /*Spline +0x44 0x360B60*/throw std::runtime_error("Unported entity rigid predicate");}
+static bool browser_entity_rigid(uint32_t resource){if(browser_roller(resource))return false;if(browser_avalanche_entity(resource))return true; /*AvaSpline +0x44 0x360B60*/if(chairlift_of(resource))return true; /*MultiSpline +0x44 0x360B60*/if(rail_livecomp_rigid(resource))return true; /*LiveComp 0x355420: 1*/if(browser_stage_livecomp_rigid(resource))return true;if(browser_stage_frozen_magnet(resource))return true;if(spline_piece_of(resource))return true; /*Spline +0x44 0x360B60*/throw std::runtime_error("Unported entity rigid predicate");}
 // 104E70 selected entity callback 356AE0 -> 353098 -> modifier vtable+0xB4 (360BD8): no-op.
 bool browser_stage_magnet_selected(uint32_t instance); // web/stage_world.inc: Object 0x356AE0 -> magnet vt+0xB4 0x360BD8 (no-op)
-static void browser_entity_selected(OriginalInstanceContactPacket& packet){if(chairlift_selected(packet))return;if(rail_livecomp_selected(packet))return;if(browser_stage_livecomp_selected(packet))return;if(browser_stage_magnet_selected(packet.instance))return;if(browser_stage_frozen_magnet(packet.instance))return;
+static void browser_entity_selected(OriginalInstanceContactPacket& packet){if(chairlift_selected(packet))return;if(browser_avalanche_entity(packet.instance))return; /*AvaSpline vt+0xB4 0x360BD8: nothing*/if(rail_livecomp_selected(packet))return;if(browser_stage_livecomp_selected(packet))return;if(browser_stage_magnet_selected(packet.instance))return;if(browser_stage_frozen_magnet(packet.instance))return;
  if(const auto* piece=spline_piece_of(packet.instance)){ /*Object 0x356AE0 -> Spline vt+0xB4 0x359CF8 (R&B train)*/
   const auto v=ssx::originalSplineContactVelocity(piece->spline,{packet.point[0],packet.point[1],packet.point[2],packet.point[3]});
   if(v.applied){OriginalRounding rounding;for(unsigned k=0;k<4;k++)packet.surfaceVelocity[k]=terrain_original::add(packet.surfaceVelocity[k],v.linear[k]);}

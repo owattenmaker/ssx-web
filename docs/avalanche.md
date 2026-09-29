@@ -159,7 +159,28 @@ Export for the core (a runtime asset; the core reads it as is, so keep the field
 
 ## Draw (JS, pv `avalanche`, off; web/avalanche-state.js)
 
-**Built (2026-09-28), waiting for the live core's exports to be switched on:**
+**Built and checked against the PS2 (2026-09-28, core50):**
+- **The draw rule, from the code:** the trigger program's builtin 0 (2FC0D0 -> 356DB0) gives each piece its Object entity and sets
+  instance flags |= 4 (the entity draw 0x356298 tests instance+8 & 4) when its key 2 != 0 or the piece was drawn statically
+  ((flags & 3) == 3). So static pieces stay drawn while they tumble; hidden pieces are drawn only with key 2 (`ENTITY_DRAWN`:
+  ABC1's 16 ava2mini rocks, DRA4's 14 crumbleLip pieces; `tools/export_avalanches.py --entity-drawn`); ABC1's 8 ava2powder and
+  ERA5's 8 ava1node pieces carry the emitters and are never drawn (PS2 gravitude-full 2019 / 2418: flags 0x42 / 0x342 with an
+  entity, bit 2 clear; after the release 0x302 / 0x102, no entity).
+- **Poses (EBA3 much-2-much-full 820 / 1219 / 1620 / 2019 / 2419 / 2819, Chrome and WebKit):** the page stepped to the PS2 slot's
+  own t (2.52 .. 20.5102, equal to 4 digits), each of the 5 rockslide pieces' drawn delta against native(0x2D9C00 matrix from the
+  PS2 tumbler +112 x +176, +96) x native(instance +0x10)^-1: rotation identical, translation within 0.1 mm; all 5 drawn where the
+  PS2 has flags & 4 and an entity. (The instance matrix has unit rows: 37E238 applies the uniform scale on both paths.)
+- **Tumble and release (QA trigger, Chrome and WebKit):** DRA4 20 (7 hidden key-2 pieces shown and moved, gone at the release,
+  none with the switch off), ABC1 14 (16 rocks shown, moved, gone at 1038 ticks), ABC1 10 (8 static boulders moved, gone), ABC1 12
+  (the powder nodes never drawn). EBA3's pieces are type 2: at rest at their last pose, the slot and the loop live on (PS2 2819:
+  refcount 1).
+- **Rumble:** the voice `avalanche:8/2` starts with the trigger and stops at the release (Chrome; the WebKit harness cannot unlock
+  audio, same logic). Against PS2 RAM (audio +0x6040 refcount, +0x6050 centroid, +0x6060 scale, +0x6064 min distance): EBA3 820
+  volume 127 (73.5 m) and 2819 volume 0 (302.8 m), the same centroid at 2819; ERA5 2019 / 2418 volume 0.
+- **ABC1 2000 / 7200 frames:** no avalanche is playing there (PS2 kept states: no slot); the static pieces draw the same with the
+  switch on and off.
+
+**Implementation:**
 - **Batches:** `web/prepare.py` puts every `ava_spline` group instance into moving_resources, so each piece has its own batches
   (`moving_resource`; the pieces hidden at the start keep `hidden_resource` too). Re-split packages of the 7 locations: same
   triangles, pixel-identical renders (docs/visual-parity.md 41). The streamed packages get the same split from the CTM agent

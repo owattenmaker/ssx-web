@@ -161,6 +161,17 @@ def event_moving(code, own):
     return sorted({r for r in out if r in own and r not in drawn})
 
 
+def event_lit(code, own):
+    """Lit instances of an event course (tools/export_lit_instances.py -> local/event-activation/<LOC>/lit-instances.json, web/prepare.py):
+    resource -> {resource, bank, rows, relight}, each lit instance on its own batches (web/world-material.js litWorldMaterial, pv
+    litInstances). The rows are the event export's (its object bank and local lights; the streamed world's bank: the visual agent's item)."""
+    path = activation_dir(code) / 'lit-instances.json'
+    if not path.exists(): return None
+    out = {x['resource']: dict(resource=x['resource'], bank=x['bank'], rows=[r[:3] for r in x['rows']], **({'relight': True} if x['relight'] else {}))
+           for x in json.loads(path.read_text())['instances'] if x['resource'] in own}
+    return out or None
+
+
 def event_attached_doc(code):
     base = ROOT / 'web/public/assets' / ('' if code == 'ARA1' else code) / 'LIVECOMP/attached.json'
     return json.loads(base.read_text()) if base.exists() else {}
@@ -316,7 +327,7 @@ def web_package(code, batches_only=False):
     hidden = [r for r in hidden if r not in children]
     live_nodes = {**({k: v for k, v in sp['livecomp_nodes'].items() if k[0] in own} if sp else {}), **attached_nodes}
     batches, new = batch_module.spatial_batches(d, vs, inds, triangle_blend=triangle_blend, triangle_wrap=triangle_wrap, triangle_env=triangle_env, hidden_resources=hidden,
-        moving_resources=moving,
+        moving_resources=moving, lit_resources=event_lit(code, own),
         scroll_groups={r: g for r, g in sp['scroll_groups'].items() if r in own} if sp else None,
         livecomp_nodes=live_nodes or None,
         script_resources=sorted(mine(sp['script_resources']) - set(hidden)) if sp else (),

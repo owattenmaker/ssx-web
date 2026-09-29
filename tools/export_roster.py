@@ -81,9 +81,11 @@ def main():
             fe=dict(idle=f'FE_GEAR_{idle}_CYC', cheer=f'FE_CHARSEL_{first.upper()}', irradiance=irr), resource_prefix=prefix,
             stats=dict(raw=[5] * 7, limit=55)))
     # Sam: the port's own rider, the eleventh Select Character entry (Sam PS2 build: screen index 10, label frame 90).
-    sam = json.loads((ROOT / 'config/characters/sam.json').read_text())
-    ident = sam['identity']; inches = ident['height_inches']
-    riders.append(dict(id='sam', name=sam['display_name'], package='RIDER_SAM', kind='custom', character=3, screen_index=10, nickname=sam.get('nickname'),
+    # His private design file is not part of the public tree: without it the roster is the disc's.
+    sam_config = ROOT / 'config/characters/sam.json'
+    sam = json.loads(sam_config.read_text()) if sam_config.exists() else None
+    ident = sam['identity'] if sam else {}; inches = ident.get('height_inches', 0)
+    if sam: riders.append(dict(id='sam', name=sam['display_name'], package='RIDER_SAM', kind='custom', character=3, screen_index=10, nickname=sam.get('nickname'),
                        stance=ident['stance'], height=f"{inches // 12}'{inches % 12}\"", weight_lb=ident['weight_lb'], weight=70, model_size=96,
                        template=dict(scale='elise (same height 5\'11\" = model size 96)', character='mac', rule='tools/export_characters.py sam_settings'), card=['A chopped unc from Wisconsin. Prefers uphill', 'and keeps his head above his board.'],
                        bio=' '.join(sam['bio_short'].split()), fe=dict(idle='FE_GEAR_MAC_CYC', cheer='FE_CHARSEL_MAC', irradiance='fe_map'),

@@ -3,8 +3,9 @@
 //  2. the snapshot reader against a fake core (avalanche_info / avalanche_pieces / avalanche_sounds layouts of
 //     web/avalanche_gameplay.inc): one read per tick, released pieces kept until reset;
 //  3. the draw's visibility rule: drawn-at-start pieces until released, hidden-at-start pieces while their tumbler drives them.
+import fs from 'node:fs';
 import * as T from 'three';
-import { avalancheRumble, avalancheState, createAvalancheDraw, takeLoopEvents } from './avalanche-state.js';
+import { avalancheRumble, avalancheState, createAvalancheDraw, takeLoopEvents, ENTITY_DRAWN } from './avalanche-state.js';
 
 let failures = 0, checks = 0;
 const fail = (m) => { if (failures++ < 12) console.error(m); };
@@ -31,12 +32,14 @@ const piece = (resource, x) => { const p = new Float32Array(22); p[0] = resource
 // 3. draw
 const group = new T.Group(), mk = (r, hidden) => { const m = new T.Mesh(); m.userData.movingResource = r; if (hidden) m.userData.batch = { moving_resource: r }; else group.add(m); return m; };
 const shown = mk(11, false), hid = mk(22, true), other = mk(33, false); group.userData.hiddenMeshes = [hid];
-const draw = createAvalancheDraw({ core, group, followers: new Set([11, 22]) });
-expect('pieces', draw.pieces, 2);
+const node = mk(44, true); group.userData.hiddenMeshes.push(node);
+const draw = createAvalancheDraw({ core, group, followers: new Set([11, 22, 44]), entityDrawn: new Set([22]) });
+expect('pieces', draw.pieces, 3);
 draw.update(); expect('before: static drawn', shown.visible, true); expect('before: hidden not in scene', hid.parent, null);
-core.info = [0, 1, 1, 0]; core.pieces = [piece(11, 5), piece(22, 7)]; core.loop = 1; core.changes = [1]; draw.update();
+core.info = [0, 1, 1, 0]; core.pieces = [piece(11, 5), piece(22, 7), piece(44, 9)]; core.loop = 1; core.changes = [1]; draw.update();
+expect('driven: node (no key 2) never drawn', node.parent, null);
 expect('driven: hidden shown', hid.parent, group); expect('driven: static drawn', shown.visible, true);
-const s = avalancheState(core); expect('tumblers', s.tumblers.length, 2); expect('loop', s.loop, true); expect('tumbler x', s.tumblers[1][0], 7);
+const s = avalancheState(core); expect('tumblers', s.tumblers.length, 3); expect('loop', s.loop, true); expect('tumbler x', s.tumblers[1][0], 7);
 expect('loop events', JSON.stringify(takeLoopEvents(core)), '[1]'); expect('loop events taken', takeLoopEvents(core).length, 0);
 core.info = [0, 1, 2, 0]; core.pieces = [piece(22, 7)]; core.released = [11]; draw.update();
 expect('released: static gone', shown.visible, false); expect('still driven', hid.parent, group);
@@ -45,5 +48,9 @@ expect('loop off', avalancheState(core).loop, false); expect('stop event', JSON.
 expect('released: hidden gone', hid.parent, null); expect('non-follower untouched', other.visible, true);
 draw.reset(); expect('reset: static back', shown.visible, true); expect('reset: hidden stays hidden', hid.parent, null);
 
+// 4. ENTITY_DRAWN against the stage programs (tools/export_avalanches.py --entity-drawn)
+const fixture = new URL('../local/reference/avalanche/entity-drawn.json', import.meta.url);
+if (fs.existsSync(fixture)) expect('ENTITY_DRAWN = the programs', JSON.stringify(ENTITY_DRAWN), JSON.stringify(JSON.parse(fs.readFileSync(fixture, 'utf8'))));
+else console.log('entity-drawn fixture missing: skipped');
 if (failures) { console.error(`test-avalanche-state: ${failures} failures`); process.exit(1); }
 console.log(`test-avalanche-state: ok (${checks} checks)`);

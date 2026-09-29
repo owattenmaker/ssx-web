@@ -85,8 +85,9 @@ if args.batches_only:
  source_world['textures']=json.loads((out/LOCATION/'world.json').read_text())['textures']  # the packaged texture table (library references)
  (out/LOCATION/'world.json').write_text(json.dumps(source_world,separators=(',',':')));shutil.copy2(src/LOCATION/'indices.bin',out/LOCATION/'indices.bin')
 elif ARA1:
- for name in ['ARA1','RIDER_SAM','RIDER_ZOE']:package_world(name)
- print('Prepared private ARA1 / Sam assets')
+ # Sam (a custom rider, not on the disc) only when his private package exists (tools/setup_from_iso.py --sam)
+ for name in ['ARA1']+(['RIDER_SAM'] if (src/'RIDER_SAM/world.json').exists() else [])+['RIDER_ZOE']:package_world(name)
+ print('Prepared private ARA1 / rider assets')
 from prepare_course_sky import prepare_course_sky  # SKY (ARA1) or <LOC>/sky/: the area's camera-anchored dome
 if args.batches_only:pass
 elif ARA1:prepare_course_sky('ARA1',out/'SKY')
@@ -100,7 +101,7 @@ spec=importlib.util.spec_from_file_location('world_batches',root/'web/world-batc
 bindings_path=pickups_dir(LOCATION)/'runtime-bindings.json';audit_path=activation_dir(LOCATION)/'countdown-instances.json';scripted_path=activation_dir(LOCATION)/'scripted-instances.json'
 event_path=src/LOCATION/'event-start.json'
 have_event=all(p.exists() for p in (bindings_path,audit_path,scripted_path,event_path))
-if ARA1 or have_event:
+if have_event:
  # Entity-owned pickups (a live moving set piece, e.g. BRA2 speedboost_1000) stay ordinary scenery batches (tools/export_browser_pickups.py).
  pickups=[p for p in json.loads(bindings_path.read_text())['instances'] if not p.get('entity')]
  audit=json.loads(audit_path.read_text())
@@ -209,7 +210,7 @@ for source in d['collision_sources']:
   if any(abs(colour_values[at+k]-((value>>(5*k))&31)/31)>1e-6 for k in range(3)):raise ValueError(f"Instance colour/vertex mismatch {source['track']}:{source['rid']}")
   if not value>>15:vertex_alpha[base+i]=0;cleared+=1
 (dest/'vertex-alpha.bin').write_bytes(bytes(vertex_alpha));print('Static-model vertices with V4-5 alpha 0:',cleared)
-if ARA1 or have_event:
+if have_event:
  scripted=json.loads(scripted_path.read_text())
  if scripted['world_package_sha256']!=audit['world_package_sha256']:raise ValueError('Scripted instance export/world mismatch')
  rollers=[x['resource'] for x in scripted['instances'] if x['contact']=='roller']  # tools/export_scripted_instances.py
@@ -217,7 +218,7 @@ else:rollers=[]
 # Chairlift cars (MultiSplineModifier, tools/export_set_pieces.py): the authored tramlores batches follow car 0
 # and web/moving-instances.js clones them for cars 1.. (clone instances of the original).
 set_pieces_path=activation_dir(LOCATION)/'set-pieces.json'  # ARA1: local/event-activation/set-pieces.json
-if (ARA1 or have_event) and set_pieces_path.exists():
+if have_event and set_pieces_path.exists():
  set_pieces=json.loads(set_pieces_path.read_text())
  if set_pieces['world_package_sha256']!=audit['world_package_sha256']:raise ValueError('Set-piece export/world mismatch')
  rollers=rollers+[l['resource'] for l in set_pieces.get('chairlifts',[])]+set_pieces.get('drawn_spline_pieces',[])  # raven flyby (SplineModifier)
@@ -326,12 +327,7 @@ if ARA1:
  export_fog_tree()
  shutil.copy2(root/"local/event-activation/fog-tree.json",out/"ARA1/fog-tree.json")
 
- # Original rider text from the owned English front-end locale.
- spec=importlib.util.spec_from_file_location('rider_locale',root/'tools/sam_ps2/loc_file.py');locale_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(locale_module)
- locale_bytes=(root/'local/sam-ps2/original/FEAMER.LOC').read_bytes();locale=locale_module.entries(locale_bytes)
- zoe_bio=locale[locale_module.name_hash('kT_FULLBIO1Zoe')]
- roster=[dict(id='sam',name='Sam',package='RIDER_SAM',card=['A chopped unc from Wisconsin. Prefers uphill','and keeps his head above his board.'],bio='From Wisconsin. Grew up riding the flat hills of the Midwest. Regular stance. Not keen on going inverted. These days he prefers uphill to down.'),dict(id='zoe',name='Zoe',package='RIDER_ZOE',card=zoe_bio.split('  ')[:2],bio=zoe_bio,locale_sha256=hashlib.sha256(locale_bytes).hexdigest())]
- (out/'riders.json').write_text(json.dumps(roster,indent=2)+'\n')
+ # riders.json (the roster) is tools/export_roster.py's; this script used to overwrite it with a two-rider list.
 else:
  fog=activation_dir(LOCATION)/'fog-tree.json'
  if fog.exists():shutil.copy2(fog,dest/'fog-tree.json')

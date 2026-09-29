@@ -943,6 +943,7 @@ void browser_stage_track_reset(uint32_t track){
  std::erase_if(stageFlags,[track](const auto& p){return (p.first&255u)==track;});std::erase_if(stageNodeState,[track](const auto& p){return (p.first&255u)==track;});std::erase_if(stageSectionLiveComps,[track](const auto& p){return (p.first&255u)==track;});
  for(auto& e:stageEntities)if((e.resource&255u)==track)e.alive=false;
  for(auto& s:stageInstances)if((s.resource&255u)==track){const auto* h=s.handler;const uint32_t r=s.resource;s=StageInstance{};s.resource=r;s.handler=h;}
+ void browser_avalanche_track_reset(uint32_t);browser_avalanche_track_reset(track);
 }
 // Mid-run seed of a streamed world (web/peak-capture.mjs from tools/export_peak_seed.py): the node entities (6 DeadNode,
 // 16 Hide, 19 RestoreNode) and instance flags a PS2 savestate holds.
@@ -1234,12 +1235,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_world_section_clocks(){
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_world_sounds(){RIDER_LOCAL static std::vector<uint32_t> out;out.assign(1,uint32_t(stageSoundLog.size()/7));out.insert(out.end(),stageSoundLog.begin(),stageSoundLog.end());return out.data();}
 // Instances whose runtime state the stage programs changed: [count, then per instance: resource, drawn (static draw
 // (f&3)==3 or an entity that draws), node state (0, 6 DeadNode, 16 Hide, 19 RestoreNode, 11 MeshAnim), flags].
+bool browser_avalanche_entity(uint32_t resource);void browser_avalanche_track_reset(uint32_t track); // web/avalanche_gameplay.inc (a piece's Object entity)
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_world_instances(){
  RIDER_LOCAL static std::vector<uint32_t> out;out.assign(1,0u);
  for(const auto& [r,f]:stageFlags){
   const int node=stage_node_state(r);auto* e=stage_entity(r);const bool breaking=e&&e->type==stage_world::Breaking;
   const auto* st=stage_instance(r); // entity draw 0x356298 (flags & 4): a LiveComp, the builtin0 Object entity (pickups, magnets) or a Debounce
-  const bool entityDraws=(e&&e->type==stage_world::LiveComp)||(st&&(st->entity==StageGateEntity||st->debounce))||stageMagnets.count(r);
+  const bool entityDraws=(e&&e->type==stage_world::LiveComp)||(st&&(st->entity==StageGateEntity||st->debounce))||stageMagnets.count(r)||browser_avalanche_entity(r);
   const bool drawn=!node&&!breaking&&((f&3u)==3u||((f&4u)&&entityDraws));
   out.insert(out.end(),{r,drawn?1u:0u,uint32_t(breaking?11:node),f});++out[0];
  }

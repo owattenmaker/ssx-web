@@ -224,11 +224,38 @@ def check_states(doc, pattern):
     return groups_checked, tumblers, worst
 
 
+def entity_drawn(codes):
+    """{LOC: [resources]}: AvaSpline pieces hidden at the start ((runtime flags & 3) != 3 in the countdown audit) whose builtin 0
+    (2FC0D0 -> 356DB0) passes key 2 != 0: flags |= 4, so the entity draw 0x356298 draws them while their tumbler drives them."""
+    out = {}
+    for code in codes:
+        loc = Location(code); doc = export(code)
+        fol = {g['resource'] for a in doc['avalanches'] for g in a['groups'] if g['ava_spline']}
+        audit = {r['resource']: r for r in loc.audit['instances']}
+        key2 = set()
+        for inst, row in loc.handler_rows():
+            for w in row:
+                if w == 0xFFFFFFFF: continue
+                try: calls = decode_program(loc.programs[w >> 8])
+                except (KeyError, TypeError): continue
+                for b, _, keys in calls:
+                    if b != 0: continue
+                    target = keys[0][1] if 0 in keys else loc.resource(inst)
+                    if target in fol and keys.get(2, ('int', 0))[1]: key2.add(target)
+        hidden = sorted(r for r in fol if (audit[r]['runtime_flags'] & 3) != 3 and r in key2)
+        if hidden: out[code] = hidden
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--location', action='append'); ap.add_argument('--out', type=Path, default=ROOT / 'local/export/avalanches')
     ap.add_argument('--check-states', action='append', default=[], help='LOC:GLOB of PS2 savestates of that location')
+    ap.add_argument('--entity-drawn', type=Path, help='write the hidden AvaSpline pieces their builtin 0 makes drawn (web/avalanche-state.js ENTITY_DRAWN) to this JSON and stop')
     args = ap.parse_args(); check_elf()
+    if args.entity_drawn:
+        d = entity_drawn(args.location or LOCATIONS_WITH_AVALANCHES); args.entity_drawn.parent.mkdir(parents=True, exist_ok=True)
+        args.entity_drawn.write_text(json.dumps(d) + '\n'); print(d); return
     if args.out.resolve().is_relative_to((ROOT / 'web/public/assets').resolve()): raise SystemExit('refusing to write into web/public/assets')
     docs = {}
     for code in args.location or LOCATIONS_WITH_AVALANCHES:

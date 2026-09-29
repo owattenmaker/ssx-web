@@ -4,15 +4,24 @@
 // [n released since the last call, resources...]; then the loop [refcount (audio+0x6040), n changes since the last call, the refcount
 // after each]] and avalanche_info() [definitions, triggers, ticks, active slots, ...].
 //  - The AvaSpline pieces' matrices reach the draw through moving_instances() (web/moving-instances.js; their batches are split by
-//    prepare.py): here only their visibility. A piece drawn at the start (countdown audit 'static') stays drawn until released; a
-//    piece hidden at the start (runtime flag bit 0 clear) shows from the trigger's builtin 0 (it gets an entity: it is then in
-//    avalanche_pieces) until released. Released (0x2D7DD8 -> entity vt+0x08(3)): gone until a new race.
+//    prepare.py): here only their visibility. The trigger program's builtin 0 (2FC0D0) gives each piece its Object entity, 356DB0:
+//    flags = (flags & ~2) | 4 (the entity draws it, 0x356298 tests instance+8 & 4) when key 2 != 0 or the piece was drawn statically
+//    ((flags & 3) == 3). So a piece drawn at the start (countdown audit 'static') stays drawn until released; a piece hidden at the
+//    start shows while its tumbler drives it only if its builtin 0 passes key 2 (ENTITY_DRAWN: ABC1's 16 rocks at flags 0x4022,
+//    DRA4's 14 crumbling lip pieces); the others (ABC1's 8 and ERA5's 8 avalanche nodes, flags 0x2) carry the emitters and are never
+//    drawn. Released (0x2D7DD8 -> entity vt+0x08(3)): gone until a new race.
 //  - The rumble (0x29DEF0 / 0x29E4A0 / 0x29E438 / 0x2DA1C0): one voice while the core's loop refcount is > 0, bank slot 8 sound 2, bus 5,
 //    positional at the centroid of the tumblers, volume from the listener's (the human rider, rider +0x110) nearest tumbler and the
 //    tumblers' average scale; the per-tumbler sound events call the empty stub 0x29E560 and play nothing.
 // One reader per core (avalanche_pieces drains its released list): the draw and the audio share the snapshot of the current tick.
 const F = Math.fround;
 const cache = new WeakMap();
+// Pieces hidden at the start whose trigger's builtin 0 passes key 2 (the stage programs: ABC1 ava1Trig / ava2Trig, DRA4 crumbleLip;
+// web/test-avalanche-state.mjs checks them against local/reference/avalanche/entity-drawn.json from tools/export_avalanches.py).
+export const ENTITY_DRAWN = Object.freeze({
+  ABC1: [8198, 74758, 135942, 231430, 239366, 260614, 303878, 362758, 372230, 441862, 453894, 494598, 544006, 563206, 617222, 620806],
+  DRA4: [72992, 102944, 125472, 266784, 292896, 316960, 381984, 416288, 417312, 502048, 503072, 644896, 660768, 671776],
+});
 
 // Snapshot of the core's avalanche state for its current tick (or null without the exports).
 export function avalancheState(core) {
@@ -54,7 +63,7 @@ export function avalancheRumble(tumblers, L) {
 
 // The draw side: visibility of the AvaSpline pieces' batches. meshes: the location's world meshes with userData.movingResource
 // (in the scene) and its hidden meshes (group.userData.hiddenMeshes: batch.moving_resource, not in the scene until shown).
-export function createAvalancheDraw({ core, group, followers }) {
+export function createAvalancheDraw({ core, group, followers, entityDrawn = new Set() }) {
   const byResource = new Map();
   const add = (resource, mesh, hiddenAtStart) => { let e = byResource.get(resource); if (!e) byResource.set(resource, e = { meshes: [], hiddenAtStart }); e.meshes.push(mesh); };
   group.traverse((o) => { if (o.isMesh && followers.has(o.userData.movingResource)) add(o.userData.movingResource, o, false); });
@@ -71,7 +80,7 @@ export function createAvalancheDraw({ core, group, followers }) {
     pieces: byResource.size,
     update() {
       const s = avalancheState(core); if (!s) return;
-      for (const [r, e] of byResource) apply(r, e, !s.released.has(r) && (s.pieces.has(r) || !e.hiddenAtStart));
+      for (const [r, e] of byResource) apply(r, e, !s.released.has(r) && (e.hiddenAtStart ? s.pieces.has(r) && entityDrawn.has(r) : true));
     },
     reset() { resetAvalancheState(core); for (const [r, e] of byResource) apply(r, e, !e.hiddenAtStart); },
     get state() { const s = cache.get(core); return { pieces: byResource.size, playing: s?.pieces.size ?? 0, released: s?.released.size ?? 0, loop: !!s?.loop }; },

@@ -26,7 +26,7 @@ import { initStageWorldSliced } from './load-slices.js';
 import { pv } from './pv-flags.js';
 import { createLocationCables, CableLife } from './set-piece-cables.js';
 import { createFogPuffs } from './fog-puffs.js';
-import { createAvalancheDraw } from './avalanche-state.js';
+import { createAvalancheDraw, ENTITY_DRAWN } from './avalanche-state.js';
 
 const params = new URL(globalThis.location?.href ?? 'http://x/').searchParams; // ?livecomp=0 / ?flags=0 / ?uvscroll=0 for comparisons
 const sortedJson = (value) => JSON.stringify(value, Object.keys(value).sort());
@@ -90,7 +90,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   // pv avalanche (web/avalanche-state.js, docs/avalanche.md): visibility of the AvaSpline pieces (moved by web/moving-instances.js).
   const avalanche = pv('avalanche') && core._avalanche_pieces ? await load(sectionRoot + 'avalanches.json').then((d) => {
     const followers = new Set(d.avalanches.flatMap((a) => a.groups.filter((g) => g.ava_spline).map((g) => g.resource)));
-    return followers.size ? createAvalancheDraw({core, group, followers}) : null; }).catch(() => null) : null;
+    return followers.size ? createAvalancheDraw({core, group, followers, entityDrawn: new Set(ENTITY_DRAWN[course?.code] ?? [])}) : null; }).catch(() => null) : null;
   // Flag manager bookkeeping in the core (web/stage_world.inc): grid builds and the wind draw from the shared visual
   // stream in the original order; the JS cloth consumes the same words (stage_world_flag_words).
   const coreFlags = !!(flagData && sectionsNative && readyState?.flags && core._init_stage_flags) && (() => {
