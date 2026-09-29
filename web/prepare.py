@@ -39,7 +39,8 @@ def package_world(name):
   if flags_state.exists():subprocess.run([sys.executable,str(root/'tools/export_rail_runtime_flags.py'),'--location',name,str(dest/'rails.json')],check=True)
   else:print(f'WARNING {name}: no glide savestate {flags_state.name}; rails keep disc flags (runtime query flags unknown)')
  if name.startswith('RIDER_'):
-  for f in ['rider.json','animation-samples.json']:shutil.copy2(a/f,dest/f)
+  # the clip table is ANIMATIONS/animation-samples.json (web/prepare-ui.py) for the original riders; Sam's packages keep their own
+  for f in ['rider.json']+(['animation-samples.json'] if name.startswith('RIDER_SAM') else []):shutil.copy2(a/f,dest/f)
  else:
   vb=array.array('f');vb.frombytes((a/'vertices.bin').read_bytes());ib=array.array('I');ib.frombytes((a/'indices.bin').read_bytes());tris=array.array('f')
   for b in d['batches']:

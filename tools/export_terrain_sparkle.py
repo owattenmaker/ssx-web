@@ -78,7 +78,7 @@ def export(root, out_dir, table, painters):
     surface = surface_block(painters.get(root.name))
     out_dir.mkdir(parents=True, exist_ok=True)
     body = struct.pack(f'<{len(words)}I', *words)
-    (out_dir / 'terrain-sparkle.bin').write_bytes(b'SPKL' + struct.pack('<3I', 2, n, 16 + len(body) if surface else 0) + body + surface)
+    __import__('atomic_write').write_bytes(out_dir / 'terrain-sparkle.bin', b'SPKL' + struct.pack('<3I', 2, n, 16 + len(body) if surface else 0) + body + surface)
     return n, len(doc['patches']), len(surface)
 
 

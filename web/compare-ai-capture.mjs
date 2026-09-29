@@ -207,6 +207,10 @@ const stageSnaps = process.env.STAGE_WORLD_PS2 ? loadSnapshots(process.env.STAGE
 const stageCompare = [];
 const stageDump = process.env.STAGE_WORLD_DUMP ? new Set(process.env.STAGE_WORLD_DUMP.split(',').map(Number)) : null;
 const particleEval = stageDump ? await import('./set-piece-particle-eval.js') : null;
+// TICK_HOOK=module.mjs: an observer (create({core, racers, dv, RECORD, captureManifest}) -> {tick({i, tick, core, racers}), summary()}),
+// run after every compared tick (the human core has run record i's command; record i + 1 holds the PS2 state after it), as in
+// compare-ps2-capture.mjs. Its summary is merged into the report.
+const tickHook = process.env.TICK_HOOK ? await import(new URL(process.env.TICK_HOOK, `file://${process.cwd()}/`).href).then((m) => m.create({ core: human, racers, dv, RECORD, captureManifest: manifest })) : null;
 for (let i = 0; i + 1 < records.length && i < limit; i++) {
   globalThis.__compareTick = records[i].tick;
   if (weatherWatch) compareWeather(i, records[i].tick);
@@ -219,6 +223,7 @@ for (let i = 0; i + 1 < records.length && i < limit; i++) {
   }
   tick(padFor(records[i].index), aiCapture ? aiCapture.records[i + 1] : null);
   const ps2 = records[i + 1];
+  tickHook?.tick({ i, tick: ps2.tick, core: human, racers });
   if (stageSnaps?.has(ps2.tick)) stageCompare.push(compareStageWorld(human, stageSnaps.get(ps2.tick), { allDiffs: !!process.env.STAGE_WORLD_ALLDIFFS }));
   if (stageDump?.has(ps2.tick)) { // STAGE_WORLD_DUMP=t,...: the drawable particle effects after tick t-1 (sprite bounds, source cm)
     const effects = particleEval.readParticleEffects(human), out = new Float32Array(1 << 20), me = Array.from(f32(human, human._reference_motion(), 3));
@@ -342,5 +347,9 @@ if (stageWorld) { // stage world activity (web/stage_world.inc): LiveComp starts
 }
 if (sharedVisual) summary.visual = visualFirst;
 if (weatherWatch) summary.weather = weatherStats;
+if (tickHook?.summary) Object.assign(summary, await tickHook.summary());
+// Avalanches (web/avalanche_gameplay.inc) per core, human first: [definitions, triggers, ticks, active slots, piece entities].
+if (human._avalanche_info) summary.avalanches = [human, ...racers.npcs.map((n) => n.core)].map((c) => { const p = c._avalanche_info() >> 2, U = new Uint32Array(c.HEAPU8.buffer);
+  return [U[p], U[p + 1], U[p + 2], U[p + 3], c._avalanche_entities ? new Uint32Array(c.HEAPU8.buffer)[c._avalanche_entities() >> 2] : 0]; });
 console.log(JSON.stringify(summary, null, 1));
 if (reportPath) fs.writeFileSync(reportPath, JSON.stringify({ summary, rows }, null, 1));

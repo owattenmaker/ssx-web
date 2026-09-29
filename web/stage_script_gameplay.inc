@@ -297,6 +297,8 @@ static StageArg stage_builtin(int index,const StageArg* args,int count){
   const float dx=sub(physicsState.position[0],m[3][0]),dy=sub(physicsState.position[1],m[3][1]),dz=sub(physicsState.position[2],m[3][2]);
   const float distance=terrain_original::sqrt(add(add(add(mul(dx,dx),mul(dy,dy)),mul(dz,dz)),0.f));
   request_stage_camera_shake(0,1.f,mul(distance,std::bit_cast<float>(f[3])));return nil;}
+ case 74: // 303F80: the current player (ctx+0) -> rider+0x3FC = 1 (DBC2 tunnelvolume_1000..1002); only this core's own rider
+  if(stage_current_human_rider)stageRiderTunnel=true;return nil;
  case 92:{ // 305660: the current player (ctx+0) human (vt+0x44) -> 0x390EC8(0): a strike at distance 0 (flash, thunder at once), gated
   // by gp+0x151C as the ScreenTint update (web/stage_world.inc stageLightningFinishAge). DRA4 treefalltriggers, EBA3 speakertower.
   if(stage_current_human&&!sharedWorldReplay&&stageLightningFinishAge<3)weather_lightning_strike(0.f);return nil;}

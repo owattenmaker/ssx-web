@@ -1,7 +1,7 @@
 import * as T from 'three/webgpu';
 import {attribute,texture,vec4,select} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {snowBillboardScale} from './snow-billboard.js';
-import {pv} from './pv-flags.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 // ARA1 start-gate spark fountains (mdl_ARA1_startfirePop_*). Data comes from
 // tools/export_startfire.py: LUN program 118 builtin 0x10 profiles, texture 28
@@ -79,7 +79,7 @@ export async function createStartfireRenderer(origin,encodedOutput){
  // GS ALPHA 0x48: Cs*As+Cd, MODULATE colour/alpha scale 128.
  const material=new T.MeshBasicNodeMaterial({transparent:true,depthWrite:false,depthTest:true,side:T.DoubleSide,forceSinglePass:true,fog:false,toneMapped:false,blending:T.AdditiveBlending});
  material.fragmentNode=vec4(select(encodedOutput,encodedColour,toFrame(encodedColour)),texel.a.mul(t.gs_alpha_scale).mul(colour.a).clamp(0,1));
- const skipEmpty=pv('skipEmpty');const mesh=new T.InstancedMesh(geometry,material,capacity);mesh.count=0;mesh.frustumCulled=false;mesh.renderOrder=690;mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
+ const skipEmpty=pv('skipEmpty');const mesh=new T.InstancedMesh(geometry,material,capacity);mesh.count=0;mesh.frustumCulled=false;mesh.renderOrder=pv('effectOrder')?drawOrder(EFFECT.setPieceParticle(28),SUBMIT.setPiece):690;mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
  const group=new T.Group();group.add(mesh);group.userData.gameplayOnly=true;
  const view=(await (await fetch('/assets/SNOW_FX/snow-fx.json')).json()).view;
  let serial=null;const matrix=new T.Matrix4(),position=new T.Vector3(),scale=new T.Vector3(),viewPosition=new T.Vector3();

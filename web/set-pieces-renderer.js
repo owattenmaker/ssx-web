@@ -27,6 +27,7 @@ import { pv } from './pv-flags.js';
 import { createLocationCables, CableLife } from './set-piece-cables.js';
 import { createFogPuffs } from './fog-puffs.js';
 import { createAvalancheDraw, ENTITY_DRAWN } from './avalanche-state.js';
+import { createAvalancheTrails } from './avalanche-trails.js';
 
 const params = new URL(globalThis.location?.href ?? 'http://x/').searchParams; // ?livecomp=0 / ?flags=0 / ?uvscroll=0 for comparisons
 const sortedJson = (value) => JSON.stringify(value, Object.keys(value).sort());
@@ -91,6 +92,9 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   const avalanche = pv('avalanche') && core._avalanche_pieces ? await load(sectionRoot + 'avalanches.json').then((d) => {
     const followers = new Set(d.avalanches.flatMap((a) => a.groups.filter((g) => g.ava_spline).map((g) => g.resource)));
     return followers.size ? createAvalancheDraw({core, group, followers, entityDrawn: new Set(ENTITY_DRAWN[course?.code] ?? [])}) : null; }).catch(() => null) : null;
+  // pv avalancheTrails (web/avalanche-trails.js): the tumblers' dust trails from the core's avalanche_trails() rings.
+  const avalancheTrails = avalanche && pv('avalancheTrails') && core._avalanche_trails ? await createAvalancheTrails({core, origin: (await load(sectionRoot + 'start.json').catch(() => null))?.position ?? [0, 0, 0]}).catch((e) => { console.warn('Avalanche trails unavailable', e); return null; }) : null;
+  if (avalancheTrails) group.add(avalancheTrails.group);
   // Flag manager bookkeeping in the core (web/stage_world.inc): grid builds and the wind draw from the shared visual
   // stream in the original order; the JS cloth consumes the same words (stage_world_flag_words).
   const coreFlags = !!(flagData && sectionsNative && readyState?.flags && core._init_stage_flags) && (() => {
@@ -153,7 +157,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
     flagStatic(resource, true);
   }
   function reset() {
-    ticks = 0; contactCursor = 0; sectionCursor = 0; startCursor = 0; fired.clear(); cableLife?.reset(); avalanche?.reset();
+    ticks = 0; contactCursor = 0; sectionCursor = 0; startCursor = 0; fired.clear(); cableLife?.reset(); avalanche?.reset(); avalancheTrails?.reset();
     scroll = scrollData && params.get('uvscroll') !== '0' ? new UvScroll(scrollData) : null;
     live = liveData && params.get('livecomp') !== '0' ? new LiveCompAnimation(liveData) : null;
     if (live && coreStarts) live.chainStarts = false; // trigger / timer starts come from the core's stage VM
@@ -352,6 +356,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
         cables.update((owner) => params.get('cables') === 'all' || cableLife.lives(owner, (o) => cableActive.get(o), (chunk) => chunkResident.get(chunk))); // ?cables=all: every cable (QA)
       }
       avalanche?.update();
+      avalancheTrails?.update();
       particles?.update();
       crowd?.update(ticks);
       halos?.update(haloNodePosition); // the player's root already carries a magnet's offset

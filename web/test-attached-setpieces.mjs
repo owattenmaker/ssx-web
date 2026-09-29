@@ -14,9 +14,10 @@ import { fromBits, bitsOf } from './ee-scalar-float.js';
 
 const LOC = process.argv[2] || 'ARA1';
 const dir = new URL(LOC === 'ARA1' ? './public/assets/LIVECOMP/' : `./public/assets/${LOC}/LIVECOMP/`, import.meta.url);
+const testDir = new URL(dir.href.replace('/public/assets/', '/public/test-data/'));   // PS2 snapshots: test data
 if (!existsSync(new URL('attached.json', dir))) { console.log(`${LOC}: no attached.json (tools/export_attached_setpieces.py --location ${LOC})`); process.exit(0); }
 const data = JSON.parse(readFileSync(new URL('attached.json', dir), 'utf8'));
-const snaps = JSON.parse(readFileSync(new URL('attached-snapshots.json', dir), 'utf8')).records;
+const snaps = JSON.parse(readFileSync(new URL('attached-snapshots.json', testDir), 'utf8')).records;
 const live = existsSync(new URL('livecomp.json', dir)) ? new LiveCompAnimation(JSON.parse(readFileSync(new URL('livecomp.json', dir), 'utf8')), { random: () => 0 }) : null;
 let failures = 0; const fail = (m) => { if (failures++ < 12) console.error(m); };
 const f = fromBits;

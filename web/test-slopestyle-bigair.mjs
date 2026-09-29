@@ -37,7 +37,7 @@ assert.deepEqual(post(8, [36, 68, -8, 21, 21], 5), [61080, 43420, 19920, 12120, 
 const peakOf = (course) => data.courses[course].field54 + 1;
 const rival = (course, human) => [[3, 5], [7, 4], [8, 6]][peakOf(course) - 1][human === [3, 7, 8][peakOf(course) - 1] ? 1 : 0];
 const modeOf = (course) => ({ slopestyle: MODE.SLOPESTYLE, superpipe: MODE.HALFPIPE, bigair: MODE.BIGAIR })[data.courses[course].kind];
-const facts = read('CAREER/freestyle-rosters.json').states;
+const facts = JSON.parse(fs.readFileSync(new URL('public/test-data/CAREER/freestyle-rosters.json', import.meta.url))).states;   // test data
 let fsStates = 0, fsScores = 0;
 for (const f of facts) {
   const single = !!f.single, mode = modeOf(f.course), slope = mode === MODE.SLOPESTYLE, riv = rival(f.course, f.player);

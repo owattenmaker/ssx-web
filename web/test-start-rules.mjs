@@ -28,9 +28,27 @@ for (const s of ['game', 'loading', 'cutscene', 'transition']) assert.equal(star
   set(9, 0); m.step(pad, 32); set(9, 1); m.step(pad, 48); assert.deepEqual(sent.splice(0), ['keydown Enter'], 'a new Start in the menu = Enter');
   set(9, 0); m.step(pad, 64); sent.length = 0; accepts = false; set(9, 1); m.step(pad, 80); assert.deepEqual(sent, [], 'switch off: the old rule');
 }
+{ // pv startConsume: the Start that accepts the card is spent until released, whichever loop sees it first (PS2 0x230A34 needs a new
+  // press with no overlay / transition, 0x20CBE8): main.js's pad path asks taken('start'); a later, new press is the pause again
+  const sent = []; let screen = 'ctm-objectives';
+  const m = createPadMenus({ menu: () => screen !== 'game', running: () => true, send: (t, c) => { sent.push(t + ' ' + c); if (t === 'keydown' && c === 'Enter') screen = 'game'; }, startAccepts: () => startAccepts(screen) });
+  const pad = { buttons: Array.from({ length: 17 }, () => ({ value: 0, pressed: false })), axes: [0, 0, 0, 0] };
+  const set = (i, v) => { pad.buttons[i].value = v; pad.buttons[i].pressed = v > 0.5; };
+  // the game frame's own edge: pauses only on a Start it has not seen held, on the ride, and not taken by a menu
+  let held = false, frameScreen = 'ctm-objectives'; const frame = () => { const down = pad.buttons[9].pressed; const p = down && !held && !m.taken('start') && frameScreen === 'game' && startOpensPause({ ...ride, screen }); held = down; frameScreen = screen; return p; };
+  set(9, 1); m.step(pad, 0); assert.deepEqual(sent.splice(0), ['keydown Enter'], 'the card takes Start (Enter)');
+  assert.equal(frame(), false, 'same frame'); assert.equal(m.taken('start'), true, 'spent while held');
+  held = false; frameScreen = 'game'; assert.equal(frame(), false, 'the game frame sees the press only after the switch (Safari): still spent');
+  m.step(pad, 16); set(9, 0); m.step(pad, 32); assert.equal(m.taken('start'), false, 'released: no longer spent');
+  frame(); set(9, 1); m.step(pad, 48); assert.equal(frame(), true, 'a new Start on the ride pauses');
+}
 const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+assert.match(main, /const padMenus=installPadMenus\(/, 'main.js keeps the pad menus');
+assert.match(main, /!\(pv\('startConsume'\)&&padMenus\?\.taken\?\.\('start'\)\)/, 'pad path: a spent Start does not pause');
+assert.match(main, /&&running&&!\(e\.ssxPadMenu&&pv\('startConsume'\)\)\)/, 'keyboard path: the pad menus\' keys do not pause');
 assert.match(main, /frameScreen==='game'&&startOpensPause\(/, 'pad Start pauses from the ride only (the screen of the previous frame)');
 assert.match(main, /window\.addEventListener\('keydown',\(\)=>\{keyScreen=ui\.screen;keyPaused=paused;\},true\);/, 'keyboard: the screen before any menu handled the key');
 const { PV_DEFAULTS } = await import('./pv-flags.js');
 assert.equal(PV_DEFAULTS.startRules, true, 'startRules on');
+assert.equal(PV_DEFAULTS.startConsume, true, 'startConsume on');
 console.log('start rules ok');

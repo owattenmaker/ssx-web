@@ -456,6 +456,38 @@ Result: the real page (compare-page-capture) keeps the shared RNG exact through 
 sampled one tick apart from the record, so they show as one-tick blips. crows-invert, perpendiculous, Launch Time and
 Much-2-Much stay exact. The 243 capture gates pass and sim-diff is identical. Live core sha256 f556dfb6.
 
+## Moving lit instances and the Object spline pieces' draw (2026-09-28, visual-parity agent)
+
+The visual agent listed 15 lit instances with runtime flag 0x1000 ("relit as it moves": their PS2 light caches sit away from the
+instance matrix) that the port drew static. How the PS2
+moves each, from the stage programs (tools/set_piece_location.py + export_startfire.decode_program), and what the port does:
+
+| instances | PS2 | port |
+|---|---|---|
+| BHP1 caryellowanim / buswhiteanim / truckwhiteanim / carredanim _1000 | slot 1: builtin 0 + 20 (MultiSpline on the owner, key 10 = 0), then 0 + 20 on the glow copy | seeded from the ready state (8 modifiers), moving batches: they move (page 419 -> 1619) |
+| ospreys ABA1 / CRA3 / DRA4 / DSS2 (contact trigger), ABC1 (timer), EBC3 cessnas a / b | builtin 3 + 19 (LiveComp + Spline) | spline pieces (drawn) drawn per node as spline LiveComps (attached.json) |
+| ESS3 sleda_1000 | sledatrigger slot 2: builtin 0 + 19 (Object + Spline), path 42288, 120 km/h | the core moved it, the page drew it static: fixed below |
+| os609 in-air heli ABC1 / DBC2 / EBC3 | slot 1: builtin 3 (LiveComp, frames 551..677, 30 fps) | in livecomp.json but hidden: open (below) |
+
+**Object spline pieces outside Snow Jam (fixed).**
+- `tools/export_location_set_pieces.py` wrote `spline_pieces` as names only, and `web/prepare.py` moves only `drawn_spline_pieces`.
+  So no Object spline piece outside ARA1 had moving batches, although the core emits its delta (`chairlift_moving`,
+  browserSplinePieces with `drawn` and phase 1).
+- The exporter now writes `drawn_spline_pieces` (the pieces drawn while on their path). The pieces drawn as spline LiveComps are
+  split per node by prepare.py's attached.json path as before.
+- Newly moving: ESS3 sleda; ASS1 locomotive, flatbed, boxcar, tanker, trainboxes x 2; CBA2 sleda / sledb; DRA4 dragonworks x 6 and
+  EZrocketCore x 2; EBA3 EZrocketCore x 2. Re-split packages: triangle sets identical, only these batches gain moving_resource.
+- Checked: ESS3 kick-doubt-full 818 / 1219 / 1618: the core's delta equals the PS2 Spline modifier +0x60 matrix (the Object's draw
+  matrix) within 1e-4; the page's 3 sled meshes are static at 418 and moved at 1219 (Chrome, WebKit).
+- Re-running the exporter today also changes the seeds of BHP1 / CHP2 / CRA3 / EHP3 (new pieces) and the multisplines of CBA2 /
+  CHP2 / EBA3 / EHP3; the headers were left as they are (physics agent).
+
+**os609 helis (open).** The countdown audit classes them draw 'none': `export_event_membership.draw_class` needs flag 0x100 for an
+entity draw, and their flags 0x50015205 carry 0x200 instead (1032C0 / 101B60 keep the 0x100 / 0x200 pair as a list parity; the EBA3
+rocks alternate 0x345 / 0x245 with their entity alive). Their entity is a LiveComp (0x490B10 -> 0x356298: flags & 4), so the PS2 can
+draw them. Forced on, the page's LiveComp player puts the ABC1 heli 9 m from the start camera at tick 2 and behind the camera in all
+33 ABC1 frames; no kept PS2 frame shows it. The fix (draw_class accepting 0x200, re-audit, unhide) waits for one.
+
 ## MultiSpline section count and the Object-entity destroy (2026-09-28, core46)
 
 - **PS2.**

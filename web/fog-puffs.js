@@ -21,6 +21,7 @@ import * as T from 'three/webgpu';
 import {attribute, texture, vec4, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv, select} from 'three/tsl';
 import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 const F = Math.fround;
 // Streamed (CTM) packages with puffs (tools/export_fog_puffs.py; web/test-fog-puffs.mjs checks this against the exported files).
@@ -132,7 +133,7 @@ export async function createFogPuffs({root, origin = [0, 0, 0], resident = () =>
   material.fragmentNode = vec4(select(encodedOutput, rgb, toFrame(rgb)), As.clamp(0, 1)); // 0x44: (Cs - Cd) x As + Cd
   material.name = 'FogPuffs';
   const mesh = new T.InstancedMesh(geometry, material, capacity);
-  mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = 684; mesh.name = 'fog puffs';
+  mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = pv('effectOrder') ? drawOrder(EFFECT.fogPuffs, SUBMIT.fogPuffs) : 684; mesh.name = 'fog puffs'; // pv effectOrder: 0x364240, t0 1023: first at priority 7
   const group = new T.Group(); group.name = 'fog puffs'; group.add(mesh);
   const out = {}, clip = new T.Matrix4(), mv = new T.Matrix4(), state = {sprites: 0, instances: layout.instances, puffs: layout.count};
   const visible = (j) => layout.chunks[j] === undefined || resident(layout.chunks[j]) !== false;

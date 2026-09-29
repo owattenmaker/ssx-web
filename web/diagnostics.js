@@ -21,6 +21,7 @@ const session = Math.random().toString(36).slice(2, 10), started = Date.now(), q
 // PRIORITY kinds still go out when the budget is nearly spent (the end of a long session is where crashes are).
 const PRIORITY = new Set(['pagehide', 'previous-session-died', 'gpu-device-lost', 'gpu-recovered', 'gpu-recovery-failed', 'gpu-recovery-attempt', 'pipeline-failed', 'shader-over-budget', 'repeat', 'error', 'rejection', 'course-failed', 'download-failed']);
 const ERRORS = new Set(['error', 'rejection', 'console.error', 'console.warn', 'gpu-error']);
+let lastMark = '', recentMarks = [], steps = [];
 let sent = 0, currentScreen = '', frames = [], lastFrame = 0, flushing = false, unloading = false, hiddenAt = 0, dropped = 0, diagRenderer = null;
 const now = () => Math.round((Date.now() - started) / 100) / 10;
 const clip = (s, n = 600) => String(s ?? '').slice(0, n);
@@ -47,6 +48,7 @@ function push(kind, data = {}) {
   if (kind === 'course' && data.key) { liveCourse = String(data.key); lastRidePos = null; }
   const event = { t: now(), kind, screen: currentScreen, course: courseKey(), ...(unloading ? { unloading: true } : {}), ...data }; // unloading: after pagehide (aborted downloads...)
   ring.push({ t: event.t, kind, screen: event.screen, ...(data.message ? { message: clip(data.message, 120) } : data.to ? { to: data.to } : {}) }); if (ring.length > RING) ring.shift();
+  if (kind !== 'frames' && kind !== 'memory') { steps.push(ring.at(-1)); if (steps.length > 4) steps.shift(); } // pv hangWatch: the last events that are not heartbeats
   if (ERRORS.has(kind)) { // the same error again: counted, reported as one 'repeat' at the next flush
     const key = kind + '|' + clip(data.message, 160), r = repeats.get(key) ?? { n: 0, accounted: 0, kind, message: clip(data.message, 160) };
     r.n++; repeats.set(key, r); if (repeats.size > 500) repeats.delete(repeats.keys().next().value);
@@ -190,7 +192,7 @@ if (enabled) {
   requestAnimationFrame(tick);
   // The race warm-up marks (main.js warmupRender: warm:start / slices / gpu / end), relative to the page start; every mark's
   // name also goes to the stall attribution (the marks made during a gap).
-  try { new PerformanceObserver((list) => { for (const e of list.getEntries()) { gapMark(e.name); if (/^warm:/.test(e.name)) push('mark', { name: e.name, at: Math.round(e.startTime) }); } }).observe({ type: 'mark', buffered: true }); } catch {}
+  try { new PerformanceObserver((list) => { for (const e of list.getEntries()) { gapMark(e.name); lastMark = clip(e.name, 60); recentMarks.push(lastMark); if (recentMarks.length > 4) recentMarks.shift(); if (/^warm:/.test(e.name)) push('mark', { name: e.name, at: Math.round(e.startTime) }); } }).observe({ type: 'mark', buffered: true }); } catch {}
   setInterval(() => {
     const t = Date.now(), every = t - started < 600000 ? 10000 : 60000;
     if (t - lastBeat >= every - 500) {
@@ -203,6 +205,31 @@ if (enabled) {
     remember();
   }, 10000);
   setInterval(() => flush(), FLUSH_MS);
+  // pv hangWatch: a hang reporter off the main thread. The page pings a small worker every 250 ms (one postMessage: the screen, the
+  // course, the last performance marks (the warm steps), step = the last diag event (kind:screen / message), the last four of them).
+  // Pings stopping for over 8 s while the page is visible means the
+  // main thread is blocked: the worker posts {kind: 'hang', since, gapMs, last} to the diag endpoint itself, again every 30 s while it
+  // lasts, and {kind: 'hang-end', lastedMs} if the pings come back (a long throttle or task, not a freeze). A killed WebContent
+  // takes the worker with it, so no event arrives: that separates a hang from a crash. In Chrome the posts leave at once. WebKit runs
+  // a dedicated worker's I/O (fetch, WebSocket, IndexedDB, Cache, OPFS) through the page's main thread (all of them finished only when a
+  // 10 s block ended; scratch ctm/hang/offmain.mjs), so in Safari the hang events go out when the main thread comes back, with the
+  // worker's own times; a freeze that never ends shows as the next session's 'previous-session-died' (foreground, agoS).
+  if (pv('hangWatch') && typeof Worker !== 'undefined') try {
+    const code = `let cfg=null,last=null,lastAt=0,visible=true,hangAt=0,sentAt=0;
+const T=(ms)=>Math.round((ms-cfg.started)/100)/10;
+const post=(ev)=>{try{fetch(cfg.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session:cfg.session,ua:cfg.ua,events:[ev]}),keepalive:true}).catch(()=>{});}catch(e){}};
+onmessage=(e)=>{const d=e.data;if(d.init){cfg=d.init;lastAt=Date.now();return;}if(!cfg)return;
+ if(d.v!==undefined){visible=d.v==='visible';lastAt=Date.now();return;}
+ if(d.p){const now=Date.now();if(hangAt){post({t:T(now),kind:'hang-end',screen:d.p.screen,course:d.p.course,since:T(hangAt),lastedMs:now-hangAt});hangAt=0;}last=d.p;lastAt=now;}};
+let tick=0;setInterval(()=>{const now=Date.now();if(tick&&now-tick>3000)lastAt=now;tick=now;/* the worker itself stalled too (the machine slept, the process was suspended): not a main-thread hang */if(!cfg||!visible||!last)return;const gap=now-lastAt;if(gap<8000)return;
+ if(!hangAt){hangAt=lastAt;sentAt=now;post({t:T(now),kind:'hang',screen:last.screen,course:last.course,since:T(hangAt),gapMs:gap,last});}
+ else if(now-sentAt>=30000){sentAt=now;post({t:T(now),kind:'hang',screen:last.screen,course:last.course,since:T(hangAt),gapMs:gap,lasting:true,last});}},1000);`;
+    const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' })), hang = new Worker(url);
+    hang.postMessage({ init: { url: new URL(ENDPOINT, location.href).href, session, ua: navigator.userAgent, started } });
+    const ping = () => { const r = steps.at(-1); hang.postMessage({ p: { screen: currentScreen, course: courseKey(), mark: lastMark, step: r ? `${r.kind}${r.to ? ':' + r.to : r.message ? ':' + r.message : ''}` : '', marks: recentMarks, recent: steps } }); };
+    ping(); setInterval(ping, 250);
+    document.addEventListener('visibilitychange', () => hang.postMessage({ v: document.visibilityState }));
+  } catch {}
   // Gamepads (web/gamepad.js): which pads players use and how they are read — the model name / vendor:product, the
   // browser's mapping, button / axis counts, the layout applied (standard, a known one, generic, +remap), the slot and
   // whether it can vibrate. Sent a second after a pad is plugged in / out / remapped / made active; at most 8 times.

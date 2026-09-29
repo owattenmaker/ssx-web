@@ -36,7 +36,12 @@ EVIDENCE = {
     **{f'local/assets/native/RIDER_{r.upper()}/animation-start.json':
        'tools/test_opponent_poses.py --export-initialization (needs the native Metal engine audit binary); test-only data'
        for r in ('psymon', 'allegra', 'moby', 'griff', 'luther')},
+    # HUD draw captures: the original HUD code run by the recompiled-code oracles (tools/probe_boost_hud_*.py, probe_trick_hud.py)
+    **{f'local/browser-ui/hud/{n}.json': 'tools/probe_boost_hud_draw.py / probe_boost_coil_glow.py / probe_boost_hud_letters.py '
+       '(PS2Recomp oracle of the gauge draw code)' for n in ('boost-draws', 'boost-coil-glow', 'boost-letters')},
+    'local/browser-ui/trick-hud/trick-hud-draws.json': 'tools/probe_trick_hud.py (PS2Recomp oracle of the trick HUD 0x1E9A30)',
 }
+LINEUP_COURSES = ('ARA1', 'ASS1', 'BRA2', 'CRA3', 'DRA4', 'DSS2')
 MOUNTAIN_SEEDS = {
     'MOUNTAIN': ('local/ps2-capture/allpeak/nav/out-apr-card/after.p2s', 'EBC3'),
     'MOUNTAIN2': ('local/ps2-capture/allpeak/nav/out-p2r-card/after.p2s', 'DBC2'),
@@ -67,6 +72,8 @@ def registry(Step):
 
     # ---------------------------------------------------------------------------------------------- riders (native)
     # Zoe (the human's rider in Snow Jam) and the five Snow Jam opponents: GameCube models, PS2 animation bank.
+    # the roster first (event audits read it); rerun after the rider packages for its settings flags
+    add(S('riders-roster-1', [PY, 'tools/export_roster.py'], needs=['iso']))
     for r in RIDERS:
         add(S(f'riders-{r}-model', [PY, 'tools/rider_assets.py', '--rider', r], needs=['gamecube']))
         add(S(f'riders-{r}-samples', [PY, 'tools/export_animation_samples.py', '--rider', r, '--source', 'ps2'], needs=['states']))
@@ -77,7 +84,11 @@ def registry(Step):
         if L == 'ARA1':
             # after Snow Jam's first web package (RIDER_ZOE, SNOW_FX): tools that update the native and web copies
             at = next(i for i, s in enumerate(steps) if s.name == 'loc-ARA1-web-1') + 1
+            # the rider packages: the event exports of the other locations read their rigs
+            steps += [S('riders-opponents', [PY, 'tools/export_opponent_packages.py'], needs=['states', 'gamecube']),
+                      S('riders-characters', [PY, 'tools/export_characters.py'], needs=['iso', 'gamecube', 'states'])]
             steps[at:at] = [
+                S('loc-ARA1-ray-policy', [PY, 'tools/apply_ray_capabilities.py']),
                 S('riders-zoe-skin', [PY, 'tools/export_rider_skin_weights.py', '--rider', 'zoe'], needs=['gamecube']),
                 S('riders-zoe-bind', [PY, 'tools/export_rider_bind_matrices.py'], needs=['states']),
                 S('shared-snow-flipbooks', [PY, 'tools/export_snow_flipbooks.py'], needs=['gamecube']),
@@ -88,6 +99,94 @@ def registry(Step):
     add(S('startfire', [PY, 'tools/export_startfire.py'], needs=['iso']))
     for L in ORDER:
         out.extend(post_steps(S, L))
+    out.extend(later_steps(S))
+    return out
+
+
+def later_steps(S):
+    out = []
+    add = out.append
+    # ---------------------------------------------------------------------------------------------- Snow Jam extras
+    add(S('ara1-rail-teeters', [PY, 'tools/export_rail_teeters.py'], needs=['states']))
+    add(S('ass1-rail-teeters', [PY, 'tools/export_rail_teeters.py', '--location', 'ASS1'], needs=['states']))
+    add(S('ara1-falling-billboard', [PY, 'tools/export_falling_billboard.py'], needs=['states']))
+    for L in LINEUP_COURSES:
+        add(S(f'lineups-{L}-export', [PY, 'tools/export_lineups.py', 'export', '--course', L], needs=['states', 'gamecube']))
+        add(S(f'lineups-{L}-build', [PY, 'tools/export_lineups.py', 'build', '--course', L], needs=['states']))
+    add(S('lineups-ARA1-sessions', [PY, 'tools/export_lineups.py', 'sessions', '--course', 'ARA1'], needs=['states']))
+    for L in ('ARA1', 'BRA2'):
+        add(S(f'grid-scales-{L}', [PY, 'tools/export_grid_scales.py', 'export', '--course', L], needs=['states']))
+    add(S('lit-instances', [PY, 'tools/export_lit_instances.py'], needs=['states']))
+    for L in ORDER:
+        add(S(f'post-{L}-web-4', [PY, 'web/prepare.py', '--location', L]))
+
+    # ---------------------------------------------------------------------------------------------- riders
+    add(S('riders-roster-2', [PY, 'tools/export_roster.py'], needs=['iso']))
+    add(S('riders-fe-preview', [PY, 'tools/export_fe_preview.py'], needs=['gamecube', 'states']))
+    add(S('ui-atlases', [PY, 'web/prepare-ui.py', '--part', 'ui'], needs=['iso']))
+    add(S('riders-character-select', [PY, 'tools/export_character_select.py'], needs=['iso', 'states']))
+    add(S('riders-wardrobe', [PY, 'tools/export_wardrobe.py'], needs=['iso', 'gamecube', 'states']))
+
+    # ---------------------------------------------------------------------------------------------- UI, career, cutscenes
+    for tool in ('export_audio_menus', 'export_ctm_screens', 'export_career_highlights', 'export_fe_menus', 'export_fs_standings',
+                 'export_replay_screens', 'export_results_screens'):
+        add(S('ui-' + tool[7:].replace('_', '-'), [PY, f'tools/{tool}.py'], needs=['iso']))
+    add(S('ui-boost-hud', [PY, 'tools/export_boost_hud.py'], needs=['iso', 'states']))
+    add(S('ui-trick-hud', [PY, 'tools/probe_trick_hud.py', '--export-only'], needs=['states']))
+    add(S('ui-hud-glow', [PY, 'tools/export_hud_glow.py'], needs=['iso', 'states']))
+    add(S('ui-rival-fx', [PY, 'tools/export_rival_fx.py'], needs=['states']))
+    add(S('career-career', [PY, 'tools/export_career.py'], needs=['iso']))
+    add(S('career-lodge-shop', [PY, 'tools/export_lodge_shop.py'], needs=['iso']))
+    add(S('career-loading', [PY, 'tools/export_loading_screen.py'], needs=['iso']))
+    add(S('career-messages', [PY, 'tools/export_messages.py'], needs=['iso', 'states']))
+    add(S('career-freestyle-rosters', [PY, 'tools/export_freestyle_rosters.py'], needs=['states']))
+    add(S('cut-cutscenes', [PY, 'tools/export_cutscenes.py'], needs=['iso']))
+    add(S('cut-sets', [PY, 'tools/export_cutscene_sets.py']))
+    add(S('cut-sets-plane', [PY, 'tools/export_cutscene_sets.py', '--plane']))
+    add(S('cut-sets-helis', [PY, 'tools/export_cutscene_sets.py', '--helis']))
+    add(S('cut-transitions', [PY, 'tools/export_transition_screens.py'], needs=['iso']))
+    add(S('cut-props', [PY, 'tools/export_cutscene_props.py'], needs=['iso', 'gamecube']))
+
+    # ---------------------------------------------------------------------------------------------- audio, movies
+    add(S('audio-catalog', [PY, 'tools/export_audio.py'], needs=['iso']))
+    add(S('audio-speech-events', [PY, 'tools/export_speech_events.py'], needs=['iso']))
+    add(S('audio-world', [PY, 'tools/export_world_audio.py'], needs=['iso']))
+    add(S('audio-animation', [PY, 'tools/export_animation_audio.py']))
+    add(S('movies', [PY, 'tools/export_movies.py'], needs=['iso', 'movies']))
+
+    # ---------------------------------------------------------------------------------------------- peaks, mountain
+    for n in (1, 2, 3):
+        state, region = PEAK_SEEDS[n]
+        add(S(f'peak{n}-world-1', [PY, 'tools/export_peak_world.py', '--peak', str(n), '--no-setpieces'], needs=['gamecube', 'states']))
+        add(S(f'peak{n}-stage', [PY, 'tools/export_peak_stage.py', '--peak', str(n)]))
+        add(S(f'peak{n}-instances', [PY, 'tools/export_peak_instances.py', '--peak', str(n)], needs=['states']))
+        add(S(f'peak{n}-world-2', [PY, 'tools/export_peak_world.py', '--peak', str(n)], needs=['gamecube', 'states']))
+        add(S(f'peak{n}-sections', [PY, 'tools/export_peak_sections.py', '--peak', str(n)], needs=['states']))
+        add(S(f'peak{n}-seed', [PY, 'tools/export_peak_seed.py', '--peak', str(n), '--state', state, '--region', region], needs=['states']))
+    add(S('peak-missions', [PY, 'tools/export_peak_missions.py']))
+    add(S('peaks-weather', [PY, 'tools/export_weather.py', '--peaks'], needs=['states']))
+    add(S('mountain-world-1', [PY, 'tools/export_mountain_world.py']))
+    add(S('mountain-stage', [PY, 'tools/export_peak_stage.py', '--mountain']))
+    add(S('mountain-world-2', [PY, 'tools/export_mountain_world.py', '--measured', 'local/ps2-capture/allpeak/measured-reads.json'],
+          needs=['states']))
+    for world, (state, region) in MOUNTAIN_SEEDS.items():
+        add(S(f'mountain-seed-{world}', [PY, 'tools/export_peak_seed.py', '--world', world, '--state', state, '--region', region],
+              needs=['states']))
+
+    # ---------------------------------------------------------------------------------------------- scratch-root exporters
+    for tool, out_dir in (('export_camera_triggers', 'camera-triggers'), ('export_terrain_glint', 'terrain-glint'),
+                          ('export_fog_puffs', 'fog-puffs'), ('export_avalanches', 'avalanches')):
+        extra = ['--assets'] if tool == 'export_camera_triggers' else []
+        add(S(f'scratch-{out_dir}', [PY, f'tools/{tool}.py', *extra, '--out', f'local/export/{out_dir}'], needs=['iso']))
+        add(S(f'install-{out_dir}', [PY, 'tools/install_export.py', f'local/export/{out_dir}']))
+    add(S('terrain-sparkle', [PY, 'tools/export_terrain_sparkle.py']))
+
+    # ---------------------------------------------------------------------------------------------- final
+    add(S('final-rider-textures', [PY, 'tools/export_rider_textures.py']))
+    add(S('core-venv', [PY, 'tools/setup_toolchain.py', 'venv']))
+    add(S('core-emsdk', [PY, 'tools/setup_toolchain.py', 'emsdk', '{emsdk}']))
+    add(S('core-build', ['sh', 'web/build-core.sh'], env={'CORE_OUT': 'web/runtime', 'EMXX': '{emxx}'},
+          sources=['web/generate-controllers.py', 'tools/generate_event_seed.py']))
     return out
 
 
@@ -119,8 +218,8 @@ def location_steps(S, L):
           needs=['states']),
         S(p + 'pickup-bindings', [PY, 'tools/probe_pickup_bindings.py', '--location', L], needs=['states']),
     ]
-    if L != 'ARA1':
-        steps.append(S(p + 'initial', [PY, 'web/prepare-ui.py', '--location', L], needs=['states']))
+    steps.append(S(p + 'initial', [PY, 'web/prepare-ui.py', '--location', L] + (['--part', 'animations'] if L == 'ARA1' else []),
+                   needs=['states']))
     if ev == 'backcountry':
         steps += [S(p + 'event-start', [PY, 'tools/export_backcountry.py', 'event-start', '--location', L], needs=['states', 'gamecube']),
                   S(p + 'npc', [PY, 'tools/export_backcountry.py', 'npc', '--location', L], needs=['states', 'gamecube'])]

@@ -654,7 +654,7 @@ export class CareerScreens {
   if(this.ui.bigChallenges?.owns(s))return this.ui.bigChallenges.draw(c,b);
   if(s==='ctm-session'||s==='ctm-sessconfirm')return this.drawSession(c,b,s);
   if(['ctm-mcomm','ctm-peaks','ctm-goals','ctm-events','ctm-confirm','ctm-pause','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-gopeak','ctm-quitsave'].includes(s))return this.drawMcomm(c,b,s);
-  if(['ctm-lodge','ctm-attributes','ctm-saved'].includes(s)){this.memoCursor();this.drawLodge(c,b,s);if(pv('buyAttribs'))this.buyAttribs.drawFlash(c);this.lodgeFlash.draw(c);return;}   // pv buyAttribs: the TransitionOut flash between the lodge and Buy Attributes; pv lodgeFlash: the other lodge screens'
+  if(['ctm-lodge','ctm-attributes','ctm-saved'].includes(s)){if(pv('equipLoading'))this.lodge.preloadGear?.();/* Equip Gear's own data before its state switch (web/lodge-ui.js) */this.memoCursor();this.drawLodge(c,b,s);if(pv('buyAttribs'))this.buyAttribs.drawFlash(c);this.lodgeFlash.draw(c);return;}   // pv buyAttribs: the TransitionOut flash between the lodge and Buy Attributes; pv lodgeFlash: the other lodge screens'
   if(this.lodge.owns(s)){this.memoCursor();const r=this.lodge.draw(c,b);this.lodgeFlash.draw(c);return r;}
   if(s==='ctm-objectives')return this.drawObjectivesOpen(c);
   if(s==='ctm-results')return this.drawResults(c);

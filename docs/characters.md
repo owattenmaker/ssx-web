@@ -1214,8 +1214,10 @@ the original builds for that outfit.
   - Board (0x19F548 +0xC50/+0xC60): at (265.75,-1073.5,-232), or (-100,45,15) in the board view.
     - q = rotZ(2 x 2.138029) rotY(2 x 2.792527) rotX(spin + 90 degrees), spin +1 degree per frame (mod 360).
       This equals the live +0xC60 of two PS2 states.
-  - "Loading..." shows while the preview slot's model loads (ready flags +0xCB4/+0xCB8): list shown, no rider.
-    On the PS2 that is a disc load of about 250 frames.
+  - "Loading..." shows while the preview isn't drawn (+0xCC8): list shown, no rider. Phase 3 of the state (vt+0x30 = 0x1993A0,
+    the intro's 0x42 label + 2) switches the preview on (19E538(slot, 1)); it draws once the model is loaded (+0xCB4/+0xCB8).
+    From the lodge the PS2 shows the rider 37 frames after Cross, "Loading..." until 38: the intro's phase 3, not a disc load
+    (docs/visual-parity.md 42 "Equip Gear's load"). The earlier "about 250 frames" for Setup Character is not re-captured.
   - The rider updates as soon as an item is equipped; the cursor only changes the icon and bar 2.
   - Gear icons come from the character's TXP archive (0x14B700; none for ids >= 10).
 
@@ -1298,8 +1300,8 @@ Only Moby changed: HeadA and MobyEarrings `alph` now bind `moby_hats_a01_d01`, t
   - **3D:** the outfit's FE preview model with the FE idle (FE_GEAR_<X>_CYC) and its morphs, lit by the rider's IRR
     record with the Equip Gear view matrix. It is placed by the port of 0x19BFE8 above: states 1..4, the Boards
     view, stick turn and zoom (Classic J/L and I/K), and the spinning board.
-  - **Loading:** the list and "Loading..." with no rider until the FE model is loaded, for the browser's own load
-    time.
+  - **Loading:** the list and "Loading..." with no rider until phase 3 and the FE model is loaded (pv `equipLoading`: the
+    outfit package is built behind it; the row highlight, the 'equip btm left' dashes and the help line wait for phase 3).
   - Each equip rebuilds the packages, the preview wears the outfit at once, and the Customize speech plays
     (`speakFrontEnd`, 0x199EA4 -> 1A0358). The race rider is reloaded with the outfit when the screen is left.
   - The screen joins OriginalUI's dispatch by wrapping its `items/choose/back/draw` (no ui.js edit).

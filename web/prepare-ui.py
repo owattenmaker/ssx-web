@@ -5,7 +5,8 @@ root=Path(__file__).resolve().parents[1];sys.path.insert(0,str(root/'tools'))
 from inspect_disc import Disc
 import argparse
 from locations import state as location_state,human_rider,web_dir
-LOCATION=(lambda p:(p.add_argument('--location',default='ARA1',help='Non-ARA1: only write web/public/assets/<LOC>/initial.json from its savestates'),p.parse_args().location)[1])(argparse.ArgumentParser(description=__doc__))
+_args=(lambda p:(p.add_argument('--location',default='ARA1',help='Non-ARA1: only write web/public/assets/<LOC>/initial.json from its savestates'),p.add_argument('--part',choices=('all','ui','animations'),default='all',help='ARA1: ui = the UI atlases and fonts only, animations = ANIMATIONS/ (clip banks, Snow Jam initial.json) only'),p.parse_args())[-1])(argparse.ArgumentParser(description=__doc__))
+LOCATION,PART=_args.location,_args.part
 a=root/'local/assets/native'
 def build_initial(location='ARA1'):
  """initial.json for a course from its own savestates (tools/locations.py): riding-start (glide),
@@ -55,20 +56,25 @@ if LOCATION!='ARA1':
  elf=(root/'local/disc/SLUS_207.72').read_bytes();(web_dir(LOCATION)/'initial.json').write_text(json.dumps(build_initial(LOCATION)));print('Course initial state',LOCATION);sys.exit(0)
 source=root/'local/browser-ui';source.mkdir(exist_ok=True);out=root/'web/public/assets/UI';out.mkdir(parents=True,exist_ok=True)
 from disc_paths import ps2_iso;disc=Disc(ps2_iso())
-try:
- for name in ['DATA/UI/FE_1.SSH','DATA/UI/OV_1.SSH','DATA/UI/SU_1.SSH','DATA/FONTS/FEFONT.SFN','DATA/FONTS/HUDFONT.SFN','DATA/FONTS/MENU.SSH']:(source/Path(name).name).write_bytes(disc.file(name))
- elf=disc.file('SLUS_207.72')
-finally:disc.close()
-for name in ['FEFONT','HUDFONT']:
+if PART=='animations':disc.close();disc=None
+if disc:
+ try:
+  for name in ['DATA/UI/FE_1.SSH','DATA/UI/OV_1.SSH','DATA/UI/SU_1.SSH','DATA/FONTS/FEFONT.SFN','DATA/FONTS/HUDFONT.SFN','DATA/FONTS/MENU.SSH']:(source/Path(name).name).write_bytes(disc.file(name))
+  (source/'hud').mkdir(exist_ok=True);(source/'hud/OV.LUI').write_bytes(disc.file('DATA/UI/OV.LUI'))  # tools/export_boost_hud.py
+  elf=disc.file('SLUS_207.72')
+ finally:disc.close()
+else:elf=(root/'local/disc/SLUS_207.72').read_bytes()
+for name in ['FEFONT','HUDFONT'] if PART!='animations' else []:
  data=(source/(name+'.SFN')).read_bytes();offset=struct.unpack_from('<I',data,28)[0];tail=data[offset:];(source/(name+'.SSH')).write_bytes(b'SHPS'+struct.pack('<II',24+len(tail),1)+b'GIMXfont'+struct.pack('<I',24)+tail)
  glyphs={}
  for i in range(struct.unpack_from('<H',data,10)[0]):
   ch,w,h,x,y,advance,dx,dy,_=struct.unpack_from('<HBBHHBbBB',data,128+i*12);glyphs[chr(ch)]=dict(w=w,h=h,x=x,y=y,advance=advance,dx=dx,dy=dy)
  (out/(name+'-glyphs.json')).write_text(json.dumps(glyphs))
-subprocess.run([str(root/'local/dotnet/dotnet'),'run','--project',str(root/'tools/sam_ps2'),'--',str(root),'--export-browser-ui'],check=True)
+if PART!='animations':from export_ui_atlases import export as export_ui_atlases;export_ui_atlases(source,out)  # was the .NET tools/sam_ps2 --export-browser-ui; same pixels
+if PART=='ui':sys.exit(0)
 a=root/'local/assets/native';dest=root/'web/public/assets/ANIMATIONS';dest.mkdir(exist_ok=True)
 for file in ['library.json','samples.f32']:shutil.copy2(a/'ANIMATIONS'/file,dest/file)
-for file in ['animation-packets.json','animation-packets.bin']:shutil.copy2(a/'RIDER_ZOE'/file,dest/file)
+for file in ['animation-packets.json','animation-packets.bin','animation-samples.json']:shutil.copy2(a/'RIDER_ZOE'/file,dest/file)  # animation-samples.json: every original rider's clip table (web/wardrobe.js riderSamplesUrl)
 initial=build_initial('ARA1')
 (dest/'initial.json').write_text(json.dumps(initial))
 print('Original UI/fonts, 497 gameplay + 67 frontend clips, and authored scoring thresholds imported')

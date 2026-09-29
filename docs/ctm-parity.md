@@ -626,6 +626,15 @@ rider held by the cut's rider actor.
   the prompt / map with the rider still held.
 - `resetPhysics` releases first, so every placement does.
 - A resume with the rider still held places it at the station's session point 0 (`nisResume`: 123B48 -> 11D390).
+- **Hardening (field report, diag session t93ez0j6):** after No at Green's door the ride stayed frozen for 12 s until the MCOMM's
+  resume re-placed the rider (No at 86.9 s; MCOMM 99.1 .. 131.0 s; the next door cut 7 s after that). The exact failure did not
+  reproduce on the current tree in Chrome or WebKit.
+  - `pause(false)` now always completes the unpause (try/catch around the release).
+  - `nisWatch()` releases a door / booth hold still active in the plain ride for 30 frames (no cut, not paused, screen 'game') at
+    the station, as 123B48 -> 11D390 does. On the PS2 the hold exists only under its cut and the prompt / map.
+  - A hold starts only once a tick has posed the rider (`nisPosed`).
+  - Checked in WebKit with the placement forced to throw at the No: with one failure, the ride goes on from the session point; with
+    both attempts failing, the rider is released at the door and the prompt comes again. No freeze.
 - **The Transport's ride** (pv nisTick; before: the world paused and `free-ride.js transport` pumped the streamer by hand):
   - **PS2** (`local/ps2-capture/ctm-parity/transport/`: nav/p2/out-to-c/frprompt.p2s, "Transport to this area now?" Yes from Ruthless
     (DBC2) to Yellow Mid Station C; `tools/ctm_flow_capture.py` with the new `RIDER_TRACE=1`, the rider every tick through PINE):
@@ -844,6 +853,26 @@ until now only the Peak 2 Race / All Peak Race / Jam).
     - 1358 rail and 274 terrain probes answer as loaded after freeing and feeding ARA1 twice;
     - the instance slots do not grow;
     - freeing is refused while ARA1 is resident.
+  - **Page runs (CTM agent, 2026-09-28; pv peakRelease, still off):** `scratchpad ctm/mtn/mlong.mjs`, the autopilot on the route's race
+    paths from Peak 3's E station down E -> ERA5 -> C -> CRA3 -> D -> DRA4 -> A -> ARA1 -> B (21 min of riding). Then a Transport back to
+    E and E -> ERA5 again, with the heights under each location's path points compared to the first pass. Transport cycles E <-> C with
+    a forced GC (`qa/cycles.mjs`, `mtn/cyclecount.mjs`, `mtn/cycleprof.mjs`, `mtn/leaksnap.mjs`).
+    - **Collision:** wasm stays at 154 MB for the whole route, 184 at most after a Transport re-feeds a hub; before, 382 MB once every
+      location had been fed. Loaded collision drops to 3 locations mid-course.
+    - **Re-entry:** E, E_ERA5, ERA5 and ERA5_C answer the same heights as on the first pass (WebKit, probes at matched times: 0
+      lost, 0 differ; node free / re-feed of the four in any order: exact). No stall frame on the whole ride in Chrome or WebKit.
+    - **Two leaks found and fixed (web/free-ride.js, web/main.js):**
+      1. Read-ahead collision (planAhead's 'core' jobs for the rows the connectors lead to) fed without a draw package was never
+         freed, because the release followed the draw packages only. A way not taken kept its courses for the session; a Transport's
+         idle feed added ASS1, CHP2, EHP3 and EBA3 (wasm 154 -> 221). `releaseIdleCores` frees collision that nothing has wanted, read
+         ahead, drawn or prefetched for RELEASE_MS.
+      2. web/gpu-copies.js (pv gpuRelease) registers a restore per location group and forgets owners only in a device recovery;
+         nothing called `forgetGpuRestore`. So every released location, and every world a course change disposed, kept its whole
+         three.js tree alive: +25-30 MB of JS heap per E -> C -> E cycle after GC. free-ride.js now forgets on both release paths,
+         main.js `disposeRoots` forgets the disposed tree, and the heap is flat (E 170 / 192 / 194 / 190 / 195 MB over four cycles;
+         before, 187 -> 231 -> 249 -> 278).
+    - Released meshes and groups are collected (a tagged E group is dead after its release, via WeakRef).
+    - With pv peakRelease the tier split goes (`free-ride.js mountainFreeRide`: every tier rides the whole mountain).
 
 Read from the asm (SLUS_207.72, `ssx3-decomp/asm`; static, no capture yet). `WC` = cWorldCache `*(gp+0x16C8)`, `WV` = cWorldView
 `WC+0x10`, `MM` = the memory manager `*(WC+0xC)`, the resolver `WC+0x3E8` (vtable 0x495090; its +0xC = the world octree root

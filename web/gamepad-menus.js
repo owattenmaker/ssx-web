@@ -29,30 +29,34 @@ export function menuControls(pad) {
 // while a run is going (the pause, MCOMM, results, the lodge); only the ride itself leaves it to main.js.
 export function createPadMenus({ menu = () => true, running = () => false, send = () => {}, startAccepts = () => false } = {}) {
   const held = new Map();         // control -> { code, next }
+  const spent = new Set();        // pv startConsume: controls whose press a menu took, until released (main.js pause: taken('start'))
   let prev = new Set();
   function release(c) { const h = held.get(c); if (!h) return; held.delete(c); send('keyup', h.code); }
   return {
     held,
     step(pad, now) {
       const controls = menuControls(pad), inMenu = !!menu();
+      for (const c of [...spent]) if (!controls.has(c)) spent.delete(c);
       for (const c of [...held.keys()]) if (!controls.has(c) || !inMenu) release(c);
       if (inMenu) for (const c of controls) {
         if (prev.has(c) || held.has(c)) continue;
         if (c === 'start' && running() && !startAccepts()) continue;   // Start pauses / resumes a run (main.js frame)
         const code = MENU_KEYS[c]; if (!code) continue;
-        send('keydown', code); held.set(c, { code, next: DIRECTIONS.has(c) ? now + MENU_REPEAT.first : Infinity });
+        send('keydown', code); held.set(c, { code, next: DIRECTIONS.has(c) ? now + MENU_REPEAT.first : Infinity }); spent.add(c);
       }
       for (const [c, h] of held) if (now >= h.next) { send('keyup', h.code); send('keydown', h.code); h.next = now + MENU_REPEAT.next; }   // menus ignore key repeats: fresh presses
       prev = controls;
     },
     releaseAll() { for (const c of [...held.keys()]) release(c); },
+    // pv startConsume: this control's current press was a menu key (a card / prompt accept): the game must not also act on it
+    taken(c) { return spent.has(c); },
   };
 }
 
 // Browser: a frame loop of its own, so the menus answer the pad before the game data has loaded.
 export function installPadMenus({ screen = () => 'title', isRunning = () => false } = {}) {
   if (typeof window === 'undefined' || typeof requestAnimationFrame !== 'function') return null;
-  const send = (type, code) => { try { window.dispatchEvent(new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true })); } catch {} };
+  const send = (type, code) => { try { const e = new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true }); e.ssxPadMenu = true; window.dispatchEvent(e); } catch {} };   // ssxPadMenu: a menu key made from the pad (main.js: never the keyboard's pause)
   const menus = createPadMenus({ menu: () => screen() !== 'game', running: isRunning, send, startAccepts: () => pv('startRules') && startMenu(screen()) });
   const loop = (t) => { try { menus.step(pollPads(), t); } catch (e) { console.warn('pad menus', e); } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);

@@ -27,9 +27,18 @@ RIDER_LOCAL static bool ready=false,gap=false;RIDER_LOCAL static unsigned update
 RIDER_LOCAL static OriginalIrradianceCoefficients irradiance{},brightBank{},darkBank{},alternateBank{};
 RIDER_LOCAL static bool irradianceReady=false;RIDER_LOCAL static unsigned irradianceUpdates=0;
 RIDER_LOCAL static float irradianceBrightness=0,irradianceGain=0,irradianceIncoming=0;
+// The rider's environment selector (block 0x4FA370 + i x 0xF0, +0x24): 2ED490 (1218D0, after the stage triggers 121818 of the
+// same tick) eases it x gp-0x3974 (0.9) and adds gp-0x3970 (0.1) while rider+0x3FC (stage builtin 74, DBC2's tunnel volumes) is
+// set; above 0.1 the rider irradiance takes the alternate bank. PS2 tunnel/dbc2-tunnel-long: 0.1 at 9831, 0.19, 0.271 ...
+RIDER_LOCAL static float environmentSelector=0;
+void browser_environment_selector_step(bool tunnel){
+ OriginalRounding rounding;environmentSelector=terrain_original::mul(environmentSelector,std::bit_cast<float>(0x3f666666u));
+ if(tunnel)environmentSelector=terrain_original::add(environmentSelector,std::bit_cast<float>(0x3dcccccdu));
+}
+extern "C" EMSCRIPTEN_KEEPALIVE float environment_selector(){return environmentSelector;} // QA
 static void setup_lighting_painter(const json& irradiance); // below: spatial Lighting painter (type 11)
 extern "C" EMSCRIPTEN_KEEPALIVE void init_environment(const char* metadata,const uint8_t* data,int length){
- const auto j=json::parse(metadata);if(j.at("version")!=1)throw std::runtime_error("Environment package version");textures.reset();patches.clear();
+ const auto j=json::parse(metadata);if(j.at("version")!=1)throw std::runtime_error("Environment package version");textures.reset();patches.clear();environmentSelector=0;
  environmentStreamed=j.value("streamed",false);streamedTextures.clear();
  globals.multiplier=j.at("multiplier").get<EnvironmentColour>();globals.airAmbient=j.at("air_ambient").get<EnvironmentColour>();globals.airRatio=j.at("air_ratio").get<EnvironmentColour>();
  state.ambient=j.at("initial_ambient").get<EnvironmentColour>();state.ratio=j.at("initial_ratio").get<EnvironmentColour>();globals.forceNext=j.at("force_next");
@@ -55,9 +64,9 @@ EnvironmentColour browser_environment_colour(int mode,EnvironmentColour fallback
    return originalEnvironmentTextureSample(textures->at(id),u,v);});gap=false;}catch(const OriginalEnvironmentUnavailable&){gap=true;}
  if(irradianceReady&&!gap){
   irradianceBrightness=originalLightingBrightness(state.ratio);
-  // Current normal-rider path: captured rider+3FC is zero. Alternate-state
-  // ownership, local lights and rim composition remain separate from this bank.
-  irradiance=originalEnvironmentIrradiance(irradiance,brightBank,darkBank,alternateBank,0,irradianceBrightness,irradianceGain,irradianceIncoming);
+  // The selector (above: stage builtin 74's tunnels) picks the alternate bank above 0.1. Local lights and rim composition remain
+  // separate from this bank.
+  irradiance=originalEnvironmentIrradiance(irradiance,brightBank,darkBank,alternateBank,environmentSelector,irradianceBrightness,irradianceGain,irradianceIncoming);
   ++irradianceUpdates;
  }
  ++updates;return state.ambient;

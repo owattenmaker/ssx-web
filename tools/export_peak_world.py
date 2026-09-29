@@ -163,13 +163,69 @@ def event_moving(code, own):
 
 def event_lit(code, own):
     """Lit instances of an event course (tools/export_lit_instances.py -> local/event-activation/<LOC>/lit-instances.json, web/prepare.py):
-    resource -> {resource, bank, rows, relight}, each lit instance on its own batches (web/world-material.js litWorldMaterial, pv
-    litInstances). The rows are the event export's (its object bank and local lights; the streamed world's bank: the visual agent's item)."""
+    resource -> {resource, bank, rows, relight, banks, regions}, each lit instance on its own batches (web/world-material.js
+    litWorldMaterial, pv litInstances). `rows` are the event export's (the object bank and local lights at the instance position).
+    In the streamed world the light cache 2F5400 takes the bank when it creates the instance's entry (its first draw, or again after
+    an LRU eviction: 32 entries, 2F59D0): the cache's own Lighting wrapper (ctor 2F5180: 2C0A58 on the world painter set) samples
+    the section of the painter region gp+0x770 at the instance's x/y: Lighting reference 3, else 0, else the course default
+    gp+0x12D4 = <letter>PBR1 (22E180 at each activate request, "ABCDEADEACEBCEADEABCDE"[course]); outside that section's tree or
+    in a region without one, the default (PS2: bhp1-arrival, region B_BHP1, 23 x BPBR1; ass1-freeride, A_ASS1, 15 x APBR1; the peak
+    races, the course records, the object banks; 69 / 69 default-bank entries bit-exact as xPBR1 + these local lights). So each
+    instance also carries `banks` {name: rows} (every bank a region or a default can give it, with the same local lights) and
+    `regions` {painter track: bank name} for the records whose section gives one; web/lit-cache.js picks at the entry's creation."""
     path = activation_dir(code) / 'lit-instances.json'
     if not path.exists(): return None
+    lit = [x for x in json.loads(path.read_text())['instances'] if x['resource'] in own]
+    if not lit: return None
     out = {x['resource']: dict(resource=x['resource'], bank=x['bank'], rows=[r[:3] for r in x['rows']], **({'relight': True} if x['relight'] else {}))
-           for x in json.loads(path.read_text())['instances'] if x['resource'] in own}
-    return out or None
+           for x in lit}
+    for r, (banks, regions) in streamed_lit_banks(code, lit).items():
+        out[r]['banks'] = banks; out[r]['regions'] = regions
+    return out
+
+
+DEFAULT_LETTER = 'ABCDEADEACEBCEADEABCDE'   # 22E180 (jump table 0x47B4E0): gp+0x12D4 = <letter>PBR1 by course
+
+
+def streamed_lit_banks(code, lit):
+    """For each lit instance: {bank name: rows} and {painter track: bank name} (event_lit). The records are the peak's location
+    records (peak.json) and their Lighting sections (lighting.json, painter_packages); the defaults are the letters of the peak's
+    courses (peak.json residency). Rows: the bank plus the event's local lights at the instance position (build/lit_instance_rows)."""
+    from export_lit_instances import tool   # noqa: E402 (tools/export_lit_instances.py builds the native tool)
+    manifest = json.loads((WEB / 'peak.json').read_text())
+    rows_of = {k: v['rows'] for k, v in json.loads((ROOT / 'local/assets/native/IRRADIANCE/irradiance.json').read_text())['records'].items()}
+    lb = WEB / 'lighting-banks.json'
+    if lb.exists(): rows_of.update(json.loads(lb.read_text())['banks'])
+    res = manifest['residency']
+    courses = [int(c) for c in res] if isinstance(res, dict) else [int(x['course']) for x in res]
+    defaults = sorted({DEFAULT_LETTER[c] + 'PBR1' for c in courses})
+    assets = ROOT / 'web/public/assets' / code
+    catalog, tree = assets / 'local-lights.json', assets / 'light-tree.json'
+    request = Path(OUT or WEB) / f'.lit-{code}.json'; request.parent.mkdir(parents=True, exist_ok=True)
+    def run(painter, queries, banks):
+        request.write_text(json.dumps(dict(painter=painter, banks=banks, queries=queries)))
+        try:
+            r = subprocess.run([str(tool()), str(catalog), str(tree), str(request)], capture_output=True, text=True)
+            if r.returncode: raise RuntimeError(f'{code}: lit_instance_rows: {r.stderr.strip()}')
+            return {x['id']: x for x in json.loads(r.stdout)}
+        finally: request.unlink(missing_ok=True)
+    pos = {x['resource']: x['position'] for x in lit}
+    regions = {x['resource']: {} for x in lit}
+    NONE = '__default__'
+    for loc in manifest['locations']:
+        section = WEB / loc['code'] / 'lighting.json'
+        painter = json.loads(section.read_text()).get('painter') if section.exists() else None
+        if not painter: continue
+        got = run(dict(tree=painter['tree'], entries=painter['entries'], default_reference=NONE), [dict(id=r, position=p) for r, p in pos.items()],
+                  {**{n: rows_of[n] for e in painter['entries'] for n in e['references'] if n in rows_of}, NONE: [[0, 0, 0, 0]] * 10})
+        for r, x in got.items():
+            if x['bank'] != NONE: regions[r][str(loc['track'])] = x['bank']
+    names = sorted({n for v in regions.values() for n in v.values()} | set(defaults) | {x['bank'] for x in lit})
+    missing = [n for n in names if n not in rows_of]
+    if missing: raise ValueError(f'{code}: no irradiance bank {missing}')
+    q = [dict(id=f'{r}/{n}', position=p, bank=rows_of[n]) for r, p in pos.items() for n in names]
+    got = run(None, q, {})
+    return {r: ({n: [row[:3] for row in got[f'{r}/{n}']['rows']] for n in names}, regions[r]) for r in pos}
 
 
 def event_attached_doc(code):
@@ -316,7 +372,8 @@ def web_package(code, batches_only=False):
     if audit is None:
         print(f'WARNING {code}: no free-ride instance audit; every imported instance is drawn')
     else:
-        (dest / 'instance-flags.json').write_text(json.dumps(dict(version=1, location=code, savestate=audit['savestate'], runtime=audit['runtime']), separators=(',', ':')))
+        # the audit's runtime flags: evidence only (nothing loads it), so beside the native package, not in the served assets
+        (NATIVE / code / 'instance-flags.json').write_text(json.dumps(dict(version=1, location=code, savestate=audit['savestate'], runtime=audit['runtime']), separators=(',', ':')))
     # Stage world of the streamed world (setpiece_packages, web/peak-set-pieces.js): the same batch splits as an event package.
     sp = setpiece_batches(load_setpieces()); own = {(s['rid'] << 8) | s['track'] for s in d['collision_sources'] if s['kind'] == 'instance'}
     mine = lambda values: {r for r in values if r in own}

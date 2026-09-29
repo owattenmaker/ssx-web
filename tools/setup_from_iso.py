@@ -22,6 +22,7 @@ Selection
 Maintainers
   --trace --states-from LIVE   run with the real savestates of another tree (linked read-only; writes into it refused)
                                and record the footprint for tools/statepack.py
+  --make-pack FILE             after the run, build the state pack from its footprint (tools/statepack.py)
   --verify-against DIR         compare web/public/assets and web/generated with another tree (tools/verify_assets.py)
 
 SPDX-License-Identifier: GPL-3.0
@@ -44,7 +45,7 @@ STAMPS = ROOT / 'local/pipeline/stamps'
 LOGS = ROOT / 'local/pipeline/logs'
 STATE_ROOTS = ('local/reference', 'local/ps2-capture', 'build/snow-emission-oracle')
 # Working folders the tools write reports and intermediates into without creating them.
-WORK_DIRS = ('local/assets/native', 'local/event-activation', 'local/browser-validation', 'local/rider-lighting', 'local/browser-ui',
+WORK_DIRS = ('web/generated', 'engine/generated', 'web/public/assets', 'local/assets/native', 'local/event-activation', 'local/browser-validation', 'local/rider-lighting', 'local/browser-ui',
              'local/browser-pickups', 'local/native-qa', 'local/export', 'local/career', 'local/visual')
 
 
@@ -55,6 +56,15 @@ class Step:
 
     def command(self, ctx):
         return [ctx.fmt(str(c)) for c in self.cmd]
+
+    def source_fingerprint(self):
+        """The step's command template and tool sources: the same on every machine (compared with the state pack's)."""
+        h = hashlib.sha256(json.dumps([str(c) for c in self.cmd]).encode())
+        for f in list(self.sources) + [c for c in self.cmd if isinstance(c, str) and c.endswith(('.py', '.sh', '.mjs'))]:
+            p = ROOT / f
+            if p.is_file():
+                h.update(p.read_bytes())
+        return h.hexdigest()
 
     def fingerprint(self, ctx):
         h = hashlib.sha256(json.dumps(self.command(ctx)).encode())
@@ -70,12 +80,24 @@ class Context:
     def __init__(self, args):
         self.args = args
         self.py = sys.executable
-        self.iso = str(Path(args.iso).resolve()) if args.iso else None
-        self.gamecube = str(Path(args.gamecube).resolve()) if args.gamecube else None
-        self.pack = str(Path(args.state_pack).resolve()) if args.state_pack else None
+        # relative paths are the caller's: `npm run setup -- --iso ...` runs in web/, npm keeps the caller's folder in INIT_CWD
+        base = Path(os.environ.get('INIT_CWD') or os.getcwd())
+        full = lambda p: str((base / Path(p).expanduser()).resolve()) if p else None
+        self.iso, self.gamecube, self.pack = full(args.iso), full(args.gamecube), full(args.state_pack)
+        if args.emsdk:
+            args.emsdk = full(args.emsdk)
+        if args.states_from:
+            args.states_from = full(args.states_from)
 
     def fmt(self, s):
-        return s.format(py=self.py, iso=self.iso or '', gamecube=self.gamecube or '', pack=self.pack or '', root=str(ROOT))
+        if '{emxx}' in s:
+            from setup_toolchain import find_emxx
+            emxx = find_emxx([self.args.emsdk])
+            if not emxx:
+                raise SystemExit('setup_from_iso: no Emscripten 6.0.9 (the core-emsdk step installs it; or pass --emsdk DIR)')
+            s = s.replace('{emxx}', str(emxx))
+        return s.format(py=self.py, iso=self.iso or '', gamecube=self.gamecube or '', pack=self.pack or '', root=str(ROOT),
+                        emsdk=self.args.emsdk or '')
 
     def have(self, need):
         a = self.args
@@ -132,7 +154,8 @@ def run_step(ctx, step):
         print(f'  FAILED ({r.returncode}) after {took:.0f} s; log {log.relative_to(ROOT)}', flush=True)
         return False
     STAMPS.mkdir(parents=True, exist_ok=True)
-    (STAMPS / f'{step.name}.json').write_text(json.dumps(dict(fingerprint=step.fingerprint(ctx), seconds=round(took, 1),
+    (STAMPS / f'{step.name}.json').write_text(json.dumps(dict(fingerprint=step.fingerprint(ctx), sources=step.source_fingerprint(),
+                                                                 seconds=round(took, 1),
                                                                  finished=time.strftime('%Y-%m-%d %H:%M:%S'))))
     print(f'  ok ({took:.0f} s)', flush=True)
     return True
@@ -186,6 +209,8 @@ def preflight(ctx):
         problems.append('--trace needs --states-from (the tree with the real savestates)')
     if ctx.args.trace and ctx.pack:
         problems.append('--trace and --state-pack exclude each other')
+    if ctx.args.make_pack and not ctx.args.trace:
+        problems.append('--make-pack needs --trace')
     if problems:
         raise SystemExit('setup_from_iso: ' + '\n  '.join(['cannot start:'] + problems))
 
@@ -197,7 +222,7 @@ def main():
     ap.add_argument('--list', action='store_true'); ap.add_argument('--only'); ap.add_argument('--skip')
     ap.add_argument('--from', dest='start'); ap.add_argument('--until'); ap.add_argument('--force', action='store_true')
     ap.add_argument('--keep-going', action='store_true'); ap.add_argument('--trace', action='store_true')
-    ap.add_argument('--states-from'); ap.add_argument('--verify-against')
+    ap.add_argument('--states-from'); ap.add_argument('--verify-against'); ap.add_argument('--emsdk'); ap.add_argument('--make-pack')
     args = ap.parse_args()
     ctx = Context(args)
     all_steps = steps()
@@ -226,6 +251,11 @@ def main():
         (ROOT / d).mkdir(parents=True, exist_ok=True)
     if args.trace:
         link_states(args.states_from)
+    pack_steps = None
+    if ctx.pack:
+        import zipfile
+        with zipfile.ZipFile(ctx.pack) as z:
+            pack_steps = json.loads(z.read('manifest.json')).get('steps', {})
     skipped_needs, failed = [], []
     t0 = time.time()
     for s in selected:
@@ -235,6 +265,8 @@ def main():
             continue
         if not args.force and done(ctx, s):
             continue
+        if pack_steps is not None and s.name in pack_steps and pack_steps[s.name] != s.source_fingerprint():
+            print(f'  note: {s.name} changed since the state pack was made; if it fails, it may need a newer pack')
         if not run_step(ctx, s):
             failed.append(s.name)
             if not args.keep_going:
@@ -246,6 +278,10 @@ def main():
     if failed:
         print('FAILED: ' + ', '.join(failed))
         sys.exit(1)
+    if args.make_pack:
+        # maintainers: the footprint of this traced run -> the state pack release file
+        subprocess.run([sys.executable, str(ROOT / 'tools/statepack.py'), 'collect'], check=True)
+        subprocess.run([sys.executable, str(ROOT / 'tools/statepack.py'), 'build', '--out', str(Path(args.make_pack).resolve())], check=True)
     if args.verify_against:
         subprocess.run([sys.executable, str(ROOT / 'tools/verify_assets.py'), str(ROOT), args.verify_against], check=False)
 

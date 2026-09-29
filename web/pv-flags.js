@@ -395,6 +395,9 @@
 // peakAttached (CTM agent, docs/visual-parity.md 41.6): the streamed worlds' ParentModifier children (<peak>/SETPIECES/attached.json,
 // tools/export_peak_world.py attached_package; the children's batches split on node 0) drawn with their LiveComp parent's node matrix
 // (0x357108, web/attached-setpieces.js): BRA2 / BHP1 / ERA5 searchlight glows on their turning bases. Off: they stayed put.
+// hangWatch (CTM agent, web/diagnostics.js): a tiny worker gets the screen / course / last marks every 250 ms and, when the pings stop for
+// over 8 s while the page is visible, posts a 'hang' diag event itself (again every 30 s, 'hang-end' when they resume). A dead WebContent
+// kills the worker too, so a hang reports and a crash does not. Silent; field telemetry only (diag on).
 // relAging (CTM agent, docs/ctm-parity.md "Relationships"): rider relationships age (0x155E58) at an event's load / restart only outside Conquer
 // the Mountain (WS1, 0x234894) and at every race's end (0x233F08, any game type), not at every start. web/ai-race.js start / results.
 // rewardRng (CTM agent, docs/ctm-parity.md "Awards, the PS2 way"): the reward / gear picks (0x157080, 0x156C70, 0x156EE0) draw from the
@@ -413,6 +416,12 @@
 // the Xbox HD rider texture set (WARDROBE/<ID>/textures-xbox.tex / gear-xbox.tex: the Xbox's own DXT blocks, 2x the PS2 texels)
 // is the default on desktops (PS2 on iOS / Android / the low tier) and Options > Display & Touch gets its 'Texture set' row.
 // Off: PS2 textures everywhere unless ?riders=xbox. Only the texels change (UVs, materials, alpha test, blending as before).
+// sharedSamples (web/wardrobe.js riderSamplesUrl, main.js asset / prefetchRiderPackage): the original riders' gameplay clip table is one
+// file, /assets/ANIMATIONS/animation-samples.json, instead of 30 identical per-package copies (1.4 MB each; Sam's packages keep their own).
+// Off: each package's own animation-samples.json (needs those files).
+// zoeBoot (web/main.js bootRider, web/ui.js; docs/iso-pipeline.md "Sam"): the model every course load starts with, before the
+// chosen rider replaces it (hidden by riderPoseGate), and the Select Character start index, is Zoe (the PS2's first roster entry,
+// always on the disc) instead of Sam (the port's own rider, whose files a public build does not have). Off: Sam, as before.
 // trophyLui (web/trophy-room.js, web/lodge-ui.js; docs/visual-parity.md 36): the lodge's Rider Details > Trophies is the PS2's three FE.LUI
 // screens (125mountainroom: Peak 1..3 / Peak Pass over the mountain with a marker per event and the pass popup; 126peakroom: the peak's
 // goals, the focused goal's events with medal icons and checks, the goal trophy thumbnails; 127trophyroom: a complete goal's trophy and
@@ -421,7 +430,11 @@
 // the PS2 rider draw state per material (37A610 -> 363C20 -> 3626D8): 'alph' / 'ea*' materials blended (GS ALPHA 0x44) with Z written
 // only above alpha 92 of 128 (ATST GREATER 92, AFAIL FB_ONLY), every other material opaque with its alpha unused (ATST ALWAYS), instead
 // of one alphaTest 0.35 for every batch.
-// frame8 (web/frame-space.js frameBufferType, main.js renderer outputBufferType; docs/visual-parity.md 38a): with the encoded frame, the
+// sortedClass (web/main.js asset; docs/visual-parity.md 44): the render queue key 364240 puts a state's sort mode (word1 bits 0..1) under
+// its priority: 0 (opaque) 1023, 1 (static-model class 1, ALPHA 0x44 AREF 92) 1022, 2 (classes 2 / 3, the depth-sorted translucents) its
+// depth key, so class-1 models draw before every sorted one. three sorted them together by distance: a large glass pane (class 2)
+// drawn first wrote depth and hid the stadium crowd (class 1) behind it at Metro. The class 2 / 3 world batches draw after class 1.
+// frame8 (web/frame-space.js frameBufferType, main.js renderer outputBufferType; docs/visual-parity.md 43): with the encoded frame, the
 // world / sky pass targets are 8-bit unorm (4 bytes a pixel instead of half-float's 8), each draw rounded to bytes as the GS frame buffer
 // (PSMCT32) does. Off: half-float targets.
 // cutsceneBytes (web/cutscenes.js; docs/visual-parity.md 43): the cutscene sets, skies and the PDA prop combine their texels and vertex
@@ -452,6 +465,21 @@
 // avalanches the core plays back (builtin 94): the AvaSpline pieces move with their tumblers (core moving_instances(), batches split by
 // prepare.py), a piece hidden at the start shows while its tumbler drives it, a released one (entity vt+0x08(3)) goes; the rumble loop
 // 0x29DEF0 (bank slot 8 sound 2, bus 5, volume 0x29E438 from the human's nearest tumbler, 2 s fade out). Off: the pieces stay put.
+// avalancheTrails (web/avalanche-trails.js; docs/avalanche.md "Trails"): the avalanche emitters' dust trails (0x2D9130 -> 0x2D8EA8 ->
+// 0x371688 colour emitters, particle entry 0xA00, fog0, GS 0x44, priority 7) from the core's avalanche_trails() rings.
+// beamEncoded (web/rival-beam.js; docs/visual-parity.md 41.9): the rival locator beam (0x2E3AF8, priority 7) drawn in the encoded pass
+// after the fog composite in GS bytes (MODULATE, ALPHA 0x48), not in the world pass where the fog composite fogged it.
+// sparkleWorld (web/terrain-sparkle.js; docs/visual-parity.md 41.9): the terrain sparkle (0x38D968, priority 4) drawn in the world pass,
+// before the fog composite, instead of the encoded pass after it.
+// effectOrder (web/ps2-draw-order.js; docs/visual-parity.md 41.9): every post-fog effect (priorities 6..8: fog puffs, set-piece
+// particles, wake, boost strips, aura, streamers, impact sprites, rival beam and icon, snow, snowfall, halos, camera splash) takes its
+// renderOrder from the PS2 render-list key 0x364240 (priority, word1 sort mode, word0 bits 6..9 rank, texture handles; stable
+// ascending radix sort 0x364050), with the FX texture handles of PS2 RAM (event boot or Conquer the Mountain). Off: the fixed orders
+// 650..716 (fog puffs after the wake and boost, halos before the snow, snowfall after the set-piece particles).
+// snowBuckets (web/snow-renderer.js; docs/visual-parity.md 41.8): the rider snow emitters drawn in the PS2's render-list order: the flush
+// radix-sorts its merged buckets by ~(priority, modes, texture handle) (0x362DE8 / 0x364240 / 0x364050), i.e. by descending handle =
+// ascending FX texture id: the snow cloud (5) and impacts (6) before the chunky sprays (13..21). Off: emitter index order (the dark
+// chunks drawn under the cloud, missing in the forest).
 // lodgeSave (web/save-game.js, web/lodge-ui.js, web/career-ui.js; docs/visual-parity.md 37): the lodge's Save Game is the PS2's Save
 // game screen (cFEStateProfileLoad mode 3 on FE.LUI 93profile_load: the card's row, the name keyboard, the memory-card popups Checking /
 // overwrite? / Saving / Save complete, Continue back to the lodge). Off: the career is written at once and 'Save complete.' shows.
@@ -478,7 +506,25 @@
 // instance (runtime flag 0x4000: crashbags, trains, trams, cars, blimps, planes, avalanche and rockslide pieces, the billboards) draws its
 // texture lit per vertex from its light-cache rows (2F5400: the object bank at its position plus up to 4 local lights; 199 instances
 // bit-exact against the PS2 caches, tools/export_lit_instances.py), one shared program. Needs the re-split world packages. Off: baked colours.
-export const PV_DEFAULTS = Object.freeze({ peakRelease: false, fsCelebrate: true, sectionClock: true, rivalRelations: true, bigChallengeAudio: true, help: true, cheat: true, skyClear: true, boostLight: true, aiFx: true, worldWrap: true, plane: true, heli: true, flyover: false, rivalIcon: true, planeFx: true, heliSky: true, regionTick: true, planeCam: true, sparkle: true, nisProjection: true, bcHeli: true, heliLight: true, heliHover: true, acrossLoop: true, raceHud: true, hudText: true, luiResults: true, replay: true, finishBanner: true, recoverMeter: true, hudStandings: true, luiLights: true, cashGap: true, streamers: true, resultsMenu: true, attract: true, bootMovies: true, transportMap: true, fsStandings: true, mcommIcons: true, byteBlend: false, careerRider: true, lodgeDetails: true, playerName: true, riderMusic: true, lazyCourse: true, uberLayout: true, lodgeCheats: true, additiveNoZ: true, lodgeRewards: true, stationFences: true, freshRider: true, finishFences: true, ctmWorldAudio: true, streamGate: true, streamAhead: true, streamWarm: true, sliceLoad: true, eventSlices: true, feCompileSpread: true, bootChain: true, lodgeWorldLoad: true, riderPrefetch: true, sharedParse: true, boothTeleport: true, rivalCard: true, sprayReset: true, rivalCardAi: true, luiWrap: true, dropCamera: true, staticWorld: true, sharedWorldMaterials: true, staticRefresh: true, gpuRestore: true, gpuRelease: true, refreshCap: false, setPieceSkip: true, skipEmpty: true, staticRefreshWide: true, warmSpread: true, softSprites: false, softGlyphs: true, sharedIndex: true, glslKeys: true, warmPost: true, feMorphTiers: true, refKeys: true, liveRest: true, oneMatrixPass: true, dropStreamer: true, musicStream: true, dropPose: true, liveCompObject: true, readyLight: true, rideWarm: true, switchIcon: true, painterWorldLoad: true, bindPoseProbe: true, shadowAtlasInit: true, hudHints: true, singlePause: true, menuRiders: true, audioDeclick: true, audioInterrupt: true, musicWorkerDecode: true, sfxStartAfterDecode: true, musicLookahead: true, sfxWarmFirst: false, musicPrefetchNext: true, heatSong: true, ctmRestartAudio: true, arrivalFade: true, genericFogOff: true, pdaOptions: true, pauseRestart: true, loopFadeOnce: true, lodgeLui: true, stallCap: true, eventAnchorRng: true, stallKeys: true, buyAttribs: true, startRules: true, sessionMap: true, finishLui: true, stationArrival: true, sessionFade: true, riderPoseGate: true , bcSpeed: true, bcBanner: true, awardCascade: true, freshEvent: true, careerReload: true, transportLists: true, stationFlow: true, ctmSmallFixes: true, crossWorld: true, mountainAudio: true, bankEvict: true, mountainRide: true, unlistedPickup: true, rewardRng: true, crossingArrival: true, newGameReset: true, boothDj: true, ws13Rival: true, doorNoPlace: true, relAging: true, nisTick: true, gameTickKeep: true, peakAttached: false, xboxRiders: true, trophyLui: true, riderDrawState: true, encodedBlend: true, envMap: false, cutsceneBytes: false, frame8: false, cables: true, fogPuffs: true, terrainGlint: true, avalanche: true, lodgeSave: true, fePopup: true, litLiveComp: true, lodgeFlash: true, stateCursor: true, introLead: true, litInstances: true});
+// equipLoading (web/wardrobe.js EquipGearScreen, preloadEquipGear; web/lodge-ui.js preloadGear; docs/visual-parity.md 42): the lodge's
+// Equip Gear switches at the flash's full white like every lodge state, and the rider loads behind "Loading..." (PS2 tout eqg-k*: full
+// white at +12, Equip Gear under the fall with "Loading...", the list and no rider from +14, the rider and the help line at +36; 0x199938:
+// the help waits for the rider's gear data 19E238 -> +0xA60, "Loading..." for the preview's +0xCC8). Before: full white held until the
+// outfit package was built.
+// titleStart (web/game-audio.js init, web/ui.js leaveTitle, web/audio-menu.js watchSounds; docs/audio-menus.md "Title Press START"): the
+// title's Start plays what the PS2 plays, on the press that also unlocks the browser's audio. PS2 (local/ps2-capture/menus/title-start,
+// call log on 294F78 / 2906B8): one sample after the press, cFEStateTitle's notify 0x1946A8 plays FE event 15 (0x1946E4: snd 7, the
+// whoosh) and the menu's UINext accept FE event 0 (0x1A2F28: snd 3), both SSX3Menu; the snowflake burst shows from 5 after the press.
+// The port played only event 0, and nothing on the first press: SSX3Menu was fetched on the audio unlock, i.e. by that same press.
+// Now the bank loads (and decodes) before the title, and ui.js leaveTitle plays both events.
+// startConsume (web/gamepad-menus.js taken, web/main.js pad / keyboard pause paths; docs/visual-parity.md section 31): a press a menu used
+// is spent. The PS2's pause (0x230A34) needs a new Start press (action 0x3C, input.map edge) with no overlay up and no transition
+// running (0x20CBE8 / 0x20CBA0), so the Start that accepts a card or prompt can never also pause: when the overlay has gone the
+// button is held, not newly pressed. The port read the pad in two loops (the menus' and the game frame's); when the game frame saw
+// the press only after the menu had switched to the ride, the one press did both (Owen, Safari + Xbox pad: BRA2's heat card ->
+// game -> ctm-pause at one instant). Now the menus' press stays spent until the button is released, and the menus' own synthetic
+// keys never pause through the keyboard path.
+export const PV_DEFAULTS = Object.freeze({ avalancheTrails: true, beamEncoded: true, sparkleWorld: true, effectOrder: true, peakRelease: false, fsCelebrate: true, sectionClock: true, rivalRelations: true, bigChallengeAudio: true, help: true, cheat: true, skyClear: true, boostLight: true, aiFx: true, worldWrap: true, plane: true, heli: true, flyover: false, rivalIcon: true, planeFx: true, heliSky: true, regionTick: true, planeCam: true, sparkle: true, nisProjection: true, bcHeli: true, heliLight: true, heliHover: true, acrossLoop: true, raceHud: true, hudText: true, luiResults: true, replay: true, finishBanner: true, recoverMeter: true, hudStandings: true, luiLights: true, cashGap: true, streamers: true, resultsMenu: true, attract: true, bootMovies: true, transportMap: true, fsStandings: true, mcommIcons: true, byteBlend: false, careerRider: true, lodgeDetails: true, playerName: true, riderMusic: true, lazyCourse: true, uberLayout: true, lodgeCheats: true, additiveNoZ: true, lodgeRewards: true, stationFences: true, freshRider: true, finishFences: true, ctmWorldAudio: true, streamGate: true, streamAhead: true, streamWarm: true, sliceLoad: true, eventSlices: true, feCompileSpread: true, bootChain: true, lodgeWorldLoad: true, riderPrefetch: true, sharedParse: true, boothTeleport: true, rivalCard: true, sprayReset: true, rivalCardAi: true, luiWrap: true, dropCamera: true, staticWorld: true, sharedWorldMaterials: true, staticRefresh: true, gpuRestore: true, gpuRelease: true, refreshCap: false, setPieceSkip: true, skipEmpty: true, staticRefreshWide: true, warmSpread: true, softSprites: false, softGlyphs: true, sharedIndex: true, glslKeys: true, warmPost: true, feMorphTiers: true, refKeys: true, liveRest: true, oneMatrixPass: true, dropStreamer: true, musicStream: true, dropPose: true, liveCompObject: true, readyLight: true, rideWarm: true, switchIcon: true, painterWorldLoad: true, bindPoseProbe: true, shadowAtlasInit: true, hudHints: true, singlePause: true, menuRiders: true, audioDeclick: true, audioInterrupt: true, musicWorkerDecode: true, sfxStartAfterDecode: true, musicLookahead: true, sfxWarmFirst: false, musicPrefetchNext: true, heatSong: true, ctmRestartAudio: true, arrivalFade: true, genericFogOff: true, pdaOptions: true, pauseRestart: true, loopFadeOnce: true, lodgeLui: true, stallCap: true, eventAnchorRng: true, stallKeys: true, buyAttribs: true, startRules: true, sessionMap: true, finishLui: true, stationArrival: true, sessionFade: true, riderPoseGate: true , bcSpeed: true, bcBanner: true, awardCascade: true, freshEvent: true, careerReload: true, transportLists: true, stationFlow: true, ctmSmallFixes: true, crossWorld: true, mountainAudio: true, bankEvict: true, mountainRide: false, unlistedPickup: true, rewardRng: true, crossingArrival: true, newGameReset: true, boothDj: true, ws13Rival: true, doorNoPlace: true, relAging: true, nisTick: true, gameTickKeep: true, peakAttached: false, hangWatch: true, xboxRiders: true, zoeBoot: true, sharedSamples: true, trophyLui: true, riderDrawState: true, encodedBlend: true, envMap: true, cutsceneBytes: true, frame8: true, sortedClass: true, cables: true, fogPuffs: true, terrainGlint: true, avalanche: true, snowBuckets: true, lodgeSave: true, fePopup: true, litLiveComp: true, lodgeFlash: true, stateCursor: true, introLead: true, litInstances: true, equipLoading: true, titleStart: true, startConsume: true});
 const overrides = new Map();
 function fromQuery() {
   const q = new URLSearchParams(globalThis.location?.search ?? '').get('pv');

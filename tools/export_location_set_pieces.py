@@ -171,7 +171,7 @@ def export_location(code):
         splines.append(dict(name=names[res], resource=res, authored_flags=u(inst + 8), entity_class='LiveComp' if u(entity + 0xC) == 0x490B10 else 'Object',
                             path=u(m + 0xD8), cursor=(seg - head) // 0x90, bytes=words, source=str(ready_path.relative_to(ROOT))))
     # triggered spline pieces (Snow Jam layout)
-    pieces_rows, piece_list = [], []
+    pieces_rows, piece_list, drawn_pieces = [], [], []
     spath = activation_dir(code) / 'spline-setpieces.json'
     if spath.exists():
         for piece in json.loads(spath.read_text())['pieces']:
@@ -190,6 +190,7 @@ def export_location(code):
             owner = next(i for i in loc.world['instances'] if i['name'] == trig['instance'])
             m = [f32bits(v) for v in inst['matrix']]
             piece_list.append(piece['instance'])
+            if piece['drawn_while_on_path']: drawn_pieces.append(piece['resource'])
             arr = lambda xs: '{' + ','.join('0x%08xu' % x for x in xs) + '}'
             pieces_rows.append('{%du,%du,%du,%du,%du,%du,{%du,%du,%d,%d,0x%08xu,0x%08xu,0x%08xu,0x%08xu,%d,0x%08xu,0x%08xu},%s,%s,%s}' % (
                 # guard 2: a random-gated trigger program (Crow's Nest osprey) launches it from the core VM's builtin19
@@ -246,6 +247,9 @@ def export_location(code):
     (ROOT / f'web/generated/set_piece_seed_{code}.hpp').write_text('\n'.join(h) + '\n')
     out = dict(location=code, ready=str(ready_path.relative_to(ROOT)), ready_ee_sha256=hashlib.sha256(ready).hexdigest(),
                world_package_sha256=loc.audit['world_package_sha256'], multisplines=multis, spline_modifiers=splines, spline_pieces=piece_list,
+               # web/prepare.py: the pieces drawn while on their path get their own batches (moved by web/moving-instances.js from the
+               # core's moving_instances(), like Snow Jam's raven); the ones drawn as spline LiveComps (attached.json) are split per node there.
+               drawn_spline_pieces=drawn_pieces,
                scope='MultiSpline / resident Spline seeds (raw bits) and triggered spline pieces; see tools/export_location_set_pieces.py')
     (activation_dir(code) / 'set-pieces.json').write_text(json.dumps(out, indent=1) + '\n')
     print(f'{code}: multisplines', [(x['name'], x['activation'], x['count'], x.get('constructed_after_tick')) for x in multis],

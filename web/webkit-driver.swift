@@ -25,6 +25,31 @@ final class Driver: NSObject, WKNavigationDelegate {
   init(_ w: CGFloat, _ h: CGFloat) {
     let cfg = WKWebViewConfiguration()
     cfg.mediaTypesRequiringUserActionForPlayback = []
+    // _setPageMuted: silences media elements but not Web Audio: a game page's AudioContext still played (Owen heard a
+    // WebKit long-ride run). So, unless WEBKIT_DRIVER_AUDIO=1, every realtime AudioContext's destination is a gain-0 node in
+    // front of the real one (timing, analysers and the audio engine's state run as normal; OfflineAudioContext untouched),
+    // and media elements start muted.
+    if ProcessInfo.processInfo.environment["WEBKIT_DRIVER_AUDIO"] != "1" {
+      let silence = """
+      (() => {
+        const B = window.BaseAudioContext || window.AudioContext; if (!B) return;
+        const d = Object.getOwnPropertyDescriptor(B.prototype, 'destination'); if (!d || !d.get) return;
+        const muted = new WeakMap();
+        Object.defineProperty(B.prototype, 'destination', { configurable: true, get() {
+          const real = d.get.call(this);
+          if (window.OfflineAudioContext && this instanceof window.OfflineAudioContext) return real;
+          let g = muted.get(this);
+          if (!g) { g = this.createGain(); g.gain.value = 0; g.connect(real);
+            Object.defineProperty(g, 'maxChannelCount', { get: () => real.maxChannelCount }); muted.set(this, g); }
+          return g;
+        } });
+        window.__webkitDriverSilent = true;
+        const play = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function () { this.muted = true; return play.apply(this, arguments); };
+      })();
+      """
+      cfg.userContentController.addUserScript(WKUserScript(source: silence, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+    }
     web = WKWebView(frame: NSRect(x: 0, y: 0, width: w, height: h), configuration: cfg)
     if #available(macOS 13.3, *) { web.isInspectable = true }
     // Test runs must be silent: mute the whole page (WebKit's _setPageMuted:, _WKMediaAudioMuted = 1), not only pages

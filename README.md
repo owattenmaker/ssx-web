@@ -25,7 +25,8 @@ committed.
 > 120 exporters, some of which also read the GameCube version of SSX 3 (course geometry and rider models) and PS2
 > emulator savestates (start states, event activation and similar runtime data), and `npm run setup` covers only part
 > of that. A one-command pipeline (`tools/setup_from_iso.py`: your PS2 disc, your GameCube disc and a small downloadable
-> state pack) is in progress; until it lands, expect to need the tools and the docs in `docs/` to reproduce the assets.
+> state pack) is in progress (see [docs/iso-pipeline.md](docs/iso-pipeline.md)); until it lands, expect to need the tools and the
+> docs in `docs/` to reproduce the assets.
 
 ```sh
 cd web
@@ -52,6 +53,7 @@ The whole port is licensed under the **GNU General Public License, version 3** (
 - The optional GameCube research route (`tools/bootstrap_gamecube.py`) fetches DolRecomp and GXRuntime (GPL-3.0) and
   nodtool (Apache-2.0) at setup time; none of them are included.
 - npm dependencies (three.js, Vite: MIT) are installed by `npm install`, not vendored.
+- **nlohmann/json** 3.10.4 (MIT, `web/third_party/nlohmann/`, with its licence) is vendored for the core build.
 
 ## Contributing
 

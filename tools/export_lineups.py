@@ -177,7 +177,9 @@ def state_paths(course):
     seed (characters/lineups, scripts/make_lineup_states.py); Metro-City: its coverage states (characters/lineups-BRA2); R&B and
     the Peak 2 courses likewise (characters/lineups-<course>: make_freestyle_states.py, make_peak2_lineup_states.py)."""
     out = {}
-    if course == 'ARA1': out = {p.name: p / 'countdown.p2s' for p in sorted(STATES.iterdir()) if (p / 'countdown.p2s').exists()}
+    # roster characters and '<skin>-on-<base>' compositions only (other evidence folders, e.g. mac-junction, are other events)
+    ids = {e['id'] for e in ROSTER}
+    if course == 'ARA1': out = {p.name: p / 'countdown.p2s' for p in sorted(STATES.iterdir()) if (p / 'countdown.p2s').exists() and (p.name in ids or '-on-' in p.name)}
     folder = STATES / ('lineups' if course == 'ARA1' else f'lineups-{course}')
     out.update({p.name: p / 'countdown.p2s' for p in sorted(folder.iterdir()) if (p / 'countdown.p2s').exists()})
     return out

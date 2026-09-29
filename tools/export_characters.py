@@ -299,7 +299,6 @@ def package(cid, states):
     (folder / 'rider.json').write_text(json.dumps(rig, indent=2) + '\n')
     from probe_rider_pose import animation_inputs
     (folder / 'animation-start.json').write_text(json.dumps(animation_inputs(countdown, actor, rig_path=folder), indent=2) + '\n')
-    shutil.copy2(WEB / 'RIDER_ZOE/animation-samples.json', folder / 'animation-samples.json')
     return web_package(folder, WEB / f'RIDER_{cid.upper()}')
 
 
@@ -357,7 +356,7 @@ def web_package(source, dest):
         rgba = (source / t['path']).read_bytes()
         if len(rgba) != t['width'] * t['height'] * 4: raise ValueError(f'{source.name} {k}: texture size mismatch')
         (dest / f'{k}.png').write_bytes(png(t['width'], t['height'], rgba)); t['path'] = f'{k}.png'
-    for f in ['vertices.bin', 'indices.bin', 'colors.bin', 'rider.json', 'animation-samples.json', 'animation-start.json']: shutil.copy2(source / f, dest / f)
+    for f in ['vertices.bin', 'indices.bin', 'colors.bin', 'rider.json', 'animation-start.json']: shutil.copy2(source / f, dest / f)  # clip table: ANIMATIONS/animation-samples.json
     (dest / 'world.json').write_text(json.dumps(world, separators=(',', ':')))
     ps2_texel_pngs(dest)
     rig = json.loads((dest / 'rider.json').read_text()); vertices = (dest / 'vertices.bin').stat().st_size // 40
@@ -552,7 +551,9 @@ def main():
         from export_rider_textures import pack_all; pack_all()
         return
     # '<skin>-on-<base>' folders are composition evidence (validated by web/test-characters.mjs), not characters
-    ids = args.character or sorted(p.name for p in STATES.iterdir() if (p / 'countdown.p2s').exists() and '-on-' not in p.name)
+    # a roster character's folder only: '<skin>-on-<base>' folders are composition evidence, others (e.g. mac-junction) other evidence
+    roster = {r['id'] for r in json.loads((WEB / 'riders.json').read_text()) if r['kind'] in ('rider', 'cheat')}
+    ids = args.character or sorted(p.name for p in STATES.iterdir() if (p / 'countdown.p2s').exists() and p.name in roster)
     for cid in ids:
         states = STATES / cid
         if not args.skip_package:
@@ -561,7 +562,11 @@ def main():
         if not args.skip_settings:
             doc = settings(cid, states, STATES / 'zoe')
             print(cid, json.dumps({k: sorted(v) for k, v in doc['settings'].items()}), doc['identity']['upper_mask8c0'], doc['identity']['gameplay_character_id'])
-    if not args.character: validate_compositions(); print('sam', sorted(sam_settings()['settings']))
+    if not args.character:
+        validate_compositions()
+        # Sam (the port's own rider) only with his private inputs (config/characters/sam.json, his web package)
+        if (ROOT / 'config/characters/sam.json').exists() and (WEB / 'RIDER_SAM/rider.json').exists():
+            print('sam', sorted(sam_settings()['settings']))
     from export_rider_textures import pack_all; pack_all()   # the packages' PNGs -> the riders' texture archives
 
 

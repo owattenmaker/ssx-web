@@ -1,7 +1,7 @@
 import * as T from 'three/webgpu';
 import {attribute,texture,vec4,select} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {snowBillboardScale} from './snow-billboard.js';
-import {pv} from './pv-flags.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 // Rider contact/impact sprites from the core (web/impact_fx_gameplay.inc):
 //  - board sparks, RFX+0x470 draw 2DB478: grind chunks (371688, snow program, GS 0x44, tmb1..8),
@@ -52,6 +52,8 @@ export async function createImpactFxRenderer(origin,encodedOutput,snowMaps,view)
  const glints=spriteMesh(3,glintMap,sprk.scale,encodedOutput,{additive:true,wrap:false,renderOrder:657});
  const fist=spriteMesh(4,ospk.map,ospk.scale,encodedOutput,{additive:true,wrap:false,renderOrder:710});
  for(const m of [chunks,sparks,glints,fist])group.add(m.mesh);
+ const effectOrder=pv('effectOrder');/* pv effectOrder: 0x364240 (web/ps2-draw-order.js): chunks and the spark kernel rank 1 (380CE0 / 380518), glints and the fist rank 0 (377CF0) */
+ if(effectOrder){chunks.mesh.renderOrder=drawOrder(EFFECT.chunks(14),SUBMIT.impact);sparks.mesh.renderOrder=drawOrder(EFFECT.sparks,SUBMIT.impact);glints.mesh.renderOrder=drawOrder(EFFECT.glints,SUBMIT.impact);fist.mesh.renderOrder=drawOrder(EFFECT.fist,SUBMIT.fist);}
  const matrix=new T.Matrix4(),position=new T.Vector3(),viewPosition=new T.Vector3(),scale=new T.Vector3(),clip=new T.Vector4();
  let chunkTexture=14;const state={sparks:0,glints:0,chunks:0,fist:0,skipped:0};
  const place=(mesh,i,cm,halfCm,camera,limit)=>{position.set(cm[0]/100-origin.x,cm[2]/100-origin.y,-cm[1]/100-origin.z);viewPosition.copy(position).applyMatrix4(camera.matrixWorldInverse);
@@ -76,7 +78,7 @@ export async function createImpactFxRenderer(origin,encodedOutput,snowMaps,view)
   for(let i=0;i<nGlints;i++){const n=i*4;place(glints.mesh,i,[glint[n],glint[n+1],glint[n+2]],glint[n+3],camera,Infinity);gc.fill(1,i*4,i*4+4);}
   finish(glints,nGlints);state.glints=nGlints;
   // Grind chunks (tmb flipbook frame from the core).
-  const frame=info[5];if(frame!==chunkTexture){const next=snowMaps.get(frame);if(!next)throw Error('Grind chunk frame outside tmb1..8');chunks.texel.value=next.map;chunkTexture=frame;}
+  const frame=info[5];if(frame!==chunkTexture){const next=snowMaps.get(frame);if(!next)throw Error('Grind chunk frame outside tmb1..8');chunks.texel.value=next.map;chunkTexture=frame;if(effectOrder)chunks.mesh.renderOrder=drawOrder(EFFECT.chunks(frame),SUBMIT.impact);}
   const nChunks=Math.min(info[3],240),chunk=read(2,nChunks,CHUNK_FLOATS),cc=chunks.mesh.geometry.attributes.fxColour.array;
   for(let i=0;i<nChunks;i++){const n=i*8;place(chunks.mesh,i,[chunk[n],chunk[n+1],chunk[n+2]],chunk[n+3],camera,view.max_projected_half_extent);for(let k=0;k<4;k++)cc[i*4+k]=chunk[n+4+k];}
   finish(chunks,nChunks);state.chunks=nChunks;

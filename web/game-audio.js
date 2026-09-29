@@ -115,6 +115,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       interruptGate: pv('audioInterrupt'), declickMs: pv('audioDeclick') ? DECLICK_MS : 0 }); // docs/audio-logic.md 9.13
     installAudioUnlock(engine);
     sfx = createSfx({ engine, fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), startAfterDecode: pv('sfxStartAfterDecode') }); // docs/audio-logic.md 9.13
+    // pv titleStart: the front end's bank before the first gesture (fetch and decode need no AudioContext), so the title's Start, which
+    // also unlocks the audio, plays its sounds (docs/audio-menus.md "Title Press START"); the unlock below asks for the same bank again.
+    if (pv('titleStart')) sfx.loadBank(SLOT.MAIN, 'SSX3Menu');
     speech = createSpeech({ engine, json, bytes, declickMs: pv('audioDeclick') ? DECLICK_MS : 0,
       onPost: (id, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('speech', id.toString(16)); },
       onLines: (banks, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('line', banks.join('+')); } });

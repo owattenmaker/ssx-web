@@ -13,6 +13,7 @@ import { fromBits, bitsOf } from './ee-scalar-float.js';
 
 const LOC = process.argv[2] || 'ARA1';
 const dir = new URL(LOC === 'ARA1' ? './public/assets/LIVECOMP/' : `./public/assets/${LOC}/LIVECOMP/`, import.meta.url);
+const testDir = new URL(dir.href.replace('/public/assets/', '/public/test-data/'));   // PS2 snapshots: test data
 const data = JSON.parse(readFileSync(new URL('livecomp.json', dir), 'utf8'));
 let failures = 0; const fail = (m) => { if (failures++ < 12) console.error(m); };
 const anim = new LiveCompAnimation(data, { random: () => 0 });
@@ -27,8 +28,8 @@ const stateFrom = (inst, h) => {
 const head = (s) => [s.mode & 0xffff, s.enabled >>> 0, s.done >>> 0, s.delay >>> 0, bitsOf(s.rate), bitsOf(s.low), bitsOf(s.high), bitsOf(s.time), bitsOf(s.sampleTime), bitsOf(s.previous), bitsOf(s.unclamped)];
 const sameHead = (s, h) => head(s).every((x, i) => (i === 0 ? x === (h[0] & 0xffff) : x === h[i]));
 const flatBits = (ms) => ms.flatMap((m) => m.flat().map(bitsOf));
-if (existsSync(new URL('livecomp-snapshots.json', dir))) {
-  const recs = JSON.parse(readFileSync(new URL('livecomp-snapshots.json', dir), 'utf8')).records;
+if (existsSync(new URL('livecomp-snapshots.json', testDir))) {
+  const recs = JSON.parse(readFileSync(new URL('livecomp-snapshots.json', testDir), 'utf8')).records;
   let clean = 0;
   for (const r of recs) {
     const inst = byRes.get(r.resource); if (r.dirty || r.name.includes('spintwin')) continue;   // spintwin: base matrix from its Spline/Position modifier (0x356078), other port

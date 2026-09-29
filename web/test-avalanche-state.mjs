@@ -2,7 +2,8 @@
 //  1. 0x29E438 / 0x2DA1C0: the volume from the nearest tumbler and the average scale (127 near, 0 at 100 m and beyond), the centroid;
 //  2. the snapshot reader against a fake core (avalanche_info / avalanche_pieces / avalanche_sounds layouts of
 //     web/avalanche_gameplay.inc): one read per tick, released pieces kept until reset;
-//  3. the draw's visibility rule: drawn-at-start pieces until released, hidden-at-start pieces while their tumbler drives them.
+//  3. the draw's visibility rule: drawn-at-start pieces always (tumbling, then statically at the authored place after the release),
+//     hidden-at-start pieces while their tumbler drives them.
 import fs from 'node:fs';
 import * as T from 'three';
 import { avalancheRumble, avalancheState, createAvalancheDraw, takeLoopEvents, ENTITY_DRAWN } from './avalanche-state.js';
@@ -42,7 +43,7 @@ expect('driven: hidden shown', hid.parent, group); expect('driven: static drawn'
 const s = avalancheState(core); expect('tumblers', s.tumblers.length, 3); expect('loop', s.loop, true); expect('tumbler x', s.tumblers[1][0], 7);
 expect('loop events', JSON.stringify(takeLoopEvents(core)), '[1]'); expect('loop events taken', takeLoopEvents(core).length, 0);
 core.info = [0, 1, 2, 0]; core.pieces = [piece(22, 7)]; core.released = [11]; draw.update();
-expect('released: static gone', shown.visible, false); expect('still driven', hid.parent, group);
+expect('released: static drawn again (static route, authored place)', shown.visible, true); expect('still driven', hid.parent, group);
 core.info = [0, 1, 3, 0]; core.pieces = []; core.released = [22]; core.loop = 0; core.changes = [0]; draw.update();
 expect('loop off', avalancheState(core).loop, false); expect('stop event', JSON.stringify(takeLoopEvents(core)), '[0]');
 expect('released: hidden gone', hid.parent, null); expect('non-follower untouched', other.visible, true);

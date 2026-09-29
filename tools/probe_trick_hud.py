@@ -26,51 +26,52 @@ TYPES = [0, 1, 2, 3, 4, 7, 0xB, 0xE, 0x19, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0
 import sys
 EXPORT_ONLY = '--export-only' in sys.argv   # reuse local/browser-ui/trick-hud/trick-hud-draws.json
 # ---- static call closure of the executed cases (excluding the HUD function itself) ----
-files = []
-for f in (root / 'local/output').glob('sub_*.cpp'):
-    m = re.match(r'sub_([0-9A-F]+)_0x', f.name)
-    if m: files.append((int(m.group(1), 16), f))
-files.sort(); starts = [s for s, _ in files]
-def file_of(a): return files[bisect.bisect_right(starts, a) - 1]
-hud_src = file_of(0x1E9A30)[1].read_text()
-asm = [(int(m.group(1), 16), m.group(2)) for m in re.finditer(r'// 0x([0-9a-f]+): 0x[0-9a-f]+\s+(.*)', hud_src)]
-case_starts = sorted(set(labels.values()) | {DEFAULT, 0x1F10F8})
-roots = set()
-for t in TYPES:
-    lo = labels[t]; hi = min(s for s in case_starts if s > lo)
-    roots |= {int(x, 16) for a, text in asm if lo <= a < hi for x in re.findall(r'jal\s+func_([0-9A-F]+)', text)}
-# Shared tails the cases branch into (text/number drawing in the loop epilogue region).
-roots |= {int(x, 16) for a, text in asm if 0x1EFAC0 <= a < 0x1F10F8 for x in re.findall(r'jal\s+func_([0-9A-F]+)', text)}
-STOP = {0x391CB0, 0x1F1190, 0x417828, 0x1E9A30}
-# Indirect (vtable) targets seen at run time (loc/career managers reached from 0x198AF0 / 0x14DD58).
-roots |= {0x1530E0}
-seen = {}; entries = {}; todo = list(roots); calls = {}
-while todo:
-    a = todo.pop()
-    if a in STOP: continue
-    start, f = file_of(a)
-    if start == 0x1E9A30: continue
-    entries.setdefault(f, set()).update({start, a})   # merged files are also entered at internal labels
-    if f in seen: continue
-    seen[f] = start
-    todo += [int(x, 16) for x in re.findall(r'jal\s+func_([0-9A-F]+)', f.read_text())]
-paths = sorted(seen)
-(out / 'trick_hud_registry.inc').write_text(''.join(f'void {p.stem}(uint8_t*,R5900Context*,PS2Runtime*);\n' for p in paths)
-    + 'void sub_001E9A30_0x1e9a30(uint8_t*,R5900Context*,PS2Runtime*);\n'
-    + 'void registerTrickHud(PS2Runtime&r){' + ''.join(f'r.registerFunction(0x{e:X},{p.stem});' for p in paths for e in sorted(entries[p])) + '}\n')
-marker = '    // 0x1efac4:'
-assert hud_src.count(marker) == 1
-hud_stop = hud_src.replace(marker, 'ctx->pc=0x12345678;return;\n' + marker)
-incs = [v / 'ps2xRuntime/include', v / 'ps2xRuntime/src/lib/Kernel', v / 'ps2xIOP/include', b / '_deps/sse2neon-src', root / 'local/output', out,
-        root / 'local/vendor/ModernGekko/vendor/dolphin/Externals/tinygltf/tinygltf']
-cmd = ['xcrun', 'clang++', '-std=c++20', '-O1', '-arch', 'arm64', '-DUSE_SSE2NEON', '-frounding-math', '-ffp-contract=off'] + ['-I' + str(p) for p in incs]
-cmd += [str(root / 'tests/trick_hud_probe.cpp')]
-cmd += [str(write_scalar_fp_oracle(file_of(0x1E9A30)[1], out / ('hud-' + file_of(0x1E9A30)[1].name), hud_stop))]
-cmd += [str(write_scalar_fp_oracle(p, out / p.name)) for p in paths]
-cmd += [str(b / 'ps2xRuntime/libps2_runtime.a'), str(b / '_deps/raylib-build/raylib/libraylib.a'), str(b / 'ps2xIOP/libps2_iop.a')]
-for framework in ['OpenGL', 'Cocoa', 'IOKit', 'CoreFoundation']: cmd += ['-framework', framework]
-binary = root / 'build/trick-hud-probe'; cmd += ['-o', str(binary)]
-if not EXPORT_ONLY: cached_oracle_build(cmd, root / 'build/trick-hud-objects')
+if not EXPORT_ONLY:   # the oracle build needs the recompiled code (local/output); --export-only reuses its capture
+    files = []
+    for f in (root / 'local/output').glob('sub_*.cpp'):
+        m = re.match(r'sub_([0-9A-F]+)_0x', f.name)
+        if m: files.append((int(m.group(1), 16), f))
+    files.sort(); starts = [s for s, _ in files]
+    def file_of(a): return files[bisect.bisect_right(starts, a) - 1]
+    hud_src = file_of(0x1E9A30)[1].read_text()
+    asm = [(int(m.group(1), 16), m.group(2)) for m in re.finditer(r'// 0x([0-9a-f]+): 0x[0-9a-f]+\s+(.*)', hud_src)]
+    case_starts = sorted(set(labels.values()) | {DEFAULT, 0x1F10F8})
+    roots = set()
+    for t in TYPES:
+        lo = labels[t]; hi = min(s for s in case_starts if s > lo)
+        roots |= {int(x, 16) for a, text in asm if lo <= a < hi for x in re.findall(r'jal\s+func_([0-9A-F]+)', text)}
+    # Shared tails the cases branch into (text/number drawing in the loop epilogue region).
+    roots |= {int(x, 16) for a, text in asm if 0x1EFAC0 <= a < 0x1F10F8 for x in re.findall(r'jal\s+func_([0-9A-F]+)', text)}
+    STOP = {0x391CB0, 0x1F1190, 0x417828, 0x1E9A30}
+    # Indirect (vtable) targets seen at run time (loc/career managers reached from 0x198AF0 / 0x14DD58).
+    roots |= {0x1530E0}
+    seen = {}; entries = {}; todo = list(roots); calls = {}
+    while todo:
+        a = todo.pop()
+        if a in STOP: continue
+        start, f = file_of(a)
+        if start == 0x1E9A30: continue
+        entries.setdefault(f, set()).update({start, a})   # merged files are also entered at internal labels
+        if f in seen: continue
+        seen[f] = start
+        todo += [int(x, 16) for x in re.findall(r'jal\s+func_([0-9A-F]+)', f.read_text())]
+    paths = sorted(seen)
+    (out / 'trick_hud_registry.inc').write_text(''.join(f'void {p.stem}(uint8_t*,R5900Context*,PS2Runtime*);\n' for p in paths)
+        + 'void sub_001E9A30_0x1e9a30(uint8_t*,R5900Context*,PS2Runtime*);\n'
+        + 'void registerTrickHud(PS2Runtime&r){' + ''.join(f'r.registerFunction(0x{e:X},{p.stem});' for p in paths for e in sorted(entries[p])) + '}\n')
+    marker = '    // 0x1efac4:'
+    assert hud_src.count(marker) == 1
+    hud_stop = hud_src.replace(marker, 'ctx->pc=0x12345678;return;\n' + marker)
+    incs = [v / 'ps2xRuntime/include', v / 'ps2xRuntime/src/lib/Kernel', v / 'ps2xIOP/include', b / '_deps/sse2neon-src', root / 'local/output', out,
+            root / 'local/vendor/ModernGekko/vendor/dolphin/Externals/tinygltf/tinygltf']
+    cmd = ['xcrun', 'clang++', '-std=c++20', '-O1', '-arch', 'arm64', '-DUSE_SSE2NEON', '-frounding-math', '-ffp-contract=off'] + ['-I' + str(p) for p in incs]
+    cmd += [str(root / 'tests/trick_hud_probe.cpp')]
+    cmd += [str(write_scalar_fp_oracle(file_of(0x1E9A30)[1], out / ('hud-' + file_of(0x1E9A30)[1].name), hud_stop))]
+    cmd += [str(write_scalar_fp_oracle(p, out / p.name)) for p in paths]
+    cmd += [str(b / 'ps2xRuntime/libps2_runtime.a'), str(b / '_deps/raylib-build/raylib/libraylib.a'), str(b / 'ps2xIOP/libps2_iop.a')]
+    for framework in ['OpenGL', 'Cocoa', 'IOKit', 'CoreFoundation']: cmd += ['-framework', framework]
+    binary = root / 'build/trick-hud-probe'; cmd += ['-o', str(binary)]
+    cached_oracle_build(cmd, root / 'build/trick-hud-objects')
 
 # ---- cases ----
 ratios = [0.0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99]

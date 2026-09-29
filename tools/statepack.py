@@ -120,7 +120,12 @@ def collect(trace_dir, out_path):
         e['spans'] = merge(e['spans'])
         e['steps'] = sorted(e['steps'])
     written = set().union(*(s['writes'] for s in steps.values())) if steps else set()
-    doc = dict(format=FORMAT + '/footprint', files=files, probes=sorted(probes), listings={k: sorted(v) for k, v in listings.items()},
+    fingerprints = {}
+    for step in steps:
+        stamp = ROOT / 'local/pipeline/stamps' / f'{step}.json'
+        if stamp.exists():
+            fingerprints[step] = json.loads(stamp.read_text()).get('sources')
+    doc = dict(format=FORMAT + '/footprint', files=files, fingerprints=fingerprints, probes=sorted(probes), listings={k: sorted(v) for k, v in listings.items()},
                steps={k: dict(reads=sorted(v['reads']), writes=sorted(v['writes'])) for k, v in steps.items()},
                written=sorted(written), escapes=escapes)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -196,8 +201,10 @@ def build(footprint_path, out_path, root=ROOT, state_roots=('local/reference', '
     placeholders = sorted({p for p in fp['probes'] if (root / p).is_file() and p not in have and is_state(p)} |
                           {f'{d}/{n}' for d, names in fp['listings'].items() for n in names
                            if (root / d / n).is_file() and f'{d}/{n}' not in have and is_state(f'{d}/{n}')})
-    dirs = sorted({p for p in fp['probes'] if (root / p).is_dir() and is_state(p)} | set(fp['listings']))
+    dirs = sorted({p for p in fp['probes'] if (root / p).is_dir() and is_state(p)} | set(fp['listings']) |
+                  {f'{d}/{n}' for d, names in fp['listings'].items() for n in names if (root / d / n).is_dir()})
     manifest = dict(format=FORMAT, created=time.strftime('%Y-%m-%d'), elf_sha1=ELF_SHA1, entries=entries,
+                    steps=fp.get('fingerprints', {}),
                     placeholders=placeholders, directories=dirs, note='Bytes read by the exporters from PS2 savestates '
                     'and captures, minus what the user\'s own disc provides (docs/iso-pipeline.md "State pack").')
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

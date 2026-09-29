@@ -565,6 +565,10 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* stage_world_magnets(){
 // static route stays), no draw / contact. 2FAE38: DeadNode / type 9 / 0x16 or an existing Boost -> nothing, another
 // entity is destroyed first.
 RIDER_LOCAL extern std::array<uint32_t,64> browserRiderTriggers; // web/instance_contact_gameplay.inc
+// rider+0x3FC: set by stage builtin 74 (0x303F80) for the contacting rider, cleared by 120F20 at the start of the rider pass, read by
+// 2ED490 at 1218D0 after the stage triggers (web/race_bridge.cpp race_end -> browser_environment_selector_step).
+RIDER_LOCAL static bool stageRiderTunnel=false;
+bool browser_rider_tunnel(){return stageRiderTunnel;}
 static void stage_boost_builtin(const StageArg* args,int count){
  std::vector<ssx::OriginalBoostKey> k;for(int i=0;i<count;i++)k.push_back({args[i].key,args[i].word0,args[i].type});
  const auto a=ssx::originalBoostArgs(k.data(),count);const uint32_t target=stage_target(uint32_t(a.instance));
@@ -935,6 +939,7 @@ static void stage_world_tick_entities(){
  for(uint32_t r:pending)stage_run_slot(r,4); // spline pieces finished this tick: 0x352ED0 -> vt+0x114 0x34FD00
  stage_livecomp_collision(); // the LiveComp-animated collision nodes of this tick (0x334888 reads them at query time)
  browserRiderTriggers.fill(0xffffffffu); // 120F20 at the start of the rider pass
+ stageRiderTunnel=false; // 120F20 clears rider+0x3FC too
 }
 // Streamed world (web/peak_world.inc): a location evicted from the world (3AB498 -> 3284B8, its instance memory freed)
 // comes back from the disc without entities at its authored flags, so its instances' stage state is dropped.

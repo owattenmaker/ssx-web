@@ -10,6 +10,7 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec4, float, select, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 export const HALO_FX_BASE = 37; // FX texture table 0x4891B0 index = 37 + key1
 export const HALO_TEXTURES = {37: 'blha', 38: 'bsha', 39: 'gcha', 40: 'orha', 41: 'rdha', 42: 'whha'};
@@ -64,6 +65,7 @@ export async function createSetPieceHalos({core, origin = [0, 0, 0], fetchJson =
     material.blending = T.CustomBlending; material.blendSrc = T.OneFactor; material.blendDst = T.OneFactor; material.blendEquation = T.AddEquation;
     material.blendSrcAlpha = T.ZeroFactor; material.blendDstAlpha = T.OneFactor; material.blendEquationAlpha = T.AddEquation;
     const mesh = new T.InstancedMesh(geometry, material, capacity); mesh.count = 1; mesh.frustumCulled = false; mesh.visible = false; mesh.renderOrder = 690; // count 1: warmable
+    if (pv('effectOrder')) mesh.renderOrder = drawOrder(EFFECT.halo(id), SUBMIT.halo); // 0x364240: priority 8, after every priority-7 effect
     mesh.userData.halo = {key: id - HALO_FX_BASE};
     group.add(mesh); meshes.set(id - HALO_FX_BASE, {mesh, centre, spin, colour, count: 0});
   }

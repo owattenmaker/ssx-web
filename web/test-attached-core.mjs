@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import createCore from './runtime/core.js';
-const fixture = 'public/assets/BHP1/LIVECOMP/attached-snapshots.json';
+const fixture = 'public/test-data/BHP1/LIVECOMP/attached-snapshots.json';
 if (!fs.existsSync(fixture) || !fs.existsSync('public/assets/BHP1/world_collision.json')) { console.log('Attached core: fixtures missing, skipped'); process.exit(0); }
 const c = await createCore();
 if (!c._set_piece_attached_bits) { console.log('Attached core: core without set_piece_attached_bits, skipped'); process.exit(0); }

@@ -1,6 +1,6 @@
 import * as T from 'three/webgpu';
 import {attribute,texture,vec4,uniform,select} from 'three/tsl';import {toFrame} from './frame-space.js';
-import {registerEncodedEffect} from './snow-composite.js';import {pv} from './pv-flags.js';
+import {registerEncodedEffect} from './snow-composite.js';import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 export async function createBoostRenderer(origin){
  const encodedOutput=uniform(false);
  const asset=await (await fetch('/assets/SNOW_FX/snow-fx.json')).json(),materials=new Map();
@@ -19,13 +19,14 @@ export async function createBoostRenderer(origin){
  const group=new T.Group();group.userData.gameplayOnly=true;const meshes=[];
  for(let strip=0;strip<3;strip++){
   const geometry=new T.BufferGeometry();for(const [name,size] of [['position',3],['uv',2],['boostColour',4]])geometry.setAttribute(name,new T.BufferAttribute(new Float32Array(180*size),size).setUsage(T.DynamicDrawUsage));geometry.setDrawRange(0,0);
-  const mesh=new T.Mesh(geometry,materials.get(57));mesh.frustumCulled=false;mesh.renderOrder=660+strip;group.add(mesh);meshes.push(mesh);
+  const mesh=new T.Mesh(geometry,materials.get(57));mesh.frustumCulled=false;mesh.renderOrder=pv('effectOrder')?drawOrder(EFFECT.boost(57),SUBMIT.boost):660+strip;group.add(mesh);meshes.push(mesh);
  }
  const riderFx=createRiderFxMeshes(group,fxMaterials,origin),updateFx=core=>riderFx.update(core);
  let previous=-1;
+ const effectOrder=pv('effectOrder');/* pv effectOrder: 0x364240 by the palette texture (web/ps2-draw-order.js) */
  const api={group,update(core){updateFx(core);const info=new Float32Array(core.HEAPF32.buffer,core._boost_fx_info(),12);if(info[9]===previous)return;previous=info[9];
   for(let strip=0;strip<3;strip++){
-   const mesh=meshes[strip],geometry=mesh.geometry,count=info[6+strip];if(count>180)throw Error('Original boost ribbon capacity exceeded');geometry.setDrawRange(0,count);mesh.material=materials.get(info[0]);if(!mesh.material)throw Error('Unmapped original boost palette');
+   const mesh=meshes[strip],geometry=mesh.geometry,count=info[6+strip];if(count>180)throw Error('Original boost ribbon capacity exceeded');geometry.setDrawRange(0,count);mesh.material=materials.get(info[0]);if(!mesh.material)throw Error('Unmapped original boost palette');if(effectOrder)mesh.renderOrder=drawOrder(EFFECT.boost(info[0]),SUBMIT.boost);
    const data=new Float32Array(core.HEAPF32.buffer,core._boost_fx_vertices(strip),count*9),p=geometry.attributes.position.array,uv=geometry.attributes.uv.array,colour=geometry.attributes.boostColour.array;
    for(let i=0;i<count;i++){p[i*3]=data[i*9]/100-origin.x;p[i*3+1]=data[i*9+2]/100-origin.y;p[i*3+2]=-data[i*9+1]/100-origin.z;uv[i*2]=data[i*9+3];uv[i*2+1]=data[i*9+4];for(let k=0;k<4;k++)colour[i*4+k]=data[i*9+5+k];}
    for(const a of Object.values(geometry.attributes))a.needsUpdate=true;
@@ -53,18 +54,18 @@ export async function createRiderFxMaterials(encodedOutput){
 }
 // One rider's aura faces and streamers in `group`, filled from a rider core (or rider context view) per frame.
 export function createRiderFxMeshes(group,fxMaterials,origin){
- const fxMeshes=[];
+ const fxMeshes=[],effectOrder=pv('effectOrder'),streamerTexture=m=>{for(const [k,v] of fxMaterials)if(v===m)return k;return 63;};
  for(let strip=0;strip<6;strip++){ // 0..3 aura faces (priority 7, after the boost strips), 4..5 streamers (priority 8, after the snow)
   const cap=strip<4?9:72,geometry=new T.BufferGeometry();for(const [name,size] of [['position',3],['uv',2],['boostColour',4]])geometry.setAttribute(name,new T.BufferAttribute(new Float32Array(cap*3*size),size).setUsage(T.DynamicDrawUsage));geometry.setDrawRange(0,0);
   const material=strip<4?fxMaterials.get('psmr'):fxMaterials.get(strip===4?63:61);if(!material)continue; // one streamer on each texture: the loading warm-up builds both pipelines
-  const mesh=new T.Mesh(geometry,material);mesh.frustumCulled=false;mesh.renderOrder=strip<4?663+strip:715+strip-4;mesh.userData.cap=cap*3;group.add(mesh);fxMeshes[strip]=mesh;
+  const mesh=new T.Mesh(geometry,material);mesh.frustumCulled=false;mesh.renderOrder=!effectOrder?(strip<4?663+strip:715+strip-4):strip<4?drawOrder(EFFECT.aura,SUBMIT.aura):drawOrder(EFFECT.streamer(strip===4?63:61),SUBMIT.streamer);mesh.userData.cap=cap*3;group.add(mesh);fxMeshes[strip]=mesh;
  }
  let previousFx=-1;
  return {
   meshes:fxMeshes,
   update(core){if(!core._rider_fx_info)return;const info=new Float32Array(core.HEAPF32.buffer,core._rider_fx_info(),8);if(info[0]===previousFx)return;previousFx=info[0];
    for(let strip=0;strip<6;strip++){const mesh=fxMeshes[strip];if(!mesh)continue;const geometry=mesh.geometry,count=Math.min(info[2+strip],mesh.userData.cap);geometry.setDrawRange(0,count);
-    if(strip>=4)mesh.material=fxMaterials.get(info[1])??fxMaterials.get(63);if(!count)continue;
+    if(strip>=4){mesh.material=fxMaterials.get(info[1])??fxMaterials.get(63);if(effectOrder)mesh.renderOrder=drawOrder(EFFECT.streamer(streamerTexture(mesh.material)),SUBMIT.streamer);}if(!count)continue;
     const data=new Float32Array(core.HEAPF32.buffer,core._rider_fx_vertices(strip),count*9),p=geometry.attributes.position.array,uv=geometry.attributes.uv.array,colour=geometry.attributes.boostColour.array;
     for(let i=0;i<count;i++){p[i*3]=data[i*9]/100-origin.x;p[i*3+1]=data[i*9+2]/100-origin.y;p[i*3+2]=-data[i*9+1]/100-origin.z;uv[i*2]=data[i*9+3];uv[i*2+1]=data[i*9+4];for(let k=0;k<4;k++)colour[i*4+k]=data[i*9+5+k];}
     for(const a of Object.values(geometry.attributes))a.needsUpdate=true;}},

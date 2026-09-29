@@ -17,6 +17,7 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec3, vec4, float, uniform, select, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv, clamp} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 import {lfsrNext} from './set-piece-particle-sprites.js';
 
 export const LAYER_WORDS = 25;
@@ -93,7 +94,7 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
       alpha = alpha.mul(fade);
     }
     material.fragmentNode = out(texel.rgb.mul(u.colour.xyz).clamp(0, 1), alpha.clamp(0, 1));
-    const mesh = new T.InstancedMesh(geometry, material, cap); mesh.count = 1; mesh.visible = false; mesh.frustumCulled = false; mesh.renderOrder = 695 + kind;
+    const mesh = new T.InstancedMesh(geometry, material, cap); mesh.count = 1; mesh.visible = false; mesh.frustumCulled = false; mesh.renderOrder = pv('effectOrder') ? drawOrder(EFFECT.snowfall, SUBMIT.weather + kind) : 695 + kind; // pv effectOrder: 0x364240 (sfal, rank 6: first after the fog puffs)
     mesh.name = kind === 0 ? 'snowfall flakes' : 'snowfall fluff';
     group.add(mesh);
     return {kind, cap, mesh, seed, u, seeds: null};
@@ -116,7 +117,7 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
   };
   // 0x2E5920 builds 4 flake layers and 2 fluff layers per camera: all six materials exist before the race (loading warm-up).
   for (const kind of [0, 0, 0, 0, 1, 1]) layers.push(makeLayer(kind));
-  const drops = makeSplash(ices, 30, 900), crystals = makeSplash(icel, 24, 901);
+  const drops = makeSplash(ices, 30, pv('effectOrder') ? drawOrder(EFFECT.splash(66), SUBMIT.weather) : 900), crystals = makeSplash(icel, 24, pv('effectOrder') ? drawOrder(EFFECT.splash(67), SUBMIT.weather) : 901);
   registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => group.children.some((m) => m.visible && m.count > 0)});
   const state = {layers: 0, flakes: 0, fluff: 0, drops: 0, crystals: 0, snowfall: 0};
   const forward = new T.Vector3(), eye = new T.Vector3();

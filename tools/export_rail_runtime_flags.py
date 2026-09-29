@@ -53,7 +53,7 @@ def main(paths, location='ARA1'):
         document['runtime_flags_source'] = dict(state=STATE.name, state_sha256=state_hash, offset='record+0x1C',
                                                 note='bit0 rail query mask 1, bit1 handplant query mask 2',
                                                 surface_offset='record+0x28 (runtime_surface)')
-        path.write_text(json.dumps(document, indent=1) + '\n')
+        __import__('atomic_write').write_text(path, json.dumps(document, indent=1) + '\n')
         print(path, {hex(k): v for k, v in counts.items()})
 
 

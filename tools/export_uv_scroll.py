@@ -94,7 +94,7 @@ def main(output=None, pattern=None, location='ARA1'):
         for res, sa in a['states'].items():
             # Streamed sections (BRA2) unload and rebuild their UVScrolls: pair only the same live object.
             if res in b['states'] and (location == 'ARA1' or a['where'][res] == b['where'][res]): pairs.append(dict(resource=res, name=names[res]['name'], ticks=b['tick'] - a['tick'], before=sa, after=b['states'][res]))
-    (output / 'uv-scroll-snapshots.json').write_text(json.dumps(dict(version=1, fields=['mode', 'timer', 'onTime', 'offTime', 'angle', 'spin', 'u', 'v', 'stepU', 'stepV', 'active'], pairs=pairs), separators=(',', ':')))
+    __import__('disc_paths').test_data(output / 'uv-scroll-snapshots.json').write_text(json.dumps(dict(version=1, fields=['mode', 'timer', 'onTime', 'offTime', 'angle', 'spin', 'u', 'v', 'stepU', 'stepV', 'active'], pairs=pairs), separators=(',', ':')))
     print(f'{sum(len(s["states"]) for s in snaps)} live UVScroll states in {len(snaps)} snapshots, {len(pairs)} consecutive pairs')
 
 

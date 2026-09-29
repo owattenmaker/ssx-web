@@ -185,6 +185,10 @@ export function envPassMaterial(batch,map,textures,uvNode){
  let bytes=clamp(floor(T.rgb.mul(round(colour.rgb.mul(31)).mul(8)).div(128)),0,255);
  if(mode===0x600000){const Ad=round(texture(map,uvNode).a.mul(attribute('ps2VertexAlpha','float')).mul(128));bytes=floor(bytes.mul(Ad).div(128));}
  m=new MeshBasicNodeMaterial({side:DoubleSide,transparent:true,depthWrite:false});
+ // the same triangles as the base pass, drawn by another pipeline: the GS compares the identical Z (ZTST GEQUAL passes), but two pipelines
+ // need not compute bit-identical depth (Safari: the pass dropped on grazing panels on single frames, Metro's stadium glass flickered).
+ // A slope-scaled bias toward the camera keeps it on its own surface.
+ m.polygonOffset=true;m.polygonOffsetFactor=-1;m.polygonOffsetUnits=-1;
  m.blending=CustomBlending;m.blendEquation=AddEquation;m.blendSrc=OneFactor;m.blendDst=OneFactor;m.blendSrcAlpha=ZeroFactor;m.blendDstAlpha=OneFactor;
  m.colorNode=vec4(frameBytes(bytes),1);m.userData.originalWorldCombine='instance-env-'+(mode===0x600000?'Ad':'add');m.userData.envTexture=tex;
  envMaterials.set(key,m);return m;

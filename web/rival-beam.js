@@ -14,6 +14,7 @@ import { texture as tslTexture, attribute, vec4, select, uniform } from 'three/t
 import { toFrame, frameTextureSpace, linearOutput, linearTextureSpace } from './frame-space.js';
 import { registerEncodedEffect } from './snow-composite.js';
 import { pv } from './pv-flags.js';
+import { drawOrder, EFFECT, SUBMIT } from './ps2-draw-order.js';
 const LEVELS = [0, 130, 20130, 20260], ALPHA = [0, 1, 1, 0], HALF_WIDTH = 85;
 export const BEAM_BONE = 5;
 export const BEAM_COLOUR = { a: 0.5, r: 1, g: 0, b: 0 };
@@ -27,16 +28,34 @@ export function beamVertices(base, right, up, colour = BEAM_COLOUR) {   // sourc
   return out;
 }
 
+// pv beamEncoded (docs/visual-parity.md 41.9): the beam is a priority-7 draw (0x2E3AF8: word2 priority 7, strips rank 3, 'beam'),
+// so the PS2 draws it after the fog composite, unfogged, in the encoded pass: GS MODULATE (texel x vertex, vertex rgb x 2 in the
+// 128 = 1.0 scale, clamped) and ALPHA 0x48 (Cd + Cs x As) on the bytes.
+function byteBeamMaterial(T, texture) {
+  const encodedOutput = uniform(false), map = new T.Texture();
+  const material = new T.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: T.DoubleSide, fog: false, toneMapped: false, blending: T.AdditiveBlending });
+  const texel = tslTexture(map), colour = attribute('color', 'vec4'), rgb = texel.rgb.mul(colour.rgb).clamp(0, 1);
+  material.fragmentNode = vec4(select(encodedOutput, rgb, toFrame(rgb)), texel.a.mul(colour.a).clamp(0, 1));
+  if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = T.NoColorSpace; texel.value = t; material.needsUpdate = true; });
+  return { material, encodedOutput };
+}
 export function createRivalBeam({ T, scene, origin, renderOrder = 650, texture = null }) {
   const geometry = new T.BufferGeometry();
   const position = new T.BufferAttribute(new Float32Array(8 * 3), 3), color = new T.BufferAttribute(new Float32Array(8 * 4), 4);
   const uv = new T.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 0.33, 1, 0.33, 0, 0.66, 1, 0.66, 0, 1, 1, 1]), 2);
   geometry.setAttribute('position', position); geometry.setAttribute('color', color); geometry.setAttribute('uv', uv);
   geometry.setIndex([0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5, 4, 5, 6, 6, 5, 7]);
-  const material = new T.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: T.DoubleSide, fog: false, blending: T.AdditiveBlending });
-  if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = frameTextureSpace; material.map = t; material.needsUpdate = true; });
-  const mesh = new T.Mesh(geometry, material); mesh.frustumCulled = false; mesh.renderOrder = renderOrder; mesh.visible = false;
+  const encoded = pv('beamEncoded');
+  let material, encodedOutput = null;
+  if (encoded) ({ material, encodedOutput } = byteBeamMaterial(T, texture));
+  else {
+    material = new T.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: T.DoubleSide, fog: false, blending: T.AdditiveBlending });
+    if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = frameTextureSpace; material.map = t; material.needsUpdate = true; });
+  }
+  const mesh = new T.Mesh(geometry, material); mesh.frustumCulled = false; mesh.visible = false;
+  mesh.renderOrder = encoded && pv('effectOrder') ? drawOrder(EFFECT.beam, SUBMIT.beam) : renderOrder;
   scene.add(mesh);
+  if (encoded) registerEncodedEffect({ object: mesh, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => mesh.visible });
   const right = new T.Vector3(), up = new T.Vector3();
   return {
     mesh,
@@ -129,7 +148,8 @@ export function createRiderIcons({ T, scene, origin, count, texture = null, rend
   const items = Array.from({ length: count }, () => {
     const g = new T.BufferGeometry(), p = new T.BufferAttribute(new Float32Array(12), 3), c = new T.BufferAttribute(new Float32Array(16), 4);
     g.setAttribute('position', p); g.setAttribute('color', c); g.setAttribute('uv', new T.BufferAttribute(new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]), 2)); g.setIndex([0, 1, 2, 2, 1, 3]);
-    const mesh = new T.Mesh(g, material); mesh.frustumCulled = false; mesh.renderOrder = renderOrder; mesh.visible = false; group.add(mesh);
+    const mesh = new T.Mesh(g, material); mesh.frustumCulled = false; mesh.visible = false; group.add(mesh);
+    mesh.renderOrder = bytesMode && pv('effectOrder') ? drawOrder(EFFECT.icon, SUBMIT.icon) : renderOrder; // pv effectOrder: 0x364240 (exlm, rank 3)
     return { entry: iconEntry(), mesh, p, c };
   });
   if (bytesMode) registerEncodedEffect({ object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => items.some((it) => it.mesh.visible) });

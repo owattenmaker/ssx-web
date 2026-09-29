@@ -1,6 +1,6 @@
 # Avalanches and rock slides (recorded tumbler playback), 2026-09-28
 
-Status (2026-09-28, core50): **core playback ported, bit-exact** (`engine/avalanche.hpp`, `web/avalanche_gameplay.inc`). The draw and the rumble loop are the rendering-sweep agent's (pv `avalanche`). Not ported yet: the trails' emitter points, the moving pieces' collision, and the save / restore. See "Port" below.
+Status (2026-09-28, core59): **core playback, the moving pieces' collision and the trails emitters ported, bit-exact** (`engine/avalanche.hpp`, `web/avalanche_gameplay.inc`). The draw and the rumble loop are the rendering-sweep agent's (pv `avalanche`). Not ported yet: the save / restore's replay hookup (engine port only). See "Port" and "Collision" below.
 
 Retail SSX 3 does **not** simulate an avalanche. It plays back motion recorded into the location's SSB kind-22 record.
 The debug recorder is `0x2D96E0` -> `0x2D9660` -> `0x2D66A0` (5.4 KB of particle physics, bounce, patch colour), then save
@@ -100,8 +100,10 @@ State:
     +180 alpha; +192 colour;
   - +208 emitter; +480 ambient colour (`0x2EE7C8` / `0x2EE810` / `0x2EE858`); +720 = 1; +736 group; +740 link; +748.
 
-Update: `0x2D8948`, the PathArrow environment component (vtable `0x488648` +0x14; component 16 of `0x2F0548`). It runs from the
-environment update `0x2F0A98` in entity group 3 (`0x354F98(mgr, 3)` at `0x230CE8`). When `gp+2368` (1), parsed (`gp+2508`) and
+Update: `0x2D8948`, the PathArrow environment component (vtable `0x488648` +0x14; component 16 of `0x2F0548`), run from the
+environment update `0x2F0A98`. (Earlier notes put it in entity group 3. The capture records say otherwise: at the provider exit of
+a tick the slot table already holds that tick's step while the AvaSpline +0x40, updated in entity group 1, holds the previous
+one, so the step runs after group 1 and before the riders. `web/avalanche_gameplay.inc` runs it there, in race_begin.) When `gp+2368` (1), parsed (`gp+2508`) and
 Update (`gp+2416` = 1), it calls `0x2D7EF8(slot)` for each of the 16 slots.
 
 **Trigger `0x2D97A8(id)`:**
@@ -179,6 +181,29 @@ Export for the core (a runtime asset; the core reads it as is, so keep the field
   volume 127 (73.5 m) and 2819 volume 0 (302.8 m), the same centroid at 2819; ERA5 2019 / 2418 volume 0.
 - **ABC1 2000 / 7200 frames:** no avalanche is playing there (PS2 kept states: no slot); the static pieces draw the same with the
   switch on and off.
+- **After the release (2026-09-28, the physics agent's question):** the release (2D7DD8 -> vt+0x08(3) -> 34FBF0) destroys the
+  entity and restores `flags = (flags & 0xFFFF0300) | (flags >> 16) | 2`, i.e. the authored low bits, with 0x100 still set.
+  - The static collectors `0x22A5A0` / `0x229FC8` test only `(flags & 3) == 3`, the location (+0x7D, table +36 == 6) and chunk
+    (+0x7E, +1008 == 3) residency and the VU0 frustum on +0x50; `0x22C078` draws what they list (the visibility context on the
+    stack, sp+320 of 0x22BBF8: +8348 count, +8352 list) through renderer +0x300 (37E238) at the instance's own matrix. 0x100 is only
+    the entity draw's list (1032C0 / 0x356298), not a test here.
+  - PS2 RAM: EBA3's 5 type-2 rocks sit at exactly 0x40214123 (0x100 set, no entity) at much-2-much-full 420, and they are in that
+    frame's static list (context 0x1FF7A00, 69 entries: 6..9 and 68); the 0x102 dust-trail groups are not. DRA4 20 after its
+    release (dra4-full 2818 on): 0x40004302, bit 0 clear, not listed. The instance +0x10 matrix and +0x50 sphere are never written
+    by the AvaSpline (EBA3 820 .. 2819 equal to the countdown).
+  - So a piece drawn at the start comes back **at its authored place** after the release: ABC1 10 / 11 / 13 (22 pieces), DBC2 71's 5
+    type-1 pieces, ESS3 58's 7 (they shrink to scale sqrt(alpha) -> 0 over the fade-out, then pop back up the slope). A piece hidden
+    at the start (authored bit 0 clear: ABC1 12 / 14, DRA4, ERA5) stays hidden. Type-2 pieces (DBC2 3, EBA3 5, EBC3 5) are never
+    released in a race.
+  - Page: `createAvalancheDraw` keeps the static pieces drawn after the release; `moving_instances()` drops their delta, so
+    `web/moving-instances.js` puts them back at the authored matrix. QA trigger ABC1 10 (Chrome, WebKit): 22 moving batches shown
+    before, during and after the release, none moved after it.
+  - Not seen in a PS2 frame yet: no kept capture releases a static piece in view (no ABC1 / DBC2 / ESS3 run touches its trigger).
+- **core56 poses (Chrome):** the draw now follows the AvaSpline +0x40 matrix (the Object's draw matrix, one record behind the
+  tumbler). EBA3 much-2-much-full 820 .. 2819: each rock's drawn delta against native(PS2 AvaSpline +0x40 via entity +0x1C) x
+  native(instance +0x10)^-1: rotation within 1e-4, translation within 0.9 mm at all six states (while tumbling, 820 .. 1620, the
+  tumbler's own 2D9C00 matrix is up to 0.34 away in rotation: the lag). WebKit and the ABC1 release re-check are pending: on
+  core56 the ABC1 QA flow finds no definitions at the start (`avalanche_info` [0, 0, 0, 0]; core50 had 5).
 
 **Implementation:**
 - **Batches:** `web/prepare.py` puts every `ava_spline` group instance into moving_resources, so each piece has its own batches
@@ -188,9 +213,9 @@ Export for the core (a runtime asset; the core reads it as is, so keep the field
 - **Matrices:** the core emits the followers through `moving_instances()` (key = resource, the three.js delta while a tumbler
   drives the piece), so `web/moving-instances.js` moves them.
 - **Visibility** (`createAvalancheDraw`, from `web/set-pieces-renderer.js`): a piece drawn at the start (countdown audit 'static')
-  stays until released; a piece hidden at the start (runtime flag bit 0 clear: ERA5's 8, DRA4's 14, 24 of ABC1's) shows from the
-  trigger (its builtin 0 gives it an entity; it is then in `avalanche_pieces()`) until released; released (0x2D7DD8, entity
-  vt+0x08(3)) = gone until a new race.
+  is always drawn (tumbling, then statically at its authored place after the release); a piece hidden at the start (runtime flag
+  bit 0 clear: ERA5's 8, DRA4's 14, 24 of ABC1's) shows from the trigger (its builtin 0 gives it an entity; it is then in
+  `avalanche_pieces()`) until released (0x2D7DD8, entity vt+0x08(3)), then stays hidden until a new race.
 - **Audio:** `web/audio-world.js avalanche()` from `web/game-audio.js` each tick (section "Audio").
 - **Snapshot:** `avalancheState(core)` reads `avalanche_pieces()` / `avalanche_sounds()` once per core tick (the pieces export drains
   its released list); `web/test-avalanche-state.mjs` checks the volume formula, the reader and the visibility rule.
@@ -200,9 +225,10 @@ The original plan (kept for the trails):
 1. **Pieces:** the group instances with a builtin-95 AvaSpline follow their tumbler matrix (rotation x scale, position).
    - The core should export these as moving-instance deltas (as `moving_instances()`), so `web/moving-instances.js` moves the
      authored batches.
-   - A released type-1 piece is hidden (entity state 3).
+   - A released type-1 piece loses its entity; it is drawn statically again only when its authored flags have bit 0 (see "After
+     the release").
    - Before its trigger a piece draws at its authored place, as now.
-2. **Trails:** `0x2D9130` (vt +0x1C, drawn when `gp+2368 && gp+2508`, or the debug `gp+4348`) sets material priority 7 (word2
+2. **Trails** (done: "Trails" below, pv `avalancheTrails`): `0x2D9130` (vt +0x1C, drawn when `gp+2368 && gp+2508`, or the debug `gp+4348`) sets material priority 7 (word2
    `|= 0xE0`: after the fog composite) and texture -1.
    - It then runs `0x2D8EA8(slot)` for each slot: `0x371688(emitter, 7)` for each tumbler with an emitter.
    - This is the colour-emitter draw of the rider snow (renderer +0x2A4 `0x380CE0`), with the per-point terrain colour from the
@@ -277,10 +303,15 @@ retail plays no per-tumbler sound; the `sounds[]` list is silent.
   - PS2 dra4-full: the RailMan is created between 9218 and 9618 and its slots are empty from 9618 (off, then on).
   - Open: the re-insertion goes to the head of the octree lists (328C20); the port keeps the original walk order.
   - Streamed worlds (core47): the static copy is rebuilt after every appended catalog (`browser_static_records_rebuild`), leaving out the grouped-off and bound rails. Before, the copy was dropped at every append, so a grouped-off or RailModifier-bound rail answered statically again as soon as another location's rails came in.
-- **74, not ported** (low priority).
-  - 2ED490 eases the per-rider selector: `x 0.9`, `+ 0.1` while rider+0x3FC.
-  - `environment_bridge.cpp` passes selector 0.
-  - Porting it needs the port's tick order between race_end (121818, where builtin 74 would set the flag) and the trail / environment update that reads it.
+- **74, ported** (core60).
+  - 0x303F80: the current player's rider (ctx+0) +0x3FC = 1. The rider manager clears it at 120F20 (the start of the rider pass). After the stage triggers (121818), 1218D0 -> 2ED490 eases the rider's environment block selector (0x4FA370 + i x 0xF0, +0x24): `x gp-0x3974 (0.9)`, then `+ gp-0x3970 (0.1)` while +0x3FC is set. Above 0.1 the rider irradiance takes the alternate bank.
+  - Port:
+    - `stageRiderTunnel` (web/stage_world.inc), set by case 74 for this core's own rider and cleared at the 120F20 point;
+    - `browser_environment_selector_step` (web/environment_bridge.cpp), run in race_end right after the stage triggers;
+    - `originalEnvironmentIrradiance` now takes the selector (it was 0).
+  - The irradiance is computed in the FX pass. With deferred FX (races with computer riders) that pass runs after race_end, so the bank switch follows the PS2. In a solo run the FX pass runs before race_end and the switch comes one tick late. The selector itself is exact in both.
+  - PS2: none of the Ruthless runs we had enters a tunnel volume (the tuck line passes about 1 m above tunnelvolume_1000). The same tuck script held to 11000 ticks (`local/ps2-capture/scripts/tunnel-dbc2-long.json`; capture `runs/tunnel/dbc2-tunnel-ai`, --ai-state, watching the human's block 0x4FA370) enters one at 9830. The selector reads 0.1, 0.19, 0.271 ... and decays to 0 by 10730, where the EE flushes the denormal.
+  - Check: selector bit-exact on all 11000 records (899 nonzero); human, Nate and the RNG exact to the end. Gate `tunnel/dbc2-tunnel-ai`; `web/test-tunnel-lighting.mjs` (hook `web/environment-selector-hook.mjs`).
 
 ## Port (2026-09-28, core50)
 
@@ -306,13 +337,125 @@ retail plays no per-tumbler sound; the `sounds[]` list is silent.
   - Tumbler 0's 0x2D9C00 matrix and alpha are equal on all 555 ticks up to its release (1096).
   - The ERA5 run (`era5-slots`) cannot be compared solo: a computer rider sets avalanche 28 off at 1998, while the solo port reaches the trigger at 2587.
 - **Exports:**
-  - `moving_instances()` carries every AvaSpline follower a tumbler drives: key = resource, the draw delta of the 0x2D9C00 matrix against the authored instance matrix.
+  - `moving_instances()` carries every AvaSpline follower a tumbler drives: key = resource, the draw delta of the AvaSpline matrix +0x40 (the Object's draw matrix: 0x2D9C00 of that tick's group 1, see "Collision") against the authored instance matrix.
   - `avalanche_pieces()` gives the 0x2DA1C0 set (active slots, list order): resource, state (1 following, 2 type-2 at rest), follower, emitter, the 0x2D9C00 matrix, alpha, scale. It is followed by the instances released since the last call (entity vt+0x08(3): hidden) and the loop refcount with its changes (0x29DEF0, audio+0x6040). The per-tumbler sound cues are dead (0x29E560 is `jr ra`); only their cursor advances.
+  - Since core56 a piece is a follower only once builtin 95 attached its AvaSpline, which 0x305D90 does only on an instance with an entity (+0xC, vt+0x84); no piece has one at the countdown, so it takes the trigger program's builtin 0. ABC1 `ava1bitB_1003` (621062) gets builtin 95 from the snowfield timer (program 64) but never a builtin 0: it stays at its authored place, not a follower. Likewise the released list holds only pieces whose entity the release destroyed (2D7DD8 calls vt+0x08(3) only with an entity).
   - `avalanche_info()` (QA: definitions, triggers, ticks, slots) and `avalanche_trigger_qa(id)`.
 - **Open:**
-  - **Trails:** the emitter init 0x371600 / 0x370DC8 draws the presentation stream (0x3177F0), plus the per-sample points and 0x3717C0 / 0x2D8EA8 / 0x371688.
-  - **Moving pieces' collision.** The type-3 rocks carry flags 0x40210000 and are on the static route 0x20 before the trigger (PS2 EBA3: 0x40214123), then on the entity route 0x40 with the Object entity after it (0x40214145). The port still leaves these instances unsupported, so they have no collision at all, as before.
-  - **Save / restore** 0x2D9CB0 / 0x2D9D68.
-  - **Computer-rider cores** load no definitions yet (their contexts), so a computer rider's own trigger only plays through the human core's replay of the contact.
+  - **Trails:** done (core59), see "Trails" below.
+  - **Moving pieces' collision:** done (core56), see "Collision" below.
+  - **Save / restore** 0x2D9CB0 / 0x2D9D68: ported in the engine (not wired), see "Replay snapshot" below.
+  - **Computer-rider cores:** done (core57; core58 keys the shared copy by a generation, not the location name). A context that never loaded definitions of its own takes the latest ones a core loaded (`avalanche_sync`: before a trigger, an Object, a new race); a core that loaded its own keeps them, so its stage programs (its own contacts and the replayed ones, web/shared_world.inc event 6) play the avalanche and its rocks collide for the computer riders too. Check: parity-ai/era5, where a computer rider sets avalanche 28 off at 1998, now plays it in all six cores alike (1 trigger, 445 ticks each; `web/test-avalanche-collision.mjs`). All 26 gates on avalanche locations are unchanged: no computer rider in them meets a collidable piece.
   - **Duplicate ids:** DBC2 and EBC3 both use id 71. In MOUNTAIN the first definition in list order wins, which is the later-loaded location.
+
+## Collision (2026-09-28, core56)
+
+Every collidable avalanche piece (72 over the seven locations: the type-3 rocks, boulders and minis; ERA5's and DRA4's pieces are collision type 0) has an event seed: the countdown gives it the static route 0x20 at its authored place (EBA3 0x40214123, the others 0x40214023, ABC1 avalanche 14's minis 0x40204022). None is "unsupported": before this port the rocks kept that static collision for the whole race, never threw, and after the trigger answered where they started instead of where they tumble.
+
+**The trigger program** (EBA3 program 75: builtin 2 on the trigger, 30, 44, 3, **94**, 30, then **0** and **95** for each rock):
+- Builtin 0 (0x2FC0D0 -> 0x356DB0, key 0 the piece, keys 1 / 2 = 0): an Object entity (vtable 0x490E80) in entity group 1. Flags: 34FB00 -> 2D1BF0 -> 1032C0 `|= 0x100`; 356DB0 (key 2 = 0) `(flags & 3) == 3 -> flags & ~2 | 4`; key 1 `& ~0x40 | 0x20`.
+- Builtin 95 (0x305D90, key 0 int, -1 = ctx+0x290; types gp+0xCB0): with an entity whose vt+0x84 accepts modifiers (Object 0x360DD0 = 1) -> 0x355A78 (skipped when gp+0x9D4, the record's bad-magic flag, is set) -> ctor 0x357750, 0x90 bytes, vtable 0x48F338:
+  - +0x40..+0x7F = the instance matrix (instance +0x10), +0x80 = the instance, +0x30 = 0;
+  - attach 0x3554B0 -> 0x356780 -> 0x350570: bounds +0x10 / +0x20 = the instance box +0x60 / +0x6C (w 1), radius +0x30 = the largest distance from the instance translation (+0x40) to the 8 box corners (VU dot, sqrt.s); flags `& ~0x20 | 0x40`.
+  - EBA3 0x40214123 -> 0x40214125 -> **0x40214145**, the PS2 value (the others end the same way).
+- **The entity route** of the Object with this primary modifier:
+
+| Original | Target | Result |
+| --- | --- | --- |
+| 334458 bounds (vt+0x164 / +0x16C 3569D0 / 356A00 -> 352B88) | modifier vt+0x64 0x361AD8 | +0x10 / +0x20 |
+| 334888 override (vt+0x134 356A28) | vt+0xA4 0x360BC8 | 0: the ordinary node path |
+| 334888 root (vt+0xCC 356128) | vt+0x9C 0x360BC0 = 0, so vt+0x94 0x361B10 | +0x40 replaces instance+0x10 as the hierarchy root |
+| 1057B8 rigid predicate (vt+0x74 355420) | vt+0x44 0x360B60 | 1: the rigid response |
+| 104E70 selected callback (vt+0x154 356AE0 -> 353098) | vt+0xB4 0x360BD8 | nothing (no surface velocity) |
+| 121818 entity contact (vt+0x144 355770) | vt+0x54 0x360B70 / gate vt+0x4C 0x360B68 | nothing / 1 (the rocks have no slot-2 program) |
+
+**Every tick**, entity group 1 (before the riders): 356198 -> 3556F8 -> the AvaSpline update 0x357820 -> 0x2D1CF0 -> 0x2D9C00 (+0x40 = the tumbler's matrix; unchanged without a tumbler), then 355028(group 1) -> 360DA0 -> 3568B0: bounds = the +0x40 translation -/+ (r, r, r, 0) (VU vsub / vadd, chop) and 3291E0 moves the instance to its new octree cell.
+- **Order against the tumbler step, from the records:** at a record (the provider exit) the AvaSpline +0x40 holds 2D9C00 of the tumblers of the *previous* record (eba3-rock-hit watches 0x5B4700 against the slot table 0x538938). So the update runs before that tick's tumbler step, and the port runs it first in `browser_avalanche_tick` (race_begin), then the slots. The kept savestates show the same thing (their +0x40 is one tumbler step behind their slot table).
+- **Release** (2D7DD8 -> entity vt+0x08(3) = 361038 -> 3553C0: 3567E0 detach, 352AE8 modifiers, 34FBF0): `flags = (flags & 0xFFFF0300) | (flags >> 16) | 2`, 0x40214145 -> 0x40214123: the static route at the authored place again. Type-2 pieces (all of EBA3's rocks) are never released. **The draw:** the low bits come back as the authored 3 (static draw), with 0x100 still set, and the static draw shows the piece at its authored place again (section Draw, "After the release").
+
+**Port** (`web/avalanche_gameplay.inc` "Pieces' collision"):
+- `avalanche_object` (builtin 0 on a group instance with no entity): records the Object; for a collidable piece, the flags above (`stage_set_flags`, so a new race restores the countdown flags).
+- `avalanche_spline` (builtin 95): attaches only to a recorded Object (else nothing, as 0x305D90), from the instance matrix; the attach bounds and radius are `originalSplineAttachBounds` (the same 0x350570).
+- `avalanche_entities_tick` (race_begin, before the slots' step): 2D9C00 and the 3568B0 bounds, then `composeWorldCollisionEntity` on +0x40 (recomposed only when the matrix or bounds change). As for the chairlifts, the composed nodes and box also go to the instance's static fields, which the ray queries (air trajectory, landing, crash probes) read; the authored ones come back at the release, a new race (`avalanche_reset`) or when a streamed location leaves (`browser_avalanche_track_reset`).
+- `browser_entity_rigid` answers 1 and `browser_entity_selected` does nothing for these entities (web/roller_gameplay.inc); `stage_world_instances` counts the Object as an entity draw (flags & 4).
+- Not modelled: the 3291E0 octree move (the port keeps the load's order for the normal sum of several contacts, as for the chairlifts), and the rider scope list's entity admission (332DB8 admits a flag-0x40 entity by its bounds at the rebuild every third tick; the port tests entity-route instances at query time).
+- Computer-rider contexts take the human's definitions (core57, see "Open").
+
+**Verification:**
+- `web/test-avalanche-collision.mjs`: much-2-much-event-tuck against the kept much-2-much-full savestates 820 .. 2819 (the five rocks' flags, AvaSpline radius / bounds / matrix bit for bit, 30 of 30), and three new captures (`local/ps2-capture/scripts/avalanche-eba3-rock-hit{,-a,-b}.json`: the same run steered with lx 1 after the trigger; watches of every rock's AvaSpline 0x5A3400 / 0x5A5000 / 0x5A3700 / 0x5A5900 / 0x5B4700 and instance header at this script's heap addresses): every rock on every record after the attach bit for bit (6390 / 6395 / 6390), the rider exact to the end.
+  - `eba3-rock-hit` passes rockslide_1001 at 1.8 m around 1111: no contact on the PS2 (the first port, with the update after the tumbler step, touched it at 1112 and left).
+  - `eba3-rock-hit-a` / `-b` hit it at 1113 / 1112 (105398 instance contact, the rigid response): exact to the end (1800 / 1799 ticks); core50 (static rocks) leaves at the contact.
+- Gates `avalanche/eba3-rock-hit`, `-a`, `-b` in `web/test-ps2-captures.mjs`.
+
+## Replay snapshot: save / restore (2026-09-28, engine only)
+
+The PS2 reaches `0x2D9CB0` / `0x2D9D68` only through the race replay's world snapshots (docs/replay.md): cReplay `0x26D818` saves at the start gate, every 60 ticks and for the kept highlights; `0x26DBF0` restores at the replay start, an R1 / L1 skip and Exit replay. It restores after the entity groups were emptied (`0x355118`) and before the move nodes and their modifiers come back (`0x357D28`).
+- **Save:** 0x80 bytes through the stream's vt+0x0C: per slot the playing avalanche's id (-1 free), then per slot its t (0 free).
+- **Restore:**
+  1. Every playing slot is released (`0x2D81B0`: the loop refcount goes down and up again).
+  2. Each saved avalanche is triggered again in saved order (`0x2D97A8`, first free slot and tumblers).
+  3. Slot t = t. When t != 0, per tumbler: +0x2EC = 1 for emitter groups, then `0x2D7C00(t)` and `0x2D5778(t)`.
+  4. The event cursor advances while event t <= t; the sound cursor while float(tick) <= t.
+- **Its quirks against the continuous run:**
+  - The speed factor is not applied (0x2D7CA8 plays t x speed): ABC1's 0.75 groups come back ahead.
+  - +96 / +112 keep the trigger's values (instance translation, identity) until the next 0x2D7CA8, so the next 0x2D9C00 (group 1, before the step) puts the AvaSpline pieces, with their collision, at the start with identity rotation for that tick.
+  - The sound cursor is compared with t, not t x 30.
+  - Released pieces get tumblers again for one tick.
+- **Port:** `engine/avalanche.hpp` `originalAvalancheSave` / `originalAvalancheRestore`.
+  - Live oracle (`tests/avalanche_live.cpp` part 3, `tools/test_avalanche_live.py`): the group instances' entities are cleared as 0x355118 leaves them, and a host stream takes the 0x80 bytes. The saved words, the restored state, the 0x2D9C00 matrices right after the restore and 60 more ticks are bit for bit on all 8 playing states (EBA3 820..2819, ERA5 2019 / 2418).
+  - The combined result: 19 runs, 1072 exact ticks, 6808 AvaSpline matrices, 0 failures.
+- **Not wired (known replay difference):** the browser's replay re-simulates the run instead of restoring snapshots (web/replay.js), so after an R1 / L1 skip or Exit replay with an avalanche running it shows the continuous state, not the PS2's restore quirks above. At the replay start no avalanche runs, so there is no difference there. Wiring it would be one core call (restore of the current save) where the replay lands on a skip target.
+
+## Trails (2026-09-28, core59)
+
+Every pool tumbler holds a colour dynamic emitter at +0xD0: 0x208 bytes, vtable 0x4930D0, the class of the rider snow. It is the dynamic emitter of `engine/set_piece_particles.hpp` plus +0x200 (the +720 flag) and +0x204, the colour ring ("DynEmitterData Colours", capacity x RGBA bytes). It is constructed once with the pool (0x3714B8) and persists: the kernel seeds 1..8 are never written by the avalanche.
+- **Trigger** (an emitter group, `hasEmitter`, the builtin-96 block at group +0..+0xD7):
+  1. 0x371600 clears: 0x370D60 zeroes the rings and the active count, then the colours are zeroed.
+  2. 0x370DC8(emitter, block, seed 2.0) runs the 0x370DC8 body of the set pieces with that seed: 0x370058 writes kernel seed 0 = 2.0 only and draws nothing. The only visual draw is the flip phase, when NumFlipTextures >= 2. The ring is reallocated (0x3715B0 / 0x371548 / 0x371600) when the capacity ceil((Life + LifeR / 2) x 60) changes.
+  3. +720 = 1.
+  4. +0x1E0 (the kernel colour base) = (0x2EE7C8, 0x2EE810, 0x2EE858)(0), w 0: the human's Weather painter flake R, G, B (block 0 +0x20; web: `breathEnvironment` properties 12..14, default 1).
+- **Every tick** (0x2D7CA8, an emitter group that is not type 2, still playing):
+  - +0x1FC (kernel +0x10C, colour range 0 alpha) = the tumbler alpha.
+  - 0x3717C0(emitter, +96, zero velocity 0x4FF120, colour +192, active = t' < duration, gp-0x3CD4 = 1/60):
+    - +0x1D0 = colour;
+    - the ring slot's bytes = trunc(clamp(c x 255, 0, 255)) (negative / NaN 0);
+    - then 0x3710D0, whose active birth draws **one value of the presentation stream 0x4FF018**. That is 3 draws a tick for EBA3's dust trails and 8 for ERA5's nodes, which the port did not make before: its visual stream (rider snow seeds, flags, splash ...) fell behind from every trigger.
+- **Release** (0x2D7DD8): 0x371600 on the released tumbler. +720 stays.
+- **Replay restore:** +0x2EC = 1 makes the next 0x2D5778 emit one point per skipped sample (the catch-up). Not ported: it is reached only by the unwired restore.
+- **Draw:** 0x2D9130 (priority 7, word2 |= 0xE0) -> 0x2D8EA8(slot) -> 0x371688(emitter, 7) for each tumbler of the list whose group has an emitter. It needs +0x174 (enabled) and +0x1E0 (live births) > 0. It rewrites the GS packet words +0x1E8 (blend 0x44B420), +0x1EC (priority 7 << 5) and the +0x1F4 halfword (texture).
+
+**Port** (`engine/avalanche.hpp`):
+- `OriginalAvalancheEmitter`, constructed lazily so the rider-local world stays constant-initialisable; `originalAvalancheEmitterClear / Setup / Emit`.
+- `originalAvalancheTrigger(w, id, visual, flake)`, `originalAvalancheSlotTick(..., visual)`. The core (`web/avalanche_gameplay.inc`) passes `stage_visual_random()` (the camera's presentation stream in the human core; a computer rider's context draws a stream of its own, as the other world effects do) and `avalanche_flake()`.
+- The world is reset in place (`avalanche_world_reset`): a whole-world temporary with the emitters overflowed the wasm stack.
+- Rider TLS grows by ~35 KB per context (64 emitters).
+- **Export** `avalanche_trails()` for the draw: per active slot in list order, per emitter tumbler:
+  - `[resource, pool index, 130 image words (ring pointers 0), n, ring A (n x 4), ring B (n x 4, w = the birth seed, 0 none), colours (n words RGBA)]`;
+  - the ring is newest-first from the cursor +0x17C.
+
+**Verification:**
+- Live oracle (`tests/avalanche_live.cpp`) compares every tumbler's emitter (image, rings, colours), +0x200, and the presentation stream words 0x4FF018 after every tick against the recompiled original. The trigger passes the painter getters' flake. The recompiled div.s gives an IEEE infinity for 1 / NumBlur (0), where the EE (PCSX2 savestates) holds 0x7F7FFFFF, so the oracle corrects that one word.
+- Results: 19 runs, 6852 exact ticks at 400 ticks a state (through ERA5's releases), 0 failures.
+- `web/test-avalanche-collision.mjs`: the core's EBA3 emitters bit-exact against the much-2-much-full 820 savestate. The draw-written packet words and the birth seeds of this solo replay's stream are left out.
+
+**Draw** (`web/avalanche-trails.js`, pv `avalancheTrails`, off; 2026-09-28, visual-parity agent):
+- The sprites are particle entry 0xA00 on the export's ring, the rider snow's model (`engine/snow_particles.cpp`
+  OriginalSnowParticles::particles / originalSnowParticle) in JS with the EE float operations. Particles per birth = kernel N / ring
+  slots (1 for every retail trail).
+- Material: fog0 (4), MODULATE, GS 0x44, depth tested, no Z write. It draws in the encoded pass at priority 7, rank 1 (key
+  `drawOrder({priority 7, mode 4, fx 4}, SUBMIT.avalanche)`).
+- **The trails are nearly invisible, on the PS2 too.** The trigger writes the flake colour into the kernel's colour base with w 0,
+  and the tick writes the tumbler alpha into colour range 0 alpha. So a sprite's alpha is at most trunc(alpha x [1, 2) - 16.8 x
+  age) <= 1 or 2 of 128. Sprites with alpha 0 are skipped: GS 0x44 with As = 0 leaves the frame as it is, and with no Z write
+  there is no side effect.
+  - PS2 RAM: EBA3 820, 3 x 60 sprites, 15 with alpha > 0 (alpha 1). ERA5 2019 / 2418: 8 x 21 / 8 x 60 sprites, none.
+  - PS2 frames at the projected positions (EBA3 820 near (370, 270), 70 m; ERA5 2019 near (456, 265), 233 m) show no dust.
+- **Checked:**
+  - At EBA3 820 and ERA5 2019 / 2418, stepped to the PS2 slot t, the page's trails have the PS2's counts, cursors, active
+    births, ring positions and colours.
+  - The birth seeds differ (presentation stream 0x4FF018 values), so the sprites' random offsets and sizes differ.
+  - Chrome and WebKit, QA trigger: ERA5 28 evaluates 480 sprites and draws none; EBA3 45 evaluates 180 and draws 6..15.
+  - No pixel changes against the switch off on the PS2 frames.
+  - `web/test-avalanche-trails.mjs` runs the evaluator on 19 PS2 trails (local/reference/avalanche/trails.json): the counts equal the
+    live births, newest first, and the GS colour ranges hold.
 

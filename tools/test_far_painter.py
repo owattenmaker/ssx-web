@@ -6,7 +6,7 @@ predicts outer+0x08 and the texture-chunk viewer range (W+0x250 +0x40) bit for b
 engine/section_streaming.hpp ChunkStreaming runs with the predicted range (and, for comparison,
 with the captured range and a fixed 45000) against the captured chunk table W+0x3F0.
 The painter is seeded from the capture baseline savestate's camera block 6 (0x4FA370 + 6*0xF0).
-Needs web/public/assets/<L>/SECTIONS/{far-painter,sections}.json (tools/export_far_painter.py,
+Needs web/public/test-data/<L>/SECTIONS/far-painter.json and web/public/assets/<L>/SECTIONS/sections.json (tools/export_far_painter.py,
 tools/export_sections.py).  Usage: python3 tools/test_far_painter.py [LOC ...]
 """
 import json, struct, subprocess, sys, zipfile
@@ -67,7 +67,7 @@ def main():
         base = ROOT / 'web/public/assets' / code / 'SECTIONS'
         replay = ROOT / 'local/ps2-capture/runs/sections' / f'{code.lower()}-far-replay.txt'
         n, view, cameras = write_input(code, replay)
-        run = subprocess.run([str(BINARY), str(base / 'far-painter.json'), str(base / 'sections.json'), str(replay)], capture_output=True, text=True)
+        run = subprocess.run([str(BINARY), str(ROOT / 'web/public/test-data' / code / 'SECTIONS/far-painter.json'), str(base / 'sections.json'), str(replay)], capture_output=True, text=True)
         print(f'{code}: {n} records, camera block {view}, cameras {cameras}')
         print(run.stdout.rstrip())
         if run.returncode:

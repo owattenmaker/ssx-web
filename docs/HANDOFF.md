@@ -1,3 +1,160 @@
+> **Avalanche trails drawn (pv `avalancheTrails`, off; 2026-09-28, visual-parity agent):** see [avalanche.md](avalanche.md) "Trails", Draw.
+> - `web/avalanche-trails.js` evaluates particle entry 0xA00 (the rider snow's model) on the core's `avalanche_trails()` rings; fog0, GS 0x44, priority 7 in the encoded pass. Particles per birth = kernel N / ring slots.
+> - The retail trails are nearly invisible on the PS2 too: the kernel colour base holds the flake colour with alpha 0 (tumbler +0x1E0), so sprite alpha is 0..2 of 128. PS2 RAM: EBA3 820 15 of 180 sprites with alpha 1, ERA5 none. Alpha-0 sprites are skipped (same pixels).
+> - Checked against PS2 RAM (counts, cursors, rings, colours equal; birth seeds differ: presentation stream). No pixel change on the PS2 frames. `test-avalanche-trails.mjs` (new, in test:all).
+
+> **Stage builtin 74 (DBC2 tunnel lighting) ported, PS2-exact (2026-09-28, AI-parity agent):** see [avalanche.md](avalanche.md) "Port status of these builtins". **Core60** (core.wasm sha256 0c3c8448fa0c964f..., core.js c8f6b928258c...) is live, identical to the scratch build.
+> - **What:** builtin 74 sets rider+0x3FC, and 120F20 clears it. 2ED490 (race_end, after the stage triggers) eases the environment selector (x 0.9, + 0.1 while set). Above 0.1 the rider irradiance takes the alternate bank; before, the selector was 0.
+> - **PS2:** the dbc2 tuck line held to 11000 enters a tunnel volume at 9830. New capture `runs/tunnel/dbc2-tunnel-ai` watches the block 0x4FA370.
+> - **Check:** selector bit-exact on all 11000 records; human, Nate and the RNG exact. Gate `tunnel/dbc2-tunnel-ai`; `web/test-tunnel-lighting.mjs` (in test:all).
+> - **Limit:** in a solo run the bank switch is one tick late, because the solo FX pass runs before race_end.
+
+> **Moving set pieces the page drew static; rival beam and terrain sparkle layers (2026-09-28, visual-parity agent):** see [set-pieces.md](set-pieces.md) "Moving lit instances" and [visual-parity.md](visual-parity.md) 41.9.
+> - **Object spline pieces outside Snow Jam now move** (packages deployed): the exporter wrote only names, so prepare.py never gave them moving batches while the core moved them. `tools/export_location_set_pieces.py` now writes `drawn_spline_pieces`. Newly moving: the ESS3 sled, the ASS1 train (6 cars), CBA2's 2 sleds, DRA4's 6 dragonworks + 2 rockets, EBA3's 2 rockets. ESS3 818 / 1219 / 1618: the core delta equals the PS2 Spline modifier +0x60 matrix within 1e-4.
+> - Of the 15 lit movers: the BHP1 traffic already moved (MultiSpline seeds), the ospreys and cessnas are spline LiveComps (attached.json), the os609 helis stay hidden (the audit's draw_class needs 0x100; open until a PS2 frame shows them).
+> - **pv `beamEncoded` (off):** the rival beam (priority 7) in the encoded pass, unfogged, in GS bytes; neutral on the only in-view frame (ABC1 2400, near the rider).
+> - **pv `sparkleWorld` (off):** the terrain sparkle (priority 4) in the world pass before the fog; 13 aligned frames, 73 of 126 changed pixels closer to the PS2, 39 further. Ready to switch on.
+> - Files: `tools/export_location_set_pieces.py`, `local/event-activation/*/set-pieces.json`, `rival-beam.js`, `terrain-sparkle.js`, `pv-flags.js`; docs set-pieces.md, visual-parity.md 41.9.
+
+> **Metro flicker fixed (env pass depth bias); world-load hang bisected, no switch reproduces it (2026-09-28, blend-space agent):** see [visual-parity.md](visual-parity.md) section 43 "Depth bias on the pass".
+> - **Flicker:** the env-map pass (pv `envMap`) z-fought its base pass in WebKit on grazing glass. `world-material.js envPassMaterial` now sets polygonOffset -1 / -1.
+> - **Hang bisect (Safari freeze on a world load; the sweep harness stuck on EBA3):** the shared WebKit driver, on the dev tree and on a frozen copy of the production bundle. Setup:
+>   - defaults, and -frame8 / -envMap / -cutsceneBytes / -sortedClass / -encodedBlend, on EBA3 and BRA2;
+>   - a fresh load, then event -> PEAK1 -> event -> MOUNTAIN (peak run 7) -> event;
+>   - plus 24 loads through the post-event transport ride with cutscenes on.
+>
+>   No hang, device loss, validation error or stuck GPU promise in any run.
+> - **Still open:**
+>   - WebContent RSS grows about 130 MB per world switch in every variant (1.45 -> 4.6 GB over 24 loads) and the GPU process 234 -> 716 MB. Not yet traced.
+>   - `fog-renderer.js compileObject` warm compiles fail after a switch back to an event: "GPUDepthStencilState.format is required", because the world pass's depth-stencil texture has no GPU backing yet. The objects then build on their first draw.
+> - **Tool and runs:** `local/browser-validation/blend-space/hang/hang.mjs` (runs beside it) (heartbeat, rAF vs timers, device.lost, uncapturederror, pending GPU promises, the driver's own GPU and WebContent CPU/RSS).
+
+> **Avalanche trails emitters ported, bit-exact; their births now draw the presentation stream (2026-09-28, AI-parity agent):** see [avalanche.md](avalanche.md) "Trails". **Core59** (core.wasm sha256 294fd6347a14..., core.js 3982f195546b...) is live, identical to the scratch build. Full mirror capture suite 252/252, sim-diff identical.
+> - **What:** every pool tumbler's colour dynamic emitter (+0xD0, vtable 0x4930D0): 0x371600 / 0x370DC8 (seed 2.0, the builtin-96 block) at the trigger, the flake colour as its colour base, then per tick the alpha into the kernel and 0x3717C0 -> 0x3710D0. The emitter is cleared at the release.
+> - **Parity:** each live birth draws one presentation-stream value (0x4FF018): 3 a tick in EBA3, 8 in ERA5. The port made none, so its visual stream fell behind from every trigger.
+> - **Checks:**
+>   - Live oracle: every emitter (image, rings, colours) and the stream words bit for bit after every tick, 19 runs / 6852 ticks, 0 failures. The oracle corrects the recompiled div.s infinity for 1 / NumBlur to the EE's 0x7F7FFFFF.
+>   - Core against the much-2-much-full savestate: bit-exact, except the packet words the draw rewrites and the solo run's birth seeds.
+> - **Export for the draw:** `avalanche_trails()` (layout in web/avalanche_gameplay.inc).
+> - **Also:** the core now resets its avalanche world in place. A whole-world temporary with the emitters overflowed the wasm stack; the first build crashed at load. Rider TLS grows ~35 KB per context.
+> - `compare-ai-capture.mjs` takes a TICK_HOOK like compare-ps2-capture.
+> - **Not ported:** the replay-restore catch-up points (+0x2EC); the restore is not wired.
+
+> **A spent Start (pv `startConsume`, on; 2026-09-28, visual-parity agent):** see [visual-parity.md](visual-parity.md) section 31 "A spent press".
+> - **Owen's Safari + Xbox pad telemetry** (t93ez0j6): the BRA2 heat card went card -> game -> ctm-pause in the same moment.
+> - **PS2:** the pause needs a new Start press with no overlay or transition (0x20CBE8 / 0x20CBA0). The press a card or prompt used is held, not new, once the overlay has gone.
+> - **Cause in the port:** two pad loops with their own edges: gamepad-menus.js and main.js's frame. If the frame saw the press only after the menu had switched to the ride, the one press did both.
+> - **Fix:**
+>   - `gamepad-menus.js taken('start')`: a press sent as a menu key is spent until the button is released;
+>   - `main.js`'s pad path skips a spent Start;
+>   - the menus' synthetic keys (`ssxPadMenu`) never pause through the keyboard path. In Chrome, at-target listeners on window run in registration order, so a synthetic key could be judged on a stale screen.
+> - **Checked:** `startmatrix.mjs` in WebKit and Chrome 17 / 17 (lodge, finish banner, card, pause items), and live WebKit 17 / 17. Tests: test-start-rules (the late-sighting order), test-gamepad, test-touch-controls.
+> - **Not reproduced:** the exact interleaving (a shared fake pad cannot stage it).
+> - **Files:** `pv-flags.js`, `gamepad-menus.js`, `main.js`, `test-start-rules.mjs`.
+
+> **One draw order for every post-fog effect (pv `effectOrder`, off; released avalanche pieces; 2026-09-28, visual-parity agent):** see [visual-parity.md](visual-parity.md) 41.9 and [avalanche.md](avalanche.md) "After the release".
+> - **The rule:** the PS2 flush sorts its merged buckets by the key 0x364240 (priority, word1 sort mode -> t0, word0 bits 6..9 -> rank through 0x492010, texture handles incl. the second slot's low bits), ascending and stable (0x364050). `web/ps2-draw-order.js` holds it once: `drawKey`, `drawOrder` (renderOrder 660..720 by priority), each effect's fields (`EFFECT`), both FX texture-handle tables from PS2 RAM (event boot and Conquer the Mountain differ; `main.js loadCourse` calls `setDrawOrderWorld(course.freeRide)`), and the world's sorted-class constant (`WORLD_SORTED_ORDER`, which main.js's SORTED_CLASS_ORDER now takes).
+> - **Converted behind the switch:** fog puffs, set-piece particles, start fire, wake, boost strips, aura, streamers, the '!' icon, impact chunks / sparks / glints / fist, snow, snowfall, camera splash, halos. Off = the old fixed orders.
+> - **Checked:** `test-ps2-draw-order.mjs` (new, in test:all) against 115 sorted RAM buckets of 14 states (`local/reference/draw-order/buckets.json`): exact keys, RAM order. Page frames (ABC1 2000, DBC2 weather 1000, BHP1 1619 / 3219, ARA1 1219; Chrome and WebKit, camera pinned): every effect both draw is in the PS2's order. No pixel changes on or off in those frames (the moved effects do not overlap there). Ready to switch on.
+> - **Open:** the set-piece particles' second texture is inherited (they get 'spec' in most frames, not all: the helper uses 'spec'); the rival beam and light glows draw outside the encoded pass; the terrain sparkle is priority 4 (before the fog) on the PS2.
+> - **Released avalanche pieces:** the static collectors 0x22A5A0 / 0x229FC8 test only (flags & 3) == 3, residency and the frustum; 0x100 is not a test there. PS2 RAM: the EBA3 rocks at 0x40214123 are in that frame's static list. A piece drawn at the start is drawn again at its authored place after its release (ABC1 10 / 11 / 13, DBC2 71, ESS3 58); `avalanche-state.js` now keeps it. The core56 poses match the PS2's AvaSpline +0x40 (EBA3 820 .. 2819, Chrome).
+> - **Files:** `ps2-draw-order.js` (new), `test-ps2-draw-order.mjs` (new), `pv-flags.js`, `fog-puffs.js`, `wake-renderer.js`, `boost-renderer.js`, `impact-fx-renderer.js`, `rival-beam.js`, `set-piece-particles.js`, `set-piece-halos.js`, `startfire-renderer.js`, `weather-renderer.js`, `snow-renderer.js`, `main.js`, `avalanche-state.js`, `test-avalanche-state.mjs`, `test-snow-renderer.mjs`, `package.json`.
+
+> **Core58 fixes a core57 regression: avalanche definitions lost at the race start (2026-09-28, AI-parity agent):** core57 keyed the shared definitions by the location name (`setPieceLocationName`). A human whose avalanches.json loaded before its world, or a streamed world (which renames the location with every append), lost its own definitions at the next race start (`avalanche_info` [0, 0, 0, 0]: the rendering agent's ABC1 QA flow). **Core58** (core.wasm sha256 631c00d263fd71f6...) is live, identical to the scratch build.
+> - **Fix:** a core that loaded its own definitions keeps them. The shared copy carries a generation, and a context that never loaded its own takes the latest.
+> - **Check:** web/test-avalanche-collision.mjs loads ABC1 in both orders, resets the race and triggers 10. It fails on core57 and passes on core58.
+> - **Gates:** the avalanche and AI gates are unchanged.
+> - No loop anywhere on this path (sync, share, release, track reset are bounded).
+
+> **The title's Start sound (pv `titleStart`, on; 2026-09-28, visual-parity agent):** see [audio-menus.md](audio-menus.md) "Title Press START".
+> - **PS2** (`local/ps2-capture/menus/title-start`: call-log hooks on 294F78 / 2906B8, and a silent SDL-disk recording with the music channel zeroed): one sample after Start, the title state's notify 0x1946A8 plays FE event 15 (snd 7) and the menu's UINext accept plays event 0 (snd 3), on the same frame, both from SSX3Menu. The snowflake burst shows from +5.
+> - **Why the port was silent:** SSX3Menu was fetched only when the audio unlocked, and the unlock was that same first press, so the voice found no bank. The port also never played event 15.
+> - **Fix:**
+>   - `game-audio.js` loads SSX3Menu at init (fetch and decode need no AudioContext);
+>   - `ui.js leaveTitle` starts the transition, then plays events 15 and 0;
+>   - `audio-menu.js` leaves the title to it.
+> - **Checked:** Chrome (trusted key) and WebKit: the bank is in before the press, and both voices start in the press's handler. Tests: `test-title-start.mjs` (new), test-audio-sfx, test-game-audio, test-audio-menu.
+> - **Files:** `pv-flags.js`, `game-audio.js`, `ui.js`, `audio-menu.js`, `test-title-start.mjs`.
+> - **Open:** Chrome may not count a gamepad press as a user gesture; it unlocks the audio only through the existing pad path, which is browser policy.
+
+> **Avalanches for the computer riders; the avalanche replay snapshot ported, not wired (2026-09-28, AI-parity agent):** see [avalanche.md](avalanche.md) "Open" and "Replay snapshot". **Core57** (core.wasm sha256 57e2a2c154812...) is live, identical to the scratch build.
+> - **Computer riders:** their contexts loaded no avalanches.json, so their worlds kept the static rocks. Now the definitions a core loads are shared (`avalancheShared*`, on the rider-globals shared list), and a context of the same location takes them (`avalanche_sync`).
+>   - parity-ai/era5 plays avalanche 28 in all six cores alike.
+>   - The 26 gates on avalanche locations and sim-diff (ARA1 x 4 pads, ERA5) are unchanged.
+>   - `compare-ai-capture.mjs` now reports `summary.avalanches` per core.
+> - **Replay snapshot:** `originalAvalancheSave` / `originalAvalancheRestore` (0x2D9CB0 / 0x2D9D68), bit-exact in the live oracle: 8 playing states, then 60 ticks each; 19 runs / 1072 ticks / 6808 matrices in total.
+>   - Not wired: the browser's replay re-simulates, so after an R1 / L1 skip it lacks the PS2's restore quirks (speed factor dropped, one tick of start-pose pieces). This is a known replay difference.
+
+> **Colour space and translucency: what future agents need to know (2026-09-28, Xbox-texture agent):** see [visual-parity.md](visual-parity.md) sections 38, 38a, 43, 44.
+> - **The frame holds encoded bytes (pv `encodedBlend`, on).** Every blend is the GS's own maths on bytes, within 1 level of the PS2 (`test-frame-space.mjs`: 16,384 blends, Chrome / WebKit, WebGPU / WebGL2). The old linear-light frame was off by up to 74.
+> - **`web/frame-space.js` is the only place that decides colour space.** `test-frame-space.mjs` fails on any `sRGBTransferEOTF` / `OETF` / `SRGBColorSpace` elsewhere in shipped modules. For a new material:
+>   - GS bytes -> `toFrame(bytes / 255)` as the output colour (the usual case: compute the PS2 combine in bytes);
+>   - a pass reading the frame (a composite) -> `fromFrame(value)`;
+>   - three's own linear-light maths kept on purpose -> `linearToFrame(linear)`, or `material.outputNode = linearOutput()` for a stock material, with textures in `linearTextureSpace`;
+>   - a stock material sampling a texture straight into the frame -> `texture.colorSpace = frameTextureSpace`;
+>   - `Color` values stay the bytes they were written as (`ColorManagement` is off with the encoded frame).
+> - **Targets:**
+>   - the world / sky pass targets are 8-bit (pv `frame8`, on; `frameBufferType`);
+>   - the front end renders straight to the canvas with no output pass (`outputColorSpace` linear);
+>   - effects drawn after the fog on the PS2 (priority 7: snow, wake, boost, beams, particles) stay in the encoded composite (`snow-composite.js registerEncodedEffect`), unfogged; everything else draws in the world pass and the fog composite fogs it.
+> - **Static models:**
+>   - blend classes from the material word & 0x60000;
+>   - the env-map second pass (word & 0x660000 in 0x2x0000 / 0x6x0000; pv `envMap`, on) is tagged per batch by `web/world-batches.py triangle_env`. Any package re-split must keep it: `web/prepare.py`, `tools/export_peak_world.py`; `SSX_ENV_SPLIT=0` only for comparisons;
+>   - class 1 draws before the depth-sorted classes 2 / 3 (render queue key 364240; pv `sortedClass`, off, verified: renderOrder 0.5 for classes 2 / 3).
+> - **Cutscene sets / skies / PDA modulate in bytes** (pv `cutsceneBytes`, on).
+> - **Checking colours against the PS2:**
+>   - use aligned frames (`vpshot --pin`) and score only the pixels a change moves;
+>   - hide batches by texture to attribute a gap;
+>   - drive a derived capture with EE pokes (e.g. palettes painted magenta) to isolate one draw's contribution;
+>   - frames with a large whole-frame error (BHP1 pipe runs, some ARA1 event-race ticks) are camera-misaligned, not colour.
+> - **Tools:** `tools/vudis.py` (VU1 micro-mode disassembler); `local/browser-validation/blend-space/` (scripts, per-frame numbers).
+
+> **Avalanche pieces' collision, bit-exact against PS2 rock hits; followers need their builtin-0 entity (2026-09-28, AI-parity agent):** see [avalanche.md](avalanche.md) "Collision". **Core56** (core.wasm sha256 ad4b7d71cb85c390...) is live, identical to the scratch build: full mirror capture suite 252/252, sim-diff identical.
+> - **Before:** every collidable piece had its countdown seed (static route 0x20 at the authored place), so nothing threw; after the trigger the rocks answered where they started instead of where they tumble.
+> - **PS2:** the trigger program's builtin 0 (Object, group 1) and 95 (AvaSpline 0x48F338 via 355A78, attach 3554B0) put the rocks on the entity route (0x40214145). Bounds are the modifier's +0x10 / +0x20; the hierarchy is composed on +0x40; the rigid predicate is 1; the selected callback does nothing. Each tick in group 1, 2D9C00 then 3568B0 (bounds = translation -/+ r).
+> - **Order (from the records' watches):** the AvaSpline reads the tumblers *before* that tick's step. The port runs `avalanche_entities_tick` first in race_begin. A first build with it after the step touched a rock the PS2 missed by 1.8 m.
+> - **Release** restores the static route at the authored place (34FBF0: 0x40214145 -> 0x40214123). EBA3's rocks (type 2) are never released.
+> - **Followers (for the draw):** `moving_instances` / `avalanche_pieces` treat a piece as a follower only once builtin 95 attached, which needs the builtin-0 entity (0x305D90). ABC1 ava1bitB_1003 is no longer one. The released list keeps only pieces whose entity the release destroyed. The draw delta is the AvaSpline +0x40.
+> - **Captures:** `runs/avalanche/eba3-rock-hit{,-a,-b}` (derived from the much-2-much countdown anchor, silent; watches of every rock's AvaSpline and instance header).
+>   - -a / -b hit rockslide_1001 at 1113 / 1112: exact to the end. core50 leaves at the contact.
+>   - Every rock bit-exact on every record (6390..6395 checks); the much-2-much-full savestates 30/30.
+> - **Tests:** `web/test-avalanche-collision.mjs` (in test:all); gates `avalanche/eba3-rock-hit`, `-a`, `-b`.
+> - **Not modelled:** the 3291E0 octree move, and the scope list's entity admission at its every-third-tick rebuild. Computer-rider contexts still keep static rocks (they load no definitions).
+
+> **Equip Gear's load from the lodge (pv `equipLoading`, on; 2026-09-28, visual-parity agent):** see [visual-parity.md](visual-parity.md) section 42 "Equip Gear's load".
+> - **PS2** (`local/ps2-capture/menus/eqg-k*`, `eqg2-k*`, first and second entry, same frames): no white hold. The switch is at full white (+12), then Equip Gear under the fall with "Loading..." over the list: no rider, help line, 'equip btm left' dashes or row highlight.
+>   - +37: all of those appear together, with "Loading..." still behind the rider for one frame.
+>   - That is phase 3 of CharEquip (vt+0x30 = 0x1993A0: 19A238, 19E538(slot, 1), 186518) at the intro's 0x42 label + 2, not a disc load.
+> - **Port** (`web/wardrobe.js`):
+>   - The screen is up at the switch, and the outfit package builds behind "Loading...".
+>   - The rider draws from phase 3 once loaded; "Loading..." goes a frame later.
+>   - The highlight, the dashes and the help line wait for phase 3 (the help line also for the outfit package).
+>   - `preloadEquipGear` is called while the lodge menu is up (`lodge-ui.js preloadGear`, `career-ui.js`). Setup Character's Equip Gear behaves the same.
+> - **Before:** the white was held until the package was built: a 42-frame hold at 200 KB/s.
+> - **Checked:** stepped frames in Chrome and WebKit against the PS2 (+16, +26, +34..+38, +41); the lodge and Setup flows including an equip reload; no errors.
+> - **Tests:** R36; test-wardrobe, test-fe-screens, test-career-rider, test-career.
+> - **Files:** `wardrobe.js`, `lodge-ui.js`, `career-ui.js`, `lui-flash.js` (comment only), `pv-flags.js`, `test-visual-parity.mjs`; docs characters.md.
+> - **Open:** input between the flash and phase 3 is not gated. Setup Character's PS2 load length has not been re-captured.
+
+> **Env-map second pass (pv `envMap`), cutscene bytes (pv `cutsceneBytes`), 8-bit frame targets (pv `frame8`), all off (2026-09-28, Xbox-texture agent):** see [visual-parity.md](visual-parity.md) section 43.
+> - **Cause of the translucent gap:** env-mapped static models draw a second time.
+>   - The material word & 0x660000 in 0x2x0000 / 0x6x0000 (37F2A4..37FD2C) selects it: GS context 2, the record's second texture (halfword +2), UV from the camera-space normal (VU1 program 3 UV mode 256 at 0xCE8, matrix 0x504760: u = 0.5 n.x + 0.5, v = -0.5 n.y + 0.5).
+>   - ALPHA_2 is Cs + Cd or Cs x Ad + Cd. The port never drew it.
+> - **Port:**
+>   - `world-batches.py` `triangle_env`; `prepare.py mesh_env` and `export_peak_world.py` tag batches `env` and add the second textures. The event packages carry it since the lit re-export (not ARA1); the peaks get it at their next re-split.
+>   - `world-material.js envPassMaterial`. Packages without tags draw no pass.
+> - **Aligned PS2 frames** (30 frames / 9 runs, BHP1's misaligned pipe excluded), on the pixels the pass changes:
+>   - Chrome: |port - PS2| 31.06 -> 27.56, bias +24.9 -> +0.7;
+>   - WebKit: 31.21 -> 27.66, +25.1 -> +0.9;
+>   - WebGL2: 31.12 -> 27.61, +25.0 -> +1.0.
+> - **Cost** (Metro, WebKit): +2 pipelines; frame times and load the same, desktop and phone tier.
+> - **cutsceneBytes:** cutscene sets, skies and the PDA prop modulate in bytes. EBC3 heli arrival luma MAD, Chrome 21.6 -> 20.7, WebKit 18.7 -> 16.6 over 3 frames.
+> - **frame8:** 8-bit world / sky targets with the encoded frame.
+>   - At most 2 levels off half-float except 24 stacked-glass pixels; no banding.
+>   - -8.1 MB texture memory desktop, -2.2 MB phone tier.
+> - **Helper bypasses closed:** the `?originalWorld=0` fallback and the old rival icon go through `frame-space.js linearOutput()`.
+> - **Tools:** `tools/vudis.py` (VU micro-mode disassembler), `tools/export_env_split.py` (scratch check only). Test: `test-env-map.mjs`.
+
 > **Public release: deploy config out of the repo, ELF-lifted and savestate code out, domain and personal paths gone, GPL-3.0 (2026-09-28, public-release agent):** see [hosting.md](hosting.md) "Deploy configuration" (and the sync command). Full notes, local-only: `local/public-release/public-release.md`.
 > - **Deploy config:** host, host folder and launchd label come from the git-ignored `deploy/.env.local` through `deploy/env.sh`. The environment still wins, and `sh deploy/env.sh` prints the resolved values.
 >   - `deploy-staged.sh` / `deploy.sh` are otherwise unchanged: a stubbed dry run gives identical command traces in 7 scenarios.
@@ -91,6 +248,7 @@
 > - **MultiSpline section leave** (for the physics agent): 0x30A460 -> 0x356CC8 -> 0x35AAE0 only counts modifier +0x34 down (never read), so the core's `Action::MultiSplineRelease` must not deactivate the lift. The Metro-City bin's disappearance at 11219..11618 has another cause, not traced yet. The JS cable life already follows the rule.
 > - **Terrain glint** (pv `terrainGlint`, on; `web/world-material.js glintBytes`, `tools/export_terrain_glint.py`, `web/test-terrain-glint.mjs`): the patch "reflection" pass 38D168 (layer type 6): UV = (n, 1) x E with E checked against RAM in 5 states; on EBC3 frames it correlates with the PS2 better than every variant tried. Assets copied and switched on by the coordinator. Costs 4 bytes a vertex while on.
 > - **Avalanches** (docs/avalanche.md): the runtime asset `<LOC>/avalanches.json` (+ PEAK copies; 14 files, copied); audio traced (only the rumble loop plays: bank 8 sound 2, bus 5, volume from the human's nearest tumbler; the per-tumbler sound calls hit the empty stub 0x29E560); prepare.py splits the AvaSpline pieces into moving batches (7 re-split packages to scratch `cable/ava/prep/deliver`, pixel-identical); `web/avalanche-state.js` (visibility by the builtin-0 key-2 rule + the rumble; pv `avalanche`, ready to switch on) verified with core50: EBA3 piece poses equal to the PS2 tumblers at 6 kept states (Chrome and WebKit), tumble / release / never-drawn emitter nodes on DRA4 and ABC1, rumble against PS2 RAM. Trails (0x2D8EA8 colour emitters) still need the core's emitter-ring export.
+> - **Snow chunks in the forest** (section 41.8, pv `snowBuckets`, off): the PS2 flush sorts its render buckets by descending texture handle (0x364240 / 0x364050) = ascending FX texture id, so the rider's chunky sprays draw over the snow cloud; the page drew them under it (emitter index order). Verified on ABC1 2000 in Chrome and WebKit.
 > - **Final sweep** (section 41.7): nothing new missing; one CTM item to check with a real ride (fr-aara1 4296 / 5046: ARA1 not resident in the page under vpworld's teleport).
 > - **Inventory** (section 41.2): what is still missing, by visibility: avalanches (docs/avalanche.md, core first), plant sway (in-engine cutscenes only; skipped, a known gap), camera shake / scripted lightning / builtins 35 and 74 (with the physics agent).
 > - **Corrected** in terrain-render-fidelity.md: the type-6 patches run the whole course (not only the start ramp), and 0x2DBF98 is the fog-puff draw.

@@ -9,13 +9,14 @@ import { fromBits, bitsOf } from './ee-scalar-float.js';
 
 const LOC = process.argv[2] || 'ARA1';
 const dir = new URL(LOC === 'ARA1' ? './public/assets/UVSCROLL/' : `./public/assets/${LOC}/UVSCROLL/`, import.meta.url);
+const testDir = new URL(dir.href.replace('/public/assets/', '/public/test-data/'));   // PS2 snapshots: test data
 const data = JSON.parse(readFileSync(new URL('uv-scroll.json', dir), 'utf8'));
 let failures = 0;
 const fail = (m) => { if (failures++ < 10) console.error(m); };
 const fence = data.instances.filter((x) => x.name.startsWith(`mdl_${LOC}_fencebuv_`) && !x.name.includes('fencebuv_eb'));
 if ((LOC === 'ARA1' ? fence.length < 200 : false) || fence.some((x) => bitsOf(x.initial.stepU) !== bitsOf(-0.025) || x.initial.stepV !== 0 || x.initial.mode !== 5)) fail('fencebuv UVScroll programs');
-if (existsSync(new URL('uv-scroll-snapshots.json', dir))) {
-  const snap = JSON.parse(readFileSync(new URL('uv-scroll-snapshots.json', dir), 'utf8'));
+if (existsSync(new URL('uv-scroll-snapshots.json', testDir))) {
+  const snap = JSON.parse(readFileSync(new URL('uv-scroll-snapshots.json', testDir), 'utf8'));
   const fields = snap.fields, ints = new Set(['mode', 'active']);
   const state = (w) => Object.fromEntries(fields.map((f, i) => [f, ints.has(f) ? w[i] | 0 : fromBits(w[i])]));
   let ticks = 0, rebuilt = 0;

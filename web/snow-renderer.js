@@ -3,9 +3,20 @@ import {snowBillboardScale} from './snow-billboard.js';
 import {createStartfireRenderer} from './startfire-renderer.js';
 import {createImpactFxRenderer} from './impact-fx-renderer.js';
 import {attribute,texture,vec4,uniform,select} from 'three/tsl';import {toFrame} from './frame-space.js';
-import {pv} from './pv-flags.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
+// pv snowBuckets (docs/visual-parity.md 41.8): the PS2's render-list order for the rider snow emitters. The snow component draw 0x2E24D0
+// submits the ten emitters in index order (allocated, count > 0) through 0x371688 -> 0x380CE0, one record each, textured with the
+// emitter's current flipbook frame. The flush merges records of equal material state and textures (0x362DE8, 0x394ED0 / 0x395000
+// buckets), keys each bucket with 0x364240 = ~((31 - priority) << 26 | modes | (texture handle & 0x3FF) << 3) and radix-sorts the
+// keys ascending, stable (0x364050): within priority 7 the draws go by DESCENDING texture handle, ties in submission order. The snow
+// textures are FX-table entries 4..25, whose handles (renderer +0xF50: 1524 .. 1505, entries 9 and 12 empty) fall as the entry rises,
+// so the order is ASCENDING texture id: the SnowTrail / CloudySpray / BodySnow cloud (5), the impacts (6), then the chunky sprays
+// (tmb1..tmb8, 14..21) on top
+// (the dark chunks over the cloud in the forest, ABC1 2000). renderOrder 700 + 0.02 x id (three keeps equal renderOrders in creation
+// order: the riders, then the emitter index, as the submission order).
+export const snowDrawOrder=(textureId)=>700+0.02*textureId;
 export async function createSnowRenderer(origin,core,options={}){
- const skipEmpty=pv('skipEmpty');
+ const skipEmpty=pv('skipEmpty'),effectOrder=pv('effectOrder'),buckets=pv('snowBuckets')||effectOrder;
  const encodedOutput=uniform(false);
  const asset=await (await fetch('/assets/SNOW_FX/snow-fx.json')).json(),maps=new Map(),alpha=new Map();
  await Promise.all(asset.textures.map(async t=>{const bytes=new Uint8Array(await (await fetch('/assets/SNOW_FX/'+(t.gs_alpha_file||t.file))).arrayBuffer());if(bytes.length!==t.width*t.height*4)throw Error('Original snow texture extent');const map=new T.DataTexture(bytes,t.width,t.height,T.RGBAFormat);map.wrapS=map.wrapT=T.RepeatWrapping;map.minFilter=map.magFilter=T.LinearFilter;map.colorSpace=T.NoColorSpace;map.needsUpdate=true;maps.set(t.id,map);alpha.set(t.id,t.gs_alpha_file?t.gs_alpha_scale:1);}));
@@ -36,7 +47,12 @@ export async function createSnowRenderer(origin,core,options={}){
  let serial=-1;const extentScratch=[0,0],lastCamera=new T.Matrix4(),lastProjection=new T.Matrix4(),viewPosition=new T.Vector3(),matrix=new T.Matrix4(),position=new T.Vector3(),scale=new T.Vector3();
  const api={group,startfire,impact,setEncodedOutput(value){encodedOutput.value=!!value;},update(core,camera){
   startfire.update(core,camera);impact?.update(core,camera);
-  const info=new Float32Array(core.HEAPF32.buffer,core._snow_info(),23);camera.updateMatrixWorld();if(serial===info[20]&&lastCamera.equals(camera.matrixWorld)&&lastProjection.equals(camera.projectionMatrix))return;const changed=serial!==info[20];serial=info[20];lastCamera.copy(camera.matrixWorld);lastProjection.copy(camera.projectionMatrix);
+  const info=new Float32Array(core.HEAPF32.buffer,core._snow_info(),23);
+  if(buckets){ // 0x364240 / 0x364050 order by the current flipbook frame, before the unchanged-state early return
+   const fb=new Float32Array(core.HEAPF32.buffer,core._snow_flipbook_info(),20);
+   for(let i=0;i<10;i++)if(meshes[i])meshes[i].renderOrder=effectOrder?drawOrder(EFFECT.snow(fb[i]),SUBMIT.snow):snowDrawOrder(fb[i]); // pv effectOrder: the shared key (web/ps2-draw-order.js)
+  }
+  camera.updateMatrixWorld();if(serial===info[20]&&lastCamera.equals(camera.matrixWorld)&&lastProjection.equals(camera.projectionMatrix))return;const changed=serial!==info[20];serial=info[20];lastCamera.copy(camera.matrixWorld);lastProjection.copy(camera.projectionMatrix);
   const frames=new Float32Array(core.HEAPF32.buffer,core._snow_flipbook_info(),20);
   for(let i=0;i<10;i++){
    const frame=frames[i];if(!bindings[i].includes(frame))throw Error('Snow texture frame outside authored sequence');if(meshes[i].userData.snowTextureId!==frame){textureNodes[i].value=maps.get(frame);meshes[i].userData.snowTextureId=frame;}

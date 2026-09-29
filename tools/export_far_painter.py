@@ -12,7 +12,7 @@ Recovered from SLUS_207.72 (engine/far_painter.hpp has the full notes):
 - Driver: 2C0778 with the -99999 automatic weight, called from the camera 15E668 (15EBBC:
   2ED490(view = outer+0x18 + 6, x = outer+0x20, y = outer+0x24)), then 15EBD8 reads the cap.
 
-Writes web/public/assets/<L>/SECTIONS/far-painter.json (git-ignored). A course record without a
+Writes web/public/test-data/<L>/SECTIONS/far-painter.json (git-ignored; tools/test_far_painter.py reads it, the game does not). A course record without a
 type-4 section (BRA2, BHP1) is written as painter=null: every tick resets to 30000.
 `--survey` lists every SDB world painter record that authors type 4.
 """
@@ -107,7 +107,7 @@ def main():
             print(row)
         return
     package = far_package(a.location)
-    out = a.output or ROOT / 'web/public/assets' / a.location / 'SECTIONS/far-painter.json'
+    out = a.output or ROOT / 'web/public/test-data' / a.location / 'SECTIONS/far-painter.json'   # no runtime consumer: test data (tools/test_far_painter.py)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(package, separators=(',', ':')))
     painter = package['painter']

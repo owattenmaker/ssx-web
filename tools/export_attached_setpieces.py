@@ -5,7 +5,7 @@ ParentModifier links (a child instance follows a parent entity's node). engine/p
 
 Outputs (git-ignored):
   web/public/assets/[<LOC>/]LIVECOMP/attached.json     browser data (schema below)
-  web/public/assets/[<LOC>/]LIVECOMP/attached-snapshots.json   PS2 snapshot records (tests)
+  web/public/test-data/[<LOC>/]LIVECOMP/attached-snapshots.json   PS2 snapshot records (tests)
   web/generated/attached_seed_<LOC>.hpp                core seed (models, spline LiveComps, parents)
 
 Sources: stage kind-16 handler rows (slots 1..5) and global handlers -> LUN programs (decoded like
@@ -204,7 +204,7 @@ def main():
             st = livecomp_state(ee, e[0], x['nodes'])
             records_out.append(dict(snapshot=Path(path).name, tick=tick, kind='spline-livecomp', resource=r, modifier=[U(e[2] + 0x60 + 4 * k) for k in range(16)],
                                     modifierDirty=U(e[2] + 0x58), distance=U(e[2] + 0x3C), **{k: st[k] for k in ('words', 'dirty', 'caches', 'matrices')}))
-    (out / 'attached-snapshots.json').write_text(json.dumps(dict(version=1, location=L, records=records_out), separators=(',', ':')))
+    __import__('disc_paths').test_data(out / 'attached-snapshots.json').write_text(json.dumps(dict(version=1, location=L, records=records_out), separators=(',', ':')))
     write_header(L, sorted(spline_lc.values(), key=lambda x: x['resource']), parents, loc.audit['world_package_sha256'])
     print(f'{L}: {len(spline_lc)} spline LiveComps {[x["name"] for x in spline_lc.values()]}, {len(parents)} parent links '
           f'({sum(x["parentKind"] == "livecomp" for x in parents)} on LiveComps, {sum(x["parentKind"] == "spline-livecomp" for x in parents)} on spline LiveComps), '

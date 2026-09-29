@@ -8,7 +8,7 @@ Single Event flag 0x535C11, game mode 0x535C12, the player's character and frees
 char*0xF88 + 0x284, 0x147CB8), GMM+0x18.. (player, +0x1C, the shuffled characters), the computer riders spawned
 (0x535C04), 0x536640 and the handler's three posted rounds (handler 0x57A600 + 4 + round*0x28 + slot*4).
 
-  python3 tools/export_freestyle_rosters.py      -> web/public/assets/CAREER/freestyle-rosters.json (web/test-slopestyle-bigair.mjs)
+  python3 tools/export_freestyle_rosters.py      -> web/public/test-data/CAREER/freestyle-rosters.json (web/test-slopestyle-bigair.mjs)
 """
 import json, struct, sys
 from pathlib import Path
@@ -46,7 +46,7 @@ def main():
     paths = [ROOT / p for p in STATES if (ROOT / p).exists()]
     for g in GLOBS: paths += sorted(ROOT.glob(g))
     out = [facts(p) for p in paths]
-    target = ROOT / 'web/public/assets/CAREER/freestyle-rosters.json'
+    target = ROOT / 'web/public/test-data/CAREER/freestyle-rosters.json'; target.parent.mkdir(parents=True, exist_ok=True)   # test data
     target.write_text(json.dumps(dict(provenance='tools/export_freestyle_rosters.py', states=out), indent=0) + '\n')
     for f in out: print(f['state'], f['course'], 'single' if f['single'] else 'career', hex(f['roster_seed']), f['roster_draws'], f['gmm_characters'][:6], f['rounds'][0])
 

@@ -723,5 +723,23 @@ else {
   check(exact && lit.size === 29 && /uniform\(new Vector3\(\)\)\.onObjectUpdate\(\(frame\)=>frame\.material\?\.userData\?\.litRows/.test(wm) &&
     /const lit=batch\.instance&&batch\.lighting&&pv\('litInstances'\)/.test(wm) && /if lit is not None:batch\['lighting'\]=lit_resources\[lit\]/.test(wb) && PV_DEFAULTS.litInstances === true,
     'lit instances: the PS2 light-cache rows on their batches (ERA5: 29 instances), one shared lit program (litInstances on)'); }
+// R36. The lodge's Equip Gear load (pv equipLoading, section 42; PS2 local/ps2-capture/menus/eqg-k*, eqg2-k*): no white hold, the screen is
+//      up at the switch with "Loading..." over the list; phase 3 (the intro's 0x42 label + FOCUS_LAG: CharEquip vt+0x30 = 0x1993A0, 19E538
+//      (slot, 1)) shows the rider once loaded, 36 frames after Cross on the PS2 (37 after the flash's 2-frame lead), "Loading..." one frame
+//      later; a reload hides it again; the help line waits for the outfit's data (+0xA60).
+{ const { EquipGearScreen } = await import('./wardrobe.js'); setPv('equipLoading', true);
+  let T = 0; const p = { failed: new Set(), model: null, shown: null, isReady: true, want() { return true; }, get ready() { return this.isReady; }, show(v) { this.shown = v; } };
+  const g = new EquipGearScreen({ characterSelect: { preview3d: p } }); g.now = () => T; g.base = { id: 'zoe', package: 'RIDER_ZOE' }; g.enter = 8; g.T = {};
+  g.data = { screen: { labels: [{ frame: 25, control: ['4200080000000000', '10000400'] }] } }; g.preparing = { promise: Promise.resolve() };
+  T = 20; const building = g.showPreview() === true && p.shown === false && g.loadingText() && !g.gearReady();
+  g.preparing = null; T = 34; const early = g.showPreview() === true && p.shown === false && g.loadingText() && !g.settled() && g.gearReady();
+  T = 35; g.showPreview(); const first = p.shown === true && g.settled() && g.loadingText();
+  T = 36; g.showPreview(); const next = p.shown === true && !g.loadingText();
+  p.isReady = false; T = 50; g.showPreview(); const reload = p.shown === false && g.loadingText();
+  setPv('equipLoading', false); const off = g.settled(); setPv('equipLoading', null);
+  const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8'), lui = src('lodge-ui.js'), cui = src('career-ui.js'), war = src('wardrobe.js');
+  check(building && early && first && next && reload && off && /preloadGear\(\)\{/.test(lui) && /if\(pv\('equipLoading'\)\)this\.lodge\.preloadGear\?\.\(\)/.test(cui) &&
+    /case '0b777dd4':return settled\?null:\{hidden:true\}/.test(war) && PV_DEFAULTS.equipLoading === true,
+    'Equip Gear load: the screen at the switch, "Loading..." until the rider draws from phase 3, no help until the outfit is in (equipLoading on)'); }
 if (failed) { console.error(`${failed} visual-parity check(s) failed`); process.exit(1); }
 console.log('visual parity: all checks passed');

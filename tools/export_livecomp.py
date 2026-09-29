@@ -188,7 +188,7 @@ def main():
             records_out.append(dict(snapshot=Path(path).name, frame=frame, resource=res, name=inst['name'],
                                     head=[U(obj + 4 * k) for k in range(12)], dirty=(U(obj + 0x40) >> 16) & 1,
                                     matrices=[U(mats + 4 * k) for k in range(16 * n)], **({} if ara1 else dict(object=obj))))
-    (a.output / 'livecomp-snapshots.json').write_text(json.dumps(dict(version=1, records=records_out), separators=(',', ':')))
+    __import__('disc_paths').test_data(a.output / 'livecomp-snapshots.json').write_text(json.dumps(dict(version=1, records=records_out), separators=(',', ':')))
     print(f'{len(records_out)} LiveComp snapshot records from {len(paths)} savestates')
 
 

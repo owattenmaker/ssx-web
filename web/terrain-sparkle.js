@@ -21,6 +21,7 @@ import {mul, vuAdd as add, vuSub as sub, div as eeDiv, add as eeAdd, sub as eeSu
 import {lfsrNext} from './set-piece-particle-sprites.js';
 import {attribute, texture, vec4, float, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';
 import {registerEncodedEffect} from './snow-composite.js';
+import {pv} from './pv-flags.js';
 import {painterRegions} from './painter-regions.js';
 
 export const SPARKLE_FLAG = 0x800000;
@@ -219,7 +220,10 @@ export async function createTerrainSparkle({T, origin, capacity = 4096, fetchByt
   material.blendSrcAlpha = T.ZeroFactor; material.blendDstAlpha = T.OneFactor; material.blendEquationAlpha = T.AddEquation;
   const mesh = new T.InstancedMesh(geometry, material, capacity); mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = 640; mesh.visible = false; mesh.name = 'terrain sparkle';
   group.add(mesh);
-  registerEncodedEffect({object: group, setEncodedOutput: () => {}, populated: () => mesh.visible && mesh.count > 0});
+  // pv sparkleWorld (docs/visual-parity.md 41.9): the PS2 draws the sparkle at priority 4 (0x38DA40: word2 |= 0x80), in the world
+  // layer before the fog composite 36AC00, so it is fogged with the terrain; off: the encoded pass after the fog (640). The blend
+  // (Cd + Cd x As) scales the destination bytes either way (the world targets hold encoded bytes, pv encodedBlend).
+  if (!pv('sparkleWorld')) registerEncodedEffect({object: group, setEncodedOutput: () => {}, populated: () => mesh.visible && mesh.count > 0});
   const eye = [0, 0, 0];   // the camera in source cm (the 22C410 / twinkle eye)
   const state = {sets: 0, patches: 0, selected: 0, sprites: 0, drawn: 0, cached: 0, density: 1, ms: 0, frames: 0, totalMs: 0, maxMs: 0, eye};   // QA: cost of update()
   const right = new T.Vector3(), up = new T.Vector3(), fwd = new T.Vector3();

@@ -30,7 +30,7 @@ def main():
  head=u(rider+0x8a8)
  if head!=5:raise ValueError('Unexpected head bone')
  matrix=u(u(rider+0x780)+0x30)+64*head
- result={'provenance':{'state':str(a.state),'state_sha256':hashlib.sha256(a.state.read_bytes()).hexdigest(),'ram_sha256':hashlib.sha256(ram).hexdigest(),'rider':rider,'fx':fx,'environment_object':obj,'environment_vtable':vtable,'environment_getter':getter},
+ result={'provenance':{'state':__import__('disc_paths').repo_relative(a.state),'state_sha256':hashlib.sha256(a.state.read_bytes()).hexdigest(),'ram_sha256':hashlib.sha256(ram).hexdigest(),'rider':rider,'fx':fx,'environment_object':obj,'environment_vtable':vtable,'environment_getter':getter},
  'state':{'accumulator':f(fx+0x14),'phase':u(fx+0x18),'effort':f(fx+0x1c),'clock':f(fx+0x20),'duration':f(fx+0x24)},
  'head_bone':head,'head_matrix':[list(struct.unpack_from('<4f',ram,matrix+i*16)) for i in range(4)],
  'environment_index':env,'environment_distance':f(obj),'environment_last_coordinates':[f(wrapper+8),f(wrapper+12)],'environment_defaults':[0,6,0,0,0,10,1,1,0,0,0,1,1,1,1,f(0x4a30f0-0x4290),1,1,1],'environment_properties':{'current':[f(obj+8+i*8) for i in range(19)],'target':[f(obj+12+i*8) for i in range(19)]},

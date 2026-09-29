@@ -3,7 +3,7 @@
 originals (392DF0/31BF60 sine table, 34AC88 parameters, 34BCA0 vertices, 34B818
 cloth tick, 34C668 manager tick, 34B228 build) against engine/flag_cloth.hpp.
 Log: local/reference/flag-cloth/reference.log. Also writes the git-ignored
-web/public/assets/FLAGS/flag-golden.json (port outputs) for web/test-flag-animation.mjs."""
+web/public/test-data/FLAGS/flag-golden.json (port outputs) for web/test-flag-animation.mjs."""
 from pathlib import Path
 import subprocess, sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,7 +27,7 @@ command += [str(build/'ps2xRuntime/libps2_runtime.a'),str(build/'_deps/raylib-bu
 for framework in ['OpenGL','Cocoa','IOKit','CoreFoundation']:command+=['-framework',framework]
 binary=root/'build/ssx3_flag_cloth_reference';command+=['-o',str(binary)]
 cached_oracle_build(command,root/'build/original-flag-cloth-objects')
-golden=root/'web/public/assets/FLAGS/flag-golden.json';golden.parent.mkdir(parents=True,exist_ok=True)
+golden=root/'web/public/test-data/FLAGS/flag-golden.json';golden.parent.mkdir(parents=True,exist_ok=True)
 run=subprocess.run([str(binary),str(root/'local/disc/SLUS_207.72'),str(golden)],check=False,timeout=1800,capture_output=True,text=True)
 print(run.stdout,end='');print(run.stderr,end='')
 (folder/'reference.log').write_text(run.stdout+run.stderr)

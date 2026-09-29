@@ -430,7 +430,7 @@ export class AudioMenus {
     const snap = () => ({ screen: ui.screen, index: ui.index, flash: !!(ui.feScreens?.flash || ui.characterSelect?.flash || this.flash), sig: sig() });
     addEventListener('keydown', (e) => {
       const s = ui.screen;
-      if (!ui.ready || e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code) || this.owns(s) || s === 'game' || s === 'loading' || s === 'title' && e.code !== 'Enter') return;
+      if (!ui.ready || e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code) || this.owns(s) || s === 'game' || s === 'loading' || s === 'title' && (e.code !== 'Enter' || pv('titleStart'))) return;   // pv titleStart: ui.js leaveTitle plays the title's Start
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape'].includes(e.code)) return;
       const before = snap(), ingame = PAUSE_SCREENS.has(s) || (s === 'options' && ui.optionsReturn !== 'fe-options' && !!ui.optionsReturn) || s === 'pause';
       const off = !!ui.nav?.children?.[ui.index]?.disabled, keyboard = !!ui.feScreens?.keyboard;

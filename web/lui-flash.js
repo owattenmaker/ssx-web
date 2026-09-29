@@ -44,7 +44,8 @@ export class LuiFlash {
     const t = this.now() - f.at;
     if (!f.done && t >= FLASH_IN) {
       f.done = true; this.switchedAt = f.at + FLASH_IN; const r = f.to();
-      // a screen that is still loading (web/wardrobe.js open): full white until it is up, then the fall
+      // a screen whose own data is not in yet (web/wardrobe.js open): full white until it is up, then the fall. The PS2's screens are
+      // resident, so it never holds: pv equipLoading preloads Equip Gear's data and builds the outfit behind its "Loading..."
       if (r && typeof r.then === 'function') { f.wait = true; const done = () => { f.wait = false; const now = this.now(); f.at = now - FLASH_IN; this.switchedAt = now; }; r.then(done, done); }
     }
     if (f.wait) { c.save(); c.fillStyle = 'rgba(255,255,255,1)'; c.fillRect(0, 0, 640, 448); c.restore(); return; }

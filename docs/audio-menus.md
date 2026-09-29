@@ -346,8 +346,23 @@ message centre 0x1E4578, 62reward_list 0x1FF748.
 * **Loading screens** (cFELoadState / LoadHint / LoadStateInLodge / cGameLoadState*, vtables 0x47C538..0x47C948):
   default handlers, no listener calls and no direct UI SFX. Only the LoadingScreen.bnk music loop plays.
 * **Title "Press START"** (06title, Menu0000/tReal): Start or Cross = UINext -> query 0x194A48 returns 0x101 for
-  ev 6 -> kind[1] 6 -> **FE ev 0 (snd 3)**, then notify 5 -> 0x39F400 transition (plus ev 15 if the FE transition
-  page runs). Up/Down on the title are silent (tReal kind[0] = 0).
+  ev 6 -> kind[1] 6 -> **FE ev 0 (snd 3)**, then notify 5 -> 0x39F400 transition. Up/Down on the title are silent
+  (tReal kind[0] = 0).
+  - The title state's notify 0x1946A8 (a1 = 0) also hides the "Press START" item, plays its LUI label (39C870) and calls
+    **294F78(ev 15) = snd 7** (0x1946E4).
+  - PS2 (`local/ps2-capture/menus/title-start`: the state 11-title-press-start with call-log hooks on 294F78 / 2906B8,
+    Start at pad sample 60):
+    - one sample after the press, 294F78(15) from 0x1946EC and 294F78(0) from 0x1A2F28 each start a voice, on the same frame;
+    - the snowflake burst shows from 5 samples after the press;
+    - a silent SDL-disk recording with the music channel zeroed (audio+0x62CC) has the sounds from 1.12 s. SSX3Menu 3's
+      first layer matches at r 0.51, +2.5 semitones (root key 59, and 44.1 kHz samples at 48 kHz).
+  - Port (pv `titleStart`, on):
+    - `ui.js leaveTitle` starts the transition and plays FE events 15 and 0;
+    - `game-audio.js` loads SSX3Menu before the first gesture (it used to wait for the audio unlock, which was that same
+      press, so the first Start was silent);
+    - the keyboard watcher in `audio-menu.js` leaves the title to leaveTitle.
+    - Chrome and WebKit: both voices start in the press's handler (0.4 / 10 ms after the key) with the transition. Test:
+      `test-title-start.mjs`.
 * **Character select** (cFEStateCharSelect 0x181090, 08sel_char "Menu"): no game-code sound. Changing rider is a
   UIMenu cursor move -> **kind 1 -> FE ev 2 (snd 2)**. If that LUI menu does not wrap, pushing past the first or
   last rider plays kind[0] = 4 (ev 4, snd 0xD). The wrap bit is in 08sel_char's LUI data and has not been read.

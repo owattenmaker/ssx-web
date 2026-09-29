@@ -34,7 +34,7 @@ def main(location='ARA1'):
    if struct.unpack('<2I',file_at(target,8))!=(0x03e00008,0):raise ValueError('Node callback is not empty')
  u=lambda address:struct.unpack_from('<I',memory,address)[0]
  worldpath=ROOT/f'local/assets/native/{location}/world_collision.json';world=json.loads(worldpath.read_text())
- table=u(u(u(0x4a30f0+0x16c8))+8);rows=[]
+ table=u(u(u(0x4a30f0+0x16c8))+8);rows=[];runtime=[]
  for source in world['instances']:
   track,rid=source['track'],source['rid'];resource=rid<<8|track
   lookup=u(u(table+track*4)+0x1c);raw=u(lookup+rid*4);address=(raw>>8)<<2
@@ -56,8 +56,12 @@ def main(location='ARA1'):
   # RestoreNode and type-16 nodes draw nothing); type-10 cloth flags are drawn by cFlagManager.
   draw=draw_class(file_at,runtime_flags,node_table)
   rows.append(dict(body_route=body_route,ray_mode0_route=body_route,ray_mode2_route=ray_mode2_route,draw=draw,resource=resource,name=source.get('name'),authored_flags=authored,runtime_flags=runtime_flags,node_type=node_type,node_vtable=node_table))
+  runtime.append(dict(resource=resource,name=source.get('name'),address=address,binding=binding,authored_flags=authored,runtime_flags=runtime_flags,entity=entity))
  result=dict(version=1,location=location,course_sha256=event['course_sha256'],ee_sha256=digest,elf_sha256=hashlib.sha256(elf).hexdigest(),world_package_sha256=hashlib.sha256(worldpath.read_bytes()).hexdigest(),source_sha256=world['source_sha256'],instances=rows,dead_resources=[r['resource'] for r in rows if r['node_type']==6],scope=f'Captured {"Snow Jam" if location=="ARA1" else location} countdown instance ownership. DeadNode draw/contact callbacks are empty. Body collector routing verified at3340F4..3341A8. Mode0/2 ray routing verified at335BB0 and336D64. Static renderer dispatch and event-script execution remain to be integrated.')
  output=activation_dir(location)/'countdown-instances.json';output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(result,indent=2)+'\n')
+ # The countdown instances' EE addresses / bindings / entities (tools/export_uv_scroll.py and export_livecomp.py map captured
+ # modifier pointers through them): runtime-instances.json.
+ (activation_dir(location)/'runtime-instances.json').write_text(json.dumps(dict(snapshot=Path(snapshot).name.split('.')[0],instances=runtime))+'\n')
  print(json.dumps(dict(output=str(output),instances=len(rows),dead_nodes=len(result['dead_resources']))))
 if __name__=='__main__':
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--location',default='ARA1');main(p.parse_args().location)

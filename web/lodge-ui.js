@@ -4,7 +4,7 @@
 // local/ps2-capture/menus/lodge (Rider Details, Rewards, Buy Gear, Ubertrick Setup).
 import {format} from './locale.js';
 import {UBER_ROWS,uberEntries,SONG_FREE_CREDITS,SONG_PRICE} from './lodge.js';
-import {openEquipGear} from './wardrobe.js';
+import {openEquipGear,preloadEquipGear} from './wardrobe.js';
 import {MONSTER_LIST,monsterById} from './monster-tricks.js'; // Career Highlights = the monster tricks (0x1F5DA0)
 import {CareerHighlights,HIGHLIGHT_PAGES} from './career-highlights.js'; // the original 35car_stat LUI page
 import {pv} from './pv-flags.js';
@@ -124,9 +124,16 @@ export class LodgeScreens {
  openGear(mode){
   // Equip Gear: the original 12equ_char screen with the rider wearing the outfit (web/wardrobe.js); Square = Buy Gear.
   const rider=mode==='equip'&&this.ui.riders?.find(r=>r.id===this.id);
-  // pv lodgeFlash: entering (career-ui.js lodgeGo holds full white while it loads), leaving and Square = Buy Gear are state changes
+  // pv lodgeFlash: entering, leaving and Square = Buy Gear are state changes (career-ui.js lodgeGo). Entering switches at the flash's full
+  // white once the screen's own data is in (pv equipLoading: preloaded by preloadGear, the outfit then loads behind "Loading..."; before:
+  // full white held until the outfit package was built)
   if(rider){this.c._gear=null;return openEquipGear(this.ui,rider,{onExit:()=>this.cs.lodgeGo(()=>{this.c._gear=null;this.ui.set('ctm-lodge');this.ui.index=1;this.ui.sync();}),onBuy:()=>this.cs.lodgeGo(()=>{this.c._gear=null;return this.openGear('buy');})}).catch(e=>console.error(e));}
   this.gearMode=mode;this.folders=[];this.top=0;this.ui.set('ctm-gear');}
+ // pv equipLoading: Equip Gear's screen data for the lodge's rider, loaded while the lodge menu is up (career-ui.js drawLodge)
+ preloadGear(){
+  if(this._gearPre===this.id)return;const rider=this.ui.riders?.find(r=>r.id===this.id);if(!rider)return;
+  this._gearPre=this.id;preloadEquipGear(this.ui,rider).catch(()=>{this._gearPre=null;});
+ }
  gearList(){const inv=this.c.gear(this.id);if(!inv)return [];const f=this.folders.at(-1)?.item??-1;return this.gearMode==='buy'?inv.buyList(f,this.peak):inv.equipList(f);}
  // Career Highlights (0x1F5DA0 / 0x1F5F80; PS2 frame local/ps2-capture/menus/lodge/30-career-highlights.png): the 24 monster
  // tricks in list order 0x441B40, three rows a page (hlsec%da, checkbox%d). Row p = highlight tier p % 3 + 1 of stat p / 3

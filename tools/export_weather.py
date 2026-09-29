@@ -92,7 +92,7 @@ def camera_eye(m):
 
 def state(path):
     m = Mem(path); rider = human_rider(m)
-    return dict(source=str(Path(path).resolve()), rider=painter(m, m.u(rider + 0x86C)), camera=painter(m, 6), layers=layers(m), splash=splash(m),
+    return dict(source=__import__('disc_paths').repo_relative(Path(path).resolve()), rider=painter(m, m.u(rider + 0x86C)), camera=painter(m, 6), layers=layers(m), splash=splash(m),
                 eye=camera_eye(m), lightning_chance=m.u(GP + 0x1524), lightning=dict(counter=m.i(GP + 0x15A8), delay=m.i(GP + 0x15C4)))
 
 
@@ -122,7 +122,7 @@ def main():
             for loc in sorted(d for d in world.iterdir() if d.is_dir() and (d / 'fog-tree.json').exists()):
                 pkg = package(loc.name)
                 if not pkg: print(f'{world.name}/{loc.name}: no Weather painter'); continue
-                (loc / 'weather.json').write_text(json.dumps(pkg, separators=(',', ':')) + '\n')
+                __import__('atomic_write').write_text(loc / 'weather.json', json.dumps(pkg, separators=(',', ':')) + '\n')
                 print(f'{world.name}/{loc.name}: {len(pkg["payloads"])} payloads, wind {max(p["values"][4] for p in pkg["payloads"])} km/h')
         return
     from locations import LOCATIONS, state as location_state
@@ -139,7 +139,7 @@ def main():
                 except ValueError as e: print(f'{code}: ready state not read ({e})')
         if ready: pkg['ready'] = ready
         target = ROOT / 'web/public/assets' / code / 'weather.json'
-        target.parent.mkdir(parents=True, exist_ok=True); target.write_text(json.dumps(pkg, separators=(',', ':')) + '\n')
+        target.parent.mkdir(parents=True, exist_ok=True); __import__('atomic_write').write_text(target, json.dumps(pkg, separators=(',', ':')) + '\n')
         print(json.dumps(dict(location=code, payloads=len(pkg['payloads']), ready=bool(ready), wind_kmh=max(p['values'][4] for p in pkg['payloads']),
                               snowfall=max(p['values'][0] for p in pkg['payloads']), lightning=max(p['values'][10] for p in pkg['payloads']))))
 

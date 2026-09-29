@@ -17,12 +17,19 @@
 import {GearInventory} from './lodge.js';
 import {LuiScreen} from './lui-player.js';
 import {speakFrontEnd} from './rider-speech.js';
-import {afb,clipSample,channelValue} from './fe-preview.js';
+import {afb,clipSample,channelValue,previewRoot} from './fe-preview.js';
+import {pv} from './pv-flags.js';
+import {FOCUS_LAG} from './lui-flash.js';
 import {mul as vmul,vuAdd as vadd,vuSub as vsub,fromBits,bitsOf} from './ee-scalar-float.js';
 import {readJSON,writeJSON,storage as saveStorage} from './save-store.js';
 import {archiveBlob} from './texture-archive.js';
 
 const ROOT='/assets/WARDROBE/';
+// The gameplay clip table (PS2 ANM.BIG sampled, tools/export_animation_samples.py) is the same for every original rider: one
+// shared file, /assets/ANIMATIONS/animation-samples.json (web/prepare-ui.py --part animations). Sam's packages keep their own
+// (another bank). pv sharedSamples off: every package's own copy, as before.
+export const SHARED_SAMPLES='/assets/ANIMATIONS/animation-samples.json';
+export function riderSamplesUrl(root){return pv('sharedSamples')&&/^\/assets\/RIDER_/.test(root)&&!/^\/assets\/RIDER_SAM(_|\/)/.test(root)?SHARED_SAMPLES:root+'animation-samples.json';}
 const OUTFIT_KEY='ssx3.outfit.v1',FREE_KEY='ssx3.outfit.free.v1';
 const BUILD_ORDER=['suit','boot','head','bord','alph'];   // tools/export_characters.py build_package texture order
 const cache=new Map(),virtual=new Map(),worn=new Map();
@@ -352,7 +359,7 @@ async function raceRoot(w,wd,rider,fetcher=globalThis.fetch){
  const asm=assembly(w,wd.raceEquipped()),key=hash(JSON.stringify([asm.parts.map(p=>p.resource),asm.textures]));
  const root=`${ROOT}${rider.id.toUpperCase()}/o${key}/`;
  if(!virtual.has(root+'world.json')){
-  const pkg=buildPackage(w,asm,{riderId:rider.id}),samples=await (await fetcher(`/assets/${rider.package}/animation-samples.json`)).text();
+  const pkg=buildPackage(w,asm,{riderId:rider.id}),samples=await (await fetcher(riderSamplesUrl(`/assets/${rider.package}/`))).text();
   virtual.set(root+'world.json',JSON.stringify(pkg.world));virtual.set(root+'rider.json',JSON.stringify(pkg.rig));
   virtual.set(root+'vertices.bin',pkg.vertices.buffer);virtual.set(root+'indices.bin',pkg.indices.buffer);virtual.set(root+'colors.bin',pkg.colors.buffer);
   virtual.set(root+'animation-samples.json',samples);virtual.set(root+'settings',JSON.stringify(pkg.settings));
@@ -426,6 +433,14 @@ export async function outfitRider(ui,rider){
 // camera eye (-110,394,0) -> (-35,0,0) cm, 25 deg; rider (-105,-100,-80) turned 80 deg (right stick: turn / zoom);
 // the board at (265.75,-1073.5,-232) spinning 1 deg per frame; in the Boards folder (id 3) both ease (x0.2 per frame)
 // to the board view (rider (-250,-650,-215), board (-100,45,15)) and back. While the model loads: "Loading...".
+// pv equipLoading (PS2 local/ps2-capture/menus/eqg-k*, eqg2-k*: the lodge's Equip Gear, first and second entry, the same frames): the
+// screen is up at once (from the lodge: at the flash's full white, as every lodge state) and the outfit's package is built behind
+// "Loading...". Until phase 3 of the state (the intro's 0x42 label, frame 25, then FOCUS_LAG: CharEquip vt+0x30 = 0x1993A0) there is
+// no rider, no 'equip btm left' group (dashes, bolt01, points; 19A238), no row highlight (the cursor, 186518) and no help line: 36
+// frames after Cross, "Loading..." over the list. 0x1993A0 switches the preview on (19E538(slot, 1): +0xCC8 = drawn once the model
+// is loaded, +0xCB4 / +0xCB8, else pending +0xCC4), so the rider, the board, the dashes, the highlight and the help show on frame 37;
+// "Loading..." (update 0x199938: !+0xCC8, before that pass's phase 3) goes one frame later. The help also waits for the rider's gear
+// data (19E238 -> +0xA60 -> 19A9B8 / 19A798): the outfit package here.
 const DEG=Math.PI/180,SCREEN='equip-gear',ROWS=6,BACK_LAYER=7,EMPTY_BOX={page:'FE_1-11',sx:60,sy:25,sw:10,sh:10};
 const HELP={category:0x059ad8f5,outfit:0x067655c4,remove:0x06fbfa43,free:0x065dc1f5,title:0x0b9b4c62,categories:'kT_FECategories'};
 const loadImage=src=>new Promise((ok,fail)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=fail;im.src=src;});
@@ -452,7 +467,11 @@ export class EquipGearScreen{
   await this.load();
   try{this.wd=await outfitState(this.ui,this.base);}catch(e){console.warn('Wardrobe unavailable',e);this.wd=null;}
   this.changed=false;this.view=this.initialView();
-  try{if(this.wd)await prepareOutfit(this.ui,this.base);}catch(e){console.warn('Outfit package unavailable',e);}
+  this.gearIn=false;this.shownAt=null;
+  if(pv('equipLoading')){   // the outfit package behind "Loading..." (the PS2 loads the rider's gear with the screen up)
+   const job=this.preparing={promise:null};
+   job.promise=(this.wd?prepareOutfit(this.ui,this.base):Promise.resolve()).catch(e=>console.warn('Outfit package unavailable',e)).finally(()=>{if(this.preparing===job)this.preparing=null;});
+  }else{this.preparing=null;try{if(this.wd)await prepareOutfit(this.ui,this.base);}catch(e){console.warn('Outfit package unavailable',e);}}
   this.ui.set(SCREEN);this.ui.index=0;this.pin=true;this.ui.sync();   // every list opens on its first entry (PS2)
   const lf=this.ui.careerUI?.lodgeFlash;if(lf?.active)this.enter=lf.introStart(this.now());   // pv lodgeFlash: opened by the lodge's state change (web/lui-flash.js)
  }
@@ -472,7 +491,7 @@ export class EquipGearScreen{
   if(!this.wd.toggle(e.item))return;
   saveOutfit(this.ui,this.base,this.wd);this.changed=true;
   speakFrontEnd(this.ui,'customize',this.rider)?.catch?.(()=>{});   // 0x199EA4 +0xC1C -> 1A0358 Customize
-  prepareOutfit(this.ui,this.base).catch(e=>console.warn(e)).finally(()=>this.ui.sync());   // the preview wears it at once
+  (this.preparing?.promise??Promise.resolve()).then(()=>prepareOutfit(this.ui,this.base)).catch(e=>console.warn(e)).finally(()=>this.ui.sync());   // the preview wears it at once (after the entry's own build, pv equipLoading)
  }
  back(){
   if(this.ui.careerUI?.lodgeFlash?.active)return;
@@ -500,10 +519,28 @@ export class EquipGearScreen{
  get preview(){return this.ui.characterSelect?.preview3d||null;}
  entry(){return this.base?outfitPreviewEntry(this.base):null;}
  // true while the FE package is loading (PS2: "Loading...", no rider, list shown) or drawn
- loading(){const p=this.preview,e=this.entry();return !!(p&&e&&this.T&&p.want(this.T,e)&&!p.ready);}
+ loading(){const p=this.preview,e=this.entry();if(this.preparing)return !!(p&&e);return !!(p&&e&&this.T&&p.want(this.T,e)&&!p.ready);}
+ // pv equipLoading: the rider's gear data is in (PS2 +0xA60, set once per entry): the outfit package built and its FE model loaded (or
+ // unavailable); the list's help line waits for it
+ gearReady(){if(this.gearIn||!pv('equipLoading'))return true;if(this.preparing)return false;return this.gearIn=true;}
+ // pv equipLoading: phase 3 of the state (0x1993A0: the intro's 0x42 label + FOCUS_LAG)
+ settled(){
+  if(!pv('equipLoading'))return true;
+  this.settleAt??=(this.data?.screen?.labels||[]).find(l=>l.control?.some(c=>c.startsWith('42')))?.frame??25;
+  return this.now()-this.enter>=this.settleAt+FOCUS_LAG;
+ }
+ // "Loading..." (0x199938: !+0xCC8): until the frame after the rider first draws, and while a reload hides it
+ loadingText(){
+  if(!pv('equipLoading'))return this.loading();
+  const p=this.preview,e=this.entry(),root=previewRoot(e);if(!p||!e||(!this.preparing&&root&&p.failed.has(root)))return false;
+  return this.shownAt==null||this.now()-this.shownAt<1;
+ }
  showPreview(){
   const p=this.preview,e=this.entry();if(!p||!e||!this.T){p?.show?.(false);return false;}
-  const on=p.want(this.T,e);p.show(on&&p.ready);this.boards(p);return on;
+  if(this.preparing){p.show(false);this.shownAt=null;this.boards(p);return true;}   // pv equipLoading: nothing drawn while the outfit builds
+  const on=p.want(this.T,e),shown=on&&p.ready&&this.settled();p.show(shown);
+  if(!shown)this.shownAt=null;else this.shownAt??=this.now();   // pv equipLoading: from phase 3 (19E538(slot, 1))
+  this.boards(p);return on;
  }
  boards(p){for(const m of p?.model?.meshes||[])if(m.userData.board)m.visible=this.owns(this.ui.screen);}
  // one 0x19BFE8 frame: the stick, the state 1/2/3/4 targets and easing, the board spin (all cm, Z-up)
@@ -537,7 +574,7 @@ export class EquipGearScreen{
   camera.position.copy(EquipGearScreen.three(T,c.eye));camera.lookAt(EquipGearScreen.three(T,c.target));
   const {position,quaternion}=this.riderTransform(T);
   const p=this.preview,e=this.entry();
-  if(p&&e&&p.want(T,e)&&p.ready&&model.parent&&p.place(T,model.parent,0)){
+  if(!this.preparing&&p&&e&&p.want(T,e)&&p.ready&&model.parent&&p.place(T,model.parent,0)){
    const g=p.model.group;g.position.copy(position);g.quaternion.copy(quaternion);g.updateMatrixWorld(true);
    // lighting: IRR record + rim at the hips with the Equip Gear camera's view matrix (0x19EE88)
    const fe=p.model.fe,saved=fe.view_matrix_bits;if(c.view_matrix_bits)fe.view_matrix_bits=c.view_matrix_bits;try{p.light(T,this.core);}finally{fe.view_matrix_bits=saved;}
@@ -551,6 +588,7 @@ export class EquipGearScreen{
   this.T=T;if(core)this.core=core;
   this.view.frames+=dt*60;while(this.view.frames>=1){this.view.frames-=1;this.step();}
   const idle=this.base?.fe?.idle||'FE_GEAR_MAC_CYC',clip=clips.find(c=>c.name===idle)||clips.find(c=>c.name==='FE_GEAR_MAC_CYC');if(!clip)return false;
+  if(this.preparing&&this.preview&&this.entry())return true;                          // pv equipLoading: the outfit is still building
   const p=this.preview,e=this.entry(),usePreview=!!(p&&e&&p.want(T,e));
   if(usePreview&&!p.ready)return true;                                          // loading: nothing drawn yet
   const target=usePreview?p.model.rig:rig;
@@ -586,10 +624,10 @@ export class EquipGearScreen{
   if(this.pin){this.pin=false;this.ui.index=0;this.top=0;}
   const frame=this.now()-this.enter,list=this.entries,index=Math.min(this.ui.index,Math.max(0,list.length-1)),row=index-this.top;
   const leafList=list.some(e=>!(e.flags&0x20)),focused=list[index]&&this.wd?.byItem.get(list[index].item);
-  const events=[];
+  const events=[],settled=this.settled();
   for(const ev of this.data.screen.events){
    if(ev.frame<=25){if(ev.frame<=Math.min(frame,25))events.push({ev,start:ev.frame});}
-   else if(ev.frame===35+5*Math.max(0,Math.min(ROWS-1,row)))events.push({ev,start:0});
+   else if(ev.frame===35+5*Math.max(0,Math.min(ROWS-1,row))){if(settled)events.push({ev,start:0});}   // the cursor's label (pv equipLoading: from phase 3, 186518)
    else if(this.arrow&&ev.frame===(this.arrow.side==='up'?90:95)&&frame-(this.arrow.at-this.enter)<20)events.push({ev,start:this.arrow.at-this.enter});
   }
   const snowFrame=frame%600;for(const ev of this.snow)if(ev.frame<=snowFrame)events.push({ev,start:frame-snowFrame+ev.frame});
@@ -597,7 +635,7 @@ export class EquipGearScreen{
   const fill=w=>Math.max(0,Math.min(1,(w-base)/(limit-base)));
   const delta=focused&&!(focused.flags&0x20)&&this.wd?this.wd.delta(focused.item):null;
   const lodge=!!this.opts.onBuy,notice=this.notice&&this.now()<this.notice.until?this.notice.text:null;
-  const helpText=frame<16?'':notice||(leafList?this.t(HELP.outfit,'1   Your current outfit\\\\2   Your possible outfit'):list.length?this.t(HELP.category,'Choose a category to continue.'):'');
+  const helpText=frame<16||!settled||!this.gearReady()?'':notice||(leafList?this.t(HELP.outfit,'1   Your current outfit\\\\2   Your possible outfit'):list.length?this.t(HELP.category,'Choose a category to continue.'):'');
   const rowsText=['00000031','00000032','00000033','00000034','00000035','00000036'],boxes=['069eb9e1','069eb9e2','069eb9e3','069eb9e4','069eb9e5','069eb9e6'];
   const override=e=>{
    const r=rowsText.indexOf(e.name);if(r>=0){const it=list[this.top+r];return it?{text:it.name}:{hidden:true};}
@@ -611,7 +649,8 @@ export class EquipGearScreen{
     case '06cc8862':case '0cc88692':return {hidden:true};
     case '00b67793':return {hidden:true};
     case '069acf75':case '007769a1':return lodge?null:{hidden:true};
-    case '0afd5af4':return this.loading()?null:{hidden:true};   // "Loading..." while the preview model loads (PS2 ~250 frames on entry)
+    case '0afd5af4':return this.loadingText()?null:{hidden:true};   // "Loading..." while the preview model loads (pv equipLoading: loadingText)
+    case '0b777dd4':return settled?null:{hidden:true};   // 'equip btm left' (19A238 at phase 3; pv equipLoading)
    }
    return null;
   };
@@ -638,6 +677,13 @@ export class EquipGearScreen{
 export async function openEquipGear(ui,rider,opts={}){
  install(ui);
  await ui.equipGear.open(rider||ui.characterSelect?.human?.()||ui.rider,opts);
+}
+// pv equipLoading: the screen's own data (FE.LUI 12equ_char, the rider's gear lists) before the lodge opens it, so the state switch at
+// the flash's full white does not wait for it (resident on the PS2). The outfit's parts load behind "Loading..." as before.
+export function preloadEquipGear(ui,rider){
+ install(ui);const base=rider?.kind==='cheat'?ui.riders?.find(r=>r.id===(rider.base||'zoe')):rider;
+ const lists=base&&!(base.kind==='custom'&&base.id!=='sam')?loadWardrobe(base.id,globalThis.fetch,{parts:false}):null;
+ return Promise.all([ui.equipGear.load(),lists]);
 }
 function install(ui){
  if(ui.equipGear)return;

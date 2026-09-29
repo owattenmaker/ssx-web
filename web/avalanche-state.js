@@ -6,10 +6,14 @@
 //  - The AvaSpline pieces' matrices reach the draw through moving_instances() (web/moving-instances.js; their batches are split by
 //    prepare.py): here only their visibility. The trigger program's builtin 0 (2FC0D0) gives each piece its Object entity, 356DB0:
 //    flags = (flags & ~2) | 4 (the entity draws it, 0x356298 tests instance+8 & 4) when key 2 != 0 or the piece was drawn statically
-//    ((flags & 3) == 3). So a piece drawn at the start (countdown audit 'static') stays drawn until released; a piece hidden at the
+//    ((flags & 3) == 3). So a piece drawn at the start (countdown audit 'static') stays drawn while it tumbles; a piece hidden at the
 //    start shows while its tumbler drives it only if its builtin 0 passes key 2 (ENTITY_DRAWN: ABC1's 16 rocks at flags 0x4022,
 //    DRA4's 14 crumbling lip pieces); the others (ABC1's 8 and ERA5's 8 avalanche nodes, flags 0x2) carry the emitters and are never
-//    drawn. Released (0x2D7DD8 -> entity vt+0x08(3)): gone until a new race.
+//    drawn. The release (0x2D7DD8 -> entity vt+0x08(3) -> 34FBF0) destroys the entity and restores flags = (flags & 0xFFFF0300) |
+//    (flags >> 16) | 2: the authored low bits. The static collectors (0x22A5A0 / 0x229FC8) test only (flags & 3) == 3, the location
+//    and chunk residency and the frustum (0x100 is only the entity draw's list), and 0x22C078 draws what they list at the instance's
+//    own matrix, which the AvaSpline never writes. So a piece drawn at the start is drawn again at its authored place (its
+//    moving_instances delta is gone); a piece hidden at the start (authored bit 0 clear) stays hidden until a new race.
 //  - The rumble (0x29DEF0 / 0x29E4A0 / 0x29E438 / 0x2DA1C0): one voice while the core's loop refcount is > 0, bank slot 8 sound 2, bus 5,
 //    positional at the centroid of the tumblers, volume from the listener's (the human rider, rider +0x110) nearest tumbler and the
 //    tumblers' average scale; the per-tumbler sound events call the empty stub 0x29E560 and play nothing.
@@ -80,7 +84,7 @@ export function createAvalancheDraw({ core, group, followers, entityDrawn = new 
     pieces: byResource.size,
     update() {
       const s = avalancheState(core); if (!s) return;
-      for (const [r, e] of byResource) apply(r, e, !s.released.has(r) && (e.hiddenAtStart ? s.pieces.has(r) && entityDrawn.has(r) : true));
+      for (const [r, e] of byResource) apply(r, e, e.hiddenAtStart ? !s.released.has(r) && s.pieces.has(r) && entityDrawn.has(r) : true);
     },
     reset() { resetAvalancheState(core); for (const [r, e] of byResource) apply(r, e, !e.hiddenAtStart); },
     get state() { const s = cache.get(core); return { pieces: byResource.size, playing: s?.pieces.size ?? 0, released: s?.released.size ?? 0, loop: !!s?.loop }; },

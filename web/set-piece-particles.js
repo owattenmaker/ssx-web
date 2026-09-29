@@ -13,6 +13,7 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec2, vec3, vec4, float, select, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
+import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 import {SPRITE_FLOATS, MAX_HALF_PIXELS, SOURCE_VIEWPORT, burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations} from './set-piece-particle-eval.js';
 export {burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations};
@@ -67,6 +68,7 @@ export async function createSetPieceParticles({core, particlesDoc, origin = [0, 
     }
     const mesh = new T.InstancedMesh(geometry, material, capacity);
     mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = 685 + (order++ % 5); mesh.visible = false; // count 1 keeps the pipeline warmable
+    if (pv('effectOrder')) mesh.renderOrder = drawOrder(EFFECT.setPieceParticle(id), SUBMIT.setPiece); // 0x364240: rank 1, the texture + the inherited 'spec'
     mesh.userData.setPieceParticles = {texture: id, blend, kind};
     group.add(mesh);
     return {mesh, centre, colour, capacity, count: 0};

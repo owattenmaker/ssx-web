@@ -21,6 +21,8 @@ from locations import activation_dir  # noqa: E402
 
 TOOL_SOURCE = root / 'tools/lit_instance_rows.cpp'
 JSON_INCLUDE = root / 'build/ps2recomp/_deps/nlohmann_json-src/single_include'
+if not JSON_INCLUDE.is_dir():   # a checkout without the PS2Recomp build: the vendored header (web/third_party/nlohmann)
+    JSON_INCLUDE = root / 'web/third_party'
 
 
 def tool():
@@ -28,7 +30,9 @@ def tool():
     sources = [TOOL_SOURCE, root / 'engine/lit_instance_lighting.hpp']
     if not binary.exists() or any(s.stat().st_mtime > binary.stat().st_mtime for s in sources):
         binary.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(['xcrun', 'clang++', '-std=c++20', '-O2', '-frounding-math', '-ffp-contract=off', '-I', str(root / 'engine'),
+        import shutil  # macOS: xcrun clang++; elsewhere $CXX or c++
+        cxx = ['xcrun', 'clang++'] if shutil.which('xcrun') else [__import__('os').environ.get('CXX', 'c++')]
+        subprocess.run([*cxx, '-std=c++20', '-O2', '-frounding-math', '-ffp-contract=off', '-I', str(root / 'engine'),
                         '-I', str(JSON_INCLUDE), str(TOOL_SOURCE), '-o', str(binary)], check=True)
     return binary
 

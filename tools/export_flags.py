@@ -234,7 +234,7 @@ def verify(manifest, pattern, output, location='ARA1'):
                                  instances=[i for i in insts]))
             checked += 1
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'flag-snapshots.json').write_text(json.dumps(dict(version=1, source='local/ps2-capture/runs/setpieces race snapshots' if location == 'ARA1' else str(Path(pattern).parent.relative_to(root)) + ' snapshots', cases=fixtures), separators=(',', ':')))
+    __import__('disc_paths').test_data(output / 'flag-snapshots.json').write_text(json.dumps(dict(version=1, source='local/ps2-capture/runs/setpieces race snapshots' if location == 'ARA1' else str(Path(pattern).parent.relative_to(root)) + ' snapshots', cases=fixtures), separators=(',', ':')))
     print(f'Verified {checked} live cloth slots in {len(paths)} race snapshots (parameters, grid size, rest-grid corners)')
 
 

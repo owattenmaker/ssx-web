@@ -14,6 +14,7 @@ import { createPeakSetPieces } from './peak-set-pieces.js';
 import { playCutscene } from './cutscenes.js';
 import { pv } from './pv-flags.js';
 import { device, quality } from './quality.js';   // pv mountainRide: the device tier
+import { forgetGpuRestore } from './gpu-copies.js';
 
 export const ROW = { ABSENT: 0, INACTIVE: 1, ACTIVE: 2, WANTED: 3, WANTED_ACTIVE: 4, UNLOAD: 5, READING: 6, UNLOADING: 7, READING_ACTIVE: 8 };
 const WANTED_STATES = new Set([1, 2, 3, 4, 6, 8]);
@@ -126,6 +127,7 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   // A released location: its meshes, materials, geometries (disposeGroup), and what that traversal does not reach: the hidden
   // batches (never in the group), the location's textures (node materials sample them) and its terrain light atlas.
   function releaseLocation(g) {
+    forgetGpuRestore(g); // pv gpuRelease registered the group's restore (web/gpu-copies.js): it held the whole released tree until a device recovery
     for (const m of g.userData.hiddenMeshes || []) { if (m.parent) m.removeFromParent(); m.geometry?.dispose(); m.dispatchEvent({ type: 'dispose' }); }
     const meshes = []; g.traverse((o) => { if (o.isMesh) meshes.push(o); });
     disposeGroup(g);
@@ -137,6 +139,7 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   // bindings in one frame was 35-165 ms at 4x CPU, and the rows a connector leaves are released together 45 s later).
   const releasing = [];
   function releaseSteps(g) {
+    forgetGpuRestore(g); // (as releaseLocation)
     const steps = [], meshes = [], geos = new Set(), mats = new Set(), texs = new Set();
     for (const m of g.userData.hiddenMeshes || []) steps.push(() => { if (m.parent) m.removeFromParent(); m.geometry?.dispose(); m.dispatchEvent({ type: 'dispose' }); });
     g.traverse((o) => { if (!o.isMesh) return; meshes.push(o); geos.add(o.geometry);
@@ -558,12 +561,15 @@ export const COURSE_PEAK = Object.freeze([1, 1, 2, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2,
 export const peakWorldOf = (course) => `PEAK${COURSE_PEAK[course] ?? 1}`;
 // pv mountainRide (docs/ctm-parity.md "The whole mountain"): the Conquer the Mountain free ride in the whole-mountain world MOUNTAIN, as
 // the PS2 has it (one world: the bottom of Intimidator streams into Green Base Station, Gravitude into Yellow Mid Station). Desktop only:
-// the core keeps every location's collision it was fed (no release yet), so a phone (iOS / Android, or quality=low) keeps the per-peak
-// worlds and crossWorld. ?mountain=0|1 overrides the tier (QA).
+// without pv peakRelease the core keeps every location's collision it was fed, so a phone (iOS / Android, or quality=low) keeps the
+// per-peak worlds and crossWorld; with it every tier rides the whole mountain. ?mountain=0|1 overrides (QA).
 export function mountainFreeRide() {
   if (!pv('mountainRide')) return false;
   let q = null; try { q = new URL(globalThis.location?.href ?? 'http://localhost/').searchParams.get('mountain'); } catch {}
   if (q === '0' || q === '1') return q === '1';
+  // pv peakRelease: the core frees a released location's collision (and free-ride.js its draw package, its idle read-ahead collision and
+  // its GPU-copy restore), so a whole-mountain session stays bounded on a phone too: no tier split (docs/ctm-parity.md "The whole mountain")
+  if (pv('peakRelease')) return true;
   return !(device.ios || device.android || quality.tier === 'low');
 }
 // The world a career free ride at `course` loads: MOUNTAIN (pv mountainRide, desktop) or the course's peak world.

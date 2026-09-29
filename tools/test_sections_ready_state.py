@@ -111,7 +111,7 @@ def fixtures(code):
                           skip=sorted({r for t, r in touched if t < T})))
     snaps.sort(key=lambda s: s['tick'])
     flags = json.loads((R.asset(code, 'FLAGS') / 'flags.json').read_text())
-    fsnap = R.asset(code, 'FLAGS') / 'flag-snapshots.json'
+    fsnap = __import__('disc_paths').test_data(R.asset(code, 'FLAGS') / 'flag-snapshots.json')
     return dict(ready=ready, livecomp=json.loads((R.asset(code, 'LIVECOMP') / 'livecomp.json').read_text()), flags=flags, windMode=flags['wind']['mode'],
                 anchorFlags=anchor_flags, snapshots=snaps, flagSnapshots=json.loads(fsnap.read_text()) if code == 'ARA1' and fsnap.exists() else None)
 

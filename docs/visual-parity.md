@@ -898,6 +898,31 @@ Triangle closes the pause and the free-ride MCOMM (`mcomm-tri`, `pause-tri`).
 - `tools/startmatrix.mjs`, 17 rows with a fake standard pad and keys: free ride, MCOMM, Messages, the lodge and its screens,
   a Single Event card, the countdown / ride, pause items, the FINISH! banner.
 - Chrome 17 / 17 and WebKit 17 / 17 with the switch on; 9 rows fail with it off.
+
+**A spent press (pv `startConsume`, on; 2026-09-28).**
+- **Owen's report** (Safari with an Xbox pad, diag session t93ez0j6, t 872.0): BRA2's heat card went to 'game' and then to
+  'ctm-pause' in the same moment. So the press that accepted the card also paused.
+  - That was the heat card after the results (the card opens at the gondola cutscene's idle).
+  - The first card (638.1) and the card after Restart (937.5) did not leak.
+  - His eight pauses in the race before it, each about 3 s long, show the pause itself working.
+- **PS2:** the pause needs a new Start press (action 0x3C: 0x320C48 -> 0x321108 evaluates the input.map expression on the pad
+  record) with no overlay up and no transition running (0x20CBE8 / 0x20CBA0). The Start that accepts a card or a prompt is
+  therefore still held, not new, once the overlay has gone, and cannot pause.
+- **Port:**
+  - The pad is read in two loops: the menus' (web/gamepad-menus.js, its own rAF) and the game frame's. Each keeps its own edges.
+  - If the game frame first sees the press after the menu has already switched to the ride, one press does both.
+  - A shared fake pad cannot stage that interleaving, and I could not reproduce it; the telemetry and code allow it.
+- **Fix:**
+  - `gamepad-menus.js` marks a press it sent as a menu key as spent until the button is released (`taken(c)`).
+  - `main.js`'s pad path does not pause on a spent Start.
+  - The menus' synthetic keys (`ssxPadMenu`) never pause through the keyboard path.
+  - Chrome dispatches at-target listeners on `window` in registration order (bubble before capture, checked), so a synthetic Enter
+    could be judged on a stale `keyScreen` there. WebKit calls capture first.
+- **Checked:**
+  - `startmatrix.mjs`: WebKit and Chrome 17 / 17 with the switch on, and WebKit 17 / 17 on the live server. That covers the free
+    ride, the MCOMM, the lodge and its screens (no pause, not dropped outside), the round card, the pause items and the FINISH!
+    banner.
+  - `test-start-rules.mjs`: the late-sighting order.
 - Test: `web/test-start-rules.mjs` (the state / Start matrix, the pad stepper, in test:all).
 - Open (not confirmed from code): what game phases 2..9 are, and the meaning of the 0x70 flag.
 
@@ -1511,8 +1536,22 @@ at 1208 the board is dark with its poster faint. CRA3 renders with the tram lit 
   23.3 / 27.3 / 30.1 / 28.2.
 
 **Open:**
-- **Moving lit instances** (flag 0x1000: BHP1's animated cars, the CRA3 / DRA4 / EBC3 planes, the backcountry heli) keep their rest
-  rows until the core's `lit_instance_rows` (task d) relights them as they move.
+- **Moving lit instances** (flag 0x1000; 15 in the 16 audits):
+  - Which: BHP1's four "anim" cars / bus / truck; the ospreys (ABA1, ABC1, CRA3, DRA4, DSS2); the os609 in-air heli (ABC1, DBC2,
+    EBC3); EBC3's cessnas; ESS3's sled.
+  - The port does not move any of them: they are in none of the core's set-piece / spline / roller / chairlift / attached seeds or
+    the LiveComp data. So it draws them at the instance matrix, where the shipped rows are exact (2F5400 with 0x1000 and no entity
+    reads row 3).
+  - The PS2 moves at least BHP1's cars: their cache entries are lit away from the instance position. That animation is the gap,
+    not the lighting.
+  - 2F5400's state machine, for when they move:
+    - relight after more than 10 units of travel from +0xB0 (a 4-component distance);
+    - re-read the bank only after more than 500 units in one step (a new entry, or reappearing after a cull). When gp+0xA74 is
+      nonzero the bank is 2EE010(gp+0x24C0) instead (not traced);
+    - re-query the lights (331450) only when the position leaves the strict +-1000 box of the last query (2F5A70 list);
+    - re-rank and select (2F5AF0, 4) at every relight;
+    - entries and lists come from 32-slot pools with LRU eviction (2F59D0 / 2F5A70).
+  - The core export (task d) waits for a consumer.
 - **The mountain world's lit instances** (ABA1's cars, the peak packages) need the peak re-export and its painter context.
 
 Tests: `test-visual-parity.mjs` R32 (the exported banks against the PS2 cache rows, the flag rule, the wiring). Tools:
@@ -1759,6 +1798,133 @@ PEAK2/{CBA2, CHP2, DBC2, DRA4, DSS2}, PEAK3/{E, EBA3, EBC3, ERA5, ESS3} (560 KB 
     - Likewise the moving batches follow `moving_instances()` (web/moving-instances.js) once the streamed core emits the cars /
       avalanche pieces.
 
+### 41.7 Final absent-structure sweep (2026-09-28, after cables, fog puffs, terrain glint)
+
+- **Frames:** 29 new mid-course event frames over all 17 event locations (ticks the first sweep did not use; `vpshot`, camera pinned)
+  and 35 CTM-world frames (`vpworld`: PEAK2 fr-dbc2 x8, fr-throne-neutral x5, PEAK3 fr-throne-tuck x7, fr-throne-late x6, PEAK1
+  fr-aara1 x4, arrive-bra2, green-start x2), Chrome. Detector: PS2 edges with no page edge within 3 px and page edges with no PS2
+  edge (scratch `cable/final/absent2.py`), triaged by eye.
+- **Nothing new is missing from the world draw.** Every large component is one of:
+  - the rider where the page's pad replay has diverged (riderErr 11-956 m on 19 event frames; the camera is pinned, so the world is
+    right but everything the rider drives differs: the region fog (ARA1 8018), triggered stage particles (DSS2 2818: `?particles=0`
+    removes them), finish bursts (EBA3 2819), a restarted event (ASS1 7219, DSS2 6818));
+  - HUD (the page shots have none) and the CTM collectible bursts (fr-throne-neutral 7102; the teleported page rider collects none);
+  - snowfall (visual RNG) and 1-2 px misregistration.
+- **Open, CTM (unverified):** PEAK1 fr-aara1 4296 / 5046: the rider is inside ARA1's bounds and the PS2 draws Snow Jam's terrain,
+  but the page's resident set there is A plus its connectors (no ARA1). `vpworld` teleports the rider, skipping the location
+  crossing that requests ARA1, so this may be the harness; it needs a real ride from A_ARA1 into Snow Jam (CTM agent).
+
+### 41.8 The dark snow chunks in the forest: the render list's texture order (pv `snowBuckets`)
+
+**The report:** ABC1 (Happiness) 2000: the PS2 shows dark blue chunks flying off the rider over the snow cloud; the page drew none.
+Not a set-piece effect (the only live ones are the snowwind puffs, texture 25): the rider's own snow emitters. The core has them
+(LargeChunkySpray / SmallChunkySpray, colour (13, 19, 43): the lit forest terrain), and the page drew them under the cloud.
+
+**The PS2's order** (not the emitter order):
+- The snow component draw `0x2E24D0` submits the ten emitters in index order (allocated, count > 0), each through `0x371688` ->
+  renderer +0x2A4 `0x380CE0`: one render record, textured with the emitter's current flipbook frame (+500 halfword).
+- The flush `0x363490` merges records of equal material state and textures into buckets (`0x362DE8`, hashes `0x394ED0` /
+  `0x395000`), keys each bucket with `0x364240` = ~((31 - priority) << 26 | word1 bits 0..1 << 16 | a word0 bits 6..9 mode << 13 |
+  (texture handle & 0x3FF) << 3), radix-sorts the keys ascending and stable (`0x364050`) and draws the sorted list. Within one
+  priority and mode: descending texture handle, ties in submission order.
+- The snow emitters share their state (0x100 / 0xC00296 / 0xE0 in the last frame's records in PS2 RAM at ABC1 2000); their textures
+  are FX-table entries 4..25, whose handles fall as the entry rises (renderer +0xF50: 4 fog0 1524, 5 1523, 6 1522, ... 15 1515, ...
+  21 1509, 25 1505; entries 9 and 12 empty). So the order is ascending texture id: the cloud (SnowTrail / CloudySpray / BodySnow, 5),
+  the impacts (6), then the chunky sprays (tmb1..tmb8, 14..21) on top.
+- **The PS2's own sorted list confirms it:** the last frame's (key, bucket) pairs are still in RAM (render list +0x67CA8). Priority 7
+  there: fog puffs (1524), two world-texture records (31, 191), FX 56 (1653), FX 43 (1552), the snowwind burst particles (brth 1505 with
+  a second texture 1549, drawn before the snow through the extra texture bits), then the snow buckets 1523, 1522, 1515, 1509. The page
+  already draws the fog puffs and the set-piece particles before the snow; only the snow's own order differed.
+  The page drew in emitter index order (700 + index): CloudySpray (7) and BodySnow (9) over the chunks.
+
+**Port:** `web/snow-renderer.js` (pv `snowBuckets`): renderOrder 700 + 0.02 x the current texture id, every frame (three keeps equal
+renderOrders in creation order: the riders, then the emitter index, as the submission order). ABC1 2000 (camera pinned): the dark
+chunks are over the cloud in Chrome and WebKit as on the PS2; dark pixels in the chunk region PS2 7125, on 7392, off 6912; 2400
+unchanged. `test-snow-renderer.mjs` checks the order against the 0x364240 key.
+
+**The rest of priority 7:** see 41.9 (one shared key for every post-fog effect, pv `effectOrder`).
+
+### 41.9 One draw order for every post-fog effect: the render-list key (pv `effectOrder`, on)
+
+**The rule** (`web/ps2-draw-order.js`, the same key as the world pass's sorted classes, section 44). The flush merges records of
+equal state and textures into buckets (`0x362DE8`), keys each bucket with `0x364240` and radix-sorts the keys ascending and
+stable (`0x364050`):
+
+  key = ~((31 - priority) << 26 | t0 << 16 | rank << 13 | ((handle | (second handle & 0xF) << 6) & 0x3FF) << 3)
+
+- priority = word2 bits 5..9; priorities 6..8 draw after the fog composite (the page's encoded pass).
+- t0 from word1 bits 0..1: 0 -> 1023, 1 -> 1022, 2 -> word2 bits 10..28 (the depth key), 3 -> 0.
+- rank = the table at `0x492010` over word0 bits 6..9: 0 -> 0, 1 -> 4, 2 -> 5, 3 -> 3, 4 -> 1, 5 -> 6, 6 / 7 -> 2, 8 -> 1.
+- So at one priority: descending t0, then descending rank, then descending texture bits; equal keys keep the first submission.
+
+**The effects' fields**, from the code and checked against the last frame's sorted list in PS2 RAM (render list +0x67CA8; 351
+kept states scanned, 115 buckets of 14 states in `local/reference/draw-order/buckets.json`):
+
+| effect | code | priority / t0 / rank | texture (FX id) |
+|---|---|---|---|
+| fog puffs | 0x2DBF98 | 7 / 1023 / 3 | fog0 (4) |
+| snowfall flakes, fluff | 0x381310 / 0x3816F0 (word0 0x140) | 7 / 0 / 6 | sfal (8) |
+| wake, boost ribbons, aura, '!' icon, rival beam | 0x2DDAB8, 0x2E7A10, 0x2EB198, 0x2D5048, 0x2E3AF8 (strips) | 7 / 0 / 3 | wake 56, yrbn..prbn 57..61, psmr 62, exlm 23, beam 43 |
+| set-piece Particle / DynamicParticle, snow emitters, spark kernel, grind chunks | 380CE0 / 380518 (word0 0x100) | 7 / 0 / 1 | own texture; set pieces + 'spec' (46) |
+| light glows, spark glints, fist sparkle | 377CF0 / 3781A0 sprites (base material 0x501420) | 7 / 0 / 0 | shal 53 / mhal 54, sprk 22, ospk 24 |
+| streamers | 0x2EF950 | 8 / 1023 / 3 | strm 63 / prbn 61 |
+| halos, camera splash, lens, sun | 0x2D1D10, 0x2F2C30 / 0x2F3418 | 8 / 1023 / 0 | blha..whha 37..42, ices 66, icel 67 |
+
+- **Texture handles differ by boot.** The FX table at renderer +0xF50 (index = the tag table `0x4891B0`) holds the texture
+  manager's handles: one table in every event boot, another in every Conquer the Mountain state (e.g. wake 1653 vs 1549, spx0 1565
+  vs 1510). Both are in the helper; `main.js loadCourse` picks the CTM one for `course.freeRide`.
+- **The second texture is inherited.** Effects that push the current material keep its second slot. The world pass sets it to FX
+  46 'spec' (renderer +36 = 46 in every state; 0x22B374, 0x22C0BC). Set-piece particles carry it in most frames: every ABC1
+  snowwind bucket is brth + spec, which puts them before all snow (key texture bits 993 vs 499). The rider FX never do. Not
+  everywhere: BHP1 1619 has spx1..3 both with and without it, and DRA4 9218's sprk / ospk and ERA5's spx2 go without.
+  Burst 3708C0 pushes the top; trail 371380 copies its emitter's own material. The exact rule is not traced, so the helper gives set
+  pieces the 'spec' key, the majority case.
+- Equal keys break ties by submission (`SUBMIT`: the world pass, then each rider's FX in 0x1119F8 order: wake, sparks, boost,
+  aura, streamers, icon, beam, snow, fist).
+
+**What changes with the switch** (renderOrder = 660 + 60 x (key - 0x98000000) / 0x0C000000, priorities 6 / 7 / 8 in
+[660, 680) / [680, 700) / [700, 720)):
+- The fog puffs draw first, before the wake and boost (the page had them after).
+- The snowfall draws before the wake, boost and particles.
+- The halos (priority 8) draw after the snow and particles (the page had them before).
+- The impact chunks and sparks draw after the boost strips; the glints and the fist after all rank-1 sprites.
+- The set-piece particles sort by handle among themselves (the page had creation order).
+- The snow keeps the 41.8 order.
+
+**Checked:**
+- `test-ps2-draw-order.mjs`: the effect specs give the RAM keys for all 115 buckets, in both tables, and sort them in the RAM
+  order.
+- Page frames with the switch on, camera pinned (`vpshot-base --probe`): the encoded meshes' keys decoded from their renderOrder,
+  against the same state's PS2 list. Frames: ABC1 2000, DBC2 weather 1000, BHP1 1619 / 3219 and ARA1 1219, Chrome and WebKit.
+  - Every effect both draw sits in the PS2's order.
+  - The rest differs in what is live, not in order: snow flipbook frames (the open phase item), set-piece bursts timed differently,
+    the rider 8 m off at ARA1.
+- Pixels, on vs off: no pixel changes at those frames, at ARA1 1079, or at CRA3 6819 / ERA5 1229 (the rider 58 / 87 m off there)
+  in either browser; the effects that moved do not overlap in them. ARA1 1079 in WebKit only: 42 snowfall-sparkle pixels, not
+  order (none in Chrome).
+- Tests: snow-renderer, fog-puffs, boost, boost-fx, impact-fx, set-piece sprites, startfire, wake, weather, rival-mode and
+  frame-space pass.
+
+**Two draws in the wrong layer (switches, off):**
+- **Rival beam, pv `beamEncoded`** (`web/rival-beam.js`): the beam is a priority-7 strip (0x2E3AF8), drawn after the fog
+  composite, unfogged. The page drew it in the world pass, so the fog composite fogged it. With the switch it is a byte-space node
+  material in the encoded pass: GS MODULATE (texel x vertex, vertex rgb x 2, clamped) and ALPHA 0x48. With `effectOrder` it takes
+  the beam key (rank 3, after the wake, boost and aura).
+  - ABC1 rival frames, camera pinned: the beam is on screen at 2400 only, near the rider where the fog is ~0. There the beam is the
+    same on and off to within a level; 64 (Chrome) / 132 (WebKit) edge pixels move by 1..4 levels.
+  - No kept frame shows a distant (fogged) beam, which is where the switch matters.
+- **Terrain sparkle, pv `sparkleWorld`** (`web/terrain-sparkle.js`): the sparkle is priority 4 (0x38DA40: word2 |= 0x80), a
+  world-layer draw before the fog composite, so it is fogged with the terrain. The page drew it in the encoded pass after the fog.
+  With the switch it stays in the world pass. Its blend (Cd + Cd x As) scales the destination bytes the same either way.
+  - 13 aligned frames (ABC1 400 .. 6800, DBC2 weather 1000), Chrome: 126 sparkle pixels change. 73 end closer to the PS2 and 39
+    further (DBC2 1000: 11 / 1 in both browsers).
+
+**Open:**
+- The light glows (`light-glow.js`, rank 0 at priority 7) draw in their own pass.
+- The set-piece particles' inherited second texture, above.
+- The PS2 also has priority-7 depth-sorted static models (e.g. BHP1 / DRA4 world textures with t0 = depth); the page draws them in
+  the world pass (section 44).
+
 ## 42. The lodge's screen changes: TransitionOut (pv `lodgeFlash`)
 
 Every lodge LUI screen is an FE state:
@@ -1855,8 +2021,8 @@ Tests: `test-visual-parity.mjs` R33 (the flash curve, the switch once at full wh
   - The lodge's values 1/2 play TransitionOut (0x1F3C4C) like the other items.
   - Port: `lodgeGo` for entering Equip Gear and the Buy Gear list, for leaving them, and for Square = Buy Gear.
   - `wardrobe.js` draws the flash and ignores input under it.
-  - A screen that is still loading (Equip Gear's outfit packages) holds full white until it is up, then falls (`LuiFlash`: `to`
-    may return a promise). This is not traced on the PS2.
+  - A screen that is still loading holds full white until it is up, then falls (`LuiFlash`: `to` may return a promise). The PS2
+    never holds: see "Equip Gear's load" below. Since pv `equipLoading` only the page's own screen data can still hold it.
 - **Buy Attributes** now uses `lui-flash.js`: `lodgeGo` from the lodge's career UI, or its own `LuiFlash` without one (tests).
   `FLASH_IN` / `FLASH_OUT` / `flashAlpha` moved to `lui-flash.js` and are re-exported from `buy-attribs.js`.
 - **The Player Name keyboard and Cheat Characters stay without a flash.**
@@ -1867,3 +2033,186 @@ Tests: `test-visual-parity.mjs` R33 (the flash curve, the switch once at full wh
 - Colour space: these frames were measured with pv `encodedBlend` on (live since this round).
 
 Tests: R34. Tools: `tools/lodgecursor.mjs` (the lodge's states walked by key presses: cursors, gear, Buy Attributes).
+
+**Equip Gear's load (pv `equipLoading`, on; 2026-09-28).**
+- **PS2** (`local/ps2-capture/menus/eqg-k*`: the lodge on Equip Gear, Cross at sample 150, one snap per run; `eqg2-k*`: the second
+  entry after Triangle, the same frames):
+  - there is no white hold: full white at +12 and Equip Gear under the fall from +14;
+  - until +36: "Loading..." over the list with no rider, no board, no help line, no dashes and no row highlight (every row dark on
+    the bar's base position);
+  - +37: the rider, the board, the help line, the 'equip btm left' dashes and Head's highlight all appear, with "Loading..." still
+    behind the rider;
+  - +38: "Loading..." is gone.
+- **Code:**
+  - +37 is phase 3 of CharEquip (vtable 0x46A548), not the end of a load: intro start +10 (the switch at +12, INTRO_LEAD 2), plus
+    the 0x42 label (25), plus FOCUS_LAG 2.
+  - Phase 3 runs vt+0x30 = 0x1993A0: 19A238 (Equip mode: the title, 'equip btm left' 0b777dd4 shown), the bars (19BC90 / 19BD48),
+    the list (19B618), 19E538(slot, 1), then the cursor (186518).
+  - 19E538 sets the preview's drawn flag +0xCC8 only once the model is loaded (+0xCB4 / +0xCB8) and the reload stamp +0xCD4 is
+    clear; otherwise it leaves +0xCC4 pending.
+  - The update 0x199938 shows "loading text" while +0xCC8 is clear, before that pass's phase 3, hence the one-frame lag.
+  - The list's help line (19A9B8 -> 19A798) waits for the rider's gear data (19E238 -> +0xA60).
+  - A reload after an equip (19E588) clears +0xCC8 again, so "Loading..." shows again.
+- **Port** (`web/wardrobe.js EquipGearScreen`):
+  - `open` switches as soon as the screen's data is in and builds the outfit package (`prepareOutfit`) in the background (`preparing`);
+  - `settled()` is phase 3; `showPreview` draws the rider only from then and once loaded;
+  - `loadingText()` hides "Loading..." from the frame after the rider first draws;
+  - the row highlight label and 'equip btm left' wait for phase 3, and the help line for phase 3 and the outfit package;
+  - an equip made while the entry's package is still building runs after it;
+  - `preloadEquipGear` (called by `lodge-ui.js preloadGear` while the lodge menu is up) loads the screen's data and the rider's gear
+    lists, which are resident on the PS2.
+  - Setup Character's Equip Gear is the same state and gets the same behaviour.
+- **Before:** full white was held until the outfit package was built.
+  - Localhost: 1-3 frames, then "Loading..." to about +24.
+  - Chrome at 200 KB/s with the cache off: a 42-frame hold.
+  - The page's focus, dashes and help showed from the start, and the rider as soon as its model was ready.
+- **After:**
+  - The same throttled link: no hold, then "Loading..." over the list until the model is in.
+  - Stepped clock (`tools/eqgflash.mjs`), in Chrome and WebKit alike (page t = PS2 k - 2, the flash's lead after Cross): t14 / t34 match
+    k16 / k36, and the rider, dashes, highlight and help come up with "Loading..." behind the rider one frame later.
+  - That one frame is the harness's clock creep before the key press: the stepped clock lands a hair before the phase-3 boundary.
+- **Open:**
+  - Input between the flash and phase 3 is not gated (the PS2 state is not yet active).
+  - The PS2 load length on Setup Character (the "~250 frames" in characters.md) has not been re-captured.
+
+Tests: R36 (the phase-3 rule on a fake preview and clock, the wiring). Tools: `tools/eqgload.mjs` (real-clock timeline, `--throttle`),
+`tools/eqgflash.mjs` (lodgeflash with the Equip Gear case and per-frame async steps), `tools/eqgflow.mjs` (the lodge and Setup flows).
+
+## 43. The static-model env-map second pass (pv `envMap`), cutscene bytes (pv `cutsceneBytes`), 8-bit frame targets (pv `frame8`)
+
+**The report:** with the encoded frame (section 38a), translucent world models blended to the PS2's maths but still sat 4-45 levels
+darker than the PS2 where their own texels were opaque. Metro 79 (aligned to 2 mm): the PS2's glass pixel is brighter than the port's
+glass texel, so no blend of that texel could reach it.
+
+**The cause: a second draw of env-mapped materials.**
+- 37F2A4..37FD2C switches on the material word (+12, with group flag bit3 -> 0x40000) & 0x660000. The cases 0x200000 / 0x220000 /
+  0x260000 and 0x600000 / 0x620000 / 0x660000 set word1 bits 7..11 (ALPHA_2 for context 2, 363C20 -> 362478 with a3 = 1) to enum 2
+  (0x100) or enum 17 (0x880). The table at 0x491FB0: enum 2 = 0x68 with FIX 128 (Cs x 128 >> 7 + Cd = Cs + Cd), enum 17 = 0x58
+  (Cs x Ad + Cd). Every other material has enum 3 (0x6A, Cd: context 2 writes nothing). The global at gp+0x1404 that would clear
+  the bits is 0 in every race savestate.
+- The context-2 texture is the material record's halfword +2 (set exactly on these materials: 119 of the 2,575 material records in bam.ssb; world textures
+  9-50, 9-62, 9-198, 9-297, all already in `TEXTURES/world.tex`).
+- These models have header +0x10 bit 1; 37E238 then builds the UV matrix = (view x node rotation, translation cleared) x the constant
+  at 0x504760 ((0.5, 0), (0, -0.5), 0, (0.5, 0.5, 1, 1), a BSS table read from RAM) and flags UV mode 256. VU1 program 3 at 0xCE8
+  (`tools/vudis.py`, a VU disassembler from PCSX2's opcode tables): uv = rows 10..13 x (normal, 1) per vertex, so u = 0.5 n.x + 0.5,
+  v = -0.5 n.y + 0.5 with n the camera-space normal (x right, y up). The second kick (0x2710 -> 0x3360) reuses the first pass's
+  packet (XYZ, vertex RGBA) with ST = uv x Q: TEX0_2 MODULATE by the packet colour, Cs = T x (c5 << 3) >> 7.
+- The port never drew it: `web/prepare.py` noted "env-map variants keep their base class".
+
+**Port:**
+- `web/world-batches.py` splits batches by `triangle_env` and tags them `env = [second texture, 0x200000 | 0x600000]`;
+  `web/prepare.py mesh_env` and `tools/export_peak_world.py` compute it from the material records and add the second textures to the
+  package's texture table (`SSX_ENV_SPLIT=0` turns the split off for byte-identity checks). No triangle is added or lost; with the
+  switch off the draws are the same, only split. The event packages carry it since the lit-instance re-export (all but ARA1); the peak
+  packages get it at their next `export_peak_world.py` re-split. A package without tags draws no pass (checked on PEAK1 free ride).
+- `web/world-material.js envPassMaterial` (pv `envMap`): the batch's last material. UV per vertex from the camera-space normal (a
+  varying), the second texture (clamped copy) times the packet colour in bytes, then additive (One / One on colour, alpha kept) with no
+  depth writes; mode 0x600000 scales by Ad = round(base texel alpha x vertex alpha x 128) >> 7. Drawn in the world pass, so the fog
+  composite fogs Cd + Cs as on the PS2.
+- `web/test-env-map.mjs`: the ALPHA table and cases from the ELF, the VU routine, the RAM constant and switch, the packages' tags and
+  textures, the material.
+
+**Measured (aligned PS2 frames, `vpshot --pin`, 9 runs / 30 frames, `aa=0`, pixels the pass changes; BHP1's pipe run excluded: its
+frames are 47-92 MAD off the PS2, a misaligned camera):**
+
+| config | pixels | \|port - PS2\| | PS2 - port |
+|---|---|---|---|
+| Chrome WebGPU | 108,941 | 31.06 -> 27.56 | +24.91 -> +0.73 |
+| WebKit WebGPU | 107,631 | 31.21 -> 27.66 | +25.14 -> +0.93 |
+| Chrome WebGL2 | 108,000 | 31.12 -> 27.61 | +25.02 -> +0.97 |
+
+- Metro 79 +28.2 -> -1.1, Metro 619 MAD 36.2 -> 20.5, CRA3 418 (station glass) +23.4 -> +4.3. Per texture (hidden one at a time):
+  Metro glass 9-152 +28.6 -> +4.0, CRA3 9-185 +22.1 -> +6.7, 9-254 +39.1 -> -2.5.
+- The UV rule from the code also scores best against the PS2 of the four axis sign choices (Metro 79: bias +3.0 / +4.7 / +8.1 / +10.9
+  in a per-fragment prototype).
+- Left: the stadium crowd behind Metro's glass (9-161, the CrowdMan2d frames) +35.7 -> +13.1; CRA3's crowd +18.3 -> +0.6.
+- The ARA1 event-race frames first listed as dark translucent content were a camera offset (a pine 100 px off), not colour.
+- Cost (six-rider Metro Single Event, WebKit, alternating loads): 2 more pipelines (106 -> 108), ~1.5k more triangles and the same
+  draw calls in the measured view (the pass is a group of the batch's own mesh); event load 7616 -> 7599 ms, race frame mean 16.78 ->
+  16.78 ms (desktop 3 + 3), phone tier 16.80 -> 16.78 ms (2 + 2); frames over 20 ms within run-to-run spread.
+
+**pv `cutsceneBytes`** (`web/cutscenes.js modulateBytes`): the cutscene sets, their skies and the PDA prop take the static-model
+MODULATE on bytes (Cs = T x (c5 << 3) >> 7; the PDA's PS2 texels x 2) instead of three's linear-light texture x colour x 31/16.
+EBC3 heli arrival (#127 t150 / t250 / t350 against PS2 samples 176 / 275 / 376, luma MAD): Chrome 6.0 -> 5.9, 8.5 -> 8.8,
+7.1 -> 6.0; WebKit 3.8 -> 4.2, 8.9 -> 6.6, 6.0 -> 5.8.
+
+**pv `frame8`** (`web/frame-space.js frameBufferType`, the renderer's `outputBufferType`): with the encoded frame the world and sky
+pass targets are 8-bit unorm, each draw rounded to bytes as the GS's 32-bit frame buffer does. Against half-float at the same
+states (9 frames: Metro, CRA3, ERA5, EBC3, ARA1): at most 2 levels on all but 24 pixels (Metro 79's stacked glass, max 11); the
+differences sit on blended texels, no contour in any sky or fog gradient. Texture memory (three's accounting, six-rider ARA1, WebKit):
+67.9 -> 59.8 MB desktop, 50.0 -> 47.8 MB phone tier; frame times the same.
+
+**Depth bias on the pass (Safari flicker, 2026-09-28):** the pass draws its base pass's triangles again through another pipeline
+with LessEqual and no depth writes. WebKit's depth differed between the two pipelines on grazing panels, so the pass vanished for
+single frames: Metro's stadium glass flickered at the top of the screen, where the crowd should show. Fix: `envPassMaterial` sets
+polygonOffset -1 / -1 (WebGPU depthBias / depthBiasSlopeScale).
+- WebKit, 30 consecutive Metro ticks with a moving camera: the tick-170 spike fell from 2743 reversal px to 117. The sequence max is
+  403, vs 419 with the pass off.
+- Colours are unchanged (Metro 79 frame MAD 13.38 -> 13.37).
+- The PS2 has no such difference: the GS draws the second kick with the first kick's own XYZ.
+
+**Helper bypasses closed:** the `?originalWorld=0` fallback materials and the old rival icon (pv `rivalIcon` off) keep their
+linear-light combine, written through `frame-space.js linearOutput()` with sRGB-decoded texels (`linearTextureSpace`).
+
+Evidence and scripts: `local/browser-validation/blend-space/envmap/` (per-frame JSON for the three configs, the prototype, cost runs,
+cutscene frames, 8-bit diff map). Test: `test-env-map.mjs`.
+
+## 44. Sorted and unsorted translucent static models (pv `sortedClass`, on)
+
+**The report:** after the env pass (43), Metro's stadium crowd (9-161) behind the glass was still +13 off the PS2.
+
+**Traced, the crowd's own draw is right.** CrowdMan2d mode 0 swaps the crowd groups' material for the shared record 0x536690:
+- texture handle 1539, the CRWD frames;
+- word 0x20000, class 1, no env, repeat.
+
+The frames' 16-entry CLUT sits unchanged in PS2 VRAM, and the crowd instances are not lit.
+
+To check the crowd directly, two captures from `metro-city-countdown-anchor` ran side by side (`runs/crowdtest/`):
+- one with all 16 crowd palettes poked to magenta in EE RAM (0xB89990.., 16 x 16 entries, alpha kept);
+- one with the original palettes.
+
+The port was driven the same way at the same state (tick 97, camera error 2 mm).
+
+The crowd's colour response matches: the magenta minus original difference is R/B 0.42 on the PS2 and 0.47 in the port. It is
+MODULATE with the bluish vertex colours; DECAL would give about 1. Magnitude ratio PS2 / port 0.97 (R), 0.92 (B).
+
+**What differed was where the crowd showed at all.**
+- The PS2 draws the crowd band across the whole frame.
+- The port missed it on the left. Batch 901215 (crowd, class 1) lies behind glass 892185 (9-152, class 2), and hiding it changed 1
+  pixel.
+- three sorted both classes together by distance. The large glass pane drew first and wrote depth (texels alpha > 20), so the crowd
+  behind failed the depth test.
+
+**The rule:** the render queue key 364240 is the priority, then a sort value from word1 bits 0..1, then word0 bits 6..9 and the
+texture:
+- mode 0 (opaque) 1023;
+- mode 1 (class 1: 37F5EC ori 1) 1022;
+- mode 2 (classes 2 / 3: ori 2, with the depth key in word2 bits 10..28) the depth key;
+- mode 3: 0.
+
+The key is inverted. So at one priority the queue runs opaque, then every class-1 model, then the depth-sorted translucents back to
+front.
+
+**Port:** `web/main.js asset` gives class 2 / 3 static-model batches renderOrder 0.5 (`SORTED_CLASS_ORDER`), so they sort after class
+1 and the world's other draws (0), and before the effects (>= 1).
+
+**Measured:**
+
+| | before | after |
+|---|---|---|
+| Crowd pixels, PS2 and port both (magenta difference) | 9,983 | 12,927 |
+| Crowd pixels, PS2 only | 7,028 | 4,084 |
+| Crowd pixels, port only | 6,920 | 2,238 |
+| Metro 79 glass 9-152, PS2 - port | +4.0 | +0.3 |
+| Metro 79 crowd 9-161, PS2 - port | +13.1 | -14.3 |
+| Metro 79 crowd 9-161, \|PS2 - port\| | 32.7 | 30.8 |
+
+- Metro 79, all pixels the switch changes: 38.27 -> 34.96 (Chrome), 38.47 -> 35.01 (WebKit). Frame MAD 13.37 -> 13.13.
+- CRA3 418: 28.2 -> 26.9.
+- All 26 aligned frames (BHP1 pipe excluded): 28,306 px, |port - PS2| 36.63 -> 34.06.
+- ARA1 set-pieces frames move a few hundred pixels either way (their rider and crowd timing are not aligned).
+
+**Left:** the crowd is now visible where the PS2 shows it, but 14 levels brighter on its pixels. The colour response matches, so the
+cause is elsewhere: the frame phase of the animator, or the glass layers over it. Open.
+
+Tools: `local/browser-validation/blend-space/crowd/`.

@@ -70,19 +70,31 @@ if MODE in ('trace', 'restore'):
     def _is_state(rel):
         return rel is not None and any(rel == r or rel.startswith(r + '/') for r in STATE_ROOTS)
 
+    def _unlink_if_linked(file, mode):
+        """A truncating write into a hard-linked file (staged deploys link the assets) gets a fresh inode instead."""
+        if 'w' in mode and not isinstance(file, int):
+            try:
+                if os.lstat(file).st_nlink > 1:
+                    os.unlink(file)
+            except (OSError, TypeError, ValueError):
+                pass
+
     # ------------------------------------------------------------------------------------------------ trace
     if MODE == 'trace':
         LOG = dict(step=STEP, argv=sys.argv, pid=os.getpid(), cwd=os.getcwd(), reads={}, writes=[], probes=[], listings={},
                    footprints={}, whole={}, escapes=[])
         _spans = {}          # key -> list of [a, b)
 
+        _limits = {}
+
         def _mark(key, a, b):
             if b <= a:
                 return
             lst = _spans.setdefault(key, [])
             lst.append((a, b))
-            if len(lst) > 200000:
-                _spans[key] = _merge(lst)
+            if len(lst) > _limits.get(key, 200000):
+                merged = _spans[key] = _merge(lst)
+                _limits[key] = max(200000, 2 * len(merged))   # never re-merge on every append
 
         def _merge(lst):
             lst.sort()
@@ -103,24 +115,41 @@ if MODE in ('trace', 'restore'):
                 import traceback
                 LOG['escapes'].append(dict(key=key, what=what, where=traceback.format_stack(limit=4)[:-1]))
 
+        LAZY = 1024          # slices at least this long stay Traced views (their own reads are marked, not the whole slice)
+
         class Traced(bytes):
-            """bytes that remember which of their bytes were looked at (key = 'path' or 'path::member')."""
+            """bytes that remember which of their bytes were looked at (key = 'path' or 'path::member'; _o = offset in it)."""
+
+            def _m(self, a, b):
+                if b > a:
+                    _mark(self._k, self._o + a, self._o + b)
+
+            def _all(self, why):
+                self._m(0, len(self))
+                if self._o == 0 and len(self) == _sizes.get(self._k, -1):
+                    LOG['whole'].setdefault(self._k, why)
 
             def __getitem__(self, k):
                 if type(k) is slice:
                     a, b, step = k.indices(len(self))
+                    if step == 1 and b - a >= LAZY:
+                        v = Traced(bytes.__getitem__(self, k))
+                        v._k, v._o = self._k, self._o + a
+                        return v
                     if step == 1:
-                        _mark(self._k, a, b)
+                        self._m(a, b)
                     elif b > a:
-                        _mark(self._k, a, b)
+                        self._m(a, b)
+                    elif a > b:
+                        self._m(b, a + 1)
                 else:
                     i = k + len(self) if k < 0 else k
-                    _mark(self._k, i, i + 1)
+                    self._m(i, i + 1)
                 return bytes.__getitem__(self, k)
 
             def _found(self, sub, at, n=None):
                 if at >= 0:
-                    _mark(self._k, at, at + (len(sub) if n is None else n))
+                    self._m(at, at + (len(sub) if n is None else n))
                 return at
 
             def find(self, sub, *a):
@@ -142,18 +171,21 @@ if MODE in ('trace', 'restore'):
             def startswith(self, prefix, start=0, *a):
                 r = bytes.startswith(self, prefix, start, *a)
                 n = max((len(p) for p in prefix), default=0) if isinstance(prefix, tuple) else len(prefix)
-                _mark(self._k, start, start + n)
+                self._m(start, start + n)
                 return r
 
             def endswith(self, suffix, *a):
-                _whole(self._k, 'endswith'); return bytes.endswith(self, suffix, *a)
+                self._all('endswith'); return bytes.endswith(self, suffix, *a)
 
             def count(self, sub, *a):
                 at = bytes.find(self, sub, *a)
                 while at >= 0:
-                    _mark(self._k, at, at + max(1, len(sub) if isinstance(sub, (bytes, bytearray)) else 1))
+                    self._m(at, at + max(1, len(sub) if isinstance(sub, (bytes, bytearray)) else 1))
                     at = bytes.find(self, sub, at + 1)
                 return bytes.count(self, sub, *a)
+
+            def __bytes__(self):
+                self._all('bytes()'); return bytes.__getitem__(self, slice(None))
 
             for _name in ('split', 'rsplit', 'decode', 'hex', 'strip', 'lstrip', 'rstrip', 'splitlines', 'partition',
                           'rpartition', 'replace', 'upper', 'lower', 'translate', '__iter__', '__contains__', '__eq__', '__ne__',
@@ -162,7 +194,7 @@ if MODE in ('trace', 'restore'):
                     base = getattr(bytes, name)
 
                     def method(self, *a, **kw):
-                        _whole(self._k, name)
+                        self._all(name)
                         return base(self, *a, **kw)
                     method.__name__ = name
                     return method
@@ -170,29 +202,36 @@ if MODE in ('trace', 'restore'):
                     locals()[_name] = _make(_name)
             del _name, _make
 
+        _sizes = {}
+
         def _traced(data, key):
+            if type(data) is Traced:        # ZipFile.read goes through our ZipFile.open: already traced
+                return data
             t = Traced(data)
-            t._k = key
+            t._k, t._o = key, 0
+            _sizes[key] = len(data)
             LOG['footprints'].setdefault(key, None)
             return t
+
+        def _touch(buf, a=0, b=None):
+            if type(buf) is Traced:
+                buf._m(a, len(buf) if b is None else b)
 
         # struct: the exporters' main way of reading memory
         _uf, _u, _iu = struct.unpack_from, struct.unpack, struct.iter_unpack
 
         def unpack_from(fmt, buffer, offset=0):
             if type(buffer) is Traced:
-                n = struct.calcsize(fmt)
-                _mark(buffer._k, offset if offset >= 0 else offset + len(buffer), (offset if offset >= 0 else offset + len(buffer)) + n)
+                o = offset if offset >= 0 else offset + len(buffer)
+                buffer._m(o, o + struct.calcsize(fmt))
             return _uf(fmt, buffer, offset)
 
         def unpack(fmt, buffer):
-            if type(buffer) is Traced:
-                _mark(buffer._k, 0, len(buffer))
+            _touch(buffer)
             return _u(fmt, buffer)
 
         def iter_unpack(fmt, buffer):
-            if type(buffer) is Traced:
-                _mark(buffer._k, 0, len(buffer))
+            _touch(buffer)
             return _iu(fmt, buffer)
 
         struct.unpack_from, struct.unpack, struct.iter_unpack = unpack_from, unpack, iter_unpack
@@ -202,26 +241,51 @@ if MODE in ('trace', 'restore'):
             def unpack_from(self, buffer, offset=0):
                 if type(buffer) is Traced:
                     o = offset if offset >= 0 else offset + len(buffer)
-                    _mark(buffer._k, o, o + self.size)
+                    buffer._m(o, o + self.size)
                 return _Struct.unpack_from(self, buffer, offset)
 
             def unpack(self, buffer):
-                if type(buffer) is Traced:
-                    _mark(buffer._k, 0, len(buffer))
+                _touch(buffer)
                 return _Struct.unpack(self, buffer)
 
             def iter_unpack(self, buffer):
-                if type(buffer) is Traced:
-                    _mark(buffer._k, 0, len(buffer))
+                _touch(buffer)
                 return _Struct.iter_unpack(self, buffer)
         struct.Struct = Struct
+
+        # whole-buffer consumers: hashes, zlib, array.frombytes, int.from_bytes on a view
+        import zlib as _zlib
+        import array as _array
+        for _mod, _names in ((hashlib, ('sha256', 'sha1', 'md5', 'blake2b', 'blake2s')), (_zlib, ('crc32', 'adler32', 'decompress', 'compress'))):
+            for _n in _names:
+                def _wrapf(f, digest=_mod is hashlib and _n in ('sha256', 'sha1', 'md5')):
+                    def g(data=b'', *a, **kw):
+                        # a whole savestate member / file hashed: the pack records its digests (restore mode answers them)
+                        if not (digest and type(data) is Traced and data._o == 0 and len(data) == _sizes.get(data._k)):
+                            _touch(data)
+                        return f(data, *a, **kw)
+                    g.__name__ = f.__name__
+                    return g
+                if hasattr(_mod, _n):
+                    setattr(_mod, _n, _wrapf(getattr(_mod, _n)))
+        _Array = _array.array
+
+        class _TracedArray(_Array):
+            def frombytes(self, buffer):
+                _touch(buffer)
+                return _Array.frombytes(self, buffer)
+
+            def __new__(cls, typecode, init=None, *a):
+                _touch(init)
+                return _Array.__new__(cls, typecode, init, *a) if init is not None else _Array.__new__(cls, typecode)
+        _array.array = _TracedArray
 
         # re on memory images: only the matched spans determine the result
         _re_search, _re_match, _re_finditer, _re_findall, _re_fullmatch = re.search, re.match, re.finditer, re.findall, re.fullmatch
 
         def _track_match(m, s):
             if m is not None and type(s) is Traced:
-                _mark(s._k, m.start(), m.end())
+                s._m(m.start(), m.end())
             return m
 
         re.search = lambda p, s, flags=0: _track_match(_re_search(p, s, flags), s)
@@ -236,7 +300,7 @@ if MODE in ('trace', 'restore'):
         def findall(p, s, flags=0):
             if type(s) is Traced:
                 for m in _re_finditer(p, s, flags):
-                    _mark(s._k, m.start(), m.end())
+                    s._m(m.start(), m.end())
             return _re_findall(p, s, flags)
         re.findall = findall
 
@@ -249,7 +313,7 @@ if MODE in ('trace', 'restore'):
         class memoryview(metaclass=_MemoryviewMeta):
             def __new__(cls, obj):
                 if type(obj) is Traced:
-                    _whole(obj._k, 'memoryview')
+                    obj._all('memoryview')
                 return _mv(obj)
         builtins.memoryview = memoryview
 
@@ -301,6 +365,7 @@ if MODE in ('trace', 'restore'):
                 if GUARD and (real == GUARD or real.startswith(GUARD + os.sep)):
                     raise PermissionError(f'pipeline trace: refusing to write into the guarded tree: {real}')
             _log_open(rel, mode)
+            _unlink_if_linked(file, mode)
             f = _open(file, mode, *args, **kwargs)
             if (rel is not None and 'b' in mode and 'r' in mode and not any(c in mode for c in 'wax+') and _is_state(rel)
                     and not rel.endswith(('.p2s', '.zip', '.json'))):
@@ -425,6 +490,7 @@ if MODE in ('trace', 'restore'):
                 return getattr(self._f, name)
 
         def _open_hook(file, mode='r', *args, **kwargs):
+            _unlink_if_linked(file, mode)
             f = _open(file, mode, *args, **kwargs)
             if 'b' in mode and 'r' in mode and not any(c in mode for c in 'wax+') and not isinstance(file, int):
                 entry = RESTORED.get(_rel(file) or '')

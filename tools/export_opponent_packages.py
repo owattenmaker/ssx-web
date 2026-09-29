@@ -33,7 +33,7 @@ def package(name):
   rgba=(a/t['path']).read_bytes()
   if len(rgba)!=t['width']*t['height']*4:raise ValueError(f'{name} {key}: texture size mismatch')
   target=dest/(key+'.png');target.write_bytes(png(t['width'],t['height'],rgba));t['path']=target.name
- for f in ['vertices.bin','indices.bin','colors.bin','rider.json','animation-samples.json','animation-start.json']:shutil.copy2(a/f,dest/f)
+ for f in ['vertices.bin','indices.bin','colors.bin','rider.json','animation-start.json']:shutil.copy2(a/f,dest/f)  # clip table: ANIMATIONS/animation-samples.json
  (dest/'world.json').write_text(json.dumps(d,separators=(',',':')))
  from export_characters import ps2_texel_pngs;ps2_texel_pngs(dest)  # PS2 texel domain (web/rider-material.js HIGHLIGHT2)
  rig=json.loads((dest/'rider.json').read_text());vertices=(dest/'vertices.bin').stat().st_size//40

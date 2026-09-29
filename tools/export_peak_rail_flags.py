@@ -83,7 +83,7 @@ def main():
                 rail['runtime_flags'], rail['runtime_surface'], rail['runtime_flags_source'] = 0x30003, -1, 'default'
             counts[rail['runtime_flags_source'] != 'default'] = counts.get(rail['runtime_flags_source'] != 'default', 0) + 1
         doc['runtime_flags_note'] = 'record+0x1C / +0x28 read from the PS2 savestates in which the location was resident (tools/export_peak_rail_flags.py)'
-        (WEB / code / 'rails.json').write_text(json.dumps(doc, indent=1) + '\n')
+        __import__('atomic_write').write_text(WEB / code / 'rails.json', json.dumps(doc, indent=1) + '\n')
         print(code, 'rails', len(doc['rails']), 'from savestates', counts.get(True, 0), 'default', counts.get(False, 0))
 
 

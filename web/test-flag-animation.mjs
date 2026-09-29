@@ -13,6 +13,8 @@ import { FlagAnimation, flagVertices, flagWindTick, flagClothTick, flagBuild, fl
 
 const LOC = process.argv[2] || 'ARA1';
 const dir = new URL(LOC === 'ARA1' ? './public/assets/FLAGS/' : `./public/assets/${LOC}/FLAGS/`, import.meta.url);
+// PS2 snapshots and the native golden are test data: public/test-data, laid out like public/assets
+const testDir = new URL(dir.href.replace('/public/assets/', '/public/test-data/'));
 const load = (name) => JSON.parse(readFileSync(new URL(name, dir), 'utf8'));
 const data = load('flags.json');
 const F = new Float32Array(1), U = new Uint32Array(F.buffer);
@@ -32,8 +34,8 @@ const clothFrom = (c) => ({ parameters: params(c.parameters), width: c.width, he
   base: new Float32Array(fs(c.base)), phase: fs(c.phase), uvOffset: fs(c.uvOffset), parity: c.parity });
 
 // ---- 1. goldens ----
-if (existsSync(new URL('flag-golden.json', dir))) {
-  const g = load('flag-golden.json');
+if (existsSync(new URL('flag-golden.json', testDir))) {
+  const g = JSON.parse(readFileSync(new URL('flag-golden.json', testDir), 'utf8'));
   let n = 0;
   for (const [a, b, m, s, d, q] of g.arithmetic) {
     const x = f(a), y = f(b);
@@ -70,8 +72,8 @@ if (existsSync(new URL('flag-golden.json', dir))) {
 } else console.log('flag-golden.json absent (run tools/test_flag_cloth_native.py): skipping golden comparison');
 
 // ---- 2. PS2 memory ----
-if (existsSync(new URL('flag-snapshots.json', dir))) {
-  const snaps = load('flag-snapshots.json'); let cur = 0, prev = 0;
+if (existsSync(new URL('flag-snapshots.json', testDir))) {
+  const snaps = JSON.parse(readFileSync(new URL('flag-snapshots.json', testDir), 'utf8')); let cur = 0, prev = 0;
   for (const c of snaps.cases) {
     const def = data.cloths[c.cloth], w = def.width, h = def.height;
     const cloth = { parameters: def.parameters, width: w, height: h, widthSpan: w - 1, heightSpan: h - 1, base: new Float32Array(c.grid.flat()), phase: c.phase.slice() };

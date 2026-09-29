@@ -17,3 +17,17 @@ info[0]=3;info[20]++;memory.set([200,1500,0,30,.25,.5,1,.75],144);snow.update(co
 info[1]=1;info[20]++;memory[801]=15;memory.set([0,1000,0,10,1,1,1,1],192);snow.update(core,camera);assert.equal(snow.group.children[1].userData.snowTextureId,15,'Animated emitter failed to change texture');
 console.log('Snow renderer uploads only active prefixes; empty, unchanged, camera-only, shrink and regrow cases pass.');
 for(const m of emitters){m.geometry.dispose();m.material.dispose();m.dispose();}
+
+// pv snowBuckets: the PS2 flush order (0x364240 key, 0x364050 radix sort): descending texture handle = ascending FX texture id.
+{
+  const { snowDrawOrder } = await import('./snow-renderer.js');
+  const ids = [5, 6, 13, 16, 19, 21, 25], orders = ids.map(snowDrawOrder);
+  if (!orders.every((o, k) => k === 0 || o > orders[k - 1])) throw Error('snowDrawOrder: not ascending by texture id');
+  if (!(orders[0] > 690 && orders.at(-1) < 710)) throw Error('snowDrawOrder: outside the snow band (after startfire 690, before fist sparkle 710)');
+  // renderer +0xF50 FX handle table (PS2 RAM, setpieces-abc1 tick 2000), entries 0..25
+  const FX = [1525, -1, -1, -1, 1524, 1523, 1522, 1521, 1520, -1, 1519, 1518, -1, 1517, 1516, 1515, 1514, 1513, 1512, 1511, 1510, 1509, 1508, 1507, 1506, 1505];
+  const handle = (id) => FX[id], key = (id) => ~((31 - 7) << 26 | (handle(id) & 0x3ff) << 3) >>> 0; // same modes: key order = handle order
+  const byKey = [...ids].sort((a, b) => key(a) - key(b));
+  if (JSON.stringify(byKey) !== JSON.stringify(ids)) throw Error('snowDrawOrder: differs from the 0x364240 key order');
+  console.log('snow draw order: the PS2 key order for', ids.join(', '));
+}

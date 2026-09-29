@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-SCOPES = ('web/public/assets', 'web/generated', 'engine/generated')
+SCOPES = ('web/public/assets', 'web/public/test-data', 'web/generated', 'engine/generated', 'web/runtime')
 
 
 def sha(path):
