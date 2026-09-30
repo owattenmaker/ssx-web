@@ -641,6 +641,12 @@ const aiCases = [
   // PS2 launches Snow Jam's rocket Spline (builtin 19's 0x35955C draw; pv peakSplines).
   { name: 'ctm-events/c0a-ws13', coreExport: '_npc_grid_start', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--ticks', '13171'],
     humanThrough: 11864, ai: [11864, 11864, 11864, 11864, 11864], rngThrough: 11864, ranks: true, records: true, why: 'a player\'s whole CTM qualifier in the streamed world, six riders' },
+  // The same qualifier with pv peakSplines (the streamed world's Spline pieces): the EZseqTimer's EZrocketCore launches (11866 / 11872,
+  // builtin 19's 0x359460 draw in the entity pass), Griff's dragontrig_1000 relaunch at 11944 (342E98's RestoreNode is listed and its
+  // section leave restores the trigger; the released dragons' guard reaches every rider context, shared world event 10), and the human's
+  // celebration (control 10's 115B58 play of 315 is a controller-phase draw: variant leaf 321), to the live stop (finish + 408, --ticks 13689).
+  { name: 'ctm-events/c0a-ws13-splines', coreExport: '_npc_grid_start', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--peak-splines', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--ticks', '13689'],
+    humanThrough: 12382, ai: [12382, 12382, 12382, 12382, 12382], rngThrough: 12382, ranks: true, records: true, why: 'the whole CTM qualifier with the streamed Spline pieces (pv peakSplines)' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;

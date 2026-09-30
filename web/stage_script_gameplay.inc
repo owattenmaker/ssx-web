@@ -558,7 +558,10 @@ void browser_stage_entities_tick(){
     if(s.handler&&s.handler->slots[4]>=0)stage_run_handler(s,4); // 34FCC0 -> 2D19E8: authored slot 4 replaces the completion
     else if(s.debounceRestore==0||s.debounceRestore==3){s.restored=s.debounceRestore==3;s.dead=s.debounceRestore==0;s.entity=StageNoopEntity;s.flags=ssx::originalPickupRestorePendingFlags(s.flags); // 0: DeadNode 0x3506D8 (permanent), 3: RestoreNode 0x350F60 (back at the section leave); same flags
      stageFlags[s.resource]=s.flags;if(s.dead){stageNodeState[s.resource]=6;section_mark_dead(s.resource);} // a collected pickup never comes back (0x34FB00: DeadNodes are not listed)
-     if(auto* w=set_piece_instance_at(s.resource)){stage_note_countdown_flags(s.resource);/* a race restart puts them back */w->eventRuntimeFlags=ssx::originalPickupRestorePendingFlags(w->eventRuntimeFlags.value_or(w->flags));}} // RestoreNode 350F60: no 0x20/0x40, the route skips it
+     if(auto* w=set_piece_instance_at(s.resource)){stage_note_countdown_flags(s.resource);/* a race restart puts them back */w->eventRuntimeFlags=ssx::originalPickupRestorePendingFlags(w->eventRuntimeFlags.value_or(w->flags));} // RestoreNode 350F60: no 0x20/0x40, the route skips it
+     // restore 3: 342E98's RestoreNode 0x350F60 is the entity at instance+0xC (type 19), listed for sections: its leave (0x34FD90 -> the
+     // 0x34FBF0 destructor) puts the authored flags back, so the trigger fires again (c0a-ws13: dragontrig_1000 by Griff at 11944)
+     if(s.restored){stageNodeState[s.resource]=19;if(!stage_section_run)section_entity_created(s.resource);shared_world_node_changed(s.resource);}}
     else {s.entity=s.entityBeforeDebounce;s.flags=ssx::originalPickupRestoredFlags(s.flags);stageFlags[s.resource]=s.flags;} // 34FBF0 base destruction
    }
   }

@@ -21,6 +21,9 @@ RIDER_LOCAL FinishControl finishControl;
 RIDER_LOCAL bool finishCelebrate=true; // rider +0x100: at the finish (125108 -> 238358) the race results handler clears it when the human's 0-based place 0x536730[slot] >= 3 (off the podium), the freestyle handler (0x23A05C) when it is > 0; set by the host (main.js / compare-ps2-capture.mjs)
 int finish_step(){
  using namespace terrain_original;
+ // 12C678 is control 10's update in the controller pass (121068): its 115B58 play (3128E8 -> 311710's variant draw at 0x3117B0) is a
+ // controller-phase draw, before every rider's motion draws (c0a-ws13 12046: the human's 315 celebration, variant word 0xD3DB07 -> leaf 321)
+ ControllerDraws controllerDraws;
  if(!finishControl.active){
   // The controller slot is gs.controlState (as the pad decode, input_bridge.inc): physicsState.controlState stays 0
   // through passive (4/5) flights, and a pipe finish is crossed in the air (pipe-finish 4404: control 5, 10 after landing).

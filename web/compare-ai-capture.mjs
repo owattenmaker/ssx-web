@@ -15,6 +15,7 @@ import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
 
 const args = process.argv.slice(2);
+if (args.includes('--peak-splines')) process.env.PEAK_SPLINES = '1'; // pv peakSplines for this run (web/peak-capture.mjs: core set_piece_streamed)
 const capturePath = args.find((a) => !a.startsWith('--') && a.endsWith('.bin'));
 const reportPath = args.includes('--report') ? args[args.indexOf('--report') + 1] : null;
 const trace = args.includes('--trace') ? args[args.indexOf('--trace') + 1].split(':').map(Number) : null;

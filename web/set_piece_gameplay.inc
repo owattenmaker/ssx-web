@@ -714,6 +714,17 @@ void browser_release_section_lift(uint32_t resource){ // also shared-world event
   if(auto* a=set_piece_instance_at(lift.resource)){a->entity.reset();a->entityPointer=false;a->eventRuntimeFlags=(lift.seed->runtimeFlags&~0x40u)|0x20u;}
  }
 }
+void shared_world_spline_released(uint32_t resource,uint32_t key); // web/shared_world.inc
+// A piece whose entity another context's section leave destroyed (shared world event 10; the streamed world's section programs run in
+// the human's context only): this context's copy goes, and with it its owner's builtin52 guard. PS2 program 136 (dragontrig_1000) starts
+// `Debounce; if builtin52(0x85308) == 1 return` (303130: an entity at instance +0xC), so the next contact relaunches the dragons with
+// two 0x359460 draws (c0a-ws13: Griff at 11944, after the 10752 launch's section leave).
+void browser_spline_piece_released(uint32_t resource){
+ for(size_t k=0;k<browserSplinePieces.size();)if(browserSplinePieces[k].seed->resource==resource){
+  const auto* seed=browserSplinePieces[k].seed;browserSplinePieces.erase(browserSplinePieces.begin()+long(k));spline_piece_collision_stop(seed->resource);
+  splineOwnersFired.erase(std::remove(splineOwnersFired.begin(),splineOwnersFired.end(),seed->owner*8+seed->slot),splineOwnersFired.end());
+ }else ++k;
+}
 static void section_stop_piece(uint32_t resource,bool multiSplineRelease){
  stage_world_section_leave(resource); // 0x34FD90: the entity's effects / LiveComp go with it
  browser_dynamic_rails_unbind(resource);browser_location_teeter_section(resource,false); // its RailModifiers / the location teeter (web/rail_dynamic.inc)
@@ -721,6 +732,7 @@ static void section_stop_piece(uint32_t resource,bool multiSplineRelease){
  for(size_t k=0;k<browserSplinePieces.size();)if(browserSplinePieces[k].seed->resource==resource){
   const auto* seed=browserSplinePieces[k].seed;moved=seed;browserSplinePieces.erase(browserSplinePieces.begin()+long(k));spline_piece_collision_stop(seed->resource);
   splineOwnersFired.erase(std::remove(splineOwnersFired.begin(),splineOwnersFired.end(),seed->owner*8+seed->slot),splineOwnersFired.end());
+  shared_world_spline_released(seed->resource,seed->owner*8+seed->slot); // pv peakSplines: the other contexts' copy goes too (event 10)
  }else ++k;
  if(const auto* seed=loop_relaunch_seed(resource))
   for(size_t k=0;k<browserLoopSplines.size();)if(browserLoopSplines[k].seed->resource==resource){browserLoopSplines.erase(browserLoopSplines.begin()+long(k));moved=seed;}else ++k;

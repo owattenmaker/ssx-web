@@ -342,6 +342,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     for (let at = 0; at < n;) {
       const len = 2 + words[at + 1], event = words.subarray(at, at + len);
       for (const c of cores()) if (c !== from) { const q = c._malloc(len * 4); new Uint32Array(c.HEAPU8.buffer, q, len).set(event); explain(c, 'shared world event', () => c._world_event_apply(q)); c._free(q); }
+      if (words[at] === 10) knownTriggers.delete(words[at + 3]); // a released Spline piece's owner (pv peakSplines): its next launch replicates again
       worldEvents++; worldEventKinds[words[at]] = (worldEventKinds[words[at]] || 0) + 1; at += len;
     }
   };
