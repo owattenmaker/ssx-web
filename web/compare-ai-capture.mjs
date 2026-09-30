@@ -339,7 +339,7 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
     // every tick's pad from here to the live stop; at the live stop the in-world restart and the re-run are compared with the live state.
     if ((process.env.REPLAY_PROBE || replayReturn) && i === ctmPlan.C) globalThis.__rep = { recording: true, list: [], live: [], at: 0, rng: Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)),
       visual: Array.from(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6)), lcg: human._visual_lcg_word ? new Uint32Array(human.HEAPU8.buffer, human._visual_lcg_word(), 1)[0] : null };
-    if (replayReturn && !process.env.REPLAY_PROBE && i === ctmPlan.C) { eventSnapshot.snapshotAttach({ human, racers, qa: true }); globalThis.__rep.js = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_COUNTDOWN, { human, racers }); }
+    if (replayReturn && !process.env.REPLAY_PROBE && i === ctmPlan.C) { eventSnapshot.snapshotAttach({ human, racers, qa: true }); globalThis.__rep.js = eventSnapshot.snapshotCountdown({ human, racers }); } // (as the page's live start)
     if (process.env.REPLAY_PROBE && i === ctmPlan.C) globalThis.__rep.world = replayWorldDump();
     if (process.env.REPLAY_PROBE && i === ctmPlan.C) console.error('replay probe context bytes', human._rider_context_bytes?.(), 'memory', human.HEAPU8.length);
     if (process.env.REPLAY_PROBE && i === ctmPlan.C) globalThis.__rep.mem = new Uint8Array(human.HEAPU8);
@@ -368,10 +368,11 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
     if (ctmReturn && i === ctmReturn.R - 1 && ctmReturn.pauseAt > 0) { // the last coast tick, then the Transport's stop frame and the WS14 frame
       tick(process.env.COAST_DEVICE ? decodePad(menuSegmentAt(menuSampleAt(i))) : padFor(records[i].index), aiCapture ? aiCapture.records[i + 1] : null);
       if (replayReturn && globalThis.__rep?.recording) { const rep = globalThis.__rep; rep.recording = false; // the results-time snapshot, the replay, the Transport's restore
-        const results = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_RESULTS, { human, racers }); const rngAt = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6));
-        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_COUNTDOWN, rep.js, { human, racers });
-        const n = Math.min(+(process.env.REPLAY_TICKS ?? 600), rep.list.length); for (let k = 0; k < n; k++) { const e = rep.list[k]; if (e.giveUp) human._race_give_up(); else tick(e.pad, e.record); }
-        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_RESULTS, results, { human, racers });
+        const heap = () => (human._snapshot_heap_used?.() / 1048576).toFixed(2), H = ['before the results save ' + heap()];
+        const results = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_RESULTS, { human, racers }); H.push('saved ' + heap()); const rngAt = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6));
+        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_COUNTDOWN, rep.js, { human, racers }); H.push('countdown restored ' + heap());
+        const n = Math.min(+(process.env.REPLAY_TICKS ?? 600), rep.list.length); let peak = 0; for (let k = 0; k < n; k++) { const e = rep.list[k]; if (e.giveUp) human._race_give_up(); else tick(e.pad, e.record); peak = Math.max(peak, +heap()); } H.push('replay peak ' + peak.toFixed(2));
+        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_RESULTS, results, { human, racers }); H.push('results restored ' + heap() + ' (memory ' + (human.HEAPU8.length / 1048576) + ' MB)'); console.error('replay return heap (MB):', H.join(' | '));
         const same = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)).every((w, k) => w === rngAt[k]);
         console.error('replay return: results-time snapshot saved, the replay ran', n, 'ticks from the countdown snapshot, the results time restored (RNG', same ? 'as saved)' : 'DIFFERS)'); }
       if (globalThis.__rep?.recording) { const rep = globalThis.__rep; rep.recording = false;

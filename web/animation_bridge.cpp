@@ -233,6 +233,16 @@ RIDER_LOCAL static bool animationPostActive=false; // inside 121750: a crash ent
 // contacts' translation. The next tick's rail step 13AF28 queries from that pushed board bone (PS2 DRA4 Psymon: the 1854 pair push of
 // 2.05 cm is in record 1855's world bones, and the 1855 rail step slides from it). Pushes after the commit are dropped by the next 121020.
 RIDER_LOCAL static std::array<float,3> pairCompanion{};
+// The contacts' part of rider+0x9D0 in this tick (106538 from the posts: body push, instance contacts, rail and crash posts), kept
+// after the commit: 121750 translates the cached bones by +0x9D0 (310530) but does not clear it; only the next 120F20 does (0x121020).
+RIDER_LOCAL static std::array<float,3> tickBodyTranslation{};
+// 105398's pushes (instance contacts, web/instance_contact_gameplay.inc run_rider_instance_contacts) while it runs: 106538 has added
+// each to +0x9D0 before 105D98 dispatches the contact, so a crash it enters sees them (c0a-ws13 Allegra 5940: 32.7 cm).
+RIDER_LOCAL static std::array<float,3> instancePendingTranslation{};
+// Rider+0x9D0 as it stands (the sum the commit applies): 12CA30 (control 8's enter) adds it to the cached primary / board bones before
+// 136D40 detaches the board (0x12CAC4..0x12CAE0; the jal 136D40 at 0x12CB18), whether or not this tick's 121750 has committed it yet.
+static terrain_original::Vector pending_pose_translation(){terrain_original::Rounding rounding;terrain_original::Vector v{};
+ for(unsigned k=0;k<3;k++)v[k]=terrain_original::add(terrain_original::add(terrain_original::add(tickBodyTranslation[k],instancePendingTranslation[k]),pairCompanion[k]),browserLandingTranslation[k]);return v;}
 static OriginalCrashClipState crash_clip(){
  if(cachedCrashWorld.size()<24)throw std::runtime_error("Crash needs a sampled world pose");
  OriginalCrashClipState value;value.semantic=graph.requestedSemantics[2];value.animationClass=graph.currentClass(2);value.progress=graph.channelProgress(2);value.duration10=graph.channelDuration(2);value.speed90=graph.channelRate(2);
@@ -264,7 +274,7 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event){
  cb.enterControl=[&](int control,OriginalHardCrashEntryState& value){physicsState.controlState=gs.controlState=control;if(control==13)return;
   OriginalCrashActorState actor;actor.position=value.physical.position;actor.quaternion=value.physical.rotation;actor.velocity=physicsState.velocity;actor.groundNormal=physicsState.normal; //rider+370: landing contact normal, air +180 copy, or ground normal
   actor.surfaceVelocity=physicsState.surfaceVelocity;actor.surface=physicsProfile.surface.id;actor.timeScale=physicsState.timeScale;actor.contactDistance=physicsState.distance;
-  crash.beginControl(actor,animationPostActive?browserLandingTranslation:terrain_original::Vector{}); /*the control-8 entry adds the pending rider+0x9D0 (not yet committed to the cached bones) to the posed primary/secondary before 136D40 detaches the board (score-uber 480)*/tmpBegin[0]=float(animationTick);for(unsigned k=0;k<3;k++){tmpBegin[1+k]=crash.actor.detachedPosition[k];tmpBegin[4+k]=browserLandingTranslation[k];} /*TMPDEBUG*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
+  crash.beginControl(actor,pending_pose_translation()); /*12CA30: the control-8 entry adds rider+0x9D0 (the tick's 106538 translations: landing, body and pair pushes; score-uber 480, c0a-ws13 Allegra 5940) to the cached primary/secondary before 136D40 detaches the board*/tmpBegin[0]=float(animationTick);for(unsigned k=0;k<3;k++){tmpBegin[1+k]=crash.actor.detachedPosition[k];tmpBegin[4+k]=browserLandingTranslation[k];} /*TMPDEBUG*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
  };
  cb.enterMotion=[&](int mode,OriginalHardCrashEntryState&){if(mode!=2)throw std::runtime_error("Invalid original crash motion entry");crash.beginMotion(previousMotion);if(crash.motion.submode==1)sync_crash_prediction(crash.trajectory,{crash.actor.position,crash.actor.velocity},true); /*136C40 restarts the rider's predictor (heading 0) before this tick's camera: 163E8C's landing angle is 0 (event-race 899)*/detach_rail_for_crash();browserCrashActive=true;browserSoftActive=browserSoftFrame=false;heldAirMode=passiveMode=false;if(crashFromAirControl)prewind={};air={};landingAirExitBaked=false; /*only the control-5 exit 134CB0 zeroes the prewind triplets (tech-oob-hops 3368: 12F620 rates survive a crash from control 3/4)*/
   //10EB30 clears only the 1F0/208/250 triplets (and +330); 11FE78(2) then runs the old motion's exit: 13F410 from the
@@ -721,14 +731,11 @@ static void select_ground_animation(bool jumpHeld,float turn,float charge,float 
 }
 // Called by step_rider's grounded controller after its turn/crouch/brake targets and
 // reverse-turn check, before the1211F8 filter pass and ground integration.
-void browser_ground_controller_animation(int jumpHeld,float turn,float braking,float charge,float prewindSpin,float prewindFlip){
- ControllerDraws controllerDraws;
- if(!physicsAttached||!previousGround||browserResetActive||crash.active)return;
- if(previousHeld&&!jumpHeld)return; // control2 release: 12E9B8 requests control5 instead (release_air_control).
- groundControllerRan=true;
- controllerGround.boost=physicsState.boost; //131620 runs 114130 (boost press sets +0x2FC) at 0x131844 before the 131878 selection reads +0x2FC (metro-event-race 1094: tuck + boost press -> 8)
- gs.reverseStance=physicsState.reverseStance;gs.state320Equals324=physicsState.state320Equals324;gs.prewindStyle=physicsState.prewindStyle;gs.manualSpin=physicsState.manualSpin;
- gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;gs.velocity=physicsState.velocity;gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.normal=physicsState.normal;gs.boost=controllerGround.boost;gp.surface=physicsProfile.surface;
+// 131620 (control 0's update) runs 115B58 / 115D48 (0x131868 / 0x131870) before its 114CC0 reverse turn (0x1318EC): 115D48 sees the
+// channel-1 class and the stance of before the turn (c0a-ws13 Allegra 9368: the turn's clip reset +0x35C a tick early in the port).
+// core.cpp calls browser_ground_upper_reactions ahead of its reverse-turn check; browser_ground_controller_animation runs them otherwise.
+RIDER_LOCAL static bool groundUpperDone=false;
+static void ground_upper_reactions(int jumpHeld){
  //115B58 (131868) plays a pending 10E028 reaction on channel1 with the rider+8C8 mask, then 115D48.
  if(!jumpHeld&&upperRequest358&&upperRequestHeldTick!=int32_t(controllerGround.logicTick)){const int mainClass=graph.currentClass(2);
   if(mainClass!=5&&graph.currentClass(1)==0&&mainClass!=10){const int32_t age=std::bit_cast<int32_t>(controllerGround.logicTick-uint32_t(upperRequestTick354));
@@ -739,6 +746,22 @@ void browser_ground_controller_animation(int jumpHeld,float turn,float braking,f
     upperRequest358=0;upperRequestTick354=-1;}}}
  //115D48 runs at131870 before main-animation selection; both draw from the shared RNG.
  if(!jumpHeld){OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick+1,riderMask8C0,riderMask8D0};auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);}
+}
+void browser_ground_upper_reactions(int jumpHeld){
+ ControllerDraws controllerDraws;
+ if(!physicsAttached||!previousGround||browserResetActive||crash.active)return;
+ if(previousHeld&&!jumpHeld)return;
+ ground_upper_reactions(jumpHeld);groundUpperDone=true;
+}
+void browser_ground_controller_animation(int jumpHeld,float turn,float braking,float charge,float prewindSpin,float prewindFlip){
+ ControllerDraws controllerDraws;const bool upperDone=groundUpperDone;groundUpperDone=false;
+ if(!physicsAttached||!previousGround||browserResetActive||crash.active)return;
+ if(previousHeld&&!jumpHeld)return; // control2 release: 12E9B8 requests control5 instead (release_air_control).
+ groundControllerRan=true;
+ controllerGround.boost=physicsState.boost; //131620 runs 114130 (boost press sets +0x2FC) at 0x131844 before the 131878 selection reads +0x2FC (metro-event-race 1094: tuck + boost press -> 8)
+ gs.reverseStance=physicsState.reverseStance;gs.state320Equals324=physicsState.state320Equals324;gs.prewindStyle=physicsState.prewindStyle;gs.manualSpin=physicsState.manualSpin;
+ gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;gs.velocity=physicsState.velocity;gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.normal=physicsState.normal;gs.boost=controllerGround.boost;gp.surface=physicsProfile.surface;
+ if(!upperDone)ground_upper_reactions(jumpHeld);
  select_ground_animation(jumpHeld,turn,charge,braking,prewindSpin,prewindFlip);
  physicsState.animationIndex=graph.requestedSemantics[2];physicsState.animationClass=graph.currentClass(2);
 }
@@ -912,7 +935,7 @@ RIDER_LOCAL static std::vector<AnimationTransform> tmpPreContact; //TMPDEBUG
 RIDER_LOCAL static float tmpDebug[24]; RIDER_LOCAL static float tmpDebug2[8]; //TMPDEBUG
 EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,float charge,int grounded,int jumpHeld,int mask,int tweak,int boost,float predictedLanding,float impact,float flip){
  if(browserNisHold)return; // 121700 / 121728: rider+0xAC4 set skips 11EB60 / 11EB98; motion 3's second phase 136978 is empty
- pairCompanion={}; // 121020 (this rider's motion tick): the companion translation starts again
+ pairCompanion={};tickBodyTranslation={};instancePendingTranslation={}; // 121020 (this rider's motion tick): +0x9D0 starts again
  browserLandingTranslation={};committedPoseTranslation={};
  scoreEvent=0;banked=deferredScore;deferredScore=0;++animationTick;board_press_filters();const bool airAdjustWasLive=airAdjustLive;airAdjustLive=false;gs.velocity={speed*100,0,0};if(!physicsAttached){gs.turn.current=turn;gs.animationTurn.current=turn;gs.brake.current=braking;}if(grounded)gs.crouch.current=charge;gs.boost=boost?1:0;if(physicsAttached){grabContext.superTime=boostState.superTime;grabContext.boostTier=boostState.tier;gs.reverseStance=physicsState.reverseStance;gs.state320Equals324=physicsState.state320Equals324;gs.prewindStyle=physicsState.prewindStyle;gs.boost=physicsState.boost;gs.manualSpin=physicsState.manualSpin;gs.velocity=physicsState.velocity;if(grounded||previousGround){gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;}gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.normal=physicsState.normal;gp.surface=physicsProfile.surface;}
  const int softExit=physicsAttached?take_soft_transition():-1;
@@ -1052,7 +1075,7 @@ if(!(riderHostFlags&4)){AnimationTransform toPresented;if(physicsAttached){const
 static float* animation_post_phase(){
  if(!animationPost.pending)return poses;animationPost.pending=false;struct PostScope{PostScope(){animationPostActive=true;}~PostScope(){animationPostActive=false;}} postScope;
  const int grounded=animationPost.grounded,jumpHeld=animationPost.jumpHeld;const bool startFrame=animationPost.startFrame,resetFrame=animationPost.resetFrame,crashFrame=animationPost.crashFrame,railFrame=animationPost.railFrame,softFrame=animationPost.softFrame;
- bool poseLanded=false;std::array<float,3> bodyPoseTranslation{};
+ bool poseLanded=false;std::array<float,3>& bodyPoseTranslation=tickBodyTranslation;bodyPoseTranslation={};
  const int postMotion=npc_motion_mode(); // the 1114A0 post stage this rider runs (0 ground 13F178, 1 air 139C88; 2/4 below)
  // 13F178's board normal update (13F2E0: +0x390 = unit(+0x390 + 0.5 +0x370)) belongs to the ground post. A rider an earlier rider's
  // 107888 crashed after its ground motion runs the crash post instead and keeps +0x390 (PS2 Gravitude Mac 873, Nate's pair).

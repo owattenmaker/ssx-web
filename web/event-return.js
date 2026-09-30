@@ -60,6 +60,7 @@ export function sessionReturn({ human, racers, cstr, bank, entry, freeRideDoc })
 // physics). The riders' contexts go back to the host (detach). The ticks before are counted by web/ai-racers.js (its riders sit out
 // ticks 3 and 4).
 export function sessionRidersLeave({ human, racers }) {
+  for (const n of racers?.npcs ?? racers?.racers?.npcs ?? []) { n.core._snapshot_clear?.(0); n.core._snapshot_clear?.(1); } // (web/event-snapshot.js snapshotReleaseRiders: the event's replay copies go with its riders; racers: the orchestrator or web/ai-race.js)
   const blocks = racers ? racers.detach() : [];
   requireReturnCore(human); human._rider_peers_restart(1); human._game_tick_restart(0); // 12B030's 10F3B8 with the human alone; 1297C8(C, 0)'s C+8 = 0
   human._rider_pose_step(); // 129160

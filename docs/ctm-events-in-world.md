@@ -780,6 +780,20 @@ are left. The full ps2-captures suite on that core: 264 scenarios clean. The rul
   (11B3F8 / 11FE78), c0a-ret10 (animation entry points on the human's animator 0x58B800), c0a-ret11 (3135B0), c0a-ret12
   (0x128CDC, the paused branch: no call).
 
+
+**(b), the replay behind in-world results (2026-09-30).** An in-world event replays behind its results as the event-load path
+does, and the results' Transport restores the results-time state, with the PS2's two snapshots (0x26D818 at the countdown,
+R+0x3D0 at the replay's start; 0x2706F0 restores it): the port's rider-context snapshot, [replay.md](replay.md) §2a. The c0a-ret3
+gate runs through it (--replay-return). On the page (behind eventReturnInWorld): main.js inWorldCountdownSave / inWorldReplayRestart
+/ inWorldResultsRestore, web/event-snapshot.js. Verified in Chrome and WebKit (local/ctm-events/qa/event6.mjs): the replay plays behind
+the results, the Transport restores the results time, WS15 places the six at Session point 1 (the white fade over them) and they go
+after 8 ticks. **The place HUD during those 8 ticks (settled from the code):** 0x1EA930 sets the HUD's flag word +0x3CC to
+0x478078[GMM+0x4A]: in free ride (GMM+0x4A = 12) 0x1530C380, no place bit; then, while the rider manager lists two riders or more
+(C+0x7C + C+0x80 >= 2, 0x1EAA18..0x1EAA3C), it adds 0x1 (the race place) and clears 0x30. So the PS2 draws the place over the return's
+ticks beside free ride's own widgets (0x80 / 0x100 / 0x200), and not after the removal. Its value is the human's +0xEC: the race's
+until 128A48(C, 0) at the return's tick 3, 0 (1ST) from there; the total is C+0x78 (6). The page shows it the same way (web/ai-race.js
+hud() while the riders ride; the ranks are gated by ctm-events/c0a-ret3). The white fade covers it either way.
+
 ### Turning it on
 
 1. Stage 1 as soon as its gates pass (it needs pv `pauseContexts`).

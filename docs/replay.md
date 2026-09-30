@@ -215,8 +215,16 @@ so they are not restored but reset), camera state words (the cameras are re-deri
   (inWorldReplayRestart: 0x26F8A0 state 9's save), the replay's restart and seeks restore the countdown one, the results' Transport
   stops the replay and restores the results time before the stop frame's tick (inWorldResultsRestore, 0x20CF88 -> 0x2706F0).
   web/ai-racers.js saveState / restoreState carry the riders' orchestrator; web/ai-race.js replayRestore the relationship tables.
-- **Sizes (c0a-ret3, six contexts, mallinfo):** the first save of both slots 5.1 MB (3.64 MB with slot 0 and the block copies of
-  both slots; 1.45 MB for slot 1): about 2.4 MB per copy. Nothing is allocated after the first saves beyond the containers' growth.
+- **Sizes and memory.** The page, six contexts: the results-time copy frees 4.05 MB when dropped (the heap in use 162.64 -> 158.59
+  MB at the map); snapshot_bytes 3.3 MB for both slots (it does not see containers inside user structs; mallinfo is the measure).
+  The copies hold references (a rider's rig and clips through its animation graph), so two rules keep the memory flat: the
+  countdown save also overwrites slot 1 (snapshotCountdown: the last event's results copy no longer keeps its data through this
+  race), and the event's end drops the rider contexts' copies (snapshotReleaseRiders, at the riders' leave; the next countdown save
+  makes them again, about 3 MB, in freed memory: a deliberate exception to "no allocation at the countdown", coordinator 2026-09-30,
+  because measured flat beats the one-time peak). Without the second, the next event's riders loaded beside the last event's (a
+  one-time peak: WASM memory 184 -> 221 MB). Measured (Chrome, 3 in-world events, the replay on, QA checks off): WASM memory 184 MB
+  flat, the heap in use 158-163 MB at every step, its high-water mark 174.7 MB, as the replay-off baseline (184 MB). The QA checks
+  (?qa, snapshotQa=0 turns them off) hash the kept tables at each save / restore (the path banks as JSON).
 - **Gates (c0a-ret3):** REPLAY_PROBE (compare-ai-capture.mjs): the countdown snapshot back and all 1989 recorded ticks run again equal
   the live run on every tick (the six riders, the shared RNG; the visual stream differs, as on the PS2), under two conditions the
   capture meets: no avalanche playing at the restore (0x2D9D68 brings it back re-triggered) and no painter between its payloads (the

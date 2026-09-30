@@ -124,7 +124,7 @@ static std::array<float,3> run_rider_instance_contacts(BodyCollisionVolume& volu
  actor.groundNormal=physicsState.normal;actor.railDirection=railDirection;actor.presentationUp=physicsState.presentationUp;
  actor.channelTime=surface_landing_channel_time;actor.landingAward=surface_landing_award;actor.scoreBoundary=surface_landing_boundary;
  actor.requestControl=surface_landing_control;actor.play=[](int semantic){if(!graph.enter(semantic,-1,~uint64_t(0),true))throw std::runtime_error("Missing surface landing animation");}; /*3128E8(anim, 268, force 1, -1)*/
- actor.translate=[&](const std::array<float,3>& d){terrain_original::Rounding rounding;for(unsigned k=0;k<3;k++){volume.broadCenterCm[k]=terrain_original::add(volume.broadCenterCm[k],d[k]);for(unsigned i=0;i<volume.count;i++)volume.spheres[i].centerCm[k]=terrain_original::add(volume.spheres[i].centerCm[k],d[k]);}};
+ actor.translate=[&](const std::array<float,3>& d){terrain_original::Rounding rounding;for(unsigned k=0;k<3;k++){instancePendingTranslation[k]=terrain_original::add(instancePendingTranslation[k],d[k]); /*106538: +0x9D0 now*/volume.broadCenterCm[k]=terrain_original::add(volume.broadCenterCm[k],d[k]);for(unsigned i=0;i<volume.count;i++)volume.spheres[i].centerCm[k]=terrain_original::add(volume.spheres[i].centerCm[k],d[k]);}};
  actor.steer=[&](const OriginalInstanceContactPacket& p){physicsState.quaternion=originalObstacleOrientation(physicsState.quaternion,physicsState.boardUp,physicsState.physicalForward,contact_xyz(p.normal));};
  actor.rebuild=[&]{auto rebuilt=originalRebuildOrientation(physicsState.quaternion);physicsState.quaternion=rebuilt.quaternion;physicsState.physicalForward=rebuilt.forward;physicsState.boardUp=rebuilt.up;};
  // 108388 gates on the motion mode (11FE98 == 0 or 4), not on contact: 13F178 runs 105398 after a passive
@@ -145,7 +145,7 @@ static std::array<float,3> run_rider_instance_contacts(BodyCollisionVolume& volu
  // rider+9D0 here: this tick's landing (query offset) and accepted 13F488/13AA48 body-response translations.
  actor.offset9D0=queryOffset;if(browserBodyResponse&&browserBodyResponse->accepted){terrain_original::Rounding rounding;for(unsigned k=0;k<3;k++)actor.offset9D0[k]=terrain_original::add(actor.offset9D0[k],browserBodyResponse->translationCm[k]);}
  const auto velocityBefore=physicsState.velocity;
- auto moved=run_instance_contacts(volume,queryOffset,callerDirection,actor);
+ auto moved=run_instance_contacts(volume,queryOffset,callerDirection,actor);instancePendingTranslation={}; // (the caller adds moved to the tick's contacts translation)
  if(moved!=std::array<float,3>{}||physicsState.velocity!=velocityBefore){
   // Unlike the 13F488 browser path, 1057B8 leaves the +3A0/+3B0 ground tangents
   // untouched (verified: carve tick 408 keeps the pre-impact tangents).

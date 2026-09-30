@@ -99,8 +99,9 @@ export function readAiCapture(binPath) {
         tick: u(A.game_info_00_a0 + 8), roster: Array.from({ length: 6 }, (_, j) => u(A.game_info_00_a0 + 0x28 + 4 * j)), riderCount: u(A.game_info_00_a0 + 0x78), raw: view(A.game_info_00_a0, 0xa0) },
     });
   }
-  // (a CTM run from free ride through the event, manifest.ai_dynamic: the Continue's 1297C8(C, 1) restarts the game tick at 0 once)
-  for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1 && !(manifest.ai_dynamic && records[i].tick === 0)) throw new Error(`tick gap at record ${i}`);
+  // (a CTM run from free ride through the event, manifest.ai_dynamic: the Continue's 1297C8(C, 1) restarts the game tick at 0; through the
+  // results and Next heat (local/ctm-events/caps/c0a-ws13) also the auto replay's start (tick 1), WS13 and its grid placement (0))
+  for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1 && !(manifest.ai_dynamic && records[i].tick <= (manifest.ws13 ? 1 : 0))) throw new Error(`tick gap at record ${i}`);
   return { manifest, records, roster, others: order.map((j) => others[j]), owners: owners.length ? order.map((j) => owners[j]) : owners, riderOf };
 }
 

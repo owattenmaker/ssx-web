@@ -105,6 +105,7 @@ struct HolderBase {
   virtual void save(const void* var, unsigned slot) = 0;
   virtual bool restore(void* var, unsigned slot) = 0;
   virtual size_t bytes() const = 0;
+  virtual void clear(unsigned slot) = 0; // drops the slot's copy (its heap memory)
 };
 
 // A copy of one variable per slot. unique_ptr<U> keeps a U (or none); a C array is copied element by element.
@@ -113,18 +114,21 @@ template <class T> struct Holder final : HolderBase {
   void save(const void* var, unsigned slot) override { const T& v = *static_cast<const T*>(var); auto& c = copies[slot]; if (!c) { if constexpr (std::is_default_constructible_v<T>) c.emplace(); else c.emplace(v); } assign_deep(*c, v); }
   bool restore(void* var, unsigned slot) override { auto& c = copies[slot]; if (!c) return false; assign_deep(*static_cast<T*>(var), *c); return true; }
   size_t bytes() const override { size_t n = 0; for (const auto& c : copies) if (c) n += sizeof(T) + heap_bytes(*c); return n; }
+  void clear(unsigned slot) override { copies[slot].reset(); }
 };
 template <class U, class D> struct Holder<std::unique_ptr<U, D>> final : HolderBase {
   std::array<std::optional<U>, 2> copies; std::array<bool, 2> present{}, saved{};
   void save(const void* var, unsigned slot) override { const auto& v = *static_cast<const std::unique_ptr<U, D>*>(var); saved[slot] = true; present[slot] = !!v; if (v) { auto& c = copies[slot]; if (c) *c = *v; else c.emplace(*v); } }
   bool restore(void* var, unsigned slot) override { if (!saved[slot]) return false; auto& v = *static_cast<std::unique_ptr<U, D>*>(var); if (!present[slot]) { v.reset(); return true; } if (v) *v = *copies[slot]; else v.reset(new U(*copies[slot])); return true; }
   size_t bytes() const override { size_t n = 0; for (unsigned k = 0; k < 2; ++k) if (present[k] && copies[k]) n += sizeof(U) + heap_bytes(*copies[k]); return n; }
+  void clear(unsigned slot) override { copies[slot].reset(); saved[slot] = false; }
 };
 template <class U, size_t N> struct Holder<U[N]> final : HolderBase {
   std::array<std::optional<std::array<U, N>>, 2> copies;
   void save(const void* var, unsigned slot) override { const U* v = static_cast<const U*>(var); auto& c = copies[slot]; if (!c) c.emplace(); for (size_t k = 0; k < N; ++k) (*c)[k] = v[k]; }
   bool restore(void* var, unsigned slot) override { auto& c = copies[slot]; if (!c) return false; U* v = static_cast<U*>(var); for (size_t k = 0; k < N; ++k) v[k] = (*c)[k]; return true; }
   size_t bytes() const override { size_t n = 0; for (const auto& c : copies) if (c) n += sizeof(U) * N + heap_bytes(*c); return n; }
+  void clear(unsigned slot) override { copies[slot].reset(); }
 };
 
 struct Entry {

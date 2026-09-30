@@ -634,6 +634,13 @@ const aiCases = [
   // everywhere, the pair records from the return. (The coast, race ticks 1700..1987, comes from the tick script, not the device pad: not gated here.)
   { name: 'ctm-events/c0a-ret3', coreExport: '_snapshot_save', returnGate: true, args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--replay-return', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json'],
     humanThrough: 0, ai: [], rngThrough: Infinity, ranks: true, records: true, why: 'CTM qualifier, the in-world return to Session point 1' },
+  // A player's full qualifier in the world (local/ctm-events/caps/c0a-ws13, local/ctm-events/ws13_capture.py: the Snow Jam arrival, the
+  // gate, WS1, the card, the race ridden closed-loop by ps2_autopilot's Pilot to the human's own 3rd place, the results' Next heat, WS13,
+  // the semi). Scored to race tick 11864 (--ticks 13171): Allegra's air crash at 5940 (12CA30 adds rider+0x9D0 with the instance push to
+  // the posed board before 136D40 detaches it), her 115D48 reset at 9368 (131620: 115D48 before the 114CC0 reverse turn). At 11865 the
+  // PS2 launches Snow Jam's rocket Spline (builtin 19's 0x35955C draw; pv peakSplines).
+  { name: 'ctm-events/c0a-ws13', coreExport: '_npc_grid_start', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--ticks', '13171'],
+    humanThrough: 11864, ai: [11864, 11864, 11864, 11864, 11864], rngThrough: 11864, ranks: true, records: true, why: 'a player\'s whole CTM qualifier in the streamed world, six riders' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;

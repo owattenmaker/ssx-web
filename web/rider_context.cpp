@@ -98,6 +98,8 @@ EMSCRIPTEN_KEEPALIVE const char* snapshot_keep_changed_name(uint32_t k){if(!snap
 EMSCRIPTEN_KEEPALIVE void snapshot_qa(int on){ssx_snapshot::qa=on!=0;}
 // The hook whose last restore failed (its state no longer matches the save's world: see its note), or nullptr.
 EMSCRIPTEN_KEEPALIVE const char* snapshot_failed_hook(){return snapshotContext?snapshotContext->failedHook:nullptr;}
+// QA (memory attribution): drops slot's copies in this context (the next save of it allocates them again).
+EMSCRIPTEN_KEEPALIVE void snapshot_clear(uint32_t slot){if(!snapshotContext||slot>1)return;for(auto& h:snapshotContext->holders)if(h)h->clear(slot);snapshotContext->saved[slot]=false;}
 EMSCRIPTEN_KEEPALIVE void snapshot_release(){delete snapshotContext;snapshotContext=nullptr;}
 // QA (the per-subsystem self-check): [n, then per source file: file index, hash lo, hash hi] of the current context's registered
 // state (kept variables excluded); snapshot_file(i) names file i.
@@ -111,6 +113,8 @@ EMSCRIPTEN_KEEPALIVE const uint32_t* snapshot_hashes(){
 EMSCRIPTEN_KEEPALIVE const char* snapshot_file(uint32_t k){std::vector<const char*> files;for(const auto& e:ssx_snapshot::registry()){if(e.keep||e.rederived)continue;bool seen=false;for(auto* f:files)if(!std::strcmp(f,e.file))seen=true;if(!seen)files.push_back(e.file);}for(const auto& hk:ssx_snapshot::hooks())files.push_back(hk.name);return k<files.size()?files[k]:nullptr;}
 // QA: the heap in use (dlmalloc's allocated bytes): the snapshot's real footprint is the difference around its init / saves.
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_heap_used(){return uint32_t(mallinfo().uordblks);}
+// QA: dlmalloc's high-water mark of the allocated space (the wasm memory grows to hold it).
+EMSCRIPTEN_KEEPALIVE uint32_t snapshot_heap_peak(){return uint32_t(mallinfo().usmblks);}
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entries(){return uint32_t(ssx_snapshot::registry().size());}
 // QA: entry k's name / source file / the bytes its holder keeps (both slots; 0 for a byte-copied or kept one) / its size / flags
 // (1 trivially copyable, 2 kept, 4 no holder).
@@ -122,6 +126,7 @@ EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entry_hash(uint32_t k){auto& r=ssx_snapsh
 // QA: the heap entry k's first save allocated (its copy's real size, containers inside user structs too).
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entry_heap(uint32_t k){return snapshotContext&&k<snapshotContext->firstHeap[0].size()?snapshotContext->firstHeap[0][k]:0;}
 // QA: the heap slot's first save allocated in total (entries, then the hooks at index entries).
+EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entry_heap_slot(uint32_t k,uint32_t slot){return snapshotContext&&slot<2&&k<snapshotContext->firstHeap[slot].size()?snapshotContext->firstHeap[slot][k]:0;}
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_slot_heap(uint32_t slot){if(!snapshotContext||slot>1)return 0;uint64_t n=0;for(auto v:snapshotContext->firstHeap[slot])n+=v;return uint32_t(n);}
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entry_size(uint32_t k){auto& r=ssx_snapshot::registry();return k<r.size()?r[k].size:0;}
 EMSCRIPTEN_KEEPALIVE uint32_t snapshot_entry_flags(uint32_t k){auto& r=ssx_snapshot::registry();if(k>=r.size())return 0;return (r[k].trivial?1:0)|(r[k].keep?2:0)|(!r[k].trivial&&!r[k].make?4:0);}

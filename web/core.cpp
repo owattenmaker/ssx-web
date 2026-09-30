@@ -134,7 +134,7 @@ extern OriginalRandomState* browser_camera_random();
 void browser_section_viewer(float x,float y,float z,float far); // web/section_gameplay.inc: texture-chunk viewer (outer camera +0x20 eye, +0x08 far)
 extern float browser_camera_crouch();
 extern "C" float browser_finish_elapsed(); // web/race_bridge.cpp: rider+0x470
-extern void snapshot_animation_prediction();void browser_ground_controller_animation(int,float,float,float,float,float);int browser_channel2_class();int browser_channel2_semantic();RIDER_LOCAL int browserPrewindBranch=0; // 12E9B8 held branch (animation_bridge.cpp select_ground_animation)
+extern void snapshot_animation_prediction();void browser_ground_controller_animation(int,float,float,float,float,float);void browser_ground_upper_reactions(int);int browser_channel2_class();int browser_channel2_semantic();RIDER_LOCAL int browserPrewindBranch=0; // 12E9B8 held branch (animation_bridge.cpp select_ground_animation)
 extern void browser_fog_step(float,float,float,float);void browser_weather_camera_step(float,float,float); // web/weather.inc (0x15EBCC: the camera's Weather painter, block 6)
 // Rider finish routine 0x125108 -> 0x162258 (race_bridge.cpp): applied before this tick's camera update.
 void browser_camera_finish(int32_t raceRiders){pendingCameraFinish=true;cameraRaceRiders=raceRiders;}
@@ -769,6 +769,7 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
     if(reverse.reversed){browserPrewindBranch=3;++reverseTurnSerial;physicsState.animationIndex=21;physicsState.animationClass=7;if(browserReverseAnimation)browserReverseAnimation(reverse.animationRootQuaternion);browser_controller_stance(physicsState.reverseStance);}}
    if(applyTargets&&browserPrewindBranch!=3)groundTurnTarget(physicsState.turn,browserPrewindBranch==2?0.f:steering,physicsState.velocity,physicsProfile.surface.id);
   }
+  if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!jump&&!held)browser_ground_upper_reactions(0); // 115B58 / 115D48 before 114CC0 (animation_bridge.cpp)
   if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!jump&&!held&&physicsState.animationIndex!=22&&physicsState.animationIndex!=21&&physicsState.manualSpin==0){
    auto reverse=originalReverseTurn(physicsState,physicsState.balance280);
    if(reverse.reversed){++reverseTurnSerial;physicsState.animationIndex=21;physicsState.animationClass=7;if(browserReverseAnimation)browserReverseAnimation(reverse.animationRootQuaternion);browser_controller_stance(physicsState.reverseStance);}
