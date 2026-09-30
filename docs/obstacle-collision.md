@@ -428,3 +428,16 @@ Found at the whole-mountain crash contacts (docs/peak3.md section 6, "Past the c
   - The 105398 instance-contact path already had this right, through its motion argument.
   - pipe-depart-soft is now exact on all 1268 ticks.
   - The full capture suite and sim-diff (ARA1 tuck / script1 / rand1 / trick1, 3000 ticks x 6 riders) are unchanged.
+
+## Back-to-back soft collisions (course-limits/p3b-right3000 14776, 2026-09-29)
+
+- **PS2.** Hard right into The Throne's EBC3_E ice blocks (`ice_block_small_b_00033`): soft collisions at 14701, 14739 and 14774,
+  each 32 ticks long; the third comes 3 ticks after the second ended. The soft control 12E778 leaves control 3 when 312AE8
+  (the first channel-2 playback sequence, +0xC0) is complete. That is the new soft clip (57, t = 0.03 s), so control 3
+  continues, and the next contacts (14779..14782) bounce the rider off the blocks.
+- **Browser, before.** `web/animation_bridge.cpp` fed `soft_animation_complete` with any channel-2 sequence of the soft
+  semantic that had completed. The previous soft's clip 57 (completed, fading out behind the new one: new plays are inserted
+  first in their channel) answered, so control 3 ended at 14776 and the rider rode on into the blocks (31 m off by 16940).
+- **Fix.** The first channel-2 sequence of that semantic decides, as the rail's `primaryCompleted` does.
+- **Checked.** p3b-right3000 exact on all 3000 ticks (was 474; now a gate), the full capture suite (253 scenarios) unchanged.
+

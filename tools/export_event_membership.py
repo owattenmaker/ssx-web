@@ -109,8 +109,11 @@ def octree(m):
 
 
 def draw_class(read, flags, vtable):
+    # An entity in the renderer's dynamic list carries 0x100 or 0x200: 1032C0 / 101B60 add it with 0x100 and flip the pair as the
+    # list's parity each rebuild (0x1030F4..0x103160), and 103358 clears 0x100 at a list reset, so a snapshot can hold 0x200 alone
+    # (the os609 helis at the countdown: 0x50015205; drawn at 0x...305 and 0x...105 alike in local/ps2-capture/runs/heli/abc1-moved2).
     static = (flags & 3) == 3
-    if flags & 0x100 and vtable:
+    if flags & 0x300 and vtable:
         slot = vtable_draw(read, vtable)
         if slot == OBJECT_DRAW:
             return 'entity' if flags & 4 else ('static' if static else 'none')

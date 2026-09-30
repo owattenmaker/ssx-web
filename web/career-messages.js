@@ -259,10 +259,17 @@ export class CareerMessages {
     this.awards = null;
     // every 1E2FE0 post sends HUD event 8; the icon's 5 s clock (1EB6E4) runs only while the HUD is up, so an event's posts
     // show it when the ride resumes (PS2 ctm/caps peak2-arr: the item posted at the Snow Jam final, the icon at the next free ride)
-    if (rules.posts.length) { career.persist(); this.hud = { frames: 0 }; }
+    // pv mailFreeze: the PS2 posts these on the finish tick (125108 -> 238358 @0x2384DC -> 154EE8) and the icon runs under the finish HUD
+    // until WS5's 180-frame countdown (0x233C88) opens the results overlays, which freeze it (+0x3D8); PS2 race-f: 0.050 at fin, 3.033 at
+    // res, 3.050 at the next ride (f95-after). The port posts at the results, so its clock starts where the PS2's froze: the next ride
+    // shows the last ~2 s. (The ~3 s blink under the finish HUD itself is not drawn: the result is decided at the results here.)
+    if (rules.posts.length) { career.persist(); this.hud = { frames: pv('mailFreeze') ? 182 : 0 }; if (pv('mailFreeze')) this.lastHud = 0; }
   }
   owns(screen) { return this.ready && MESSAGE_SCREENS.includes(screen); }
-  open(back) { this.back = back; this.view = null; this.top = 0; this.hud = null; this.ui.set('ctm-messages'); this.ui.index = 0; this.ui.sync(); }
+  // pv mailFreeze: an overlay's open / close sends HUD events 3 / 4 (20A380 / 20A430 -> 1EC3D4): the icon freezes and resumes (no sender of
+  // event 9 exists); before, opening the Message Center cleared it.
+  freezeHud() { if (pv('mailFreeze')) this.lastHud = 0; else this.hud = null; }
+  open(back) { this.back = back; this.view = null; this.top = 0; this.freezeHud(); this.ui.set('ctm-messages'); this.ui.index = 0; this.ui.sync(); }
   // The career's first FAQ (world state 4 at 0x2309A4 with gp-0x1024 != -1, set by Green Base Station's "?" through stage
   // builtin 100 -> 1E3510; web/peak_world.inc): the Message Center (1E3C00) opens the Progression/Rewards folder (category 7,
   // 1E3A78) for as long as it is shown and views the folder's first FAQ, "How do I open up other peaks?" (PS2 new career:
@@ -271,7 +278,7 @@ export class CareerMessages {
     const box = this.inbox(), c = this.data.categories[category]; if (!c) { back?.(); return; }
     const wasOpen = box.posted(category); box.setPosted(category, true);
     this.back = () => { if (!wasOpen) { this.inbox().setPosted(category, false); this.cu.career.persist(); } back?.(); };
-    this.top = 0; this.hud = null; this.view = { type: 'faq', category, item: c.first + 1 };
+    this.top = 0; this.freezeHud(); this.view = { type: 'faq', category, item: c.first + 1 };
     this.ui.set('ctm-message'); this.ui.index = 2; this.ui.sync();
   }
   // List rows (0x1E2BB8): the inbox newest first, then the FAQ folders (kind 2 categories), an open folder's FAQs below it.

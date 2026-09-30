@@ -67,15 +67,24 @@ export function createStageSet(meta, meshes) {
 // The world meshes of the set's instance (its static copy in the course / streamed location package): every drawn world
 // mesh whose bounds lie within meta.world_copy {centre, radius} (native metres; world geometry keeps native coordinates,
 // the mesh sits at -origin). Hidden while the set plays, restored after.
+const activeCopies = new Set();   // the copies hidden now: {copy, hidden}
+const inCopy = (o, copy) => { const s = o.geometry?.boundingSphere; if (!s) return false; const [cx, cy, cz] = copy.centre;
+  return Math.hypot(s.center.x - cx, s.center.y - cy, s.center.z - cz) + s.radius <= copy.radius; };
 export function hideWorldCopy(scene, meta, exclude) {
   const copy = meta?.world_copy; if (!copy || !scene) return () => {};
-  const [cx, cy, cz] = copy.centre, r = copy.radius, hidden = [];
+  const hidden = [], entry = {copy, hidden};
   scene.traverse((o) => {
     if (!o.isMesh || !o.visible || o === exclude || isInside(o, exclude)) return;
-    const s = o.geometry?.boundingSphere; if (!s || o.parent?.isSkinnedMesh) return;
-    const dx = s.center.x - cx, dy = s.center.y - cy, dz = s.center.z - cz;
-    if (Math.hypot(dx, dy, dz) + s.radius <= r) { o.visible = false; hidden.push(o); }
+    if (!o.geometry?.boundingSphere || o.parent?.isSkinnedMesh) return;
+    if (inCopy(o, copy)) { o.visible = false; hidden.push(o); }
   });
-  return () => { for (const o of hidden) o.visible = true; hidden.length = 0; };
+  activeCopies.add(entry);
+  return () => { for (const o of hidden) o.visible = true; hidden.length = 0; activeCopies.delete(entry); };
+}
+// A world mesh put into the scene while a set stands in for its copy (web/set-pieces-renderer.js, pv heliWorld): hidden with the
+// copy and shown again when the set leaves.
+export function adoptWorldCopy(o) {
+  for (const {copy, hidden} of activeCopies) if (inCopy(o, copy)) { o.visible = false; hidden.push(o); return true; }
+  return false;
 }
 function isInside(o, group) { for (let p = o.parent; p; p = p.parent) if (p === group) return true; return false; }

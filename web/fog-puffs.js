@@ -22,6 +22,7 @@ import {attribute, texture, vec4, uniform, positionGeometry, modelViewMatrix, ca
 import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
 import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
+import {setUpdateRange} from './heap-views.js';
 
 const F = Math.fround;
 // Streamed (CTM) packages with puffs (tools/export_fog_puffs.py; web/test-fog-puffs.mjs checks this against the exported files).
@@ -152,7 +153,7 @@ export async function createFogPuffs({root, origin = [0, 0, 0], resident = () =>
       Co[o] = layout.rgb[3 * k] / 128; Co[o + 1] = layout.rgb[3 * k + 1] / 128; Co[o + 2] = layout.rgb[3 * k + 2] / 128; Co[o + 3] = out.alpha[k] / 128;
     }
     if (!n) { C.fill(0, 0, 4); Co.fill(0, 0, 4); } // one empty sprite (zero size, alpha 0): the pipeline stays built and warmable
-    for (const a of [centre, colour]) { a.clearUpdateRanges(); a.addUpdateRange(0, Math.max(n, 1) * 4); a.needsUpdate = true; }
+    setUpdateRange(centre, 0, Math.max(n, 1) * 4); setUpdateRange(colour, 0, Math.max(n, 1) * 4);
     mesh.count = Math.max(n, 1); state.sprites = n;
     return n;
   }

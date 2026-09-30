@@ -172,7 +172,9 @@ def tick_into(a, reg):
 # first 0x18 bytes (type, maximum, value, arg, +0x10, points) of each of its 44 HUD message slots *(score+0x1B0)+k*0x9C.
 SCORE_RECORD, SCORE_BYTES = 9136, 0x1D0      # -> 9136..9600
 HUD_SLOTS_RECORD, HUD_SLOT_COUNT, HUD_SLOT_WORDS = 9600, 44, 6   # -> 9600..10656
-F_SCORE, F_HUD = 240, 244   # DATA words refreshed each record
+F_SCORE, F_HUD = 240, 244   # DATA words refreshed each record (not a switch: local/ctm-events/menu_pad.py once used DATA+0xF0 as one)
+# Reserved: 0x9C000..0xA0000 inside the script region is local/ctm-events/menu_pad.py's arena (its device-pad hook, script and the
+# pad-hook switch 0x9C8F0); it asserts the arena is still zero, i.e. the tick script never reaches it.
 WATCH = 10752         # optional raw memory windows (--watch ADDR:LEN), appended from here (9072.. belongs to fixed fields)
 
 

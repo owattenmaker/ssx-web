@@ -28,9 +28,12 @@ import { createLocationCables, CableLife } from './set-piece-cables.js';
 import { createFogPuffs } from './fog-puffs.js';
 import { createAvalancheDraw, ENTITY_DRAWN } from './avalanche-state.js';
 import { createAvalancheTrails } from './avalanche-trails.js';
+import { adoptWorldCopy } from './cutscene-stage-sets.js';
+import { heapU32 } from './heap-views.js';
 
 const params = new URL(globalThis.location?.href ?? 'http://x/').searchParams; // ?livecomp=0 / ?flags=0 / ?uvscroll=0 for comparisons
 const sortedJson = (value) => JSON.stringify(value, Object.keys(value).sort());
+const HELI_INAIR = /os609_full_version_inair$/; // not global: test() keeps no lastIndex state
 
 export async function createSetPieceRenderer({core, group, load, course = null}) {
   // Snow Jam's exports live in /assets/{FLAGS,UVSCROLL,LIVECOMP}/; other locations under their root.
@@ -84,6 +87,9 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   const cables = pv('cables') ? await createLocationCables({code: course?.code ?? 'ARA1', root: sectionRoot, load, origin: (await load(sectionRoot + 'start.json').catch(() => null))?.position ?? [0, 0, 0]}).catch((e) => { console.warn('Cables unavailable', e); return null; }) : null;
   const cableActive = new Map(), cableLife = cables ? new CableLife(course?.code ?? 'ARA1', sectionsNative ? JSON.parse(sectionText) : null) : null;
   if (cables) group.add(cables.group);
+  // texture chunk -> resident (core section_chunks, filled by update()); declared before the fog puffs, whose residency reads it from their
+  // first draw (it ran into the temporal dead zone while this async set-up was still awaiting: 'Cannot access chunkResident before init')
+  const chunkResident = new Map();
   // pv fogPuffs (web/fog-puffs.js, docs/visual-parity.md 41): the kind-5 fog-particle puffs (0x22A270 / 0x2DC190 / 0x2DBF98), each
   // instance while its record's texture chunk is resident (chunkResident below; an unknown chunk counts as resident).
   const fogPuffs = pv('fogPuffs') ? await createFogPuffs({root: sectionRoot, origin: (await load(sectionRoot + 'start.json').catch(() => null))?.position ?? [0, 0, 0], resident: (chunk) => chunkResident.get(chunk)}).catch((e) => { console.warn('Fog puffs unavailable', e); return null; }) : null;
@@ -102,7 +108,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
     texts.forEach((t, k) => core.HEAPU8.set(t, ptrs[k])); try { return core._init_stage_flags(...ptrs) > 0; } finally { ptrs.forEach((p) => core._free(p)); }
   })();
   let flagWordCursor = 0;
-  const flagRandom = () => { const U = new Uint32Array(core.HEAPU8.buffer), at = core._stage_world_flag_words() >> 2; if (flagWordCursor < U[at]) return U[at + 1 + flagWordCursor++]; return (Math.random() * 0x100000000) >>> 0; };
+  const flagRandom = () => { const U = heapU32(core), at = core._stage_world_flag_words() >> 2; if (flagWordCursor < U[at]) return U[at + 1 + flagWordCursor++]; return (Math.random() * 0x100000000) >>> 0; };
   const liveMeshes = group.userData.liveCompMeshes || [];
   // pv litLiveComp (web/world-material.js litWorldMaterial, docs/visual-parity.md 40): a lit LiveComp instance (livecomp.json
   // `lighting`: authored flag 0x40000000, runtime 0x4000) is lit per vertex from the object bank on its node-rotated normals, as
@@ -119,7 +125,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   // Magnet flight (see the frame update): authored instance translations (source cm) of the magnet pickups.
   const magnetOffsets = new Map();
   const applyVisibility = (mesh) => { mesh.visible = (mesh.userData.chunkVisible ?? true) && (mesh.userData.scriptVisible ?? true); };
-  const chunkMeshes = params.get('chunks') === '0' ? [] : (group.userData.chunkMeshes || []).filter((m) => !m.userData.liveComp && m.userData.hiddenResource === undefined && m.userData.pickupResource === undefined && m.userData.eventDeadResource === undefined && m.userData.movingResource === undefined), chunkResident = new Map(); // ?chunks=0 draws every chunk
+  const chunkMeshes = params.get('chunks') === '0' ? [] : (group.userData.chunkMeshes || []).filter((m) => !m.userData.liveComp && m.userData.hiddenResource === undefined && m.userData.pickupResource === undefined && m.userData.eventDeadResource === undefined && m.userData.movingResource === undefined); // ?chunks=0 draws every chunk
   const contactOwners = new Set(liveData ? liveData.instances.flatMap((x) => x.starts || []).filter((st) => st.trigger === 'contact').map((st) => st.ownerResource) : []);
   const hidden = group.userData.hiddenMeshes || [];
   // UV scroll groups: first-appearance order of distinct initial states (prepare.py assigns the same ids).
@@ -196,6 +202,14 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   }
   // P (source cm) of a JS-animated LiveComp node for a halo: row 3 of the node matrix, into the caller's scratch array.
   const teeterScratch = new Map(), seenScratch = new Set(), activeScratch = new Set(), changedFlagSlots = new Set(); // per-frame sets, reused
+  // Per-frame garbage (docs/web-render-performance.md): the frame update reads the core's logs in place, iterates Maps
+  // through callbacks made once, and keeps its teeter matrices, UV-scroll group list and cable callbacks across frames.
+  const u32at = (i) => heapU32(core)[i], teeterPool = [];
+  const dropUnseenScript = (drawn, r) => { if (seenScratch.has(r)) return; scriptState.delete(r); if (!drawn) { const ms = scriptMeshes.get(r); if (ms) for (let i = 0; i < ms.length; i++) { ms[i].userData.scriptVisible = true; applyVisibility(ms[i]); } } }; // new race
+  const dropInactivePieces = (pieces, r) => { if (!activeScratch.has(r)) for (let i = 0; i < pieces.length; i++) if (pieces[i].mesh.parent) pieces[i].mesh.removeFromParent(); };
+  const scrollIds = [...representative.keys()], scrollResources = scrollIds.map((id) => representative.get(id));
+  const cablesAll = params.get('cables') === 'all', cableModifierActive = (o) => cableActive.get(o), cableResident = (chunk) => chunkResident.get(chunk);
+  const cableAlive = (owner) => cablesAll || cableLife.lives(owner, cableModifierActive, cableResident); // ?cables=all: every cable (QA)
   const haloNodePosition = (resource, node, out) => { const m = live?.matrices?.(resource); if (!(m && m[node])) return null; const r = m[node][3]; out[0] = r[0]; out[1] = r[1]; out[2] = r[2]; return out; };
   reset();
   return {
@@ -222,46 +236,46 @@ export async function createSetPieceRenderer({core, group, load, course = null})
     // Trigger contacts of other riders (computer riders run in their own core instances).
     fireContact(resource) { if (live && !coreStarts && contactOwners.has(resource) && !fired.has(resource)) { fired.add(resource); live.fire('contact', resource); } },
     update() {
-      const info = core._set_piece_info ? new Float32Array(core.HEAPF32.buffer, core._set_piece_info(), 2) : null;
-      if (!info) return;
-      const target = info[1];
+      if (!core._set_piece_info) return;
+      const target = core.HEAPF32[(core._set_piece_info() >> 2) + 1];
       if (target < ticks) reset();
       const steps = Math.min(target - ticks, 3600);
       changedFlagSlots.clear();
       // Fired slot-2 triggers of any rider (core set_piece_triggers: tick, owner*8+slot; other riders' cores
       // replay their triggers into this one, web/ai-racers.js), else the raw contact log (older cores).
-      // The core logs only grow during a run: copy just the unread tail (from the cursor), not the whole log every frame
-      // (a whole-log copy per frame grew to megabytes a second of garbage by the end of a run).
+      // The core logs only grow during a run and nothing in this update appends to them: their unread tails (from the
+      // cursors) are read in place, word i of a tail at heap word [log]At + i (no per-frame copies or views).
       const contactBase = contactCursor, sectionBase = sectionCursor, startBase = startCursor;
-      const readLog = (fn, decode) => { const p = fn.call(core), n = new Uint32Array(core.HEAPU8.buffer, p, 1)[0], v = new Uint32Array(core.HEAPU8.buffer, p + 4 + 4 * contactBase, Math.max(0, 2 * n - contactBase)).slice(); if (decode) for (let i = 1; i < v.length; i += 2) v[i] = v[i] >>> 3; return v; };
-      const log = core._set_piece_triggers ? readLog(core._set_piece_triggers, true) : core._set_piece_contacts ? readLog(core._set_piece_contacts, false) : new Uint32Array(0);
+      let logAt = 0, logLength = 0; const logDecode = !!core._set_piece_triggers;
+      if (core._set_piece_triggers || core._set_piece_contacts) { const p = (logDecode ? core._set_piece_triggers() : core._set_piece_contacts()) >> 2; logAt = p + 1 + contactBase; logLength = Math.max(0, 2 * u32at(p) - contactBase); }
       // LiveComp starts of the core's trigger and timer programs: [tick, resource, 11 words, key8 word, key6 word, draws].
-      const startLog = coreStarts ? (() => { const U = new Uint32Array(core.HEAPU8.buffer), p = core._stage_world_livecomps() >> 2, n = U[p]; return U.slice(p + 1 + startBase, p + 1 + Math.max(startBase, 16 * n)); })() : null;
-      let sectionLog = null;
-      if (sectionsNative) { const p = core._set_piece_sections(), n = new Uint32Array(core.HEAPU8.buffer, p, 1)[0]; sectionLog = new Uint32Array(core.HEAPU8.buffer, p + 8 + 4 * sectionBase, Math.max(0, 6 * n - sectionBase)).slice(); }
+      let startAt = 0, startLength = 0;
+      if (coreStarts) { const p = core._stage_world_livecomps() >> 2; startAt = p + 1 + startBase; startLength = Math.max(startBase, 16 * u32at(p)) - startBase; }
+      let sectionAt = 0, sectionLength = 0;
+      if (sectionsNative) { const p = core._set_piece_sections() >> 2; sectionAt = p + 2 + sectionBase; sectionLength = Math.max(0, 6 * u32at(p) - sectionBase); }
       for (let k = 0; k < steps; k++) {
         if (live) {
           if (ticks === 0 && !sectionsNative) for (const inst of live.instances) if ((inst.starts || []).some((st) => st.trigger === 'section')) live.fire('section', inst.resource);
           if (ticks === liveData.go_tick) live.fire('go');
           live.tick();
-          if (startLog) {
+          if (coreStarts) {
             // starts of this tick (contact programs in the rider phase, timer programs in the entity pass): first advance next tick
-            while (startCursor - startBase < startLog.length && startLog[startCursor - startBase] <= ticks) {
-              const e = startLog.subarray(startCursor - startBase, startCursor - startBase + 16); startCursor += 16;
-              const inst = live.byResource.get(e[1]); if (!inst) continue;
-              const random = live.random, drawn = [e[13], e[14]]; let k = 0; live.random = () => drawn[k++] ?? 0;
-              try { live.start(inst, Array.from(e.subarray(2, 13))); } finally { live.random = random; }
+            while (startCursor - startBase < startLength && u32at(startAt + startCursor - startBase) <= ticks) {
+              const e = startAt + startCursor - startBase; startCursor += 16;
+              const inst = live.byResource.get(u32at(e + 1)); if (!inst) continue;
+              const random = live.random, drawn = [u32at(e + 13), u32at(e + 14)]; let k = 0; live.random = () => drawn[k++] ?? 0;
+              try { live.start(inst, Array.from(heapU32(core).subarray(e + 2, e + 13))); } finally { live.random = random; }
             }
           } else
           // contacts of this tick (rider phase, after the entity pass): slot-2 programs of trigger volumes
-          while (contactCursor - contactBase < log.length && log[contactCursor - contactBase] <= ticks) {
-            const resource = log[contactCursor - contactBase + 1]; contactCursor += 2;
+          while (contactCursor - contactBase < logLength && u32at(logAt + contactCursor - contactBase) <= ticks) {
+            const word = u32at(logAt + contactCursor - contactBase + 1), resource = logDecode ? word >>> 3 : word; contactCursor += 2;
             if (contactOwners.has(resource) && !fired.has(resource)) { fired.add(resource); live.fire('contact', resource); }
           }
         }
         // Section scan at the end of this tick (0x101B60 after every rider): slot-1 starts, leaves.
-        while (sectionLog && sectionCursor - sectionBase < sectionLog.length && sectionLog[sectionCursor - sectionBase] <= ticks) {
-          const [, resource, action, , draws, word] = sectionLog.subarray(sectionCursor - sectionBase, sectionCursor - sectionBase + 6); sectionCursor += 6;
+        while (sectionsNative && sectionCursor - sectionBase < sectionLength && u32at(sectionAt + sectionCursor - sectionBase) <= ticks) {
+          const e = sectionAt + sectionCursor - sectionBase, resource = u32at(e + 1), action = u32at(e + 2), draws = u32at(e + 4), word = u32at(e + 5); sectionCursor += 6;
           cableLife?.section(resource, action);
           if (action === 1) {
             if (live) { const random = live.random; if (draws) live.random = () => word; try { live.fire('section', resource); } finally { live.random = random; } }
@@ -272,7 +286,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
             if (flags?.deactivate(resource)) removeFlagMesh(resource);
           }
         }
-        if (flags) for (const slot of flags.tick(ticks + 1)) changedFlagSlots.add(slot);
+        if (flags) { const changed = flags.tick(ticks + 1); for (let j = 0; j < changed.length; j++) changedFlagSlots.add(changed[j]); }
         scroll?.tick(); ticks++; // 0x34B818 recomputes a grid when (tick + 1) % 2 == its parity (20/20 PS2 snapshots)
       }
       ticks = target;
@@ -281,7 +295,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
       // translation (source cm) away from the authored instance translation; a LiveComp pickup (collecta) animates on
       // the magnet matrix (its player's root row 3 moves, the node deltas carry the offset).
       if (core._stage_world_magnets) {
-        const F = new Float32Array(core.HEAPU8.buffer), q = core._stage_world_magnets() >> 2, n = F[q];
+        const q = core._stage_world_magnets() >> 2, F = core.HEAPF32, n = F[q];
         if (n || magnetOffsets.size) { const now = new Map(); // nothing to do (and nothing allocated) with no pickup in flight
         for (let k = 0, at = q + 1; k < n; k++, at += 10) { const d = [F[at + 1] - F[at + 7], F[at + 2] - F[at + 8], F[at + 3] - F[at + 9]]; if (d[0] || d[1] || d[2]) now.set(F[at], d); }
         for (const r of new Set([...magnetOffsets.keys(), ...now.keys()])) {
@@ -294,20 +308,24 @@ export async function createSetPieceRenderer({core, group, load, course = null})
       }
       // Log teeters (core set_piece_teeters: [count, ticks, forces, max time, then resource + 16 per teeter]).
       const teeter = teeterScratch; teeter.clear();
-      if (core._set_piece_teeters) { const q = core._set_piece_teeters() >> 2, n = core.HEAPF32[q]; for (let k = 0; k < n; k++) teeter.set(core.HEAPF32[q + 4 + 17 * k], core.HEAPF32.slice(q + 5 + 17 * k, q + 21 + 17 * k)); }
-      for (const mesh of liveMeshes) {
-        const lc = mesh.userData.liveComp, resource = lc[0], node = lc[1], delta = teeter.get(resource);
+      if (core._set_piece_teeters) { const q = core._set_piece_teeters() >> 2, F = core.HEAPF32, n = F[q]; for (let k = 0; k < n; k++) { const d = teeterPool[k] ??= new Float32Array(16), at = q + 5 + 17 * k; for (let i = 0; i < 16; i++) d[i] = F[at + i]; teeter.set(F[q + 4 + 17 * k], d); } }
+      for (let i = 0; i < liveMeshes.length; i++) { // indexed loops here: no iterator records per mesh (per-frame garbage)
+        const mesh = liveMeshes[i], lc = mesh.userData.liveComp, resource = lc[0], node = lc[1], delta = teeter.get(resource);
         if (!delta || node !== 1) continue;
         mesh.matrixAutoUpdate = false; mesh.userData.lcRest = false;
         const e = mesh.matrix.fromArray(delta).elements, o = mesh.userData.restPosition ??= mesh.position.clone();
         e[12] += o.x; e[13] += o.y; e[14] += o.z; mesh.matrixWorldNeedsUpdate = true;
       }
-      if (live) for (const mesh of liveMeshes) {
-        const lc = mesh.userData.liveComp, resource = lc[0], node = lc[1], deltas = live.nodeDeltas(resource);
+      if (live) for (let i = 0; i < liveMeshes.length; i++) {
+        const mesh = liveMeshes[i], lc = mesh.userData.liveComp, resource = lc[0], node = lc[1], deltas = live.nodeDeltas(resource);
         // pv liveCompObject: an owner the static collector skips but its LiveComp Object player (vtable 0x490B10, flags & 4) draws through
         // 0x356298 while the player lives (livecomp.json draw 'object', tools/export_livecomp.py): The Throne's summit flag pole.
-        if (mesh.userData.hiddenResource !== undefined && live.byResource.get(resource)?.draw === 'object' && pv('liveCompObject')) {
-          const on = !!deltas?.[node]; if (on && !mesh.parent) group.add(mesh); else if (!on && mesh.parent === group) mesh.removeFromParent(); }
+        // pv heliWorld: the backcountry heli os609 in the air (a LiveComp, flags & 4) is drawn the same way (PS2 derived capture
+        // local/ps2-capture/runs/heli/abc1-moved2: moved in front of the camera, drawn at flags 0x...305 and 0x...105 alike; the
+        // audit's 'none' was the dynamic list's 0x100 / 0x200 parity). While an arrival set shows its copy it stays hidden with it.
+        const heli = pv('heliWorld') && live.byResource.get(resource)?.draw === 'none' && HELI_INAIR.test(live.byResource.get(resource)?.name ?? '');
+        if (mesh.userData.hiddenResource !== undefined && ((live.byResource.get(resource)?.draw === 'object' && pv('liveCompObject')) || heli)) {
+          const on = !!deltas?.[node]; if (on && !mesh.parent) { group.add(mesh); if (heli) adoptWorldCopy(mesh); } else if (!on && mesh.parent === group) mesh.removeFromParent(); }
         if (!deltas || !deltas[node]) {
           // a section leave destroyed the player (0x34FD90): back to the static draw
           if (sectionsNative && playing(mesh) && !teeter.has(resource)) restMesh(mesh);
@@ -319,25 +337,26 @@ export async function createSetPieceRenderer({core, group, load, course = null})
       }
       attached?.apply(liveMeshes, live);
       if (core._stage_world_instances) { // stage setup (collectibles, 30C4A8) runs without the particle data too
-        const U = new Uint32Array(core.HEAPU8.buffer);
+        const U = heapU32(core);
         // Instance draw states (DeadNode / RestoreNode / Hide / breaking pieces hide the static draw).
         const ip = core._stage_world_instances() >> 2, count = U[ip], seen = seenScratch; seen.clear();
         for (let k = 0; k < count; k++) { const r = U[ip + 1 + 4 * k], drawn = U[ip + 2 + 4 * k] !== 0; seen.add(r);
           if (scriptState.get(r) !== drawn) { scriptState.set(r, drawn); for (const m of scriptMeshes.get(r) || []) { m.userData.scriptVisible = drawn; applyVisibility(m); } } }
-        for (const r of scriptState.keys()) if (!seen.has(r)) { const drawn = scriptState.get(r); scriptState.delete(r); if (!drawn) for (const m of scriptMeshes.get(r) || []) { m.userData.scriptVisible = true; applyVisibility(m); } } // new race
+        scriptState.forEach(dropUnseenScript); // entries the core no longer lists: shown again (new race)
         // Break pieces in flight: node deltas rest -> current on the per-node copies.
-        const mp = core._stage_world_meshanims() >> 2, F = new Float32Array(core.HEAPU8.buffer), active = activeScratch; active.clear();
+        const mp = core._stage_world_meshanims() >> 2, F = core.HEAPF32, active = activeScratch; active.clear();
         for (let k = 0, at = mp + 1; k < F[mp]; k++) {
           const r = F[at], nodes = F[at + 1]; at += 2; active.add(r);
-          for (const piece of pieceMeshes.get(r) || []) {
-            if (piece.node >= nodes) continue; const mesh = piece.mesh;
+          const pieces = pieceMeshes.get(r);
+          if (pieces) for (let j = 0; j < pieces.length; j++) {
+            const piece = pieces[j]; if (piece.node >= nodes) continue; const mesh = piece.mesh;
             if (!mesh.parent) group.add(mesh);
-            mesh.matrixAutoUpdate = false; const o = mesh.userData.restPosition ??= mesh.position.clone(), e = mesh.matrix.fromArray(F.subarray(at + 16 * piece.node, at + 16 * piece.node + 16)).elements;
+            mesh.matrixAutoUpdate = false; const o = mesh.userData.restPosition ??= mesh.position.clone(), e = mesh.matrix.fromArray(F, at + 16 * piece.node).elements;
             e[12] += o.x; e[13] += o.y; e[14] += o.z; mesh.matrixWorldNeedsUpdate = true;
           }
           at += 16 * nodes;
         }
-        for (const r of pieceMeshes.keys()) if (!active.has(r)) for (const piece of pieceMeshes.get(r)) if (piece.mesh.parent) piece.mesh.removeFromParent();
+        pieceMeshes.forEach(dropInactivePieces);
         // Entity events: a destroyed LiveComp (builtin2 / builtin16 conversion / MeshAnim on its instance) stops its JS player.
         const lp = core._stage_world_entity_log() >> 2, events = U[lp];
         if (entityCursor > events) entityCursor = 0;
@@ -345,23 +364,23 @@ export async function createSetPieceRenderer({core, group, load, course = null})
       }
       // Texture chunks: static instances of chunks the original has not streamed in are not drawn (0x22A5A0).
       if (sectionsNative && core._section_chunks && chunkMeshes.length) {
-        const p = core._section_chunks(), n = new Uint32Array(core.HEAPU8.buffer, p, 1)[0], v = new Uint32Array(core.HEAPU8.buffer, p + 4, 2 * n);
-        for (let k = 0; k < n; k++) chunkResident.set(v[2 * k], v[2 * k + 1] === 3);
-        for (const mesh of chunkMeshes) { const on = chunkResident.get(mesh.userData.chunk) ?? true; if (mesh.userData.chunkVisible !== on) { mesh.userData.chunkVisible = on; applyVisibility(mesh); } }
+        const p = core._section_chunks() >> 2, U = heapU32(core), n = U[p];
+        for (let k = 0; k < n; k++) chunkResident.set(U[p + 1 + 2 * k], U[p + 2 + 2 * k] === 3);
+        for (let i = 0; i < chunkMeshes.length; i++) { const mesh = chunkMeshes[i], on = chunkResident.get(mesh.userData.chunk) ?? true; if (mesh.userData.chunkVisible !== on) { mesh.userData.chunkVisible = on; applyVisibility(mesh); } }
       }
-      if (scroll) for (const id of representative.keys()) { const offset = worldUvScroll.get(id); if (offset) { const x = scroll.byResource?.get(representative.get(id)); if (x) offset.value.set(x.state.u, x.state.v); else { const uv = scroll.offsetOf(representative.get(id)); offset.value.set(uv[0], uv[1]); } } }
+      if (scroll) for (let j = 0; j < scrollIds.length; j++) { const offset = worldUvScroll.get(scrollIds[j]); if (offset) { const x = scroll.byResource?.get(scrollResources[j]); if (x) offset.value.set(x.state.u, x.state.v); else { const uv = scroll.offsetOf(scrollResources[j]); offset.value.set(uv[0], uv[1]); } } }
       if (cables) { // [count, then per modifier: resource, active, cars, distance, 16 words per car]
         cableActive.clear();
-        if (core._set_piece_multi_bits) { const U = new Uint32Array(core.HEAPU8.buffer), p = core._set_piece_multi_bits() >> 2; for (let k = 0, at = p + 1; k < U[p]; k++) { cableActive.set(U[at], U[at + 1] !== 0); at += 4 + 16 * U[at + 2]; } }
-        cables.update((owner) => params.get('cables') === 'all' || cableLife.lives(owner, (o) => cableActive.get(o), (chunk) => chunkResident.get(chunk))); // ?cables=all: every cable (QA)
+        if (core._set_piece_multi_bits) { const p = core._set_piece_multi_bits() >> 2, U = heapU32(core); for (let k = 0, at = p + 1; k < U[p]; k++) { cableActive.set(U[at], U[at + 1] !== 0); at += 4 + 16 * U[at + 2]; } }
+        cables.update(cableAlive);
       }
       avalanche?.update();
       avalancheTrails?.update();
       particles?.update();
       crowd?.update(ticks);
       halos?.update(haloNodePosition); // the player's root already carries a magnet's offset
-      if (flags) for (const entry of flagMeshes) {
-        const {mesh, resource} = entry;
+      if (flags) for (let i = 0; i < flagMeshes.length; i++) {
+        const entry = flagMeshes[i], mesh = entry.mesh, resource = entry.resource;
         // Cloth advances at 30 Hz; rendering can run faster or repeat a paused
         // tick. A newly attached mesh still needs its initial world positions.
         if (entry.uploaded && !changedFlagSlots.has(flags.byResource.get(resource)?.slot)) continue;

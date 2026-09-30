@@ -154,6 +154,13 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
       if (core._peak_world_free_track(e.track) < 0) return false;
       e.core = 'absent'; e.ready = null; e.batches = null; return true;
     },
+    // pv peakRelease: a location fetched and cut but not fed (queued behind a wanted row's feeds) that nothing wants any more: its
+    // slices are dropped (the next requestCore fetches it again). Never the one being fed.
+    dropQueued(code) {
+      const e = byCode.get(code); if (!e || e.core !== 'queued' || feeding === e) return false;
+      const i = queue.indexOf(e); if (i >= 0) queue.splice(i, 1);
+      e.core = 'absent'; e.ready = null; e.batches = null; e.done = null; return true;
+    },
     dispose() { worker.terminate(); if (hashPtr) core._free(hashPtr); painterRegions.reset(); },
   };
 }

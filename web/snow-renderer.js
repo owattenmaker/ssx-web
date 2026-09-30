@@ -4,6 +4,7 @@ import {createStartfireRenderer} from './startfire-renderer.js';
 import {createImpactFxRenderer} from './impact-fx-renderer.js';
 import {attribute,texture,vec4,uniform,select} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
+import {setUpdateRange} from './heap-views.js';
 // pv snowBuckets (docs/visual-parity.md 41.8): the PS2's render-list order for the rider snow emitters. The snow component draw 0x2E24D0
 // submits the ten emitters in index order (allocated, count > 0) through 0x371688 -> 0x380CE0, one record each, textured with the
 // emitter's current flipbook frame. The flush merges records of equal material state and textures (0x362DE8, 0x394ED0 / 0x395000
@@ -47,22 +48,22 @@ export async function createSnowRenderer(origin,core,options={}){
  let serial=-1;const extentScratch=[0,0],lastCamera=new T.Matrix4(),lastProjection=new T.Matrix4(),viewPosition=new T.Vector3(),matrix=new T.Matrix4(),position=new T.Vector3(),scale=new T.Vector3();
  const api={group,startfire,impact,setEncodedOutput(value){encodedOutput.value=!!value;},update(core,camera){
   startfire.update(core,camera);impact?.update(core,camera);
-  const info=new Float32Array(core.HEAPF32.buffer,core._snow_info(),23);
+  const si=core._snow_info()>>2,H=core.HEAPF32; // core records read in place (no per-call views): info [23], flipbook [20], particles [count x 8]
   if(buckets){ // 0x364240 / 0x364050 order by the current flipbook frame, before the unchanged-state early return
-   const fb=new Float32Array(core.HEAPF32.buffer,core._snow_flipbook_info(),20);
-   for(let i=0;i<10;i++)if(meshes[i])meshes[i].renderOrder=effectOrder?drawOrder(EFFECT.snow(fb[i]),SUBMIT.snow):snowDrawOrder(fb[i]); // pv effectOrder: the shared key (web/ps2-draw-order.js)
+   const fp=core._snow_flipbook_info()>>2;
+   for(let i=0;i<10;i++)if(meshes[i])meshes[i].renderOrder=effectOrder?drawOrder(EFFECT.snow(H[fp+i]),SUBMIT.snow):snowDrawOrder(H[fp+i]); // pv effectOrder: the shared key (web/ps2-draw-order.js)
   }
-  camera.updateMatrixWorld();if(serial===info[20]&&lastCamera.equals(camera.matrixWorld)&&lastProjection.equals(camera.projectionMatrix))return;const changed=serial!==info[20];serial=info[20];lastCamera.copy(camera.matrixWorld);lastProjection.copy(camera.projectionMatrix);
-  const frames=new Float32Array(core.HEAPF32.buffer,core._snow_flipbook_info(),20);
+  camera.updateMatrixWorld();if(serial===H[si+20]&&lastCamera.equals(camera.matrixWorld)&&lastProjection.equals(camera.projectionMatrix))return;const changed=serial!==H[si+20];serial=H[si+20];lastCamera.copy(camera.matrixWorld);lastProjection.copy(camera.projectionMatrix);
+  const frames=core._snow_flipbook_info()>>2;
   for(let i=0;i<10;i++){
-   const frame=frames[i];if(!bindings[i].includes(frame))throw Error('Snow texture frame outside authored sequence');if(meshes[i].userData.snowTextureId!==frame){textureNodes[i].value=maps.get(frame);meshes[i].userData.snowTextureId=frame;}
-   const mesh=meshes[i],count=info[i];if(!mesh){if(count)throw Error('Unimplemented snow emitter became active');continue;}if(count>mesh.userData.capacity)throw Error('Snow history exceeded authored birth capacity');mesh.count=count;if(skipEmpty)mesh.visible=count>0;/* pv skipEmpty: an empty emitter draws nothing, and hidden it skips three's per-object work (render object, bindings, pipeline) */if(!count)continue;
-   const data=new Float32Array(core.HEAPF32.buffer,core._snow_particles(i),count*8),colours=mesh.geometry.attributes.snowColour;
-   for(let j=0;j<count;j++){const n=j*8;position.set(data[n]/100-origin.x,data[n+2]/100-origin.y,-data[n+1]/100-origin.z);viewPosition.copy(position).applyMatrix4(camera.matrixWorldInverse);const extent=snowBillboardScale(data[n+3]/100,-viewPosition.z,camera.projectionMatrix.elements[0],camera.projectionMatrix.elements[5],view.source_viewport,view.max_projected_half_extent,extentScratch);scale.set(extent[0],extent[1],1);matrix.compose(position,camera.quaternion,scale);mesh.setMatrixAt(j,matrix);if(changed)for(let k=0;k<4;k++)colours.array[j*4+k]=data[n+4+k];}
+   const frame=H[frames+i];if(!bindings[i].includes(frame))throw Error('Snow texture frame outside authored sequence');if(meshes[i].userData.snowTextureId!==frame){textureNodes[i].value=maps.get(frame);meshes[i].userData.snowTextureId=frame;}
+   const mesh=meshes[i],count=H[si+i];if(!mesh){if(count)throw Error('Unimplemented snow emitter became active');continue;}if(count>mesh.userData.capacity)throw Error('Snow history exceeded authored birth capacity');mesh.count=count;if(skipEmpty)mesh.visible=count>0;/* pv skipEmpty: an empty emitter draws nothing, and hidden it skips three's per-object work (render object, bindings, pipeline) */if(!count)continue;
+   const data=H,dp=core._snow_particles(i)>>2,colours=mesh.geometry.attributes.snowColour;
+   for(let j=0;j<count;j++){const n=dp+j*8;position.set(data[n]/100-origin.x,data[n+2]/100-origin.y,-data[n+1]/100-origin.z);viewPosition.copy(position).applyMatrix4(camera.matrixWorldInverse);const extent=snowBillboardScale(data[n+3]/100,-viewPosition.z,camera.projectionMatrix.elements[0],camera.projectionMatrix.elements[5],view.source_viewport,view.max_projected_half_extent,extentScratch);scale.set(extent[0],extent[1],1);matrix.compose(position,camera.quaternion,scale);mesh.setMatrixAt(j,matrix);if(changed)for(let k=0;k<4;k++)colours.array[j*4+k]=data[n+4+k];}
    // The whole active prefix was rewritten. Older pending tail updates may be
    // discarded because those instances are no longer drawn; growth rewrites them.
-   mesh.instanceMatrix.clearUpdateRanges();mesh.instanceMatrix.addUpdateRange(0,count*16);mesh.instanceMatrix.needsUpdate=true;
-   if(changed){colours.clearUpdateRanges();colours.addUpdateRange(0,count*4);colours.needsUpdate=true;}
+   setUpdateRange(mesh.instanceMatrix,0,count*16);
+   if(changed)setUpdateRange(colours,0,count*4);
   }
  }};
  (globalThis.ssxEffects??={}).snow=api;return api;

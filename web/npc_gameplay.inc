@@ -84,6 +84,14 @@ void npc_follow_route(float bestRemaining,int32_t tick){
  physicsState.headingOffset=resetRoute.heading;++routeProgressUpdates;}
  tick_rail_score();
 }
+// A player setup record (rider_setup_player_reset, 149A88): the three stat getters 1494C0 / 1493D8 / 148D80 return 0.5 for it (1477E8 set:
+// 0x149508 / 0x149420 / 0x148DC8; PS2 c0a-ret8 probe of 0x11B434, slot 1 0.0909 -> 0.5 from WS15's first tick). The materials keep
+// them over surface changes, as npc_seed_rider does.
+void npc_player_setup_stats(){
+ npc.groundProfile.topSpeedStat=npc.groundProfile.speedStat=npc.groundProfile.edgeStat=0.5f;
+ physicsProfile.topSpeedStat=physicsProfile.speedStat=physicsProfile.edgeStat=0.5f;
+ for(auto& m:physicsMaterials)m.topSpeedStat=m.speedStat=m.edgeStat=0.5f;
+}
 void npc_seed_rider(){
  // begin_event_rider has applied the human seed and the shared resets; replace the rider-specific parts.
  physicsState=npc.groundState;physicsProfile=npc.groundProfile;
@@ -216,6 +224,12 @@ EMSCRIPTEN_KEEPALIVE float* rider_world_state(){
 }
 // Any rider instance (human too): apply the shared 0x10F560 records to its 115D48 peers.
 EMSCRIPTEN_KEEPALIVE void rider_world_peers(){npc_read_world();}
+// 0x10F3B8 on this rider's own records, its 115D48 peer view (1297C8 -> 10F398: the WS15 return's 1297C8(C, 1) and WS1's exit
+// 1297C8(C, 0)): +0 = another slot and loaded (slot < loaded: the riders in the list then), +8 = 1e10, +0xC..+0x20 = 0 (the bearing,
+// the peer reaction's tick, the rival flag). The shared records are race_world_pair_restart's; later ticks refresh this view from
+// them (rider_world_peers) while the riders ride, and nothing does once they have left (PS2 c0a-ret3: no peer reaction after the
+// removal, both 115D48 draws made at the return's tick 66).
+EMSCRIPTEN_KEEPALIVE void rider_peers_restart(unsigned loaded){for(unsigned s=0;s<6;++s){auto& p=peers[s];p.enabled=s!=npc.slot&&s<loaded;p.attackEligible=false;p.distanceCm=1e10f;p.bearing=0;p.lastReactionTick=0;}}
 }
 
 // Shared course-script objects across the six cores (web/ai-racers.js). A rider trigger (121818 ->

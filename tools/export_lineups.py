@@ -185,6 +185,39 @@ def state_paths(course):
     return out
 
 
+# ---- career-only riders (docs/ctm-decomp-world-states.md "Next heat") -------------------------------------------------
+# A Conquer the Mountain race final puts the peak rival (0x145750) in slot 1 (GMM+0x44 = the rival, WS13 enter 0x235AA0 ->
+# setRiderCharID), a rider the Single Event rosters never hold (0x23A4F0 skips the rival). characters/career/<COURSE>-<name>/
+# countdown.p2s: derived career countdowns (the final's card -> Cross -> saved at world state 3). They feed only the parts no
+# other state has (the rival's skin part); every other leaf of their riders must equal the course's tables.
+CAREER = STATES / 'career'
+
+
+def career_paths(course):
+    return {p.name: p / 'countdown.p2s' for p in sorted(CAREER.iterdir()) if p.name.startswith(f'{course}-') and (p / 'countdown.p2s').exists()} if CAREER.exists() else {}
+
+
+def export_career(course):
+    folder = ROOT / f'local/assets/native/{course}/lineups-career'; folder.mkdir(parents=True, exist_ok=True)
+    for name, path in career_paths(course).items():
+        memory = memory_of(path)
+        participants = participants_from_memory(memory)
+        if memory[0x535C11] != 0: raise ValueError(f'{name}: not a Conquer the Mountain state (0x535C11)')
+        doc = extract_document(memory, path, participants, course, check_human=participants[0]['character'] == 'zoe')
+        doc['lineup_state'] = dict(rng_facts(memory), **roster_words(memory), human=participants[0]['character'],
+                                   human_base=participants[0]['gameplay_character_id'], lineup=[p['character'] for p in participants[1:]])
+        (folder / f'{name}.json').write_text(json.dumps(doc, indent=1, allow_nan=False) + '\n')
+        print(name, doc['lineup_state']['lineup'], flush=True)
+
+
+def career_docs():
+    """{(course, name): doc} of every exported career countdown (export-career)."""
+    out = {}
+    for f in sorted((ROOT / 'local/assets/native').glob('*/lineups-career/*.json')):
+        out[(f.parent.parent.name, f.stem)] = json.loads(f.read_text())
+    return out
+
+
 def export(course):
     folder = ROOT / f'local/assets/native/{course}/lineups'; folder.mkdir(parents=True, exist_ok=True)
     anchor_event = json.loads((ROOT / f'local/assets/native/{course}/event-start.json').read_text())
@@ -366,7 +399,7 @@ def assemble(data, human_base, values, moment=None, state=None, extra=None):
     return doc
 
 
-def build(course):
+def build(course, out_dir=None):
     folder = ROOT / f'local/assets/native/{course}/lineups'
     docs = {p.stem: json.loads(p.read_text()) for p in sorted(folder.glob('*.json')) if p.stem != 'summary'}
     anchor = docs['__anchor']
@@ -395,6 +428,35 @@ def build(course):
                 elif path in PATHS['moment'] or path in PATHS['state']: pass
                 elif path in PATHS['const']: record(constants, 'all', path, value, name)
                 else: raise ValueError(path)
+    # career-only riders: a skin part no Single Event state has, taken from a career countdown of this course or, since the
+    # race courses' skin parts are course independent (every skin common to two courses' tables is identical), of another
+    # race course whose tables agree with this one on every common skin. Every other leaf of a same-course career rider must
+    # equal this course's tables (record() raises on a difference).
+    career_skins = {}
+    for (ccourse, name), doc in career_docs().items():
+        other = None
+        if ccourse != course:
+            f = ROOT / f'web/public/assets/{ccourse}/lineups.json'
+            if not f.exists(): continue
+            other = json.loads(f.read_text())
+            common = set(other['skin']) & set(tables['skin'])
+            if other['paths']['skin'] != PATHS['skin'] or len(common) < 8 or any(other['skin'][s] != tables['skin'][s] for s in common): continue
+        for r in doc['riders']:
+            flat = leaves(r); slot = str(r['slot']); skin = r['character']; base = str(r['gameplay_character_id'])
+            scale = f32key(r['ground']['profile']['body_scale'])
+            if ccourse == course:
+                for path, value in flat.items():
+                    if path in PATHS['slot']: record(tables['slot'], slot, path, value, name)
+                    elif path in PATHS['grid']: record(tables['grid'].setdefault(slot, {}), scale, path, value, name)
+                    elif path in PATHS['base']: record(tables['base'], base, path, value, name)
+                    elif path in PATHS['const']: record(constants, 'all', path, value, name)
+            if skin_scale.setdefault(skin, scale) != scale: raise ValueError(f'{name}: {skin} scale differs')
+            part = {p: flat[p] for p in PATHS['skin']}
+            if skin in tables['skin']:
+                if tables['skin'][skin] != part: raise ValueError(f'{ccourse} {name}: {skin} skin part differs from the tables')
+            else:
+                tables['skin'][skin] = part; career_skins[skin] = f'{ccourse} {name} slot {slot}'
+                if skin_scale.get(skin) != scale: raise ValueError(skin)
     moment = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['moment']} for r in anchor['riders']}
     state = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['state']} for r in anchor['riders']}
     fresh = relationship_banks(memory_of(FRESH_PROFILE))
@@ -493,6 +555,7 @@ def build(course):
                           for name, d in docs.items()],
                 provenance=dict(tool='tools/export_lineups.py', states='local/assets/native/%s/lineups/*.json (export)' % course))
     if human_pair_inputs is not None: data['human_pair_inputs'] = human_pair_inputs
+    if career_skins: data['career_skins'] = career_skins   # skin -> the career countdown it came from (export-career)
     # every observed document back from the parts (with its own moment/snapshot words), world.records distance/bearing aside
     # (the 10F560 refresh recomputes them from the grid positions at the first tick; web/test-lineups.mjs checks that in the core)
     def strip(doc):
@@ -514,10 +577,19 @@ def build(course):
             entries = freestyle_roster(ls['roster_seed'], ls['human_base'], peak_rival(data['peak'], ls['human_base']))
             if [entries[-1]] != values or entries[:4] != ls['characters'][2:6]: raise ValueError(f'{name}: 0x239938 does not give the observed roster')
         elif build_roster(ls['roster_seed'], ls['human_base'], data['peak'])[:5] != values: raise ValueError(f'{name}: 0x23A4F0 does not give the observed lineup')
+    for (ccourse, name), doc in career_docs().items():   # a career countdown of this course back from the parts (its riders: the relationship
+        if ccourse != course: continue                    # tables of a career are aged by its earlier events, not the load rule)
+        ls = doc['lineup_state']; values = riding_values(ls)
+        own_moment = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['moment']} for r in doc['riders']}
+        own_state = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['state']} for r in doc['riders']}
+        got = assemble(data, ls['human_base'], values, own_moment, own_state)
+        if json.dumps(got['riders']) != json.dumps(doc['riders']): raise ValueError(f'career {name}: the parts do not reproduce its riders')
+        if got['world']['pair_inputs'][1:] != doc['world']['pair_inputs'][1:]: raise ValueError(f'career {name}: computer riders pair inputs differ')
     grid_missing = [(s, k) for s in map(str, range(1, 1 + len(anchor['riders']))) for k in {v for v in skin_scale.values()} if k not in tables['grid'].get(s, {})]
-    out = ROOT / f'web/public/assets/{course}/lineups.json'
+    out = (Path(out_dir) / course / 'lineups.json') if out_dir else ROOT / f'web/public/assets/{course}/lineups.json'
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, separators=(',', ':'), allow_nan=False))
-    print(json.dumps(dict(output=str(out.relative_to(ROOT)), bytes=out.stat().st_size, states=len(docs), skins=len(tables['skin']), bases=sorted(tables['base']),
+    print(json.dumps(dict(output=str(out), bytes=out.stat().st_size, states=len(docs), skins=len(tables['skin']), career_skins=career_skins, bases=sorted(tables['base']),
                           grid={s: len(v) for s, v in tables['grid'].items()}, grid_missing=grid_missing, reproduced='all'), indent=1))
 
 
@@ -548,12 +620,14 @@ def sessions():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('action', choices=['export', 'build', 'sessions'])
+    parser.add_argument('action', choices=['export', 'export-career', 'build', 'sessions'])
     parser.add_argument('--course', default='ARA1')
+    parser.add_argument('--out', default=None, help='build: write <OUT>/<course>/lineups.json instead of web/public/assets')
     a = parser.parse_args()
     if a.action == 'export': export(a.course)
+    elif a.action == 'export-career': export_career(a.course)
     elif a.action == 'sessions': sessions()
-    else: build(a.course)
+    else: build(a.course, a.out)
 
 
 if __name__ == '__main__':

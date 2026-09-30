@@ -275,21 +275,30 @@ static void stage_particle_stop(const StageArg* args,int count){
 // instance+8: bit0|bit1 static draw ((f&3)==3, 0x22A5A0), bit2 entity draw, 0x20 static / 0x40 entity collision route
 // (333EF8). Changes reach the collision world (eventRuntimeFlags) and the renderer (stage_world_instances).
 RIDER_LOCAL_LAZY static std::map<uint32_t,uint32_t> stageScriptCountdownFlags; // stage-world.json "script": countdown runtime flags (instance+8) of every instance the programs change
+// pv loadFlags (web/free-ride.js stage_load_flags; docs/peak-mountain.md "Course limits"): an instance nothing has changed yet
+// holds the load's runtime flags, the authored high half copied down with bit 1 (34FC1C: authored 0x200000 -> 0x200022,
+// 0x210000 -> 0x210023; every untouched instance of the 794 PS2 free-ride savestates), not the authored word. With the
+// authored word, builtin 7 (one-way volume, flags | 0x100) left 0x200100: no static route, so the connectors' one-way
+// volumes never reached the rider list and never pushed back (PS2: 0x200322, entity type 8). Off: the authored word as before.
+RIDER_LOCAL static bool stageLoadFlags=false;
+extern "C" EMSCRIPTEN_KEEPALIVE void stage_load_flags(int on){stageLoadFlags=on!=0;}
 static uint32_t stage_flags(uint32_t resource){
  if(auto it=stageFlags.find(resource);it!=stageFlags.end())return it->second;
  if(const auto* st=stage_instance(resource);st&&st->flagsKnown)return st->flags;
  if(auto* w=set_piece_instance_at(resource);w&&!w->eventRuntimeFlags)if(auto c=stageScriptCountdownFlags.find(resource);c!=stageScriptCountdownFlags.end())return c->second; // e.g. R&B treerailhevbb 0x210023 (authored 0x210000)
- if(auto* w=set_piece_instance_at(resource))return w->eventRuntimeFlags.value_or(w->flags);
+ if(auto* w=set_piece_instance_at(resource))return w->eventRuntimeFlags.value_or(stageLoadFlags?ssx::originalPickupRestoredFlags(w->flags):w->flags);
  return 0;
 }
 RIDER_LOCAL_LAZY static std::map<uint32_t,std::optional<uint32_t>> stageFlagsCountdown; // collision-world eventRuntimeFlags before the first change (race restart)
 // The collision world's flags of an instance before a run first changes them, put back by the next race reset (stage_world_reset).
 static void stage_note_countdown_flags(uint32_t resource){if(!stageFlagsCountdown.count(resource)){auto* w=set_piece_instance_at(resource);stageFlagsCountdown[resource]=w?w->eventRuntimeFlags:std::nullopt;}}
+void shared_world_node_changed(uint32_t resource); // web/shared_world.inc (kind 9, pv eventInWorldAi: off unless shared_world_nodes)
 static void stage_set_flags(uint32_t resource,uint32_t flags){
  stage_note_countdown_flags(resource);
  stageFlags[resource]=flags;
  if(auto* w=set_piece_instance_at(resource))w->eventRuntimeFlags=flags;
  if(auto* st=stage_instance(resource)){st->flags=flags;st->flagsKnown=true;}
+ shared_world_node_changed(resource);
 }
 static void stage_log_entity(uint32_t resource,uint32_t event){if(stageEntityLog.size()<3*16384)stageEntityLog.insert(stageEntityLog.end(),{stage_world_tick(),resource,event});}
 // Base destructor 0x34FBF0 (vt+0xC mode 3): the instance flags return to the authored high half (0x34FC1C) with bit 1
@@ -582,6 +591,18 @@ static void stage_boost_builtin(const StageArg* args,int count){
  stage_set_flags(target,stage_flags(target)|0x100u);
  if(!stage_section_run)section_entity_created(target);
 }
+// Capture seeds (web/peak-capture.mjs PEAK_SEED_BOOSTS): a one-way volume a PS2 savestate already holds (entity type 8, words
+// +0x20..+0x40 = direction xyzw, speed, gain, duration, countdown, mode; instance+8 flags), which a mid-run seed's section state
+// would otherwise leave as a plain entity that never pushes.
+extern "C" EMSCRIPTEN_KEEPALIVE int stage_seed_boost(uint32_t resource,const float* w,uint32_t flags){
+ if(!set_piece_instance_at(resource))return 0;
+ if(auto* e=stage_entity(resource);e&&e->type==stage_world::Boost)return 1;
+ auto& e=stage_new_entity(resource,stage_world::Boost);
+ e.boost.direction={w[0],w[1],w[2],w[3]};e.boost.speed=w[4];e.boost.gain=w[5];
+ e.boost.duration=std::bit_cast<int32_t>(w[6]);e.boost.countdown=std::bit_cast<int32_t>(w[7]);e.boost.mode=std::bit_cast<int32_t>(w[8]);
+ if(auto* st=stage_instance(resource))if(st->entity==StageNoEntity)st->entity=StageNoopEntity;
+ stage_set_flags(resource,flags);return 1;
+}
 // 0x1250A8 on this core's rider (and the air predictor restart 0x1135B8 when 11FE98 == 1).
 static void stage_boost_push(const ssx::BoostQuad& dv){
  const int motion=npc_motion_mode();
@@ -843,7 +864,7 @@ static void stage_livecomp_builtin(const StageArg* args,int count){
  // 0x341AA0's entity takes instance+0xC: a Hide (16) or RestoreNode (19) node there is replaced, so a later builtin29 Hide destroys
  // this LiveComp and the next builtin3 builds a fresh one (PS2 Schizophrenia timer 101655: program 98 hides it at 3544, the trigger's
  // re-contact at 3590 restarts it and its slot 5 relaunches the splines at 3609 / 3615).
- if(const int n=stage_node_state(target);n==16||n==19)stageNodeState.erase(target);
+ if(const int n=stage_node_state(target);n==16||n==19){stageNodeState.erase(target);shared_world_node_changed(target);}
  auto& e=stage_new_entity(target,stage_world::LiveComp);e.model=model->second.get();e.startTick=stage_world_tick();
  e.live=ssx::originalLiveCompConstruct(e.model->model,e.model->matrix,e.model->scale,e.model->flags,a,random);
  ++stageLiveCompStarts;if(!stage_section_run)section_entity_created(target);

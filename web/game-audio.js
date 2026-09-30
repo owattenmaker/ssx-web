@@ -7,7 +7,7 @@
 // web/audio-painters.js (MusicTrigger / Mix / Ambience painters).
 import { createAudioEngine, installAudioUnlock, SLIDER_DEFAULT } from './audio-engine.js';
 import { decodeBankPatch, toAudioBuffer } from './audio-decode.js';
-import { loadSong, createPathfinderPlayer, prefetchSongStart, streamSongStart, raceIntensity } from './pathfinder.js';
+import { loadSong, createPathfinderPlayer, prefetchSongStart, streamSongStart, raceIntensity, musStreamStats } from './pathfinder.js';
 import { createSfx, SLOT } from './sfx.js';
 import { createSpeech, charId, peakMask, courseBit, CHAR_ID, EV } from './audio-speech.js';
 import { createCrowd, crowdConfig } from './audio-crowd.js';
@@ -79,7 +79,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   fetchBytes = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.arrayBuffer(); }).then((b) => new Uint8Array(b)),
   now = () => performance.now(),
   // pv musicStream (main.js): songs stream their .mus bar by bar (pathfinder.js createMusStream); busy() = the game's downloads run
-  musicStream = null } = {}) {
+  musicStream = null,
+  // fetchRange(path, start, end) -> {start, bytes} (tests; default: a Range request, rangeBytes)
+  fetchRange = null } = {}) {
   let catalog = null, engine = null, ready = null, sfx = null, speech = null, crowd = null, world = null, sfxGame = null;
   const cache = new Map(); // path -> promise
   const once = (key, make) => { if (!cache.has(key)) cache.set(key, make().catch((e) => { cache.delete(key); throw e; })); return cache.get(key); };
@@ -92,6 +94,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const start = r.status === 206 ? Number(/bytes (\d+)-/.exec(r.headers.get('content-range') || '')?.[1] ?? a) : 0;
     return { start, bytes: new Uint8Array(await r.arrayBuffer()) };
   });
+  // pv speechRange (docs/audio-logic.md 9.15): one speech line's bytes of its bank's .dat (web/audio-speech.js lineData), a test's own fetcher
+  // or a Range request like rangeBytes (with its priority: a line is due at once).
+  const speechRange = fetchRange ?? ((p, a, b) => rangeBytes(p, a, b, 'high'));
   const rand15 = () => Math.floor(Math.random() * 0x8000);
   const settings = loadSettings();
   const nowPlaying = new Set();
@@ -118,7 +123,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // pv titleStart: the front end's bank before the first gesture (fetch and decode need no AudioContext), so the title's Start, which
     // also unlocks the audio, plays its sounds (docs/audio-menus.md "Title Press START"); the unlock below asks for the same bank again.
     if (pv('titleStart')) sfx.loadBank(SLOT.MAIN, 'SSX3Menu');
-    speech = createSpeech({ engine, json, bytes, declickMs: pv('audioDeclick') ? DECLICK_MS : 0,
+    speech = createSpeech({ engine, json, bytes, range: pv('speechRange') ? speechRange : null, declickMs: pv('audioDeclick') ? DECLICK_MS : 0, radioBigStops: () => pv('djQueueRules'), // 2A26F0 -> 2B11B0
       onPost: (id, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('speech', id.toString(16)); },
       onLines: (banks, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('line', banks.join('+')); } });
     speech.init().catch((e) => console.warn('Speech events unavailable', e));
@@ -194,7 +199,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     if (!context) { state.musicId = id; state.feEvent = event; return null; } // not unlocked yet: remember what should be playing
     const token = {}; state.musicToken = token;
     const file = songFile(id); // e.g. 'Rock Star' -> Rock_Star
-    const song = await loadSong(file, { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), ...(musicStream ? { fetchRange: rangeBytes, busy: musicStream.busy } : {}),
+    const song = await loadSong(file, { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), ...(musicStream ? { fetchRange: rangeBytes, busy: musicStream.busy, role: 'play' } : {}),
       workerDecode: pv('musicWorkerDecode') }); // docs/audio-logic.md 9.13
     if (state.musicToken !== token) return null;
     // Intensity (branch selector): 127 for front-end/podium/hub songs; races ramp it from 0 (28F000, raceIntensity).
@@ -219,7 +224,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   function prefetchPicked(event = 0) {
     if (!pv('musicPrefetchNext') || !musicStream || !ctx()) return;
     const s = feSongs()[state.songIndex]; if (!s) return;
-    loadSong(songFile(s.id), { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), fetchRange: rangeBytes, busy: musicStream.busy, workerDecode: pv('musicWorkerDecode') })
+    loadSong(songFile(s.id), { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), fetchRange: rangeBytes, busy: musicStream.busy, workerDecode: pv('musicWorkerDecode'), role: 'next' })
       .then((song) => streamSongStart(song, event, { intensity: state.raceMusic ? 0 : 127 })).catch(() => {});
   }
   function stopMusic() { state.musicToken = null; state.music?.stop(); state.music = null; }
@@ -275,7 +280,11 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   const trace = [];
   const log = (t) => { trace.push(`${Math.round(now())} ${t}`); if (trace.length > 64) trace.shift(); };
   // Profile visited mask (P+0xACC): the career can supply it through context().visited / markVisited.
-  const visited = (loc) => { const m = context().visited; return (((typeof m === 'number' ? m : dir.visited) >>> loc) & 1) === 1; };
+  // pv djVisited: the saved mask (main.js: careerUI.visitedMask of the ridden rider) with the marks made since this world load (dir.visited,
+  // reset at each world load when the mask is supplied), so a reload no longer replays the first-visit lines of visited locations.
+  const visited = (loc) => { const m = context().visited; return ((((typeof m === 'number' ? (pv('djVisited') ? m | dir.visited : m) : dir.visited)) >>> loc) & 1) === 1; };
+  // 146008(P, 0, 1) = P+0x278 bit 12: Peak 2 still locked (cleared at the Peak 2 pass; PS2 f95-after). Without a career, locked.
+  const peak2Locked = () => !pv('djVisited') || context().peak2Locked !== false;
   function markVisited(loc) { if (loc < 0 || loc > 22) return; dir.visited |= 1 << loc; try { api.context?.()?.markVisited?.(loc); } catch {} }
 
   // 2ADCA0 / 2ADDE0: the audio timer queue (ms). Keys name the callbacks: 'request' 28E088, 'dj' 28E548, 'retry' 28E068.
@@ -361,7 +370,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   // speech cancelled, mix 0), then the front end's charsel (285FB0) with the lodge's event 1 (28F140). The browser keeps
   // the world loaded under the lodge; its sounds stay paused.
   function enterLodge() {
-    state.lodge = true; tl('leave'); if (state.music || state.musicToken || state.musicId) tl('stop');
+    state.lodge = true; state.switchCarry = null; tl('leave'); if (state.music || state.musicToken || state.musicId) tl('stop');
     state.paused = false; timers.length = 0; stopMusic(); state.musicId = null; speech?.stop(); state.pendingDj = {};
     world?.ambienceStop(0); sfxGame?.pauseStops(); engine?.setMix(0); state.raceMusic = false;
   }
@@ -415,8 +424,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       if (sed === -1) return;
       if (kind !== 5) { speech.stop(); speech.radioBigIntro(kind === 4 ? 0 : 1, 0); speech.flush(); }
       const loc = state.course;
-      // 146008(profile, 0, 1): profile option bit P+0x278 bit 12, set in every PS2 profile read (menus/fr savestates).
-      if (!challenge() && peakMask(loc) === 1 && dir.firstVisit[loc] === 1) {
+      // 146008(profile, 0, 1) at 0x28E730: P+0x278 bit 12, Peak 2 still locked (pv djVisited; before, taken as always set): when it is
+      // clear neither Free_Ride_Intro nor the 579C clear runs, only the artist intro.
+      if (!challenge() && peak2Locked() && peakMask(loc) === 1 && dir.firstVisit[loc] === 1) {
         if (loc < 5 || (loc >= 5 && loc <= 7)) p.freeRideIntro = 1; // 2A40E0 race / 2A4158 slope location
         dir.firstVisit[loc] = 0;
       }
@@ -467,11 +477,13 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   // pmf at 0x4A36F0 -> 2A4A68) that clears it. 2A4A38 = the flag and 2A10C0(audio, 10) (the request being spoken is the DJ's): while
   // that holds, the travel (28E8C0 20) neither stops the speech before pktrans (0x28EDF0: 2B11B0 skipped) nor queues the radio big
   // intro (0x28EDB4: 2A26F0 / 2B1758 / +0x6258 / +0x5754 skipped), so a DJ line started at the booth plays on over the transport.
+  // 2A4550: the pending DJ flags (0x5740..0x5788) cleared.
+  function clearPendingDj() { for (const k of ['bcChallenge', 'radioBigOutro', 'finishLine', 'hubChatter', 'hubChatter2', 'hubChatter3', 'eventIntro', 'radioBigIntro', 'firstSpoke', 'freeRideIntro', 'artist', 'textMessage', 'bcIntro']) state.pendingDj[k] = 0; }
   const boothHold = () => pv('boothDj') && !!state.boothFlag && !!speech?.speaking?.(0xa);
   function travel() {
     log(`travel (28E8C0 20) dest ${dir.dest}`); tl('code', 20);
     dir.arrived = 0; state.pendingDj.textMessage = 0; dir.lastDest = dir.dest; dir.cinematic = 1; state.trigger.latch = -1; dir.bcIntro = 0;
-    for (const k of ['bcChallenge', 'radioBigOutro', 'finishLine', 'hubChatter', 'hubChatter2', 'hubChatter3', 'eventIntro', 'radioBigIntro', 'firstSpoke', 'freeRideIntro', 'artist', 'textMessage', 'bcIntro']) state.pendingDj[k] = 0; // 2A4550
+    clearPendingDj(); // 2A4550
     cancel('request'); cancel('dj'); cancel('retry');
     world?.ambienceStop(5.03); sfxGame?.pauseStops(); // 29D678 (gp-0x45C8 = 5.03 s), 296E20 / 297438
     if (!musicMode()) { // 28D5A0: the destination peak's ambience, event 30
@@ -485,11 +497,23 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const d = dir.dest;
     if (d !== NO_DEST && isBackcountry(d) && dir.firstVisit[d] === 1) { // pktrans: first arrival on a new peak
       if (!boothHold()) speech.stop(); log('pktrans');
-      playSong('pktrans', peakMask(d) === 2 ? 2 : 3, { intensity: 127 }).then((m) => m?.pause());
+      state.pktransHold = true; // paused until world state 10's enter resumes it (2B3A98 at 0x2357B8; pv worldSwitchAudio: ws10)
+      playSong('pktrans', peakMask(d) === 2 ? 2 : 3, { intensity: 127 }).then((m) => { if (state.pktransHold) m?.pause(); });
       return;
     }
     if (pick && d !== NO_DEST) { pickSong(); post('request', 10, request(2, true)); }
     if (dir.lastDest !== NO_DEST && dir.lastDest !== state.course && !boothHold()) { speech.radioBigIntro(0, 1); speech.flush(); dir.arrived = 1; state.pendingDj.hubChatter3 = 1; } // 2A4718, 2A4A38
+  }
+
+  // pv worldSwitchAudio: world state 10 at a course change (22DF50 pushes it at every crossing / Transport arrival; a carried world switch's
+  // arrival). The push enter 0x234F40 (234FE0..235058): a Conquer the Mountain backcountry whose visited bit (+0xACC) is clear is a first
+  // visit: +0x578C BC intro, +0x5790 = 0, +0x6254 = 1. The enter 0x2355C0: 2B3A98 resumes the song (the pktrans code 20 left paused) and
+  // 2A4B68 stops the speech while pktrans (id 0x191) plays.
+  function ws10(c) {
+    if (state.free?.kind === 4 && isBackcountry(c) && !visited(c)) { dir.bcIntro = 1; dir.hubFirst = 0; dir.cinematic = 1; log(`first visit ${c} (234FE0)`); }
+    markVisited(c);
+    state.pktransHold = false; state.music?.resume();
+    if ((state.currentId ?? state.musicId) === 'pktrans') speech?.stop();
   }
 
   // ---- loading loop (28F768 / 28FA98: LoadingScreen.bnk looped on MUSIC, 1 s fade out) --------------------------
@@ -503,6 +527,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const buffer = toAudioBuffer(context, decodeBankPatch(bnk, patch));
     const source = context.createBufferSource(); source.buffer = buffer; source.loop = true;
     const gain = context.createGain(); source.connect(gain); gain.connect(engine.bus('MUSIC')); source.start();
+    source.onended = () => { try { source.disconnect(); } catch {} try { gain.disconnect(); } catch {} }; // (after its 1 s fade out: the loop lets go of its nodes)
     state.loading = { source, gain };
   }
 
@@ -543,6 +568,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   const HUB = ['HUB_CHAR_STORIES', 'HUB_TERRAIN_INFO', 'HUB_WEATHER', 'PEAK_BOSS', 'TEXT_MESSAGE', 'HUB_GOING_ONS', 'HUB_LOCAL_STORIES', 'HUB_MTN_HISTORY'];
   function hubChatter(pool = 0) {
     let k = -1, random = false;
+    if ((dir.hubFirst || dir.arrived) && pv('postEventDj') && commentary()) return; // 0x2A2EBC: 2A4770 first (Char_Stories keeps precedence); no flush (0x2A2EC4)
     if (!dir.hubFirst && !dir.arrived) { dir.hubFirst = 1; dir.hubForced = 3; dir.hubUsed |= 0x80; dir.bcIntro = 0; k = 0; }
     else if (dir.hubForced !== -1 && !dir.arrived) { k = dir.hubForced; dir.hubForced = -1; }
     else {
@@ -563,6 +589,59 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     speech.flush(); // 2B1758
   }
   const SUBJECT_MASK = [0x4, 0x10, 0x200, 0x2, 0x20, 0x100, 0x1, 0x80, 0x8, 0x40]; // 2A1DA0 by CHARDB id
+  // pv postEventDj: the post-event record (audio +0x57F8 armed, +0x57FC final, +0x5800 place, +0x5804 hits, +0x5808 score, +0x580C last
+  // commentary, +0x5810 course). 287070 -> 2A45C0 at every Conquer the Mountain finish (0x535C11 == 0), timed out too: round 1 resets it
+  // (2A4590(audio, 0): +0x580C kept, +0x5814 = 23); 2A4660 arms it at a medal run (GMM+0x98) or when no round follows (round >= GMM+0x70),
+  // sets final when the rider finished (+0x480 clear) round 3, and always adds the KOs (score object +0x128, races only: 2A4078) and the
+  // Ubers (+0x114). PS2 after-final/final.p2s: armed, place 0, course 0.
+  const rec = { armed: 0, final: 0, place: -1, hits: 0, score: 0, prev: -1, course: -1 };
+  function recordEvent({ place = 0, dnf = false, ko = 0, ubers = 0, race = false }) {
+    const c = context(), r = c.round ?? 3, mode = c.mode ?? -1;
+    if (r === 1) { rec.armed = 0; rec.final = 0; rec.hits = 0; rec.score = 0; rec.place = -1; rec.course = -1; dir.lastDest = NO_DEST; } // 2A4590(audio, 0)
+    const medalRun = !!c.career && r === 3 && !(mode >= 4);   // GMM+0x98: the race / freestyle handlers' round 3
+    if (medalRun || mode >= 4) {                               // rival challenges and peak runs are one round (no next round)
+      rec.armed = 1; if (!dnf && r === 3) rec.final = 1;
+      rec.place = place; rec.course = state.course;            // 0x536730[0] (the human's place), 144BC0 of the course
+    }
+    rec.hits += race ? ko | 0 : 0; rec.score += ubers | 0;
+    log(`event record armed ${rec.armed} final ${rec.final} place ${rec.place} hits ${rec.hits} score ${rec.score}`);
+  }
+  // 2A4770 (from 2A2E50): the commentary on the recorded event, once. Final: 1st -> Char_Progress 0x2102 (2A2938: [subject, peak of the
+  // current course]); >= 5 KOs -> Aggression 0x212E (2A2CF0: [course bit]); Ubers >= 27 (race, slope style, half pipe courses; else 24) ->
+  // High_Trick_Score 0x212F (2A2DA0: [course bit]); with two or more earned, the last one said (+0x580C) is left out; then a random one
+  // (2ADF60 & 0x7FFF * n / 0x7FFF + 1-th). Nothing earned (or no final) during a travel (+0x6254, +0x5814 != 23): a hub -> hub chatter
+  // (2A2E50 pool 0, flushed), a backcountry -> Terrain_Info (2A23D0), a course -> Event_Intro (2A24B0). PS2 audio/postevent2: 0x2102 at tick
+  // 15614, from the pool-5 chatter the Transport's code 20 queued (2A4718).
+  function commentary() {
+    if (!rec.armed) return false;
+    rec.armed = 0;
+    const f = [0, 0, 0]; let n = 0;
+    if (rec.final) {
+      const c = rec.course;
+      if (rec.place === 0) { f[0] = 1; n++; }
+      if (rec.hits >= 5) { f[1] = 1; n++; }
+      if (rec.score >= (c < 5 || (c >= 5 && c <= 7) || (c >= 11 && c <= 13) ? 27 : 24)) { f[2] = 1; n++; } // 2A40E0 / 2A4158 / 2A4238
+    }
+    rec.final = 0;
+    const E = speech.EV;
+    if (!n) {
+      const d = dir.lastDest; if (!dir.cinematic || d === NO_DEST) return false;
+      log(`commentary: nothing earned, destination ${d}`); tl('commentary', -1);
+      if (isHub(d)) hubChatter(0);
+      else if (isBackcountry(d)) speech.dj(E.HUB_TERRAIN_INFO, [peakMask(d)]);
+      else speech.eventIntro(d);
+      return true;
+    }
+    if (n >= 2 && rec.prev >= 0 && f[rec.prev]) { f[rec.prev] = 0; n--; }
+    let k = Math.floor((rand15() * n) / 0x7fff) + 1, i = -1;
+    for (;;) { i++; if (i > 2 || (f[i] && --k === 0)) break; } // (rand 0x7FFF: the PS2 reads past the three flags; nothing is said)
+    log(`commentary ${['Char_Progress', 'Aggression', 'High_Trick_Score'][i] ?? 'none'}`); tl('commentary', i);
+    if (i === 0) speech.dj(E.HUB_CHAR_PROGRESS, [subjectMaskOf(state.character), peakMask(state.course)]);
+    else if (i === 1) speech.dj(E.AGGRESSION, [courseBit(rec.course)]);
+    else if (i === 2) speech.dj(E.HIGH_TRICK_SCORE, [courseBit(rec.course)]);
+    rec.prev = i;
+    return true;
+  }
   const subjectMaskOf = (name) => { const id = charId(name); return id >= 0 ? SUBJECT_MASK[id] : 0x1000; };
   // 145750: the peak rival (web/career.js rival): Mac / Nate / Psymon, Griff / Zoe / Elise when the player rides that one.
   const peakBoss = () => { const p = peakMask(state.course), me = charId(state.character); const [boss, alt] = p === 1 ? [3, 5] : p === 2 ? [7, 4] : [8, 6]; return me === boss ? alt : boss; };
@@ -672,6 +751,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // charsel, 28F140(1)). The free-ride MCOMM (Messages, Options, Audio, Transport) and the pause menus are overlays on
       // the paused world (289B70 pauses the song; music/runs/mcomm: no 28F140, no charsel until 289BB8 resumes the song).
       if (state.inWorld && !state.lodge) { if (name !== 'ctm-lodge') return; enterLodge(); }
+      if (state.switchCarry && !state.inWorld) state.switchCarry = null; // (pv worldSwitchAudio: the front end after all, e.g. a quit from the map)
       if (state.musicId !== 'charsel' || !state.music) { state.raceMusic = false; state.feEvent = event; tl('fe', event); await playSong('charsel', event); return; }
       if (state.feEvent === event) return; // ignored if the state is unchanged
       state.feEvent = event; tl('fe', event); sendEvent(event);
@@ -682,6 +762,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     async loadingStart({ courseCode = null, character = null } = {}) {
       await whenReady();
       if (state.carry) { if (courseCode) api.prepare({ courseCode, character }); return; } // in-world event load: no FE fade, no loading loop
+      if (state.switchCarry === 'map') state.switchCarry = null; // (pv worldSwitchAudio) an event from the results' map: the event load
+      else if (state.switchCarry) { if (courseCode) api.prepare({ courseCode, character }); return; } // a carried world switch: no fade, no loop
       fadeOutMusic(1.0); state.feEvent = null;
       if (courseCode) api.prepare({ courseCode, character });
       await loadingLoop(true);
@@ -714,16 +796,23 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // (freeRide) starts the world; a later load notification for the running world is ignored.
       if (isPeakWorld(courseCode) && !freeRide) { if (!state.free) api.prepare({ courseCode, character }); return; }
       if (freeRide) singleEvent = false; // free ride and the peak runs are Conquer the Mountain (0x535C11 = 0)
+      // pv worldSwitchAudio: a carried Transport / crossWorld (travelSwitch) is no world load on the PS2: no 2867E8 (rider music, pick,
+      // PlayMusic), no 2A4A78 DJ timer, no 579C read; the song, the timers, the MusicTrigger state and the pending DJ flags carry on.
+      const carried = !!freeRide && (state.switchCarry === 'travel' || state.switchCarry === 'cross');
+      if (state.switchCarry) { tl('carried', carried ? state.switchCarry : 0); state.switchCarry = null; }
+      if (pv('djVisited') && !carried && typeof context().visited === 'number') dir.visited = 0; // the saved mask holds the earlier marks
       state.raceMusic = true; state.course = courseIndex; state.singleEvent = singleEvent; state.goSeen = false; state.resumeGo = 1; // 0x2867AC: audio+0x627C = 1 at every world load
       state.free = freeRide ? { kind: freeRide.kind ?? 4, mode: freeRide.mode ?? 12 } : null; state.rolled = false;
       state.inWorld = true; state.replay = false; speech.replay = false; sfxGame.G.replay = false; state.chartuneIndex = -1; state.rounds = { current: 1, total: rounds };
       state.courseCode = courseCode; if (character) state.character = character;
-      state.trigger = { a: -99, b: -99, zone: 0, zoneExit: 0, rearm: 1, latch: -1 }; state.pendingDj = {}; state.track = -1; state.region = null; state.relTick = null; state.relPair.clear();
-      if (!state.carry) riderMusic(); // 2867E8: the human's radio mode (158700 -> 28BF78) and custom playlist (158750 -> 28C2D0)
+      if (!carried) { state.trigger = { a: -99, b: -99, zone: 0, zoneExit: 0, rearm: 1, latch: -1 }; state.pendingDj = {}; }
+      state.track = -1; state.region = null; state.relTick = null; state.relPair.clear();
+      if (!state.carry && !carried) riderMusic(); // 2867E8: the human's radio mode (158700 -> 28BF78) and custom playlist (158750 -> 28C2D0)
       api.prepare({ courseCode, character });
       sfxGame.start({ courseIndex, ...courseFlags(courseIndex), raceKind: gameKind() });
-      const intro = !!state.free && introStart(); // 234F40's pktrans comes before the loading screen ends (PS2 samples 573 / 594)
+      const intro = !!state.free && !carried && introStart(); // 234F40's pktrans comes before the loading screen ends (PS2 samples 573 / 594)
       await loadingLoop(false);
+      if (carried) { log(`carried world switch: course ${courseIndex}`); state.carriedWorld = courseCode; ws10(courseIndex); return; } // the arrival's world state 10
       if (state.free) { worldLoadFree(intro); return; }
       if (state.carry && (state.music || state.musicToken || state.musicId || timers.some((t) => t.key === 'request'))) return; // in-world event start: the fly-over's song plays on (until the run starts)
       tl('worldload', courseIndex); // 2867E8 (free ride: worldLoadFree)
@@ -762,6 +851,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // s3248). The ride start (runStart) then only runs 28E888 (startFree: the cinematic end, held while an arrival list plays).
     async freeWorldLoaded({ courseIndex = 0, courseCode = null, character = null, freeRide = null } = {}) {
       await whenReady(); state.carry = false;
+      // pv worldSwitchAudio: the ride start (runStart) can come first and has already taken the carried world in: no second world load
+      if (state.carriedWorld && state.carriedWorld === courseCode && state.inWorld && state.free && !state.lodge) { state.carriedWorld = null; log('carried world already in'); return; }
       if (character) state.character = character;
       if (state.lodge) { state.lodge = false; fadeOutMusic(1.0); state.feEvent = null; sfx?.pauseAll(false, (v) => v.tag !== 'ui'); }
       await api.worldLoaded({ courseIndex, singleEvent: false, courseCode, character, freeRide });
@@ -845,19 +936,27 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       if (pv('audioDeclick')) state.music?.warmEvents?.([33, 34, 38]); // the stingers decoded before the start (docs/audio-logic.md 9.13)
     },
     // Pause menu (289B70 / 289BB8): music freezes (pitch 0), SFX voices pause (29CE28); resume cancels queued speech.
+    // pv djQueueRules: 289BB8 touches the speech only when +0x5828 is set (28FAE0, an in-game song change, via 0x208CA4): then 2B11B0 stops
+    // the line and 2A4550 clears the pending DJ flags, and +0x5828 is cleared; otherwise the DJ's queued lines survive an MCOMM visit. The
+    // port's caller of 28FAE0 (the 0x208C28 menu case) is not identified, so state.songChanged (+0x5828) is set by nothing yet.
     pause(on) {
       if (!on && !state.paused) { sfx?.pauseAll(false, (v) => v.tag !== 'ui'); return; } // not paused (a world load / transport resumed it)
       state.paused = on; tl(on ? 'pause' : 'resume');
-      if (on) { state.music?.pause(); sfxGame?.pauseStops(); } else { state.music?.resume(); speech?.cancelQueued(); }
+      if (on) { state.music?.pause(); sfxGame?.pauseStops(); }
+      else if (pv('djQueueRules')) { state.music?.resume(); if (state.songChanged) { speech?.stop(); clearPendingDj(); state.songChanged = false; } }
+      else { state.music?.resume(); speech?.cancelQueued(); }
       sfx?.pauseAll(on, (v) => v.tag !== 'ui');
     },
     // Finish (286EA0): ending section (10), or 36 when runs remain (Big Air / Half Pipe heats); PA finish lines.
-    finish({ runsLeft = false, place = state.place, timedOut = false, winner = null, ai = null, challengeKind = 0 } = {}) {
+    // stats: {ko, ubers} = the human's score object +0x128 / +0x114 (main.js from core score_object_dump) for the post-event record.
+    finish({ runsLeft = false, place = state.place, timedOut = false, winner = null, ai = null, challengeKind = 0, stats = null } = {}) {
       if (state.free && (state.free.kind === 5 || state.free.kind === 6)) challengeKind = state.free.kind; // Peak 1 Race / Jam
       if (ai && !winner) { const w = ai.standings?.().find((r) => r.rank === 0); if (w) winner = w.human ? state.character : w.character; }
       if (musicMode()) sendEvent(runsLeft ? 36 : 10);
       if (runsLeft) { state.goSeen = false; state.resumeGo = 0; } // 286F94
       state.place = place; if (winner) state.winner = winner;
+      if (pv('postEventDj') && !state.singleEvent) // 287060: 0x535C11 == 0 -> 2A45C0 (also on a time-out, 0x286FE0)
+        recordEvent({ place: stats?.place ?? place, dnf: timedOut, ko: stats?.ko ?? 0, ubers: stats?.ubers ?? 0, race: state.course < 5 || gameKind() === 0 || gameKind() === 5 || challengeKind === 5 });
       if (timedOut) return; // rider+0x480
       const me = { id: charId(state.character) };
       if (state.course < 5 || eventKind(state.course) === 0 || challengeKind === 5) speech.paFinishLine(me, place); // 2A4078 -> 2A3708 (kind 5: time challenges incl. Rival Time)
@@ -890,10 +989,18 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     },
     leaveWorld() {
       if (state.restarting) { state.humanCore = null; return; } // (restartRun: the quit around a restart keeps the world's audio)
+      state.carriedWorld = null;
       state.humanCore = null; // the world's core instance: main.js drops it at a course change (unloadCourse)
       // Song files (~5-20 MB each): kept only while in use. A course change stays in the page (main.js navigateCourse), so the
       // byte cache would otherwise keep every song ever played (a playing song holds its own bytes; a replay re-fetches).
       for (const k of [...cache.keys()]) if (k.startsWith('b:music/')) cache.delete(k);
+      if (state.switchCarry && pv('worldSwitchAudio')) { // (travelSwitch / eventMap) the world goes, the director and the song stay
+        tl('leave', state.switchCarry); log(`leave (carry ${state.switchCarry})`);
+        state.inWorld = false; state.residentKey = ''; state.lodge = false; state.paused = false; state.freeStart = false; dir.hold = false; dir.heldEnd = false;
+        sfxGame?.stop(); world?.unload(); crowd?.reset(); sfx?.stopAll({ fade: 0.25, keep: (v) => v.tag === 'nis' }); // (the Transport ride's voices play on)
+        for (const s of [SLOT.BOARD, SLOT.SPUBOARD, SLOT.MOUNTAIN, SLOT.CROWD, SLOT.TRANSPORT, SLOT.LAND, SLOT.WORLD8, SLOT.WORLD9, SLOT.DYNAMIC]) sfx?.unloadBank(s);
+        return;
+      }
       if (state.carry === true) { // in-world event start (carryWorld): only the world's own sounds go
         state.carry = 'switched'; state.inWorld = false; state.free = null; state.residentKey = ''; for (let i = timers.length; i-- > 0;) if (timers[i].key !== 'request') timers.splice(i, 1);
         sfxGame?.stop(); world?.unload(); crowd?.reset(); sfx?.stopAll({ fade: 0.25 });
@@ -981,7 +1088,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // backcountry, hub, the first-visit Free_Ride_Intro) and the ambience / painters follow the rider's contact track.
     freeRideCourse(course, { kind } = {}) {
       if (!state.free || !(course >= 0) || course === state.course) return;
-      state.course = course; markVisited(course); log(`course ${course}`);
+      state.course = course; if (pv('worldSwitchAudio')) ws10(course); else markVisited(course); log(`course ${course}`);
       Object.assign(sfxGame.G, { courseIndex: course, bigAirEvent: courseFlags(course).bigAir, halfPipeEvent: courseFlags(course).halfPipe, backcountry: courseFlags(course).backcountry });
     },
     // Transport inside the world (28F558 then 27A860 -> 28E8C0(20, 1); the browser reloads the page instead, so this
@@ -1000,6 +1107,27 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       travel();
     },
     arrived() { cinematicEnd(); },
+    // pv worldSwitchAudio (docs/ctm-decomp-freeride.md ranked 2): a Transport whose destination is in another page world (career-ui.js
+    // goWorld at the confirm: the post-event return, another peak on the per-peak worlds) runs code 20 in the world as the PS2 does (PS2
+    // ctm-decomp/audio/postevent2, ticks 15440-15442: 28F520 Stop, 28E8C0(20, 1): pick, Radio BIG intro (0,1) + pool-5 hub chatter (2A4718),
+    // the destination song 10 ms later (request kind 2); no loading loop) and carries the audio through the page's switch: leaveWorld keeps
+    // the song, the timers, the speech and the ride's NIS voices; loadingStart starts no loop; the next free-ride worldLoaded makes no world
+    // load (no 2867E8 / 2A4A78) and runs world state 10 (ws10). After an event, 2018A8 has set free ride (kind 4, mode 12: the poll at the
+    // confirm) and the results' replay flag goes. `cross`: crossWorld (a riding crossing: no director call on the PS2, 22DF50) carries
+    // without code 20.
+    travelSwitch(dest, { cross = false } = {}) {
+      if (!pv('worldSwitchAudio') || !sfx || state.lodge) return false;
+      if (cross) { if (!state.free) return false; state.switchCarry = 'cross'; log('carry (crossWorld)'); tl('carry', 'cross'); return true; }
+      if (!state.free || state.free.kind !== 4) state.free = { kind: 4, mode: 12 };
+      state.replay = false; speech.replay = false; if (sfxGame) sfxGame.G.replay = false;
+      state.switchCarry = 'travel'; tl('carry', 'travel');
+      api.travel(dest);
+      return true;
+    },
+    // pv worldSwitchAudio: the results' Transport (0x20CF80 -> WS14 arg 2) opens the map over the event world with its song playing (PS2
+    // postevent2: song 201, the podium's chartune, stopped only at the confirm); the page quits the run before the map, so that leaveWorld
+    // keeps the song. An event picked from the map is an event load (loadingStart ends the carry).
+    eventMap() { if (!pv('worldSwitchAudio') || !sfx) return false; state.switchCarry = 'map'; log('carry (results map)'); return true; },
     // pv heatSong: world state 13 (a Conquer the Mountain event's Next heat, and the results' Restart: WS13 0x235A18 calls 27A860 at
     // 0x235C44, which calls 28E8C0(20, 1)). Its event branch (0x28EC90..0x28ED18): unless free ride (2A4040), in a race (2A4078) or
     // slope-style (2A40E8) event with the round (*(G+0xC0)+0) >= 2: PickNextSong (28D488) and a forced request kind 3 (PlayMusic 36)
@@ -1033,7 +1161,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       return { unlocked: !!engine?.unlocked, context: c?.state, time: c ? +c.currentTime.toFixed(2) : 0, music: state.musicId, playing: !!state.music, finished: !!state.music?.finished,
         position: state.music?.position ?? null, intensity: state.music?.intensity ?? null, loading: !!state.loading, mix: engine?.mixIndex, scale: engine?.scaleMode, characterGain: engine?.busOutput('CHARACTER')?.gain?.value ?? null, speakerGains: engine ? Array.from({ length: 10 }, (_, k) => +(engine.speakerGain(k) ?? 0).toFixed(3)) : null, radioMode: settings.radioMode,
         challenge: { music: !!state.challengeMusic, type: state.challengeType ?? 0, prompt: !!state.challengePrompt }, // +0x5FD4 / +0x5FD0 / +0x5FD8
-        speech: speech?.debug(), sfx: sfxGame?.debug(), world: world?.debug(), trigger: { ...state.trigger }, track: state.track, voices: sfx?.voiceCount ?? 0, pools: sfx?.pools, byTag: sfx?.byTag(),
+        speech: speech?.debug(), sfx: sfxGame?.debug(), world: world?.debug(), trigger: { ...state.trigger }, track: state.track, voices: sfx?.voiceCount ?? 0, pools: sfx?.pools, byTag: sfx?.byTag(), streams: musStreamStats(),
         director: { free: state.free, course: state.course, dest: dir.dest, hubFirst: dir.hubFirst, bcIntro: dir.bcIntro, tmVariant: dir.tmVariant, firstVisit: dir.firstVisit.join(''),
           pending: Object.fromEntries(Object.entries(state.pendingDj).filter(([k, v]) => v && k !== 'sed' && k !== 'region')), timers: timers.map((t) => `${t.key}@${Math.round(t.at - now())}`), trace: trace.slice(-32) } };
     },

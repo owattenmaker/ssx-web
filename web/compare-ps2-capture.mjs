@@ -8,6 +8,7 @@ import fs from 'node:fs';
 // CORE_JS=path/core.js: compare with a private core (CORE_OUT=dir sh web/build-core.sh) instead of web/runtime.
 const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
+import * as inWorldSetup from './ctm-in-world-setup.mjs';
 
 const args = process.argv.slice(2);
 const capturePath = args.find((a) => !a.startsWith('--'));
@@ -134,20 +135,20 @@ const RECORD = captureManifest.record || 8192;
 let raw = fs.readFileSync(capturePath);
 // --peak-arrival (with --course PEAK1): a location entry capture (free-ride Transport arrival, tools/ps2_capture.py from a
 // screen-10 state): the comparison starts at the placement record (the first after the transport control 13), which the
-// browser reproduces with core place_rider_region (web/peak-capture.mjs arrive); the retained speed limit +0x2E4 is the
-// record before it (11D390 keeps it; the placement tick's 11B3F8 runs after the placement).
-const arrivalMode = args.includes('--peak-arrival');
+// browser reproduces with core place_rider_region (web/peak-capture.mjs arrive). The words the placement keeps are seeded from
+// the records: the retained speed limit +0x2E4 and the boost words (record P-1), the route heading +0x4CC and the location id
+// +0x434 (record P), and the game tick 1298C8 (the rider manager's +8, record P's tick field).
+// --peak-ws15 SEED (with --course PEAK1; pv eventReturnInWorld, docs/ctm-events-in-world.md stage 5): the return from an event (WS15), record 0
+// the placement, the kept words from SEED (web/ctm-in-world-setup.mjs ws15Seeds).
+const ws15Seed = args.includes('--peak-ws15') ? JSON.parse(fs.readFileSync(args[args.indexOf('--peak-ws15') + 1], 'utf8')) : null;
+const arrivalMode = args.includes('--peak-arrival') || !!ws15Seed;
 // --peak-fresh (with --course PEAK1): a world start's capture (tools/ps2_capture.py from the state before its first tick, e.g. the
 // CTM last-lodge start): record 0 is the placement of the world load's new rider, which the browser reproduces with core
 // fresh_rider_start + place_rider_region (web/free-ride.js placeRegion; docs/peak-mountain.md "Fresh rider at a world start").
 const freshMode = args.includes('--peak-fresh');
-let arrivalLimit = null, arrivalBoost = null; // the pre-placement retained limit and boost words (11D390 keeps the meter +0x2F8 and amount +0x2FC)
-if (arrivalMode) { const R0 = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8')).record || 8192, n = Math.floor(raw.length / R0), ctl = (k) => raw.readUInt32LE(k * R0 + 20);
-  let P = -1; for (let k = 1; k < n; k++) if (ctl(k - 1) === 13 && ctl(k) !== 13) { P = k; break; }
-  if (P < 0) throw new Error('--peak-arrival: no placement record (control 13 -> other)');
-  arrivalLimit = raw.readFloatLE((P - 1) * R0 + 32 + 0x2E4 - 0x100);
-  { const q = (P - 1) * R0 + 32 - 0x100; arrivalBoost = [raw.readFloatLE(q + 0x2E8), raw.readFloatLE(q + 0x2EC), raw.readFloatLE(q + 0x2F0), raw.readInt32LE(q + 0x2F4), raw.readFloatLE(q + 0x2F8), raw.readFloatLE(q + 0x2FC), raw.readInt32LE(q + 0x304)]; }
-  raw = raw.subarray(P * R0); }
+let arrivalSeedWords = null; // web/ctm-in-world-setup.mjs arrivalSeeds: the words the placement 11D390 keeps, from the records
+if (arrivalMode) { const R0 = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8')).record || 8192;
+  arrivalSeedWords = ws15Seed ? inWorldSetup.ws15Seeds(raw, R0, ws15Seed) : inWorldSetup.arrivalSeeds(raw, R0); raw = raw.subarray(arrivalSeedWords.P * R0); }
 const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
 const records = [];
 for (let at = 0; at + RECORD <= raw.length; at += RECORD) {
@@ -174,6 +175,7 @@ if (courseManifest.live) for (let i = 1; i < records.length; i++) {
 for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1) {
   // STAGE_WORLD_PS2 runs stop at an event restart (e.g. setpieces-bhp1/full restarts at 4697); gated captures have none.
   if (process.env.STAGE_WORLD_PS2) { records.length = i; break; }
+  if ((args.includes('--ctm-in-world') || ws15Seed) && records[i].tick === 0) continue; // the Continue's 1297C8(C, 1) / WS15's WS1 arg 0 -> WS4: the game tick restarts at 0
   throw new Error(`tick gap at record ${i}`);
 }
 
@@ -205,8 +207,14 @@ const peakWorld = peakMode ? await (await import('./peak-capture.mjs')).loadPeak
 core._reset_animation();
 core._reset_race();
 core._reset_rider(...start.position, start.heading);
-if (arrivalMode) { if (!peakWorld || !core._place_rider_region) throw new Error('--peak-arrival needs --course PEAK1 and a core with place_rider_region'); const a = peakWorld.arrive(() => core._boost_state_seed(...arrivalBoost)); core._speed_limit_seed(arrivalLimit);
-  if (process.env.SEED_FIELDS) console.error('arrival', a.location, 'course', a.course, 'entry', JSON.stringify(a.entry.position), 'limit', arrivalLimit); }
+if (arrivalMode) { const a = inWorldSetup.applyArrival(core, peakWorld, arrivalSeedWords);
+  if (process.env.SEED_FIELDS) console.error('arrival', a.location, 'course', a.course, 'entry', JSON.stringify(a.entry.position), 'limit', arrivalSeedWords.limit); }
+// --ctm-in-world CODE (with --course PEAK1 --peak-arrival; pv eventInWorld): arrival -> free ride -> the event's gate -> WS1's hold
+// -> the card -> the race in one capture, set up as the page runs it (web/ctm-in-world-setup.mjs; local/ctm-events/caps/c0a-full).
+let inWorld = null;
+if (args.includes('--ctm-in-world')) { if (!arrivalMode) throw new Error('--ctm-in-world needs --peak-arrival');
+  inWorld = inWorldSetup.planCtmInWorld({ code: args[args.indexOf('--ctm-in-world') + 1], core, dv, RECORD, records, layout: captureManifest.layout, json });
+  console.error('ctm in world', inWorld.code, 'gate', records[inWorld.G].tick, 'hold', records[inWorld.H].tick, 'countdown record', inWorld.C, 'kind', inWorld.kind, 'mode', inWorld.mode, 'document', inWorld.docPath); }
 if (freshMode) { if (!peakWorld || !core._fresh_rider_start) throw new Error('--peak-fresh needs --course PEAK1 and a core with fresh_rider_start'); peakWorld.arrive(() => core._fresh_rider_start(), 0); }
 const eventMode = args.includes('--event');
 // --pro: Controller Settings "Pro" captures (DATA/CONFIG/INPUT2.MAP, the race copy's controller byte 0x535B30 = 1): the core evaluates the Pro expressions.
@@ -295,12 +303,24 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const rows = [];
 const fieldFirst = {}; // FIELD_DIFF
 let firstRollerMismatch = null, rollerTicksExact = 0, firstChairliftMismatch = null, chairliftTicksExact = 0;
-let firstLimit = null, firstExact = null, firstPos1cm = null, firstControl = null, firstMode = null, unsupported = null;
+let firstLimit = null, limitAgreed = null, limitAgreedRow = null, firstLimitDivergence = null, firstExact = null, firstPos1cm = null, firstControl = null, firstMode = null, unsupported = null;
 // --event: the browser's real race start (grid, countdown control6) advanced to the PS2 countdown anchor tick.
 if (eventMode) {
   core._reset_pad_history(); if (process.env.STAGE_COLLECT_PATH && core._set_stage_collect_state) core._set_stage_collect_state(+process.env.STAGE_COLLECT_PATH, 0, 0); /* 0x535C11 (QA: 0 = career race collectibles) */ core._start_event();
   if (process.env.CAMERA_SEED_JSON) { const [file, key] = process.env.CAMERA_SEED_JSON.split(':'); const w = Uint32Array.from(JSON.parse(fs.readFileSync(file, 'utf8'))[key].words);
     const wp = core._malloc(4 * CAMERA_WORDS), mp = core._malloc(CAMERA_WORDS); core.HEAPU8.set(new Uint8Array(w.buffer), wp); core.HEAPU8.fill(1, mp, mp + CAMERA_WORDS); core._camera_seed_words(wp, mp); core._free(wp); core._free(mp); }
+  // --carry-seed OFF,OFF,...: a CTM countdown savestate's rider carries free-ride / hold words the event seed does not have
+  // (docs/ctm-events-in-world.md §6.3): copy them from record 0 (core ground_state_seed; the countdown holds them still).
+  if (args.includes('--carry-seed')) { const offs = args[args.indexOf('--carry-seed') + 1].split(',').map(Number), w = core._malloc(8 * offs.length);
+    offs.forEach((o, k) => { core.HEAPF32[(w >> 2) + 2 * k] = o; core.HEAPF32[(w >> 2) + 2 * k + 1] = dv.getFloat32(32 + o - 0x100, true); }); core._ground_state_seed(w, offs.length); core._free(w); }
+  // --ctm-countdown: a CTM countdown savestate (the first heat ridden in from free ride, or a WS13 heat): the words core
+  // event_grid_start keeps from the rider, from record 0 (the countdown holds them): the motion-0 stamps (owner +0x10 / +0x14),
+  // the boost words +0x2E8..+0x304 and the normals +0x380 / +0x390.
+  if (args.includes('--ctm-countdown')) { const o = captureManifest.layout.owner_00_40, r0 = (off) => dv.getFloat32(32 + off - 0x100, true), i0 = (off) => dv.getInt32(32 + off - 0x100, true);
+    core._ground_tick_seed(dv.getUint32(o + 0x10, true), dv.getUint32(o + 0x14, true));
+    core._boost_state_seed(r0(0x2e8), r0(0x2ec), r0(0x2f0), i0(0x2f4), r0(0x2f8), r0(0x2fc), i0(0x304));
+    const offs = [0x380, 0x384, 0x388, 0x390, 0x394, 0x398], w = core._malloc(8 * offs.length);
+    offs.forEach((off, k) => { core.HEAPF32[(w >> 2) + 2 * k] = off; core.HEAPF32[(w >> 2) + 2 * k + 1] = r0(off); }); core._ground_state_seed(w, offs.length); core._free(w); }
   const neutral = new Float32Array(24);
   for (let t = 0; t < records[0].tick; t++) { core.HEAPF32.set(neutral, padPtr >> 2); const o = Array.from(f32(core._pad_tick(padPtr), 24)); padFrame({ turn: o[0], jump: o[6], brake: o[2], boost: o[7], grab: o[8], tweak: o[12], animTurn: o[10], animBrake: o[11], animFlip: o[13] }); }
 }
@@ -368,7 +388,8 @@ if (args.includes('--attributes')) { const bytes = args[args.indexOf('--attribut
 // (+0x2E4, 11B3F8); --seed-idle / --seed-limit copy them from the first record.
 if (!eventMode) { const r0 = (off) => dv.getFloat32(32 + off - 0x100, true);
   if (args.includes('--seed-idle') && core._idle_clock_seed) core._idle_clock_seed(r0(0x35c));
-  if (args.includes('--seed-limit') && core._speed_limit_seed) core._speed_limit_seed(r0(0x2e4)); }
+  // Record 0's +0x2E4 is the limit tick 0 uses (11B3F8 runs before the provider hook): held, so tick 0 does not step it again.
+  if (args.includes('--seed-limit') && core._speed_limit_seed) (core._speed_limit_seed_held ?? core._speed_limit_seed)(r0(0x2e4)); }
 // --event also seeds it after the browser's own countdown pre-roll: the HUD bank keeps stale words from the front end
 // (field10 of slots 5/6/7/0x19 and of reused slots), which the original never clears.
 if (scoreMode && (!eventMode || !args.includes('--no-score-seed'))) {
@@ -483,7 +504,13 @@ function compareWeather(i, tick) {
   if (core._weather_region_info) { const r = new Int32Array(core.HEAPU8.buffer, core._weather_region_info(), 5); const patch = dv.getInt32(i * RECORD + 32 + 0x430 - 0x100, true); weatherStats.region ??= []; const last = weatherStats.region[weatherStats.region.length - 1];
     if (!last || last[1] !== r[0] || last[2] !== (patch === -1 ? -1 : patch & 0xFF)) weatherStats.region.push([tick, r[0], patch === -1 ? -1 : patch & 0xFF]); } // [tick, web gp+0x770, PS2 rider+0x430 track] at changes
 }
+// SNAPSHOT_KEEP_CHECK (QA, docs/replay.md §2a): the rider-context snapshot saved before the first tick and restored after the last
+// (web/event-snapshot.js with its QA checks): a kept table (web/snapshot-policy.mjs) that this run changed, or a hook whose world no
+// longer matches, fails the restore. Needs a core built with SSX_SNAPSHOT=1.
+const snapshotKeepCheck = process.env.SNAPSHOT_KEEP_CHECK ? await import('./event-snapshot.js') : null;
+if (snapshotKeepCheck) { snapshotKeepCheck.snapshotAttach({ human: core, qa: true }); globalThis.__keepCheckState = snapshotKeepCheck.snapshotSave(0, { human: core }); }
 for (let i = 0; i + 1 < records.length; i++) {
+  if (inWorld && inWorldSetup.ctmInWorldBeforeTick(core, inWorld, i, { cstr: (t) => put(Buffer.from(t + '\0')), cfile: str }) === 'skip') { if (syncRng) webDrawsOut.push(0); continue; } // WS1's last tick
   if (weatherWatch) compareWeather(i, records[i].tick);
   let rngStart = null;
   if (syncRng) { const w = new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6); for (let k = 0; k < 6; k++) w[k] = dv.getUint32(i * RECORD + 8896 + 4 * k, true);
@@ -543,6 +570,7 @@ for (let i = 0; i + 1 < records.length; i++) {
     if (cmd.unsupported) break;
     boothTick = records[i].tick; web = frame(cmd);
   }
+  if (inWorld && inWorldSetup.ctmInWorldAfterTick(core, inWorld, i)) { if (rngStart) webDrawsOut.push(Math.max(0, drawsBetween(rngStart, Array.from(new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6))))); continue; } // WS1's hold: not compared
   const ps2 = records[i + 1];
   // RUMBLE_TRACE=1: this tick's rumble-source audio events (web/audio_events.hpp) beside the recorded owner +0xDFC / +0xE00 (pad motor intensities, web/rumble.js)
   if (process.env.RUMBLE_TRACE && core._audio_events) { const q = core._audio_events() >> 2, F = new Float32Array(core.HEAPU8.buffer), n = F[q], ev = []; for (let k = 0; k < n; k++) ev.push(Array.from(F.subarray(q + 1 + 5 * k, q + 6 + 5 * k)).map((x) => +x.toFixed(3))); core._audio_events_clear(); const o = (i + 1) * RECORD + captureManifest.layout.owner_de0_e00;
@@ -555,8 +583,9 @@ for (let i = 0; i + 1 < records.length; i++) {
   if (process.env.POSE_DUMP && process.env.POSE_DUMP.split(',').map(Number).includes(ps2.tick)) console.error('pose', ps2.tick, JSON.stringify(Array.from(f32(core._pose_physical(), 12))), JSON.stringify(Array.from(f32(core._world_pose_bones(), 1 + 7 * 22)).filter((_, k) => [0, 5, 10, 15, 18, 21].some((b) => k >= 1 + 7 * b && k < 4 + 7 * b))));
   if (stageSnaps?.has(ps2.tick)) stageRows.push(compareStageWorld(core, stageSnaps.get(ps2.tick), { allDiffs: !!process.env.STAGE_WORLD_ALLDIFFS }));
   if (rngStart) { let d = drawsBetween(rngStart, Array.from(new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6))); const pending = core._animation_rng_pending ? core._animation_rng_pending() : 0; if (core._animation_rng_defer) d -= Math.max(0, webSkip - pending); webDrawsOut.push(Math.max(0, d)); }
-  // Frame-begin 11B3F8 runs before the provider: record i holds the limit used by tick i.
-  const webLimit = f32(core._physics_info(), 1)[0] * 100, ps2Limit = records[i].speedLimit;
+  // Frame-begin 11B3F8 runs before the provider: record i holds the limit used by tick i. physics_info [6] is the exact cm/s
+  // word ([0] is m/s, which rounds when scaled back); an older core has something else there.
+  const pinfo = f32(core._physics_info(), 7), webLimit = Math.abs(pinfo[6] - pinfo[0] * 100) < 1 ? pinfo[6] : pinfo[0] * 100, ps2Limit = records[i].speedLimit;
   if (process.env.BONE_SCAN && (!globalThis.__boneDone || process.env.BONE_SCAN === 'all')) { const wb = f32(core._world_pose_bones(), 1 + 32 * 7); const n = wb[0]; const base = (i + 1) * RECORD + 3264; const bad = [];
     for (let b = 0; b < Math.min(n, +(process.env.BONE_SCAN_MAX || 29)); b++) for (let k = 0; k < 7; k++) { const pb = b >= 24 && n <= 27 ? b + 2 : b; /* compiled 24/25 are Zoe's inactive eye bones */ const pv = dv.getFloat32(base + 32 * pb + (k < 3 ? k * 4 : 16 + (k - 3) * 4), true), wv = wb[1 + b * 7 + k]; if (Math.fround(wv) !== pv) bad.push([b, k, wv, pv]); }
     if (bad.length) { console.error('bones', ps2.tick, JSON.stringify(bad.slice(0, 8))); globalThis.__boneDone = true; } }
@@ -568,6 +597,11 @@ for (let i = 0; i + 1 < records.length; i++) {
   if (process.env.ROUTE_TRACE && process.env.ROUTE_TRACE.split(',').map(Number).includes(ps2.tick)) console.error('route', ps2.tick, JSON.stringify(Array.from(f32(core._route_info(), 8))), 'ps2 4CC', dv.getFloat32((i + 1) * RECORD + 32 + 0x4cc - 0x100, true));
   if (process.env.LIMIT_TRACE && ps2.tick >= +process.env.LIMIT_TRACE.split(':')[0] && ps2.tick <= +(process.env.LIMIT_TRACE.split(':')[1] ?? process.env.LIMIT_TRACE)) console.error('limit', records[i].tick, webLimit, ps2Limit, JSON.stringify(Array.from(f32(core._physics_info(), 6))));
   if (Math.fround(webLimit) !== ps2Limit && firstLimit === null) firstLimit = { tick: records[i].tick, control: records[i].control, web: Math.fround(webLimit), ps2: ps2Limit };
+  // A course seed's retained limit can differ from the savestate's (the countdown anchors' pre-race history); 11B3F8's filter
+  // (x 0.97 / 0.9 a tick) then reaches the PS2's bits within ~130 ticks. limitAgreed: the first equal tick; firstLimitDivergence:
+  // the first difference after it (test-ps2-captures gates that one).
+  if (Math.fround(webLimit) === ps2Limit) { if (limitAgreed === null) { limitAgreed = records[i].tick; limitAgreedRow = rows.length; } }
+  else if (limitAgreed !== null && firstLimitDivergence === null) firstLimitDivergence = { tick: records[i].tick, control: records[i].control, web: Math.fround(webLimit), ps2: ps2Limit };
   const posErr = dist(web.motion.slice(0, 3), ps2.position);
   const velErr = dist(web.motion.slice(3, 6), ps2.velocity);
   const exact = web.motion[0] === ps2.position[0] && web.motion[1] === ps2.position[1] && web.motion[2] === ps2.position[2] && web.motion[3] === ps2.velocity[0] && web.motion[4] === ps2.velocity[1] && web.motion[5] === ps2.velocity[2];
@@ -629,7 +663,7 @@ for (let i = 0; i + 1 < records.length; i++) {
   if (process.env.ROLLER_WEB) { const [a, b] = process.env.ROLLER_WEB.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= (b ?? a)) console.error('rollerweb', ps2.tick, JSON.stringify(rollerSnapshot && rollerSnapshot.map((x) => +x.toFixed(2)))); }
   if (process.env.FIELD_DUMP && process.env.FIELD_DUMP.split(',').map(Number).includes(ps2.tick)) {
     const ptr = core._ground_state_dump(); const n = f32(ptr, 1)[0]; const pairs = f32(ptr + 4, n * 2); const out = [];
-    for (let k = 0; k < n; k++) { const off = pairs[2 * k], wv = pairs[2 * k + 1]; const pv = dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true); if (Math.fround(wv) !== pv) out.push(`0x${off.toString(16)} ${wv} ${pv}`); }
+    for (let k = 0; k < n; k++) { const off = pairs[2 * k], wv = pairs[2 * k + 1]; const pv = dv.getFloat32((off === 0x2e4 ? i : i + 1) * RECORD + 32 + off - 0x100, true); if (Math.fround(wv) !== pv) out.push(`0x${off.toString(16)} ${wv} ${pv}`); }
     console.error('fields', ps2.tick, out.join(' | ')); }
   // STAGE_TRACE=a:b: stage-script dispatch counters and the newest fired (resource, program, tick?) triples.
   if (process.env.STAGE_TRACE && core._stage_script_info) { const [a, b] = process.env.STAGE_TRACE.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= (b ?? a)) { const p = core._stage_script_info(); const h = new Uint32Array(core.HEAPU8.buffer, p, 7); const n = h[6]; const log = new Uint32Array(core.HEAPU8.buffer, p + 28, 3 * n); console.error('stage', ps2.tick, Array.from(h).join(','), 'last', JSON.stringify(Array.from(log.slice(Math.max(0, 3 * n - 9))))); } }
@@ -650,7 +684,8 @@ for (let i = 0; i + 1 < records.length; i++) {
   }
   if (args.includes('--fields')) {
     const ptr = core._ground_state_dump(); const n = f32(ptr, 1)[0]; const pairs = f32(ptr + 4, n * 2);
-    for (let k = 0; k < n; k++) { const off = pairs[2 * k], wv = pairs[2 * k + 1]; const pv = dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true);
+    // +0x2E4 against record i (the limit tick i used, as firstSpeedLimitMismatch): the record after holds tick i+1's 11B3F8.
+    for (let k = 0; k < n; k++) { const off = pairs[2 * k], wv = pairs[2 * k + 1]; const pv = dv.getFloat32((off === 0x2e4 ? i : i + 1) * RECORD + 32 + off - 0x100, true);
       const key = '0x' + off.toString(16); if (!(key in fieldFirst) && Math.fround(wv) !== pv && (process.env.FIELD_EXACT || Math.abs(wv - pv) > 1e-6 * Math.max(1, Math.abs(pv)))) fieldFirst[key] = { tick: ps2.tick, web: wv, ps2: pv }; }
   }
   if (process.env.POSE_TRACE && process.env.POSE_TRACE.split(',').map(Number).includes(ps2.tick)) {
@@ -731,7 +766,7 @@ for (let i = 0; i + 1 < records.length; i++) {
 }
 const maxPos = rows.reduce((m, r) => Math.max(m, r.posErrCm), 0), maxVel = rows.reduce((m, r) => Math.max(m, r.velErrCmps), 0);
 const summary = { capture: capturePath, ticks: rows.length, seedErrorCm: seedError, exactTicks: rows.filter((r) => r.exact).length,
-  maxPosErrCm: maxPos, maxVelErrCmps: maxVel, firstInexact: firstExact, firstOver1cm: firstPos1cm, firstControlMismatch: firstControl, firstSpeedLimitMismatch: firstLimit, fieldFirst, firstWordMismatch, firstModeMismatch: firstMode, unsupported, rollerTicksExact, firstRollerMismatch, chairliftTicksExact, firstChairliftMismatch,
+  maxPosErrCm: maxPos, maxVelErrCmps: maxVel, firstInexact: firstExact, firstOver1cm: firstPos1cm, firstControlMismatch: firstControl, firstSpeedLimitMismatch: firstLimit, speedLimitAgreed: limitAgreed, speedLimitAgreedRow: limitAgreedRow, firstSpeedLimitDivergence: firstLimitDivergence, fieldFirst, firstWordMismatch, firstModeMismatch: firstMode, unsupported, rollerTicksExact, firstRollerMismatch, chairliftTicksExact, firstChairliftMismatch,
   cameraWordTicks, cameraWordTicksExact, firstCameraWordMismatch, cameraShakeRngTicks, visualRngTicksExact, firstVisualRngMismatch, cameraWordFirst: Object.fromEntries(Object.entries(cameraWordFirst).sort((a, b) => a[1].tick - b[1].tick).slice(0, 40)),
   controlsSeen: [...new Set(records.map((r) => r.control))],
   ...(lightingMode ? { lighting } : {}),
@@ -751,5 +786,6 @@ if (stageSnaps) { summary.stageWorld = stageRows;
   const el = core._stage_world_entity_log() >> 2; summary.stageEntityLog = Array.from({ length: U[el] }, (_, k) => Array.from(U.subarray(el + 1 + 3 * k, el + 4 + 3 * k))); }
 summary.boostTicks = boostTicks; summary.boostTicksExact = boostTicksExact; summary.firstBoostMismatch = firstBoostMismatch; summary.firstBoostAmountMismatch = firstBoostAmountMismatch;
 if (tickHook?.summary) Object.assign(summary, await tickHook.summary());
+if (snapshotKeepCheck) { try { snapshotKeepCheck.snapshotRestore(0, globalThis.__keepCheckState, { human: core }); summary.snapshotKeepCheck = 'ok'; } catch (e) { summary.snapshotKeepCheck = e.message; } console.error('snapshot keep check:', summary.snapshotKeepCheck); }
 console.log(JSON.stringify(summary, null, 1));
 if (reportPath) fs.writeFileSync(reportPath, JSON.stringify({ summary, rows }, null, 1));

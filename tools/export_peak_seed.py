@@ -39,7 +39,7 @@ def seed_state(state):
     act = m.activation()
     sections = dict(game_tick=m.tick(), last_scan=m.i(act + 0xD0), last_bits=[X.fbits(x) for x in m.v(act + 0x20)], parity=m.u(act + 0xD4),
                     listed=[dict(resource=m.u(i + 0x78), parity=int(bool(m.u(i + 8) & 0x200))) for i in m.active_list()])
-    return dict(version=1, state=str(Path(state).resolve().relative_to(ROOT)), nodes=nodes, entities=entities, sections=sections)
+    return dict(version=1, state=__import__('disc_paths').repo_relative(Path(state).absolute()), nodes=nodes, entities=entities, sections=sections)
 
 
 def main():
@@ -92,7 +92,7 @@ def main():
     initial['original_rail_context'] = extract_rail_context(memory, rider)
     initial['original_trick_names'] = extract_trick_names()
     initial['original_animation']['secondary_motion'] = extract_secondary_motion(memory, rider)
-    initial['peak_seed'] = dict(state=str(a.state.resolve().relative_to(ROOT)), state_sha256=hashlib.sha256(a.state.read_bytes()).hexdigest(), rider=hex(rider), region=a.region)
+    initial['peak_seed'] = dict(state=__import__('disc_paths').repo_relative(a.state.absolute()), state_sha256=hashlib.sha256(a.state.read_bytes()).hexdigest(), rider=hex(rider), region=a.region)
     WEB.mkdir(parents=True, exist_ok=True)
     (WEB / 'initial.json').write_text(json.dumps(initial))
     (WEB / 'seed-state.json').write_text(json.dumps(seed_state(a.state)))

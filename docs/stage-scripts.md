@@ -212,7 +212,7 @@ MultiParticle groups, one-way volumes, crowd). Decoded calls per course: `tools/
 | 2 | 2FC420 | SetNodeState | DeadNode 6 / authored flags / RestoreNode 19 (runtime flags to the collision world and the renderer) |
 | 3 | 2FBCB8 | LiveComp player | core players for trigger/timer starts (key8/key6 gameplay-RNG draws), JS players for section starts |
 | 6, 48 | 2FB498, 2FF1C8 | AnimTeeter / Rail | `web/rail_bridge.cpp` (log teeters), falling billboard |
-| 7 | 2FBEC8 | one-way volume (Boost, type 8) | `engine/one_way_volume.hpp` + stage world; entity words bit-exact vs `setpieces/full.tick11758/11918` |
+| 7 | 2FBEC8 | one-way volume (Boost, type 8) | `engine/one_way_volume.hpp` + stage world; entity words bit-exact vs `setpieces/full.tick11758/11918`; flags \| 0x100 over the load's runtime flags (pv loadFlags, free ride: push exact vs course-limits/p3b-zig3000) |
 | 12 | 2FC9C8 | flag cloth | `web/flag-animation.js` |
 | 13 | 2FCFF0 | MeshAnim break pieces | 0x351B40/0x352230/0x352500; deterministic words exact vs PS2 (BRA2 chinaroof 6466); pose from a LiveComp node / the magnet |
 | 15 | 2FD250 | RollerModifier (crashbag) | `web/roller_gameplay.inc` |
@@ -232,7 +232,8 @@ MultiParticle groups, one-way volumes, crowd). Decoded calls per course: `tools/
 | 88 | 303BA0 | CrowdMan2d | crowd texture animation (CRWD.SSH an00..15, 3 ticks/frame) and camera-flash areas (`web/crowd-2d.js`) |
 | 90 | 305478 | MagnetModifier | `engine/magnet_modifier.hpp` in the stage world: box answer, gate, flight; BHP1 pointa award exact (pipe-finish 2862) |
 | 97 | 3057C0 | HaloModifier | `web/set-piece-halos.js` (FX whha/gcha/rdha, spin, double copy for keys 1/4) |
-| 99 | 3061B0 | option enabled | treated as enabled |
+| 99 | 3061B0 | game option enabled: selector 0 / 1 / 2 = bit 6 Multipliers / 8 Power-ups / 7 Point icons of *0x5308D0 clear (other selectors 1). Setter 192088 (option 1..14, options screen 192380), getter 192240, Yes / No rows 1AF098 / 1AFE08 / 1B0850 (TextMultipliersResult / TextPowerUpsResult / TextPointiconsResult) | nil. Every one of the 162 calls is `if 99(sel)==0: builtin29, return`; 0x5308D0 is 0 in all 794 PS2 free-ride savestates, and nil==0 is false, so the build branch runs as on the PS2 (docs/peak-mountain.md "Course limits") |
+| 101 | 306438 | attention point: key0 instance (-1 ctx+0x290), key1 radius (1000), key2 seconds -> 101728 slot in W+0x84->+0xC->+0xA8 (64 x 0x1C) | nil (the PS2 returns nil too). The only consumer is 1441B8 -> 101A10 -> 122CF0 -> rider+0x5B0, read only by 122CF0 itself, whose change notification 11A0C0 is an empty stub: no gameplay, collision, draw or sound effect |
 | 105, 106 | 306A90, 306CB0 | MultiParticle (roadflare flames) | groups from the ready savestate, member add/first-match remove; exact vs PS2 |
 | 40, 47, 50, 63..65, 67, 68, 75, 76, 78, 79, 83, 98, 107 | | Big Challenge / free ride / hub | inert in a race (their programs never run there, or return 0) |
 

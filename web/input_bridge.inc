@@ -101,6 +101,21 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* world_pose_bones(){RIDER_LOCAL static std
  for(size_t b=0;b<cachedCrashWorld.size();b++){for(unsigned k=0;k<3;k++)out[1+b*7+k]=cachedCrashWorld[b].position[k];for(unsigned k=0;k<4;k++)out[1+b*7+3+k]=cachedCrashWorld[b].rotation[k];}return out.data();}
 static void board_press_state_dump(std::vector<float>&);
 static void animation_state_dump(std::vector<float>& out);
+// QA (compare-ps2-capture.mjs): set physicsState words by rider offset, (offset, value) pairs, for a capture that starts from a
+// state the browser cannot ride into (a CTM countdown savestate: the rider's free-ride / hold history, docs/ctm-events-in-world.md).
+// The vectors and filter triplets of ground_state_dump; any other offset throws.
+extern "C" EMSCRIPTEN_KEEPALIVE void ground_state_seed(const float* pairs,int count){
+ auto slot=[&](OriginalGroundState& s,unsigned off)->float*{
+  auto v3=[&](unsigned base,std::array<float,3>& v)->float*{return off>=base&&off<base+12&&(off-base)%4==0?&v[(off-base)/4]:nullptr;};
+  auto t3=[&](unsigned base,GroundControlValue& t)->float*{return off==base?&t.current:off==base+4?&t.rate:off==base+8?&t.target:nullptr;};
+  for(auto* p:{v3(0x110,s.position),v3(0x1E0,s.velocity),v3(0x1C0,s.boardUp),v3(0x1B0,s.physicalForward),v3(0x370,s.normal),v3(0x380,s.previousNormal),
+    v3(0x390,s.boardNormal),v3(0x3A0,s.forward),v3(0x3B0,s.lateral),v3(0x3D0,s.surfaceVelocity),v3(0x180,s.presentationUp),
+    t3(0x1F0,s.turn),t3(0x208,s.extraLean),t3(0x214,s.brake),t3(0x220,s.crouch),t3(0x2BC,s.boardAlignment),t3(0x2C8,s.presentationLift),
+    t3(0x280,s.balance280),t3(0x28C,s.adjustment28C),t3(0x298,s.adjustment298),t3(0x1FC,s.animationTurn),t3(0x250,s.presentationRoll)})if(p)return p;
+  if(off==0x454)return &s.distance;if(off==0x31C)return &s.boardLift;if(off==0x4CC)return &s.headingOffset;
+  return nullptr;};
+ for(int k=0;k<count;k++){const unsigned off=unsigned(pairs[2*k]);float* p=slot(physicsState,off);if(!p)throw std::runtime_error("ground_state_seed: unsupported rider offset");*p=pairs[2*k+1];*slot(gs,off)=pairs[2*k+1];} // gs: the animation side's copy
+}
 // QA: physicsState laid out as (rider offset, value) pairs for field-level PS2 comparison.
 extern "C" EMSCRIPTEN_KEEPALIVE float* ground_state_dump(){
  RIDER_LOCAL static std::vector<float> out;out.clear();const auto& s=physicsState;
@@ -112,6 +127,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* ground_state_dump(){
  t3(0x280,s.balance280);t3(0x28C,s.adjustment28C);t3(0x298,s.adjustment298);
  v3(0x370,s.normal);v3(0x380,s.previousNormal);v3(0x390,s.boardNormal);v3(0x3A0,s.forward);v3(0x3B0,s.lateral);v3(0x3D0,s.surfaceVelocity);
  v3(0x180,s.presentationUp);f1(0x454,s.distance);f1(0x2E4,physicsProfile.speedLimit);f1(0x2FC,s.boost);f1(0x300,s.timeScale);f1(0x2DC,s.manualSpin);f1(0x31C,s.boardLift);f1(0x35C,idleSeconds);v3(0x3E0,collisionHistory.previousNormal);f1(0x3F0,collisionHistory.directionChanges);f1(0x3F4,collisionHistory.secondaryCounter);
+ f1(0x470,s.modeTiming);f1(0x4CC,s.headingOffset); // 13C948 reads both (+0x470 finish marker, +0x4CC route heading)
  t3(0x1FC,s.animationTurn);t3(0x250,s.presentationRoll);
  board_press_state_dump(out); //+0x268/+0x274 triplets, +0x360 latch (web/boardpress_gameplay.inc)
  animation_state_dump(out); //+0x244 handplant lean, +0x2A4/+0x2B0 prewind spin/flip (end of animation_bridge.cpp)

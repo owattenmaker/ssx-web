@@ -86,9 +86,13 @@ export async function loadPeakWorld({ core, root, captureManifest, dv, RECORD, r
   // (web/free-ride.js); STATION_FENCES=1 / 0 forces it.
   core._peak_world_builtin108?.(process.env.STATION_FENCES ? (process.env.STATION_FENCES === '1' ? 1 : 0) : pv('stationFences') ? 1 : 0);
   core._stage_object_route?.(process.env.FINISH_FENCES ? (process.env.FINISH_FENCES === '1' ? 1 : 0) : pv('finishFences') ? 1 : 0); // pv finishFences
+  core._set_piece_streamed?.(process.env.PEAK_SPLINES ? (process.env.PEAK_SPLINES === '1' ? 1 : 0) : pv('peakSplines') ? 1 : 0); // pv peakSplines (web/set_piece_gameplay.inc)
+  core._stage_load_flags?.(process.env.LOAD_FLAGS ? (process.env.LOAD_FLAGS === '1' ? 1 : 0) : pv('loadFlags') ? 1 : 0); // pv loadFlags (LOAD_FLAGS=1 / 0 forces it)
   // 0x535C11 (the watch's byte 9: 0 Conquer the Mountain): with kind 4 the score pays tricks as cash (web/score_gameplay.inc)
   core._set_stage_collect_state?.(dv.getUint8(gameW.offset + 9), 0, 0);
   let bank = -1;
+  let autoPrev = null, autoPort = null; const autoLog = [];
+  if (process.env.PEAK_AUTO === '1' && process.env.PEAK_AUTO_OUT) process.on('exit', () => fs.writeFileSync(process.env.PEAK_AUTO_OUT, JSON.stringify(autoLog)));
   function applyRows(i) { for (const id of ids) core._peak_world_row(id, rowState(i, id)); core._peak_world_set_course(course(i)); }
   // Record 0: its rows; the bank in use is the course row's location with id < 22 (the hub or course the rider is in).
   applyRows(0); core._peak_world_sync_octree?.();
@@ -120,6 +124,26 @@ export async function loadPeakWorld({ core, root, captureManifest, dv, RECORD, r
         call(core._peak_world_seed, JSON.stringify(seedState));
         call(core._set_world_visual_state, JSON.stringify({ sections: seedState.sections }));
       }
+      // PEAK_SEED_BOOSTS=file (diagnostics): [[resource, [9 entity words +0x20..+0x40 as u32], instance+8 flags], ...] read from the
+      // baseline savestate (local/course-limits/seed_boosts.py): the one-way volumes it already holds (core stage_seed_boost).
+      if (i === 0 && process.env.PEAK_SEED_BOOSTS && core._stage_seed_boost) for (const [res, words, flags] of JSON.parse(fs.readFileSync(process.env.PEAK_SEED_BOOSTS, 'utf8'))) {
+        const p = core._malloc(36); new Uint32Array(core.HEAPU8.buffer, p, 9).set(words); try { core._stage_seed_boost(res, p, flags >>> 0); } finally { core._free(p); }
+      }
+      // PEAK_AUTO=1 (diagnostics, docs/peak-mountain.md "Course limits"): from record 1 the core's own streamer (22D8D8, one pass a
+      // tick) decides the rows instead of the capture; every row transition that differs from the PS2's is logged (tick, row, from, to).
+      if (process.env.PEAK_AUTO === '1' && i > 0) {
+        if (i === 1) { core._peak_world_manual(0); autoPrev = Object.fromEntries(ids.map((id) => [id, rowState(0, id)])); autoPort = { ...autoPrev }; }
+        core._peak_world_tick();
+        const p = core._peak_world_rows(), n = new Int32Array(core.HEAPU8.buffer, p, 1)[0], rw = new Int32Array(core.HEAPU8.buffer, p + 4, 4 * n), now = {};
+        for (let k = 0; k < n; k++) now[rw[4 * k]] = rw[4 * k + 2];
+        for (const id of ids) {
+          const ps2 = rowState(i, id), port = now[id] ?? 0, code = manifest.streaming.find((r) => r.id === id).code;
+          if (ps2 !== autoPrev[id]) autoLog.push({ tick: records[i].tick, code, who: 'ps2', from: autoPrev[id], to: ps2 });
+          if (port !== autoPort[id]) autoLog.push({ tick: records[i].tick, code, who: 'port', from: autoPort[id], to: port });
+          autoPrev[id] = ps2; autoPort[id] = port;
+        }
+        return;
+      }
       applyRows(i); core._peak_world_rows_tick?.(); // the eviction countdown: the octree removal at T+7, the record's row 0 at T+8 (web/peak_world.inc)
       // A peak run's location crossing restarts the game tick 1298C8 (1297C8 via 128A10 from world state 10's background rider
       // load, 9..24 ticks after the Unload: the location's NIS script read on the disc). The record's tick field is 1298C8, so
@@ -140,6 +164,7 @@ export async function loadPeakWorld({ core, root, captureManifest, dv, RECORD, r
         if ((a === 6 || a === 8) && (b === 1 || b === 2)) { if (!early.delete(id)) core._peak_world_deliver(id); if (id < 22) bank = id; }
       }
     },
+    autoLog,
     rowsAt: (i) => Object.fromEntries(ids.map((id) => [manifest.streaming.find((r) => r.id === id).code, rowState(i, id)])),
   };
 }

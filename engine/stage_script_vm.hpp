@@ -344,6 +344,13 @@ public:
         return run(function.word0,function.word1,globals,builtin,finalRegisters,returnSlot);
     }
 
+    // The browser's replay snapshot (web/world_snapshot.hpp, docs/replay.md §2a): the VM's run-time state (its tables and call
+    // depth) without the loaded programs, which a restore requires unchanged.
+    struct RuntimeSnapshot { std::deque<OriginalScriptTable> tables; int depth=0; size_t programs=0; };
+    void saveRuntime(RuntimeSnapshot& s) const { s.tables=tables_; s.depth=depth_; s.programs=programs_.size(); }
+    bool restoreRuntime(const RuntimeSnapshot& s) { if(programs_.size()!=s.programs)return false; tables_=s.tables; depth_=s.depth; return true; }
+    size_t runtimeTables() const { return tables_.size(); }
+    size_t programCount() const { return programs_.size(); }
 private:
     std::deque<OriginalScriptProgram> programs_;
     std::deque<OriginalScriptTable> tables_;

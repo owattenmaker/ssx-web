@@ -13,6 +13,7 @@
 //  - challenge music (29D6E0 events 33/34/38 by the challenge type, 29D8E0 / 29DBB0 event 39) through web/game-audio.js.
 import { format } from './locale.js';
 import { pv } from './pv-flags.js';
+import { CTX } from './pause-contexts.js';
 
 const TABLE_URL = '/assets/BIGCHAL/big-challenges.json'; // tools/export_peak_missions.py (table 0x43EE10)
 // 31paus_freeride icon groups (web/ctm-pda.js ICON): the challenge pause rows
@@ -72,12 +73,13 @@ export function challengeClock(ticks) {
 export const heightText = (cm) => { const v = Math.max(0, Math.trunc(cm)); return `Height: ${Math.trunc(v / 100)}.${String(v % 100).padStart(2, '0')}m`; };
 
 // ---- runtime ----------------------------------------------------------------------------------------------------------------
-export async function createBigChallenges({ core, ui, pause, gameAudio = null, riderId = () => null, careerUI = () => ui.careerUI }) {
+export async function createBigChallenges({ core, ui, gameAudio = null, riderId = () => null, careerUI = () => ui.careerUI }) {
   if (!core?._mission_hud) return null;
   const rows = await loadBigChallengeTable();
   // pv bcSpeed: stage builtin 59 (0x3032C0, the tick's distance |rider+0x1E0| x 1/60) answers (the Kick Doubt Grinder challenges);
   // set in the human's context at every tick, where the WScript tick runs
   const speedBuiltin = pv('bcSpeed') ? 1 : 0;
+  const lifecycle = pv('bcDecline') ? 7 : 0; // core mission_lifecycle: 1235F8 reset, builtin 67's 30B7F8, WS10 enter's 308988
   if (!rows) return null;
   const I32 = (p, n) => new Int32Array(core.HEAPU8.buffer, p, n);
   const byId = new Map(rows.map((r, i) => [r.id >>> 0, i]));
@@ -98,9 +100,17 @@ export async function createBigChallenges({ core, ui, pause, gameAudio = null, r
   function row(id) { const i = byId.get(id >>> 0); return i == null ? null : { index: i, ...rows[i] }; }
   function openPrompt(id, from) {
     prompt = { id: id >>> 0, from };
-    pause(true); ui.set('ctm-bcstart'); ui.index = 0; ui.sync();
+    hold(); ui.set('ctm-bcstart'); ui.index = 0; ui.sync();
   }
-  function resume() { ui.set('game'); ui.cb.resume?.(); }
+  // The offer (overlay 0x1D) and fail (0x1E) prompts push pause context 3 (0x2308B4 / 0x230954) without the audio pause 289B70: the
+  // music and SFX keep playing under them (audio +0x5FB4 = 0 in the prompt state; docs/ctm-decomp-freeride.md). This module holds the
+  // handle and pops it when the prompt returns to the ride (web/pause-contexts.js).
+  let promptCtx = null;
+  function hold() {
+    promptCtx ??= ui.contexts.push(CTX.PROMPT, { owner: 'Big Challenge prompt', audio: false, ends: (s) => s === 'game' });
+  }
+  // back to the ride: the prompt's own context, then the pause menu's if the prompt came from it (Restart Challenge)
+  function resume() { ui.set('game'); ui.contexts?.pop(promptCtx); promptCtx = null; ui.cb.resume?.(); }
   function drainEvents() {
     const p = core._mission_ui_events() >> 2, H = new Int32Array(core.HEAPU8.buffer), n = H[p];
     const c = career(), id = riderId();
@@ -121,10 +131,11 @@ export async function createBigChallenges({ core, ui, pause, gameAudio = null, r
     tick() {
       if (!statusSent) sendStatus();
       core._mission_speed_builtin?.(speedBuiltin);
+      core._mission_lifecycle?.(lifecycle);
       const q = I32(core._mission_offer_peek(), 3), type = q[0], id = q[1] >>> 0;
       drainEvents();
       if (type === 8) openPrompt(core._mission_offer_pop() >>> 0, 'offer');
-      else if (type === 9) { prompt = { id, from: 'fail' }; pause(true); ui.set('ctm-bcfail'); ui.index = 2; ui.sync(); } // overlay 0x1E opens on Challenge Info
+      else if (type === 9) { prompt = { id, from: 'fail' }; hold(); ui.set('ctm-bcfail'); ui.index = 2; ui.sync(); } // overlay 0x1E opens on Challenge Info
       lastHud = hud();
     },
     running: () => !!core._mission_running?.(),
@@ -205,11 +216,12 @@ export async function createBigChallenges({ core, ui, pause, gameAudio = null, r
       if (s === 'ctm-bcpause') {
         const back = (k) => () => { ui.set('ctm-bcpause'); ui.index = k; ui.sync(); };
         if (i === 0) resume();
-        else if (i === 1) { prompt = { id: lastHud?.active ?? id, from: 'pause' }; ui.set('ctm-bcstart'); ui.index = 0; ui.sync(); } // 20D8F4: overlay 0x1D
+        else if (i === 1) { const go = () => { prompt = { id: lastHud?.active ?? id, from: 'pause' }; ui.set('ctm-bcstart'); ui.index = 0; ui.sync(); }; // 20D8F4: overlay 0x1D
+          if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[1], go, back(1)); else go(); }   // pv ps2MenuInput: "Are you sure?" first
         else if (i === 2) careerUI()?.messages?.open?.(back(2));
         else if (i === 3) ui.audioMenus?.open?.('audio', { back: back(3) });
         else if (i === 4) { ui.optionsReturn = 'ctm-bcpause'; ui.set('options'); }
-        else { core._mission_prompt(3, 0); resume(); } // 20D944 -> 30B758
+        else { const go = () => { core._mission_prompt(3, 0); resume(); }; if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[5], go, back(5)); else go(); } // 20D944 -> 30B758
       }
     },
     back() {

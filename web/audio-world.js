@@ -70,6 +70,8 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
   const contactVoices = new Map();   // `${resource}:${node}` -> voice (295028 repeat FIFO)
   const scriptLoops = new Map();     // instance -> {id, voice} (audio+0x5A00 table)
   const scriptVoices = new Map();    // instance -> one-shot voice (295028 repeat FIFO, tag 0)
+  // (a voice that no longer plays blocks nothing: its entry goes, or every instance ever touched kept its ended voice for the session)
+  const sweep = (m) => { for (const [k, v] of m) if (!v.playing()) m.delete(k); };
   let rumble = null;                 // 0x29DEF0 voice (audio+0x5FF4) and its position (audio+0x6050)
   const locationByTrack = new Map();
   // Streamed peak worlds (world/PEAK<n>.json, docs/audio-logic.md "Free ride / Peak 1"): only the locations whose
@@ -195,7 +197,7 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
       if (prev?.playing()) return; // 295028
       const vol = Math.min(Math.max(Math.trunc(curve(CURVES.contact_445898, speed)), 0), 127);
       const v = sfx.play({ slot: w.bank, sound: w.snd, bus: 'COLLISION', volume: vol, position: [...position], posStatic: true, tag: 'contact' });
-      if (v) contactVoices.set(key, v);
+      if (v) { if (contactVoices.size >= 64) sweep(contactVoices); contactVoices.set(key, v); }
     },
     // Stage-script builtins: kind 0 play (2974A0), 1 loop (297950), 2 stop (297EB8).
     script(kind, id, resource, position, location = 0) {
@@ -208,7 +210,7 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
       if (kind === 1) { const l = scriptLoops.get(resource); if (l) { l.voice?.stop(0); scriptLoops.delete(resource); } }
       const v = sfx.play({ slot: r.slot, sound: r.sound, bus: 'UI', volume: 127, position, posStatic: true, vanish: 300, tag: 'script' });
       if (kind === 1 && v) scriptLoops.set(resource, { id, voice: v });
-      else if (v) scriptVoices.set(resource, v); // 295628
+      else if (v) { if (scriptVoices.size >= 64) sweep(scriptVoices); scriptVoices.set(resource, v); } // 295628
     },
     // 0x29DEF0 / 0x29E4A0: the avalanche rumble. on = the core's loop count > 0; tumblers = [[x, y, z, scale] (source cm)];
     // L = the listener rider's position (rider +0x110, source cm). Once per tick.

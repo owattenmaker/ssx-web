@@ -13,7 +13,7 @@ Ground truth: ARMSX2 runs from derived savestates (`local/ps2-capture/menus/repl
 saves screenshots), plus a static read of 0x26C458..0x2721D0 (cReplay), the camera director and cOVState_REPLAY.
 
 **It re-runs the game.** When the start gate opens (0x234AD0: 0x26F228, 0x26F7B8) the replay manager snapshots the world
-(0x26D818: the shared RNG 0x4FF030, the object ids, BE, the session's state objects, every rider +0x77C..+0xDE8, the render
+(0x26D818: the shared RNG 0x4FF030, the object ids, BE, the session's state objects, every rider's controller (two pointer hops, rider +0x77C -> C, C+0xDE8 -> its vtable; see below), the render
 state manager, avalanche, the world-script manager, move nodes with their modifier blocks and splines, the dynamic and dead
 buckets) and then records each human's 8-byte controller command per tick (0x127998 -> 0x12863C -> 0x26D178: RLE, 4096 runs
 per human in a 0x8000-byte cache; when a cache fills, R+0x610 = 1 and the replay ends there). A replay restores the snapshot
@@ -34,6 +34,23 @@ popups and anger effects are off (0x1E9A30 returns while R state is 1..9); the p
   the replay from t1 (W3 countdown, W4 race).
 - What stops it (`stopAutoReplay` 0x2706F0 restores the results-time state): Next heat, Transport, Next event, Replay, the
   confirmed Restart / Quit popups, leaving the game. Records and an open confirm popup do not.
+- **What 0x2706F0 restores** (read from the code, 2026-09-30; docs/ctm-events-in-world.md stage 5). The results' Transport is overlay command 1
+  with item gp-0x9F0 = 2 (0x20CFD0 -> table 0x471AC0 -> 0x20CF80): 0x20CF88 calls 0x2706F0, then command 4 (WS14 arg 2) follows one frame later.
+  0x2706F0 (auto mode, R+0x61C != 0) -> 0x26F980 -> 0x26F850 -> 0x26DB88 -> `cReplay_restoreFrame` 0x26DBF0 on R+0x3D0, the **results-time
+  snapshot** taken at the replay's start (state 9: 0x26F8A0 -> 0x26F7F8 -> 0x26D818, only while R+0x3D0 is empty), then 0x26EEA0 (camera
+  triggers), R state 13 (0x270718). Nothing is restored when R+0x608 != 0 (set only by 0x271758), R+0x3D0 is 0, or R state is 14 / 15.
+  The stop runs inside 0x20CFD0 (session update 0x2306A8 at 0x230864), before that frame's rider manager tick (0x128AF0 via 0x230CB0), so
+  the frame runs one normal tick on the restored state. What the snapshot holds (save 0x26D818 / restore 0x26DBF0): the shared RNG 0x4FF030
+  (0x3178E0 / 0x317908), the object id counters gp+0x2A88 / +0x2A8C, BE (0x14DF08 / 0x14DFA8), the session (vtable 0x47D110 +0x44 / +0x4C),
+  the rider manager (vtable 0x458488 +0x3C 0x12B7F0 / +0x44 0x12B948: race +0x00..+0x28 with the total tick +8, the rider lists +0x40 / +0x48
+  / +0x5C, each controller C = rider +0x77C through C+0xDE8's vtable +0x14 / +0x1C: human 0x458338 -> 0x111AC0 / 0x111D98, computer
+  0x4585F0 -> 0x10A898 / 0x10A8E8 plus C+0xDF0..+0xF40), 0x2D9CB0 / 0x2D9D68, gp+0xCE8 (0x30BB10 / 0x30BD20), gp-0x6F0 (0x229E20 / 0x229E58),
+  gp+0xF00 (0x3441A8 / 0x344240), gp+0xF38 (0x357CA8 / 0x357D28), the kind-1 and kind-8 objects of gp+0x2898 (0x26D988 / 0x26DDC0: deleted
+  and rebuilt through the factory 0x4816C0; 0x26DA88 / 0x26E340), race+0xA4 (0x103480 / 0x103578), then 0x12B788 (0x120E50 per rider) and
+  0x22E840. Per rider (0x111AC0 / 0x111D98): a raw copy of rider +0x000..+0x6C0 (position, speed limit, normals, route heading all in it),
+  the sub-objects rider +0x780 / +0x784 / +0x788 / +0x790, +0x864 / +0x868, C+0xDE0 / +0xDE4 and C's members C+0x20 .. +0xD20, rider
+  +0xAB4..+0xAC0; the restore also clears C+0x3B0 .. +0xC70 and re-poses (0x312598, 0x3103F0, 0x106828). A capture that pokes command 4
+  directly (as c0a-ret did) skips 0x2706F0 and leaves the replay's frame in place.
 
 **The Replay item** (0x20CE0C -> dialog 0x11 cOVState_REPLAY '64replay' -> 0x26F8A0(R, 0, 0, 0)) opens a full-screen replay
 that starts **paused on its first frame** (R state 7 -> 3; `menus/replay/rmenu1.f00075.png`), plays to the finish and pauses
@@ -127,6 +144,85 @@ time / points replaying from tick 1, a rolling start). Online results show item 
   the run's).
 - Online races keep the finish camera behind their results (the other riders come from the network; the PS2's online results
   have no Replay either).
+
+## 2a. In-world events: the snapshots (pv eventReturnInWorld (b); inventory 2026-09-30, not built yet)
+
+An in-world Conquer the Mountain event (docs/ctm-events-in-world.md) starts on the streamed world as free ride left it (no world
+reset at an offline event start), so the port's restart path (startRun(R)) cannot rebuild its start state: measured with
+compare-ai-capture.mjs REPLAY_PROBE on c0a-ret3 (restart as startRun(R) would, then all 1989 recorded ticks again), tick 0 already
+draws 18 shared-RNG words against the live run's 10 and every rider ends metres off. The port therefore takes the PS2's two
+snapshots (decision C, coordinator 2026-09-30): the **countdown snapshot** (0x26D818 at the gate open, 0x234AD0: 26F228 / 26F7B8)
+for the replay's restart and R1 / L1, and the **results-time snapshot** (R+0x3D0, saved at the replay's start, state 9) that the
+Transport's stopAutoReplay 0x2706F0 restores (no re-simulation).
+
+**Scope, from 0x26D818 (save) / 0x26DBF0 (restore), in their order:**
+
+| PS2 item (save / restore) | what | port subsystem |
+|---|---|---|
+| 26E9C0 / 26E9B0 | the snapshot stream's cursor (R+0x08 / +0x10) | (the snapshot object itself) |
+| 0x3178E0 / 0x317908 | the shared game RNG 0x4FF030 | `rng` (animation_rng_words), shared by the contexts |
+| jalr x2: gp+0x2A88 / gp+0x2A8C | the object id counters | no port state found yet (to check: the world-entity ids of shared_world.inc) |
+| 14DC80 -> 14DF08 / 14DFA8 | BE: 14 sub-objects of the game object (14DD58(i), vt+0x18) | Big Challenge / mission state (mission_gameplay.inc; to confirm which 14) |
+| G vt (0x47D110 +0x44 / +0x4C) | the session | race session (race_bridge.cpp `race`, the clock) |
+| C vt+0x3C 0x12B7F0 / +0x44 0x12B948 | the rider manager: race +0x00..+0x28 (phase, total tick +8), the lists +0x40 / +0x48 / +0x5C, per rider through C+0xDE8's vtable (human 0x458338 -> 0x111AC0 / 0x111D98; computer 0x4585F0 -> 0x10A898 / 0x10A8E8 + C+0xDF0..+0xF40) | each rider context: physics, controllers, animation, rails, handplant, board press, attacks, boost, score, pair / peer records, route and reset state (core.cpp, animation_bridge.cpp, the *_gameplay.inc files, npc_gameplay.inc; race_world.cpp for the shared records) |
+| per rider (0x111AC0) | raw rider +0x000..+0x6C0; sub-objects +0x780 (skeleton), +0x784 (animator), +0x788, +0x790 (score); +0x864 / +0x868; C+0xDE0 / +0xDE4 (motion owner, control); C+0x20..+0xD20; rider +0xAB4..+0xAC0 (the paths) | as above (the carried words event_grid_start / npc_grid_start keep are among them) |
+| restore also | clears C+0x3B0..+0xC70, re-poses (0x312598, 0x3103F0, 0x106828) | the riders' FX objects are cleared, not restored |
+| 0x2D9CB0 / 0x2D9D68 | avalanche | avalanche_gameplay.inc (engine/avalanche.hpp originalAvalancheSave / Restore, already ported) |
+| gp+0xCE8: 0x30BB10 / 0x30BD20 | the world-script manager WScriptMan (0x28C header, 0x10C-byte script slots 30C6C8, 30BC80 lists) | stage_script_gameplay.inc, stage_world.inc (script state) |
+| gp-0x6F0: 0x229E20 / 0x229E58 | CrowdMan2d (0x200 bytes from +8) | stage_world.inc crowd |
+| gp+0xF00: 0x3441A8 / 0x344240 | a world manager of 5 slots x 0x1F4 (344FC0 per used slot; reset by 230180's 343BC0(S+0x3C)) | to identify (candidate: the move nodes / modifiers) |
+| gp+0xF38: 0x357CA8 / 0x357D28 | a world manager of 4 lists (358380 each; reset by 230180's 357B38(S+0x40)) | to identify (candidate: the splines / dead buckets) |
+| 0x26D988 / 0x26DDC0 | gp+0x2898 entity group 1 (every entity: count, then each one; the restore deletes and rebuilds through the factory 0x4816C0) | stage world entities (set pieces, LiveComps, MeshAnim, pickups as DeadNodes): stage_world.inc, set_piece_gameplay.inc, pickup_gameplay.inc, shared_world.inc |
+| 0x26DA88 / 0x26E340 | entity group 8 | to identify |
+| race+0xA4: 0x103480 / 0x103578 | the section activation (C+0xA4) | section_gameplay.inc |
+| restore only | 354C98 / 355118 (group 1 queues), 3A6800(gp+0x16C8: the world cache), 26DE58 (group walk), 2C03E8 (every painter wrapper reset), 12B788 (120E50 per rider: the scope lists), 22E840 (the views) | re-derived after a restore, not saved |
+
+**Cross-check against the fingerprint** (REPLAY_PROBE, the core's info exports at the countdown, live against the naive restart):
+stage world info / flag words / script info / builtin counts, set-piece sections, missions, pickups, world events, race world, score
+object and rider state are in the PS2's list. Not in it: weather (the painters: 2C03E8 resets every painter wrapper at the restore,
+so they are not restored but reset), camera state words (the cameras are re-derived: 22E840), peak-world events and stage teleports
+(the streaming and the location's path banks: not part of the snapshot; to check that nothing of them changes in a race).
+
+**Built (2026-09-30; compiled in with SSX_SNAPSHOT=1 / SSX_SNAPSHOT_REGISTRY, pv eventReturnInWorld on the page):**
+- **The registry.** web/generate-snapshot-registry.mjs (run by web/build-core.sh) registers every file-scope RIDER_LOCAL of the core's
+  units (983), with its compile-time type (web/generated/snapshot/<unit>.inc, included at each unit's end). web/check-snapshot-registry.mjs
+  (in the build) checks the link map: every TLS variable is registered, a function-local output buffer (155, the info exports'),
+  or one of two engine thread_locals (the input map variant, the rounding mode). A new one fails the build with what to do.
+- **A context's snapshot** (web/world_snapshot.hpp, web/rider_context.cpp): a save copies the 167 KB TLS block and deep-copies each
+  variable that is not trivially copyable (holders made once, at the first save of that context, then reused); a restore puts the
+  trivially copyable ones back as bytes and copy-assigns the others. The default is snapshot; web/snapshot-policy.mjs classifies the
+  rest, each with its reason:
+  - SNAPSHOT_KEEP: tables a race does not change (the location's rail records and walk caches, the streamed world's path banks /
+    rows / residency / map ids, models, the section template, the rider model's bind data, constant tables). Under QA their hash is
+    taken at each save and checked at each restore (checked on c0a-ret3, avalanche/eba3-rock-hit, setpieces/full, allpeak/apr-start,
+    peak3/fr-throne-unload, peak2/dss2-full: compare-ps2-capture.mjs SNAPSHOT_KEEP_CHECK). resetPaths / evictedResetPaths went back
+    into the snapshot (a location unload changes them).
+  - SNAPSHOT_CURRENT: left as they are because the PS2's snapshot does not hold them: the visual stream 0x4FF018 (snowParticleRandom,
+    stageWorldVisualOwn) and the LCG gp+0xA0C (trailVisualRandom); the streaming's event queue (drained by the page); the drawn
+    frame's skin matrices / palette (re-derived by the next pose: the PS2's restore re-poses, 0x312598 / 0x3103F0).
+  - SNAPSHOT_REDERIVED: restored, then re-derived by a restore hook (the painter wrappers and the painter trees' views).
+  - SNAPSHOT_OWN: the hooks' own storage.
+- **Hooks** (a subsystem's own save / restore, after the variables; each has a check that runs before anything is restored):
+  browserBodies' run-time instance state (flags and bits of every instance; entity, answer box and matrix of the dynamic ones; the
+  geometry kept, the instance count required), the stage VM's run-time tables (its programs kept: engine/stage_script_vm.hpp
+  RuntimeSnapshot), the avalanche world through the PS2's own 0x2D9CB0 / 0x2D9D68 (the saved slots triggered again and brought to t
+  without the group speed factor: a playing avalanche comes back as the PS2 brings it back; code-ported, not capture-verified), the
+  painter trees' views (pointed at their restored node lists) and every painter wrapper reset (0x2C03E8, as 0x26DBF0).
+- **The restore checks every context first** (core snapshot_check changes nothing), then restores: a restore that cannot run leaves
+  the state as it is (web/event-snapshot.js).
+- **The page** (web/main.js, pv eventReturnInWorld): an in-world event replays behind its results (web/replay.js allowed()); the
+  countdown snapshot is taken at the live start (replay.liveStart -> snapshot()), the results-time one at the replay's first start
+  (inWorldReplayRestart: 0x26F8A0 state 9's save), the replay's restart and seeks restore the countdown one, the results' Transport
+  stops the replay and restores the results time before the stop frame's tick (inWorldResultsRestore, 0x20CF88 -> 0x2706F0).
+  web/ai-racers.js saveState / restoreState carry the riders' orchestrator; web/ai-race.js replayRestore the relationship tables.
+- **Sizes (c0a-ret3, six contexts, mallinfo):** the first save of both slots 5.1 MB (3.64 MB with slot 0 and the block copies of
+  both slots; 1.45 MB for slot 1): about 2.4 MB per copy. Nothing is allocated after the first saves beyond the containers' growth.
+- **Gates (c0a-ret3):** REPLAY_PROBE (compare-ai-capture.mjs): the countdown snapshot back and all 1989 recorded ticks run again equal
+  the live run on every tick (the six riders, the shared RNG; the visual stream differs, as on the PS2), under two conditions the
+  capture meets: no avalanche playing at the restore (0x2D9D68 brings it back re-triggered) and no painter between its payloads (the
+  2C03E8 reset jumps it). ctm-events/c0a-ret3 (test-ps2-captures.mjs, --replay-return): the results-time snapshot, 600 replayed ticks
+  from the countdown snapshot, the Transport's restore, then the return: all six exact to the removal, the human to the end, the RNG
+  and ranks everywhere, the pair records from the return.
 
 ## 3. Verification
 

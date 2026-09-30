@@ -19,6 +19,7 @@ import {attribute, texture, vec3, vec4, float, uniform, select, positionGeometry
 import {registerEncodedEffect} from './snow-composite.js';
 import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 import {lfsrNext} from './set-piece-particle-sprites.js';
+import {heapU32, setUpdateRange} from './heap-views.js';
 
 export const LAYER_WORDS = 25;
 const F32 = new Float32Array(1), U32 = new Uint32Array(F32.buffer);
@@ -26,7 +27,7 @@ const fromBits = (w) => { U32[0] = w; return F32[0]; };
 // Core weather_layers(): [count, per layer 25 words] (web/weather.inc).
 export function readLayers(core) {
   if (!core._weather_layers) return [];
-  const U = new Uint32Array(core.HEAPU8.buffer); let at = core._weather_layers() >> 2; const n = U[at++], out = [];
+  const U = heapU32(core); let at = core._weather_layers() >> 2; const n = U[at++], out = [];
   for (let k = 0; k < n; k++, at += LAYER_WORDS) {
     const f = (i) => fromBits(U[at + i]);
     out.push({camera: U[at] | 0, kind: U[at + 1] | 0, count: U[at + 2] | 0, extent: f(3), speed: f(4), size: f(5), alpha: f(6), gravity: f(7),
@@ -132,20 +133,20 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
       c[k * 4] = vtx(0, Math.fround(F[o + 6] * fade)); c[k * 4 + 1] = vtx(0, F[o + 7]); c[k * 4 + 2] = vtx(0, F[o + 8]); c[k * 4 + 3] = vtx(0, F[o + 9]);
     }
     target.mesh.count = Math.max(m, 1); target.mesh.visible = m > 0;
-    if (m) for (const a of [target.pos, target.rot, target.col]) { a.clearUpdateRanges(); a.addUpdateRange(0, m * a.itemSize); a.needsUpdate = true; }
+    if (m) { setUpdateRange(target.pos, 0, m * target.pos.itemSize); setUpdateRange(target.rot, 0, m * target.rot.itemSize); setUpdateRange(target.col, 0, m * target.col.itemSize); }
     return m;
   }
   const api = {
     group, state,
     // Once per drawn frame, after the frame's ticks.
     update(camera) {
-      const info = new Float32Array(core.HEAPF32.buffer, core._weather_info(), 11);
-      if (!info[0]) { group.visible = false; return; }
+      const H = core.HEAPF32, ip = core._weather_info() >> 2; // [11 floats], read in place
+      if (!H[ip]) { group.visible = false; return; }
       group.visible = true;
       const all = readLayers(core).filter((l) => l.camera === 0);
       while (layers.length < all.length) layers.push(makeLayer(all[layers.length].kind));
       camera.getWorldDirection(forward); const fwd = [forward.x, -forward.z, forward.y]; // three -> source axes
-      eye.set(info[7] / 100 - origin.x, info[9] / 100 - origin.y, -info[8] / 100 - origin.z);
+      eye.set(H[ip + 7] / 100 - origin.x, H[ip + 9] / 100 - origin.y, -H[ip + 8] / 100 - origin.z);
       state.layers = all.length; state.flakes = state.fluff = 0;
       all.forEach((l, i) => {
         const L = layers[i]; if (L.kind !== l.kind) { L.mesh.visible = false; return; }
@@ -158,9 +159,8 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
         if (l.kind === 0) state.flakes += drawn; else state.fluff += drawn;
       });
       for (let i = all.length; i < layers.length; i++) layers[i].mesh.visible = false;
-      const F = new Float32Array(core.HEAPF32.buffer, core._weather_splash(), 5); const nd = F[0], nc = F[1]; state.snowfall = F[4];
-      const S = new Float32Array(core.HEAPF32.buffer, core._weather_splash() + 20, (nd + nc) * 14);
-      state.drops = fillSplash(drops, S, 0, nd); state.crystals = fillSplash(crystals, S, nd * 14, nc);
+      const sp = core._weather_splash() >> 2, nd = H[sp], nc = H[sp + 1]; state.snowfall = H[sp + 4]; // [5 floats, then (nd + nc) x 14]
+      state.drops = fillSplash(drops, H, sp + 5, nd); state.crystals = fillSplash(crystals, H, sp + 5 + nd * 14, nc);
     },
     setDensity(v) { density = v; },
     dispose() { group.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } }); for (const t of [sfal, ices, icel]) t.dispose(); },

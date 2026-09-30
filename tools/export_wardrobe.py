@@ -481,6 +481,7 @@ def main():
     parser.add_argument('--character', action='append')
     parser.add_argument('--verify', action='store_true')
     parser.add_argument('--ground-truth', action='store_true', help='only write local/reference/pcsx2/characters/gear-ground-truth.json')
+    parser.add_argument('--no-ground-truth', action='store_true', help='skip that savestate audit (tools/setup_from_iso.py: it writes into the evidence tree)')
     args = parser.parse_args()
     if args.ground_truth: return ground_truth()
     from export_opponent_packages import png
@@ -500,7 +501,7 @@ def main():
         report.append(verify(bolt, ch, rid))
         print(json.dumps(report[-1]))
     if not args.character or 'sam' in args.character: export_sam(png)
-    if not args.character: ground_truth()
+    if not args.character and not args.no_ground_truth: ground_truth()
     bad = [r['rider'] for r in report if not (r['parts_ok'] and r['textures_ok'])]
     print('default assemblies match the packages:', len(report) - len(bad), '/', len(report), 'mismatch:', bad)
     from export_rider_textures import pack_all; pack_all()   # textures/*.png, icons/*.png -> textures.tex, icons.tex

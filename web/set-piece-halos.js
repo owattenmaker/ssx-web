@@ -11,6 +11,7 @@ import * as T from 'three/webgpu';
 import {attribute, texture, vec4, float, select, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
 import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
+import {setUpdateRange} from './heap-views.js';
 
 export const HALO_FX_BASE = 37; // FX texture table 0x4891B0 index = 37 + key1
 export const HALO_TEXTURES = {37: 'blha', 38: 'bsha', 39: 'gcha', 40: 'orha', 41: 'rdha', 42: 'whha'};
@@ -98,7 +99,7 @@ export async function createSetPieceHalos({core, origin = [0, 0, 0], fetchJson =
         }
       }
       for (const m of meshes.values()) {
-        if (m.count) { for (const a of m.attributes ??= [m.centre, m.spin, m.colour]) { a.clearUpdateRanges(); a.addUpdateRange(0, m.count * 4); a.needsUpdate = true; } }
+        if (m.count) { const as = m.attributes ??= [m.centre, m.spin, m.colour]; for (let i = 0; i < as.length; i++) setUpdateRange(as[i], 0, m.count * 4); }
         m.mesh.count = Math.max(m.count, 1); m.mesh.visible = m.count > 0;
       }
     },

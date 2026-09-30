@@ -26,6 +26,17 @@ export const PASS_BY_RA = {
 
 const hex = (v) => '0x' + (v >>> 0).toString(16);
 
+// tools/ps2_capture.py writes the computer riders' record blocks in ascending actor-address order (manifest.others is sorted), while
+// a lineup document (npc-riders.json, a career lineup of tools/export_lineups.py export-career) lists them in roster order (C+0x28).
+// The two agree in every Single Event capture; a career heat rebuilt by WS13 (128958) allocates its riders out of order
+// (docs/ctm-events-in-world.md section 6). rosterOrder(manifest)[k] = the record block of roster slot k + 1 (identity when unknown).
+export function rosterOrder(manifest) {
+  const others = (manifest.others || []).map(Number), human = Number(manifest.rider);
+  const roster = (manifest.roster || []).map(Number).filter((a) => a !== human);
+  const order = roster.map((a) => others.indexOf(a));
+  return order.length === others.length && order.every((j) => j >= 0) ? order : others.map((_, k) => k);
+}
+
 export function readAiCapture(binPath) {
   const manifest = JSON.parse(fs.readFileSync(binPath.replace(/\.bin$/, '.capture.json'), 'utf8'));
   const L = manifest.layout, A = L.ai_state;
@@ -36,8 +47,10 @@ export function readAiCapture(binPath) {
   const roster = (manifest.roster || []).map(Number), others = manifest.others.map(Number);
   const owners = (manifest.others_owners || []).map(Number), humanActor = Number(manifest.rider), humanOwner = Number(manifest.human_owner);
   const pathBank0 = Number(manifest.ai_path_bank);
+  const order = rosterOrder(manifest), slotOfBlock = [];   // record block -> roster slot (identity in Single Event captures)
+  order.forEach((j, k) => { slotOfBlock[j] = k; });
   // a0 of a marker -> which rider (actor or motion-owner component), -1 = human, k = computer rider slot k.
-  const bases = [[humanActor, -1, 'actor'], [humanOwner, -1, 'owner'], ...others.map((a, k) => [a, k, 'actor']), ...owners.map((o, k) => [o, k, 'owner'])];
+  const bases = [[humanActor, -1, 'actor'], [humanOwner, -1, 'owner'], ...others.map((a, k) => [a, slotOfBlock[k], 'actor']), ...owners.map((o, k) => [o, slotOfBlock[k], 'owner'])];
   const riderOf = (a0) => { let best = null; for (const [b, k, kind] of bases) if (a0 >= b && a0 - b < 0x1000 && (!best || b > best[0])) best = [b, k, kind]; return best ? { slot: best[1], kind: best[2], offset: a0 - best[0] } : null; };
   const records = [];
   for (let at = 0; at + RECORD <= raw.length; at += RECORD) {
@@ -79,15 +92,16 @@ export function readAiCapture(binPath) {
     const log = Array.from({ length: Math.min(draws, A.rng_log_entries) }, (_, i) => { const o = A.rng_log + 16 * i, ma0 = u(o + 8), mra = u(o + 12);
       return { ra: u(o), leafRa: u(o + 4), markerA0: ma0, markerRa: mra, pass: PASS_BY_RA[mra] ?? null, rider: riderOf(ma0) }; });
     records.push({
-      seq: u(0), tick: u(4), human, ai,
+      seq: u(0), tick: u(4), human, ai: order.map((j) => ai[j]),
       rng: { words: Array.from({ length: 6 }, (_, k) => u(L.shared_rng_6 + 4 * k)), draws, total: u(R + 4), logged: log.length, truncated: draws > log.length,
         markerAtRecord: { a0: u(R + 8), ra: u(R + 12) }, npcUnmatched: u(R + 16), log },
       game: { pointer: u(A.globals_pathbank_coursepaths_game_humanowner + 8), aiPathBank: u(A.globals_pathbank_coursepaths_game_humanowner), coursePaths: u(A.globals_pathbank_coursepaths_game_humanowner + 4),
         tick: u(A.game_info_00_a0 + 8), roster: Array.from({ length: 6 }, (_, j) => u(A.game_info_00_a0 + 0x28 + 4 * j)), riderCount: u(A.game_info_00_a0 + 0x78), raw: view(A.game_info_00_a0, 0xa0) },
     });
   }
-  for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1) throw new Error(`tick gap at record ${i}`);
-  return { manifest, records, roster, others, owners, riderOf };
+  // (a CTM run from free ride through the event, manifest.ai_dynamic: the Continue's 1297C8(C, 1) restarts the game tick at 0 once)
+  for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1 && !(manifest.ai_dynamic && records[i].tick === 0)) throw new Error(`tick gap at record ${i}`);
+  return { manifest, records, roster, others: order.map((j) => others[j]), owners: owners.length ? order.map((j) => owners[j]) : owners, riderOf };
 }
 
 // Containing original function for an address (local/output/sub_XXXXXXXX_0x....cpp names give function starts).

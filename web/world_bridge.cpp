@@ -233,6 +233,17 @@ size_t browser_world_release_track(uint32_t track){
 }
 // pv finishFences (above): on for this world; the loaded instances too (a streamed world's start row is in before free-ride.js starts).
 EMSCRIPTEN_KEEPALIVE void stage_object_route(int on){browserObjectRoutes=on!=0;if(browserBodies)object_route_instances(*browserBodies);}
+// Diagnostics (docs/peak-mountain.md "Course limits"): the collision state of every package instance, for comparison with the
+// PS2's instance+8 / +0xC: [count, then per instance resource, runtime flags (-1: none), bits: route (0 skip, 1 static, 2 entity),
+// 4 unsupported, 8 track resident, 16 released, 32 entity geometry].
+EMSCRIPTEN_KEEPALIVE uint32_t* world_instance_states(){
+ RIDER_LOCAL static std::vector<uint32_t> out;out.assign(1,0u);if(!browserBodies)return out.data();
+ for(const auto& i:browserBodies->instances){if(i.runtimeClone)continue;
+  const auto route=i.eventRuntimeFlags?originalInstanceBodyRoute(*i.eventRuntimeFlags,true):OriginalInstanceBodyRoute::Static;
+  const uint32_t r=route==OriginalInstanceBodyRoute::Static?1u:route==OriginalInstanceBodyRoute::Entity?2u:0u;
+  out.insert(out.end(),{i.resource,i.eventRuntimeFlags.value_or(0xffffffffu),r|(i.unsupported.empty()?0u:4u)|(ssx::worldResident(i.resource)?8u:0u)|(i.released?16u:0u)|(i.entity?32u:0u)});++out[0];}
+ return out.data();
+}
 EMSCRIPTEN_KEEPALIVE void init_body_terrain(const char* text){
  if(!browserBodies)throw std::runtime_error("Body terrain requires its world package");
  const std::string key=browserWorldAppend?std::string():parse_key(text,bodySourceHash);
@@ -243,15 +254,21 @@ EMSCRIPTEN_KEEPALIVE void init_body_terrain(const char* text){
  candidate.prepareTerrainTraversal();terrainParseCache={key,candidate.terrain};browserBodies->terrain=std::move(candidate.terrain);bodyTerrainReady=true;bodyContactCache={};
 }
 // pv eventSlices: see event_world_seal above init_world_collision.
-EMSCRIPTEN_KEEPALIVE void event_world_begin(){eventSlicing=true;eventSliceSetPieceCalls=setPieceInstanceCalls;}
+// pv eventInWorldAi (docs/ctm-events-in-world.md stage 4): the event package loaded in parts into a computer rider's context of the
+// streamed world, whose camera terrain (shared by every context, web/core.cpp) is the streamed world's own: the parts then build the
+// context's body collision only (terrain_part leaves the camera terrain alone, the seal commits no camera-terrain append). The event
+// package's collision is exactly its resident locations' (web/test-ctm-event-world.mjs), so this is the streamed world's resident set.
+RIDER_LOCAL static bool eventSliceBodiesOnly=false;
+EMSCRIPTEN_KEEPALIVE void event_world_begin(){eventSlicing=true;eventSliceBodiesOnly=false;eventSliceSetPieceCalls=setPieceInstanceCalls;}
+EMSCRIPTEN_KEEPALIVE void event_world_bodies_only(){if(!eventSlicing)throw std::runtime_error("event_world_bodies_only without event_world_begin");eventSliceBodiesOnly=true;}
 EMSCRIPTEN_KEEPALIVE void terrain_part(const char* text){
- if(!eventSlicing||!browserWorldAppend||!browserBodies||!cameraTerrain)throw std::runtime_error("terrain_part outside an event load in parts");
- auto data=json::parse(text);browser_camera_terrain_json(data);browserBodies->appendTerrainTraversal(body_terrain_patches(data));bodyTerrainReady=true;
+ if(!eventSlicing||!browserWorldAppend||!browserBodies||(!cameraTerrain&&!eventSliceBodiesOnly))throw std::runtime_error("terrain_part outside an event load in parts");
+ auto data=json::parse(text);if(!eventSliceBodiesOnly)browser_camera_terrain_json(data);browserBodies->appendTerrainTraversal(body_terrain_patches(data));bodyTerrainReady=true;
 }
 EMSCRIPTEN_KEEPALIVE void event_world_seal(const char* worldKey,const char* terrainKey){
- if(!eventSlicing||!browserBodies||!cameraTerrain)throw std::runtime_error("event_world_seal without event_world_begin");
+ if(!eventSlicing||!browserBodies||(!cameraTerrain&&!eventSliceBodiesOnly))throw std::runtime_error("event_world_seal without event_world_begin");
  browserWorldAppend=false;eventSlicing=false;
- cameraTerrain->finishAppend();browserBodies->commitTerrainTraversal();browserBodies->nextInsertion=0;
+ if(!eventSliceBodiesOnly)cameraTerrain->finishAppend();eventSliceBodiesOnly=false;browserBodies->commitTerrainTraversal();browserBodies->nextInsertion=0;
  auto terrain=std::move(browserBodies->terrain);browserBodies->terrain.clear();
  {BodyParse c{worldKey,bodyParseCache.location,bodySourceHash,bodyParseCache.tracks,std::make_unique<const WorldBodyCollision>(*browserBodies),setPieceInstanceCalls!=eventSliceSetPieceCalls};bodyParseCache=std::move(c);}
  bodyTerrainReady=false;bodyContactCache={};object_route_instances(*browserBodies);browser_attach_set_pieces();
@@ -315,3 +332,34 @@ namespace ssx {terrain_original::ContactCache& browser_rider_body_cache(){return
 // Per rider context (web/rider_context.cpp): construct this translation unit's RIDER_LOCAL_LAZY containers.
 void rider_statics_world(){rider_touch(&peak_stream::residency);}
 static const bool riderStaticsWorldReady=(rider_statics_world(),true);
+#ifdef SSX_SNAPSHOT_REGISTRY
+// The rider-context snapshot's hook (web/world_snapshot.hpp; docs/replay.md §2a): the collision world's run-time instance state
+// (the PS2's entity buckets 26D988 / 26DDC0: flags, entity placement, answer boxes, matrices), its geometry kept
+// (web/snapshot-policy.mjs). The streaming's eviction words (released, reinsertion) are the world cache's (3A6800): not restored.
+// A restore needs the countdown's instance count (set-piece clones are made at their setup, not in a race).
+#include "world_snapshot.hpp"
+namespace {
+// Every instance: its eventRuntimeFlags (value, engaged) and bits; the dynamic ones (an entity, a clone, an entity pointer or an
+// answer box at the save) also their entity, answer box and matrix. A static instance's matrix is its authored one (QA: hashed).
+struct BodyRuntime{size_t count=0;std::vector<uint32_t> flags;std::vector<uint8_t> bits;std::vector<uint32_t> dynamic;std::vector<std::shared_ptr<const WorldCollisionEntity>> entities;std::vector<std::optional<std::array<terrain_original::Vector,2>>> boxes;std::vector<collision_transform::Matrix> matrices;uint64_t staticMatrices=0;};
+RIDER_LOCAL_LAZY std::array<BodyRuntime,2> bodySnapshot;
+bool body_dynamic(const WorldCollisionInstance& i){return i.entity||i.runtimeClone||i.entityPointer||i.answerBox;}
+uint64_t body_static_matrices(const BodyRuntime& s){uint64_t h=1469598103934665603ull;size_t d=0;for(size_t k=0;k<browserBodies->instances.size();++k){if(d<s.dynamic.size()&&s.dynamic[d]==k){++d;continue;}h=ssx_snapshot::fnv(&browserBodies->instances[k].authoredMatrix,sizeof(collision_transform::Matrix),h);}return h;}
+void body_snapshot_save(unsigned slot){auto& s=bodySnapshot[slot];s.count=browserBodies?browserBodies->instances.size():0;s.flags.resize(s.count);s.bits.resize(s.count);s.dynamic.clear();s.entities.clear();s.boxes.clear();s.matrices.clear();
+ for(size_t k=0;k<s.count;++k){const auto& i=browserBodies->instances[k];s.flags[k]=i.eventRuntimeFlags.value_or(0);s.bits[k]=uint8_t((i.eventRuntimeFlags?1:0)|(i.entityPointer?2:0)|(i.rayAlwaysEmpty?4:0)|(i.runtimeClone?8:0));
+  if(body_dynamic(i)){s.dynamic.push_back(uint32_t(k));s.entities.push_back(i.entity);s.boxes.push_back(i.answerBox);s.matrices.push_back(i.authoredMatrix);}}
+ s.staticMatrices=browserBodies&&ssx_snapshot::qa?body_static_matrices(s):0;}
+bool body_snapshot_check(unsigned slot){const auto& s=bodySnapshot[slot];if((browserBodies?browserBodies->instances.size():0)!=s.count)return false;return !(browserBodies&&ssx_snapshot::qa&&body_static_matrices(s)!=s.staticMatrices);}
+bool body_snapshot_restore(unsigned slot){auto& s=bodySnapshot[slot];if(!body_snapshot_check(slot))return false;
+ size_t d=0;for(size_t k=0;k<s.count;++k){auto& i=browserBodies->instances[k];const uint8_t b=s.bits[k];i.eventRuntimeFlags=b&1?std::optional<uint32_t>(s.flags[k]):std::nullopt;i.entityPointer=b&2;i.rayAlwaysEmpty=b&4;i.runtimeClone=b&8;
+  if(d<s.dynamic.size()&&s.dynamic[d]==k){i.entity=s.entities[d];i.answerBox=s.boxes[d];i.authoredMatrix=s.matrices[d];++d;}else{i.entity.reset();i.answerBox.reset();}}
+ reset_body_queries();return true;} // (the sphere-tree / contact caches: re-derived)
+uint64_t body_snapshot_hash(){uint64_t h=1469598103934665603ull;if(!browserBodies)return h;for(const auto& i:browserBodies->instances){const uint32_t f=i.eventRuntimeFlags.value_or(0xFFFFFFFFu);h=ssx_snapshot::fnv(&f,4,h);h=ssx_snapshot::mix(h,reinterpret_cast<uintptr_t>(i.entity.get()));h=ssx_snapshot::fnv(&i.authoredMatrix,sizeof i.authoredMatrix,h);h=ssx_snapshot::mix(h,(i.answerBox?1:0)|(i.entityPointer?2:0)|(i.rayAlwaysEmpty?4:0)|(i.runtimeClone?8:0));if(i.answerBox)h=ssx_snapshot::fnv(i.answerBox->data(),sizeof(*i.answerBox),h);}return h;}
+size_t body_snapshot_bytes(){size_t n=0;for(const auto& s:bodySnapshot)n+=s.flags.capacity()*4+s.bits.capacity()+s.dynamic.capacity()*4+s.entities.capacity()*sizeof(s.entities[0])+s.boxes.capacity()*sizeof(s.boxes[0])+s.matrices.capacity()*sizeof(s.matrices[0]);return n;}
+struct BodySnapshotHook{BodySnapshotHook(){ssx_snapshot::hooks().push_back({"browserBodies (run-time state)",&body_snapshot_save,&body_snapshot_restore,&body_snapshot_hash,&body_snapshot_bytes,&body_snapshot_check});}};
+[[maybe_unused]] BodySnapshotHook bodySnapshotHook;
+}
+#endif
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/world_bridge.inc"
+#endif

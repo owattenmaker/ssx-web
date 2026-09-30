@@ -338,3 +338,21 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t environment_world_loads(){return enviro
 // Per rider context (web/rider_context.cpp): construct this translation unit's RIDER_LOCAL_LAZY containers.
 void rider_statics_environment(){rider_touch(&patches);rider_touch(&streamedTextures);}
 static const bool riderStaticsEnvironmentReady=(rider_statics_environment(),true);
+#ifdef SSX_SNAPSHOT_REGISTRY
+// The rider-context snapshot's re-derivation after a restore (web/world_snapshot.hpp; docs/replay.md §2a): the painter trees are
+// views (std::span) of their packages' node lists, which a restore copies back into their own buffers: the views are pointed
+// at them again. Nothing is saved.
+#include "world_snapshot.hpp"
+namespace {
+void painter_trees_save(unsigned){}
+bool painter_trees_restore(unsigned){fogTree.nodes=fogNodes;lightingTree.nodes=lightingNodes;return true;}
+uint64_t painter_trees_hash(){return 0;}
+size_t painter_trees_bytes(){return 0;}
+bool painter_trees_check(unsigned){return true;}
+struct PainterTreesHook{PainterTreesHook(){ssx_snapshot::hooks().push_back({"painter trees (re-derived)",&painter_trees_save,&painter_trees_restore,&painter_trees_hash,&painter_trees_bytes,&painter_trees_check});}};
+[[maybe_unused]] PainterTreesHook painterTreesHook;
+}
+#endif
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/environment_bridge.inc"
+#endif

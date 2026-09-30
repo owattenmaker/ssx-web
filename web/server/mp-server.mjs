@@ -315,8 +315,10 @@ function serveStatic(req, res) {
       try { const g = fs.statSync(candidate); if (g.isFile() && g.mtimeMs >= stat.mtimeMs) return { file: candidate, size: g.size, encoding }; } catch {}
       return null;
     };
-    if (PRECOMPRESSED && /\bbr\b/.test(accepts)) gz = copy('.br', 'br');
-    if (PRECOMPRESSED && !gz && /\bgzip\b/.test(accepts)) gz = copy('.gz', 'gzip');
+    // (a Range request gets its bytes of the file itself: web/audio-speech.js reads single speech lines out of a .dat, docs/audio-logic.md 9.15)
+    const ranged = /^bytes=/.test(String(req.headers.range ?? ''));
+    if (PRECOMPRESSED && !ranged && /\bbr\b/.test(accepts)) gz = copy('.br', 'br');
+    if (PRECOMPRESSED && !ranged && !gz && /\bgzip\b/.test(accepts)) gz = copy('.gz', 'gzip');
     const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}${gz ? (gz.encoding === 'br' ? '-br' : '-gz') : ''}"`, hashed = /^\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$/.test(pathname); // Vite's content-hashed bundles (8-character hash), top level of /assets only
     const headers = { 'content-type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream', etag, 'accept-ranges': 'bytes',
       // Behind the gate every response is `private`: the browser caches it, a shared cache (the Cloudflare edge) must not,

@@ -43,3 +43,6 @@ const OriginalAirTrajectory* air_motion_start_trajectory(){return airMotionStart
 extern "C" EMSCRIPTEN_KEEPALIVE float* rider_trajectory_info(){RIDER_LOCAL static float v[32];const auto& t=browserTrajectory;unsigned n=0;auto put=[&](const std::array<float,3>& a){for(float x:a)v[n++]=x;};
  put(t.hitPosition);put(t.heading);put(t.normal);v[n++]=float(t.patchId);put(t.prediction.position);put(t.prediction.velocity);put(t.integrated.position);put(t.integrated.velocity);
  v[n++]=t.predictedTime;v[n++]=t.apexTime;v[n++]=t.elapsed;v[n++]=t.integratedTime;v[n++]=t.speedLimit;v[n++]=float(t.status);return v;}
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/prediction_bridge.inc"
+#endif

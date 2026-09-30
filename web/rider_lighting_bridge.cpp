@@ -57,3 +57,6 @@ EMSCRIPTEN_KEEPALIVE float* shade_external_rider_lighting(const float* bounds,co
 EMSCRIPTEN_KEEPALIVE uint32_t* rider_lighting_selection(){return selection.ids.data();}
 EMSCRIPTEN_KEEPALIVE float* rider_lighting_info(){RIDER_LOCAL static float out[5];out[0]=bool(lightWorld);out[1]=refreshes;out[2]=draws;out[3]=selection.candidates.size();out[4]=0;for(auto id:selection.ids)out[4]+=bool(id);return out;}
 }
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/rider_lighting_bridge.inc"
+#endif

@@ -76,6 +76,20 @@ void browser_environment_painters_reset(); // web/environment_bridge.cpp (Fog, L
 RIDER_LOCAL static uint32_t weatherPainterResets=0;
 static void weather_painters_reset(){breathEnvironment.distance=-99999.f;weatherCamera.distance=-99999.f;browser_environment_painters_reset();++weatherPainterResets;}
 void shared_world_log(std::initializer_list<uint32_t>); // web/shared_world.inc
+#ifdef SSX_SNAPSHOT_REGISTRY
+// The rider-context snapshot's re-derivation after a restore (web/world_snapshot.hpp; docs/replay.md §2a): the PS2's restore
+// 0x26DBF0 resets every painter wrapper (0x2C03E8: +0 = -99999, the next step jumps to its payload) instead of restoring them.
+#include "world_snapshot.hpp"
+namespace {
+void painters_restore_save(unsigned){}
+bool painters_restore_reset(unsigned){weather_painters_reset();return true;}
+uint64_t painters_restore_hash(){return 0;}
+size_t painters_restore_bytes(){return 0;}
+bool painters_restore_check(unsigned){return true;}
+struct PaintersRestoreHook{PaintersRestoreHook(){ssx_snapshot::hooks().push_back({"painters (0x2C03E8 at the restore)",&painters_restore_save,&painters_restore_reset,&painters_restore_hash,&painters_restore_bytes,&painters_restore_check});}};
+[[maybe_unused]] PaintersRestoreHook paintersRestoreHook;
+}
+#endif
 static void weather_rider_fx_reset(){
  weather_painters_reset();shared_world_log({8u});
  if(browserHumanRider&&weatherReady)ssx::originalSplashReset(weatherSplash); // 0x111890: the splash of camera rider+0x870 (-1 for computer riders)

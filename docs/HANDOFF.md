@@ -1,3 +1,567 @@
+> **Live core installed: the WS15-gate core (2026-09-30, coordinator):** web/runtime core.js `c894e9b5dd1c3842…`, core.wasm `99c0958656063da4…` (was 991a2184…), copied byte-identical from local/ctm-events/core under the build lock, new inodes. No core source changed after that build, every live export is still there, and no page code calls the removed `reset_stance_seed` / `boost_meter_clear` / `npc_stats_seed`. Full ps2-captures ran on that exact build (264 clean); `npm test -- ps2-captures c0a` passes again on the live core. The new exports are used only behind pv eventReturnInWorld (off).
+
+> **CTM events in the world, stage 5: the WS15 gate passes with the page's own return; core to install; eventReturnInWorld stays off until (b) (2026-09-30, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) stage 5 "The WS15 gate".
+> - **Gate:** `ctm-events/c0a-ret3` (test-ps2-captures.mjs, `returnGate`): all six exact from WS15's record to the WS4 removal, the human on all 729 records to the capture's end, RNG / ranks exact, pair records from the return. Full ps2-captures on scratch core `local/ctm-events/core` (core.js c894e9b5..., core.wasm 99c09586...): 264 scenarios clean.
+> - **One code path:** web/event-return.js (`transportMapEnter`, `sessionReturn`, `sessionRidersLeave`) is what compare-ai-capture.mjs --ctm-full and main.js (cb.freeRide's in-world branch, eventInWorldEnd({session}), worldAiEnd, new `returnRun`) both call. No seeds: the old reset_stance_seed / boost_meter_clear / npc_stats_seed exports are gone.
+> - **New core exports (no values):** `rider_setup_player_reset` (149A88's slot-1 player setup: stance, size, stat getters 0.5), `race_world_player_setup(slot)` (its pair inputs: weight 65, stats 0.5), `location_entry_place` / `transport_map_enter` (112180 + 11DE60 / WS14's enter), `race_world_rank_mode` (128A48), `rider_peers_restart(loaded)` (10F3B8 on a rider's own 115D48 view), `rider_pose_step` (129160, the rider manager's pose pass that WS1's exit runs after the removal: one full-rate animation step).
+> - **Found by probe (ARMSX2, derived states):** the removal frame gives the human one extra full-rate animation step without physics (c0a-ret10 / c0a-ret11). **Correction:** it is *not* 128AF0's paused branch (0x128CB8 -> 120ED8): probe c0a-ret12 logged no call to it from the pause menu through the removal; the caller is WS1's exit 0x234750 -> 129160 (0x23488C: 11EB60(rider, 1.0) + 11EB98 + 3103F0 per listed rider), port `rider_pose_step`. The removed riders' pair records go off at the removal (12B030 = 12AE38 + 10F3B8), else 115D48 reacts to them (the old "RNG at tick 68").
+> - **Tools:** local/ctm-events/probe_entry.py (function-entry hooks, FILTER / LOG_F12 / LOG_REG), probe_calls.py per-site modes; capture_card.py reads the probe's own log size.
+> - **Page:** loads clean in Chrome (--mute-audio) and WebKit (webkit-driver) with the switches off and on. The in-world return itself has not been driven through the page's results -> map -> confirm yet.
+> - **Next:** (b) the replay behind in-world results and the Transport's re-run to the results-time frame (required before eventReturnInWorld goes on); then the carried-presses item (the coast after the Give Up, race ticks 1700..1987, is from the tick script and not gated), WS13, the WebKit trails re-probe.
+
+> **CTM events in the world, stage 5 (WS15 return) in progress: a player-faithful capture, the WS14 / WS15 rider rules from probes; gate not yet passed, eventReturnInWorld stays off (2026-09-30, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) stage 5 and [replay.md](replay.md) "What 0x2706F0 restores".
+> - **c0a-ret was an artifact:** its command-4 poke skipped stopAutoReplay 0x2706F0, so its riders were the auto replay's frame. `c0a-ret3` (local/ctm-events/caps) is a player's return: a real results Cross on Transport, the real map Crosses, records through the Give Up's 289 coast ticks (finish + 288), map savestate C+8 = 1990 (the stop frame and the WS14 frame tick once each).
+> - **Capture tool fix:** menu_pad.py's pad-hook switch was ps2_capture's F_SCORE word (DATA+0xF0), rewritten every record. It now has its own word 0x9C8F0 (asserted, and reserved in ps2_capture.py). Captures affected: c0a-ret2, the ret2diag runs; c0a-ret3's coast came from the tick script. No ps2-captures scenario uses any of them.
+> - **New probe tools:** local/ctm-events/probe_calls.py (jal sites -> logging stubs, t4..t9 only), route_hook.py, fill_manifest.py; capture_card.py RECORDS_OFF_AT_REPLAY / TRANSPORT_ITEM / PROBE / PROBE_AT_SAMPLE / CAPTURE_STOP_AT_SAMPLE.
+> - **Rules ported (scratch core only; full ps2-captures on f6e8d28d...: 263 clean):**
+>   - place_rider_region ends a crash (11DE60's 11FEC8(0) / 11FE78(0)) and a finished rider's control 10;
+>   - race_world_pair_restart (10F3B8), reset_stance_seed, start_row_reattach (112180), boost_meter_clear (WS14 enter 0x2362B4).
+>   - ai-racers.js resume: pair restart, every rider's game tick to 0 (1297C8, 0x1297F0).
+>   - compare-ai-capture.mjs: --ctm-full through the Give Up, coast, Transport ticks, WS14 grid hold, WS15 (all six) and the WS4 removal; --coast-only.
+> - **Page (behind eventReturnInWorld, off):** game-tick.js liveStopAt (in-world live ticks end at finish + 288 / + 408), the Transport's 2 ticks in cb.freeRide. The page's WS15 placement sequence (the WS14 grid hold, 112180, the stance rule, no rider reset of the human) is **not** ported to main.js yet.
+> - **Open for the gate:** Psymon's (setup slot 1 = Zoe) tick-0 speed limit (port 2299.30 against PS2 2301.00); the human's coast from the Give Up tick (the pause menu's Yes Cross is still in the shared pad history on resume: crouch without an edge, the port can't show it yet, separate item); the 149A88 caller at WS15 (indirect). Then (b): the replay behind in-world results with a re-run to the results-time frame at Transport.
+
+> **gcWatchdog never holds its kick memories across a core instantiation (2026-09-29, coordinator):** web/gc-watchdog.js gains `state.release()`, and main.js newCore calls `window.__gcWatchdog?.release?.()` before instantiating. JSC has few wasm fast-memory slots (3 without the large gigacage, i.e. iPhones). A kick held during a load (the load screen counts as a safe moment) could have left the new course core on a bounds-checked memory for the session. Dropped, unreferenced kick memories are fine: with no slot left, BufferMemoryManager runs a synchronous full collection and reclaims them. pv switchGC already drops its memories before instantiating. Still unverified on iPhone hardware: that the course core gets a fast memory after a kick (check `WebAssembly.Memory` mode / wasm perf on a device). switchGC stays OFF until then (docs/mobile.md "Load spikes").
+
+> **CTM events in the world, stage 4 milestone 4: the whole run from the Snow Jam arrival exact with six riders; pv nisSectionPoint (off) (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 4 "Milestone 4".
+> - **Result:** `ctm-events/c0a-full-ai` (compare-ai-capture.mjs --ctm-full): human, 5 riders, RNG, ranks and pair records exact through all 1666 race ticks, from free ride through the fly-over, approach, card and race.
+> - **NIS director's section point** (0x281370 / 0x281100 / 0x281400; savestates c0a-snap / c0b-snap): the outer camera's eye becomes a second activation point while a script plays.
+>   - Core `section_point`; engine Activation points.
+>   - cutscenes.js feeds it, gated by pv eventInWorldAi from the gate, or by new pv `nisSectionPoint` (off) for every streamed-world NIS. No existing gate moves.
+> - **Riders under WS1:** fresh (129E20), held at their approach actors, grid-placed keeping +0x2E4 etc.
+>   - Core `npc_fresh_rider`, `npc_grid_start`.
+>   - ai-racers.js `holdTick` / `start({gridStart})`; cutscenes.js `onRaceActors`; main.js `worldAiTick` via a new game-tick.js hook.
+> - **Remaining (no position effect):** +0x380 under the NIS hold is not written by the port's hold branch (core.cpp).
+> - **Captures:** `local/ctm-events/caps/c0a-full-ai.*` (capture_card.py --ai-dynamic), `c0a-snap.tick*.p2s`, `c0b-snap.tick*.p2s` (capture_card.py --snap).
+
+> **Load spikes on WebKit: attributed; two plain fixes free the old and boot courses' cores; pv `switchGC` and `loadCopies` (off) (2026-09-29, load-spike agent):** see [mobile.md](mobile.md) "Load spikes" (tools, attribution, tables) and [course-switch.md](course-switch.md).
+> - **Two heap policies:** this Mac has 64 GB, so JavaScriptCore runs its "Aggressive" growth (about 3.9x the live heap before a full collection). A phone runs the default (2x / 1.5x). `__XPC_JSC_forceRAMSize=6442450944` on the driver gives the phone policy (JSC options reach WebContent as `__XPC_JSC_*`).
+> - **Attribution:**
+>   - The "30 s into the world ride" spike is the booth map's per-frame LUI garbage (lui-player.js, ctm-map.js; ~47 MB/s in Chrome, +100-110 MB/s WebKit Malloc) under the Mac policy. It is not a load, and it did not spike under the phone policy.
+>   - The event-load spikes were old cores still resident (3 cores, WebAssembly Memory 371-429 MB).
+>   - After every load no full collection runs for 20-40 s, so the load's garbage stays resident.
+>   - Fetch bodies were held 3-4 times over while a load read them.
+> - **Plain fixes (web/main.js):**
+>   - `acrossBefore` (pv switchGate) is pruned to what is still in the scene right after unloadCourse (it kept the old course, and its core, through the whole next load). unloadCourse drops `worldRewarm`.
+>   - `ui.cb.standings` / `ui.cb.lineup` are module-level functions. As closures made inside loadCourse (which the streamed world never replaced), in JavaScriptCore they kept the menu boot course's whole load scope, its 128 MB core and ~130 MB of its load, through the first career ride (every run; FinalizationRegistry counting; JIT off too). This settles the runaway agent's open item: real, not a probe artifact. After the fix it is freed at the first full collection (menu -> career and menu -> Peak 2 Race, both policies, 4 of 4).
+> - **pv `switchGC`** (off; new web/switch-gc.js, test-switch-gc.mjs in test:all; JavaScriptCore only): the gc-watchdog's one-page WebAssembly.Memory kick.
+>   - Before a new core, while an earlier core's memory is alive (FinalizationRegistry), until it is freed or a full collection has passed.
+>   - Once more under the load screen before `ready`.
+>   - Cost: 150-250 ms plus 50-70 ms per switch.
+> - **pv `loadCopies`** (off; web/downloads.js, test-downloads.mjs section 11): one buffer per body of known size, and each reader's one copy from the shared bytes (json / text decode them). Its runs had the menu boot course's load 0.9-1.3 s longer (4 of 4, not understood).
+> - **Results** (career shape, 2 cycles, WebContent lifetime peak MB):
+>   - phone policy: before 986 / 1633; fixes 1120-1688 (median 1266); + switchGC 1014-1229; + switchGC, loadCopies 983-1225.
+>   - Mac policy: before 2242; fixes 1231-1370 (one 2845: a full-GC stall after the load); with the switches 1418-1487 at the menu boot, and one 3090 (a 20 s world load with the Transport map's LUI garbage).
+>   - Single loads, phone policy: menu boot 1030-1140, All Peak Race direct boot 1008-1058, BRA2 direct boot 1108-1200. Mac policy: 1135-1580.
+>   - A whole All Peak Race, phone policy, both switches on: p50 689 / p95 821 / max 971 MB, lifetime peak 988 MB, results reached.
+> - **Recommendation:** switchGC on after a check on iOS hardware (same fast-memory kick as gcWatchdog). loadCopies stays off.
+> - **Measuring pitfall:** `WeakRef.deref()` polled during a concurrent collection keeps its target for that cycle. Count cores with a FinalizationRegistry; the loadpeak RECORDER's `cores` did deref.
+> - **Open:**
+>   - the LUI player's per-frame garbage (map and load screens; the Mac-policy spikes);
+>   - the first career load's own transient (phone policy 1.19-1.25 GB);
+>   - switchGC on iOS hardware.
+> - **Checks:** node --check; test-downloads, test-switch-gc (new), test-lazy-course and test-ride-warm (headless Chrome) pass. The capture gates are not affected: page-side JS only, the core is unchanged.
+> - **Tools:** `local/browser-validation/load-spikes/` (probe, run / bootcore / chralloc / sum / tl, the probe and bisect vite configs).
+
+> **CTM events in the world, stage 4 milestone 3: both heats natively exact with six riders; the whole run from the arrival captured and compared (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 4.
+> - **The 461 was the collect path.** In CTM (0x535C11 = 0) the uncollected collectibles are listed and their slot-1 programs draw. `compare-ai-capture.mjs --in-world-ai` sets it, with the mask derived from the countdown savestate's DeadNode collectibles through the new core export `stage_collection_list` (index = 30C4A8's list position, 0x30C510..0x30C548).
+>   - `ctm-events/c0a-race-riders` / `c0c-race-riders`: human, 5 riders, RNG, ranks and pair records exact to the end. c0c needs a core with `stage_collection_list` and is skipped before that.
+> - **Whole run:** `local/ctm-events/caps/c0a-full-ai` (capture_card.py `--ai-dynamic`) and `compare-ai-capture.mjs --ctm-full ARA1` (web/ctm-in-world-setup.mjs), pending gate `ctm-events/c0a-full-ai`.
+>   - The riders ride from the countdown's tick 0 (`anchorTick: 0`).
+>   - 129768's list clear at the Continue: new core `section_restart`, called from startRun.
+>   - Remaining: the PS2's NIS director adds the active camera's point to the section activation under the fly-over (0x281370 -> 0x1033B0, 0x281100). The port scans around the rider only: RNG 4 draws behind from free-ride tick 2854, riders 185..438.
+> - **Browser:** Chrome and WebKit race cleanly on live bfff10bb with the new startRun order.
+> - **Files:** main.js, ai-racers.js / ai-race.js (anchorTick), compare-ai-capture.mjs, ps2-capture-ai.mjs (the tick-0 restart of an `ai_dynamic` capture), test-ps2-captures.mjs; core section_gameplay.inc (`section_restart`), stage_script_gameplay.inc (`stage_collection_list`), both scratch; local/ctm-events/capture_card.py.
+
+> **CTM events in the world: the in-world race start is exact (c0a-full through race tick 1507); core event_grid_start keeps the rider and the world (2026-09-29, physics agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) stage 3 "The in-world race start".
+> - **Live core** core.wasm bfff10bb0a642cb7… / core.js ff6e42f6744cac9c…. Full ps2-captures on the same build: every gate at its baseline or better (the events agent's new c0a-race-riders / c0c-race-riders pass on it).
+> - **Cause (traced):**
+>   - The CTM countdown's rider equals the Single Event anchor except the words WS1's hold and 11D390 leave (rider block diffed): the motion-0 stamps (owner +0x10 / +0x14), the boost words, +0x380 / +0x390, ...
+>   - 13C7A8 scales the push-off velocity by 0.7 + 0.01 × (tick − leave − 40). The game tick restarts at the Continue, so a CTM start keeps 0.7. The anchor's leave 0 gave c0a-race 182's 160 cm/s.
+>   - 308DB8 (the WScript missions' +0x4C programs, through the stage VM 2227D0, Hide 2FFB50 → 350E90) hides every Big Challenge marker at free ride's first tick (entry probe). The in-world event start reset the stage world (browser_reset_pickups), so the port hit flg_ARA1_BigCFlag_1002 at race tick 829.
+> - **Core:**
+>   - `event_grid_start(x, y, z, heading)`: reset_race + reset_rider + start_event with the stage world kept (`browserEventWorldKept`). It keeps the stamps, boost words, +0x380 / +0x390 and +0x2E4, and sets grounded (a streamed world's reset_rider snap misses).
+>   - `event_route_seed(docText)`: the grid route from the event document.
+>   - `init_race` keeps a running session's total tick count.
+>   - QA exports: `ground_state_seed`, `ground_tick_seed`, `stage_instance_flags`.
+> - **Page** (events agent, wired): event_route_seed, _reset_pad_history, event_grid_start; no _reset_race first (it would reset the world).
+> - **Comparers:**
+>   - web/ctm-in-world-setup.mjs: the arrival seeds and the in-world gate / hold / start, shared by compare-ps2-capture.mjs `--ctm-in-world CODE` and the events agent's compare-ai-capture.mjs `--in-world-ai`.
+>   - `--ctm-countdown` (both comparers): the kept words from a countdown savestate's record 0.
+>   - compare-ai-capture.mjs also seeds the career cash (HUD slot 0x19).
+>   - The +0x2E4 gate is by row (the in-world tick restarts).
+> - **Gates:**
+>   - `ctm-events/c0a-full` (new, runs/ctm-events link): exact through race tick 1507. 1508 is a PS2 soft collision with no instance contact: a computer rider, stage 4.
+>   - `ctm-events/c0a-race` / `c0c-race` (human, now gated): exact through 309 / 318. The idle upper reaction looks for computer riders.
+>   - Six-rider (pending): the human is exact to the end; the RNG leaves at 461.
+> - **Open:** c0a-full's score from the gate (12B180 commit, the event HUD bank's stale words; gated through 2821). engine/riding.hpp keeps its own start.
+
+> **CTM events in the world, stage 4 milestone 1: pv `eventInWorldAi` (off, QA), the Snow Jam qualifier with its 5 computer riders in the streamed world (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 4 "Built".
+> - **Key fact:** each event package's collision, terrain and rails are exactly its resident locations' (all 17 events, same order and tracks). So each rider context loads the event package in parts (`event_world_bodies_only`: the shared camera terrain stays the streamed world's), and the others copy it by key.
+> - **Core (scratch, not live):**
+>   - `world_event_apply` kind 9, node state: the human's DeadNode / Hide / flag changes reach the contexts;
+>   - `world_node_states[_apply]`: the start sync.
+> - **Page:** ctm-event.js / main.js make the riders under the fly-over and attach them in `cb.eventInWorld`. The contexts are reused through a pool (no destroy). The startRun in-world start uses the physics agent's `event_route_seed` + `event_grid_start`.
+> - **Approximation (unconfirmed):** the CTM collectible magnets live in the human's context only (see the doc).
+> - **Tests:** `web/test-ctm-event-ai.mjs` (new, in test:all). QA `local/ctm-events/qa/event4.mjs`: Chrome and WebKit race 40 s clean.
+> - **Six riders (live db807fea):** `compare-ai-capture.mjs --in-world-ai --node-seed` (the page's rider path) scores the same as the event package. With the capture's section draws (`--no-sections`) all five riders and the RNG are exact to the end in both heats: new gates `ctm-events/c0a-race-riders` / `c0c-race-riders`. The remaining 461 is the human's section pass (3 x 0x341bbc at tick 460 on the PS2), not the contexts.
+> - **startRun (pv eventInWorld):** no `_reset_race` before `event_grid_start` (the physics agent's order: an offline start keeps the stage world). It needs the physics agent's next core.
+
+> **pv gcWatchdog ON (2026-09-29, coordinator):** the WebKit full-GC stall watchdog (web/gc-watchdog.js; docs/mobile.md "The WebKit memory runaway") is switched on after the runaway agent's report. No-op while healthy (26 game runs, 0 kicks); a rescue costs one frame of up to about 60 ms. The stall is a JSC bug seen on the 64 GB Mac's Aggressive heap policy (about 8 / 43 menu -> MOUNTAIN runs), which is Owen's desktop Safari; with the phone policy it didn't occur (0 / 34). The WebKit bug report draft is in docs/mobile.md. ~~Open: the menu flow's boot-course core (128 MB) stays alive in WebKit through its 5 computer-rider groups~~ Settled by the load-spike agent (entry above): two loadCourse closures (`ui.cb.standings` / `lineup`) held it; fixed.
+
+> **The WebKit memory runaway is JavaScriptCore no longer running full collections; watchdog behind pv `gcWatchdog` (off); main.js keeps no old scene / core after a switch (2026-09-29, WebKit runaway agent):** see [mobile.md](mobile.md) "The WebKit memory runaway".
+> - **Cause (JSC, not our code):**
+>   - The full-GC timer's delay is lastFullGCLength / timeSlice(bytes x deathRate). deathRate is 0 when a full collection ends with sizeAfter >= sizeBefore.
+>   - Extra memory allocated during a concurrent full collection counts as visited, but the cycle's allocation counter is reset. So a load that allocates big buffers during a full collection can leave deathRate 0 and the timer never armed again.
+>   - After that only Eden collections run, and everything a full collection frees piles up: WebKit Malloc, dead cores (the "WebAssembly Memory" / JS VM Reservations growth), jettisoned JIT code (the 512 MB pool, then LLInt), GPU / audio wrappers.
+>   - Detector: an in-page FinalizationRegistry on old-generation markers. Healthy WebKit frees them every 3-7 s. Every runaway frees none after the load.
+> - **Where:** this 64 GB Mac's JSC policy (Aggressive growth):
+>   - menu -> MOUNTAIN, ~8 of 43 runs;
+>   - menu -> Peak 2 Race, 1 of 6. The audio agent's "DRA4 crossing" runaway is the same stall: it starts at the load and only shows at DRA4's streaming.
+>   - Under the phone policy (`__XPC_JSC_forceRAMSize=6442450944`): 0 of 24 game runs and 0 of 10 repro runs. iPhone hardware not checked.
+> - **Recovery:** 1-4 one-page `new WebAssembly.Memory({initial: 1})` held together. JSC's BufferMemoryManager requests a full collection once half its fast-memory slots are in use.
+>   - On a live runaway: footprint 1589 -> 927 MB, or 1251 -> 838 MB. The longest frame was 62 ms, once.
+>   - 1 GB / 4 GB ArrayBuffers do nothing.
+> - **pv `gcWatchdog` (off, `web/gc-watchdog.js`, one line in main.js after installYieldShim, JSC only; QA `window.__gcWatchdog`):**
+>   - It kicks when an old marker has waited 40 s while young markers are still freed. 40 s is over twice the longest healthy gap measured: 17 s on the Mac, 13 s under the phone policy.
+>   - The kick is one held one-page memory a second until a full collection happens, at most 6. It waits up to 5 s for a load screen / pause / cutscene, with 30 s between episodes.
+>   - Results with it on: 26 game runs with 0 kicks and 0 runaways; minimal repro page: 1 stall, recovered 3 s after the kick with a 21 ms longest frame.
+>   - New `web/test-gc-watchdog.mjs` in test:all.
+> - **main.js (plain fix):** `acrossBefore` (pv switchGate) and `loadBefore` were never cleared. They kept the previous course's scene and, through its closures, its core. Now cleared at `live=true`.
+> - ~~**Open (WebKit):** the menu flow's boot-course core (128 MB) stays alive for the whole ride through its 5 computer-rider groups.~~ Settled (load-spike agent): the holder was `ui.cb.standings` / `ui.cb.lineup`, closures made inside the boot course's loadCourse; fixed in main.js.
+>   - Not reachable from window, not pending GPU promises, not listeners, not three's caches, not the audio leak.
+>   - Next step: a Web Inspector heap snapshot.
+> - **WebKit bug report draft** (mechanism, minimal repro `rw/reprosrv.mjs`, both policies) is in mobile.md, for Owen to file.
+> - **Files:** web/gc-watchdog.js (new), web/test-gc-watchdog.mjs (new), web/main.js, web/pv-flags.js, web/package.json, docs/mobile.md.
+> - **Tests:** test-gc-watchdog, test-lazy-course, test-ride-warm pass.
+> - **Scratch:** `rw/` in this agent's scratchpad:
+>   - a probe dev server on 5281 (injects `probe.js`: instantiations, GPU object counts, full-GC markers, load events, listeners);
+>   - `trial.mjs` (repeated WebKit trials, shapes apj / apr / fr / free / p2r, `--exp` kicks, `--old` retention, `--clear`);
+>   - `kicksrv.mjs` / `reprosrv.mjs` (test pages).
+
+> **CTM events in the world, stage 3: pv `eventInWorld` (off, QA), the Snow Jam event in the streamed world with no load; live core 06c4862e (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 3 "Built".
+> - **Live core** core.wasm 06c4862ef8410d47... / core.js 1f34a77b7fe5b076...: scratch build of the current tree (only web/peak_world.inc's `event_course_seed` new). Full ps2-captures 257/257. test-ctm-event-world is in test:all.
+> - **Flow:** main.js cb.eventInWorld / introInWorld / eventInWorldEnd, `worldEvent` guards (gate / station / FAQ / Big Challenges / free-ride HUD), startRun's event start and audio. career-ui begin `inWorld`, ctm-event.js.
+>   - Chrome and WebKit: gate → fly-over → approach → idle + card → countdown at the PS2 grid spot → race, all in MOUNTAIN, no load screen.
+> - **Capture:** `local/ctm-events/capture_card.py` + `caps/c0a-full` (arrival → free ride → gate → hold → card → race, 3000 records).
+> - **Not exact yet:** core `begin_event_rider` seeds the Single Event anchor over the carried rider. The PS2's 11D390 event branch (0x11D564) keeps it. Needs a core `event_grid_start` (physics) and a comparer in-world mode for c0a-full.
+
+> **CTM events in the world, stage 2: pv `eventWorldData` (off), the event's own data read at the gate; core `event_course_seed` (scratch) (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 2 "Built".
+> - New `web/ctm-event-plan.js`, called from ctm-event.js at the fly-over: riders, lineups, race-event document, spawn, route, meter, slope-style list, camera triggers, GO starts. Inert.
+> - All 17 event courses' race / reset paths are their streamed location's bank, so the plan's exporter change and `init_race_event` were not needed.
+> - Core `event_course_seed(code)` (web/peak_world.inc): the event start seeds, with the streamed world's lists kept.
+>   - Built in local/ctm-events/core. Targeted ps2-captures (9) pass on it; **the live core is not rebuilt** (the coordinator's call, or the next stage's).
+> - New `web/test-ctm-event-world.mjs` (not yet in test:all). Chrome and WebKit: the plan resolves by the switch.
+> - Also: test-ride-warm's `course === 'PEAK1'` is stale since pv peakRelease is on (quality=low now rides MOUNTAIN).
+
+> **The tuck-onset +0x2E4 difference settled: 11B3F8 was exact; the comparer's arrival seeds, the route tick and the reset-tick order were not (2026-09-29, physics agent):** see [core-gameplay-fidelity.md](core-gameplay-fidelity.md) "Speed limit".
+> - **Cause (traced):**
+>   - A record is taken at the provider exit 0x128630, after 120F20's `jal 11B3F8` (0x121024). So record k holds L(k), the limit tick k uses, computed with the crouch +0x220 as tick k-1 left it.
+>   - `--peak-arrival` seeded record P's L(P), one step ahead. That is the 0.42 cm/s on the tuck onset (bra2-tuck-late 2071). Seeding from P-1, as before the §6.8 change, is exact.
+>   - The early tuck's 0.09 cm/s: the unseeded route heading +0x4CC. The browser had the course seed's -2.98, the PS2 the carried -0.4016. 13C948's heading weight was 0 with a location id (+0x434) of 17 or more, so the drive and its crouch term were dropped.
+>   - The late tuck's 2227 is not the limit (1150 cm/s against a 2335 limit). 112338 switched paths at 2225 instead of 2280. Its `lateral > 500 && tick % 60 == 0` uses the rider manager's +8 (1298C8, the capture's tick field). The browser's copy was 2773 against the PS2's 2057.
+>   - The event-race "gap from 187" was the same one-record misreading. Its tick-244 miss was physics_info[0]'s m/s rounding.
+> - **Core (live, wasm sha256 c9d783585a62e1d93907572f32b0f5b35825331c0bd43b95eb605438ea43541f):**
+>   - `step_rider` runs 11B3F8 before this tick's reset requests: Select, 1210B0, the controllers. A reset tick's limit was motion 3's: tech-select-* and tech-oob-dance 3297, setpieces/full 5544. Physics were exact because the limit never binds there.
+>   - `browser_game_tick_restart` also moves the race clock's totalTicks. The port keeps 1298C8 twice; a peak-run crossing restarted only motionTick.
+>   - New `arrival_carry_seed(heading, location)` and `speed_limit_seed_held`.
+>   - physics_info[6] now gives the limit exactly, in cm/s; race_result_info[6] gives totalTicks; ground_state_dump now includes +0x470 and +0x4CC.
+> - **compare-ps2-capture.mjs:**
+>   - `--peak-arrival` seeds the limit from record P-1 (`LIMIT_AT_PLACEMENT=1` gives the old seed), and +0x4CC / +0x434 / the game tick from record P (`NO_ARRIVAL_CARRY=1` skips them). An arrival now needs the new core.
+>   - `--seed-limit` holds record 0's value for tick 0.
+>   - The limit is read exactly, and `--fields` compares +0x2E4 with record i.
+>   - New summary fields `speedLimitAgreed` and `firstSpeedLimitDivergence`.
+> - **test-ps2-captures.mjs:** +0x2E4 is gated from its first equal tick while the physics are exact, and a limit that never becomes equal fails. Event-start course seeds can hold a different retained limit than the capture's savestate; it becomes equal during the countdown (crows-invert 132, monster-deepsky 136).
+>   - New gates: `ctm-events/bra2-tuck-late` and `-early` (runs/ctm-events links), both exact to the end.
+>   - Pending c0b-bra2-arr: exact through 2413 (the NIS hold 2414), was 2057.
+> - **Checked:**
+>   - ps2-captures 257/257 on this core: 255 at their baselines plus the 2 new gates; the 32 that first failed on the new limit gate are now exact on it.
+>   - node: speed-limits, rider-reset, forced-reset, detached-reset, route-progress, crash-gameplay (both), rail-gameplay, steering-gameplay, race-finish, peak-release, peak-run, peak-world.
+> - **Left:** +0x248 (the +0x244 lean rate) is 0.05 in the browser and 0 on the PS2 after an arrival. Not gated and not investigated. engine/riding.hpp `beginFrameState` (the prototype rider) keeps the old order.
+
+> **CTM events in the world, stage 1: pv `worldUnderCuts` (off), the world ticks under the fly-over and the arrivals (2026-09-29, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) §4 stage 1 "Built".
+> - **What changes:** the WS1 fly-over and the WS10 arrival lists play over the ticking world, and the rider is held by the cut's rider actor (core nis_hold) instead of a HOLD context. Only movie steps push a HOLD (`WS10 movie`).
+>   - The arrival's ride starts before the list and the rider is placed after it (career-ui.js enterWorld `arrival`, main.js cb.arrivalPlace).
+>   - Files: main.js (nisCut / nisCutHold / nisCutEnd, onMovie, the gate pause, cb.cutscene, cb.arrivalPlace), cutscenes.js (onMovie), career-ui.js, pv-flags.js.
+> - **Checked, Chrome and WebKit:** new career: tick 0 through the ABC1 movie, then 2 → 531 under #153. Snow Jam gate: 3631 → 3890 under #94, with the rider at the PS2's hold position to the cm. No context left open.
+>   - With the switch off, test-pause-contexts, cutscenes, ctm-flow, presentation and world-warm pass.
+>   - test-ride-warm timed out under load (35-38).
+>   - The capture gates are waiting for the physics agent's core.
+> - **Deferred to stage 5:** WS13 / #152 (the event core has already been replayed or ended by then).
+> - **Separately:** the §6.8 speed-limit claim is withdrawn (it was comparer seeds; the physics agent is fixing it).
+
+> **Whole-mountain memory on phones: the location release follows the PS2's rule, pv `peakRelease` ON (2026-09-29, whole-mountain memory agent):** see [mobile.md](mobile.md) "Whole-mountain memory" (target, tools, every run) and [ctm-parity.md](ctm-parity.md) "The PS2's location release" (the rule).
+> - **Measured** (WebKit through the driver, phone tier, footprint sampled outside the page, page polled every 3 s):
+>   - All Peak Race, All Peak Jam and Peak 2 Race, landscape and portrait, direct and from the menus: all reach their results;
+>   - the long MOUNTAIN free ride with 3 Transports (phone and desktop);
+>   - the career shape with 4 event cycles.
+> - **Before (switch off), All Peak Race:** WebContent p95 1187 / max 1318 MB, core 154 -> 319 MB.
+>   - A peak run never freed collision (a `!route` guard).
+>   - It read 2 rows ahead plus every hub connector's row (39 locations loaded by the finish).
+>   - Stations built the nearest connector's course, and packages stayed 45 s after their location left.
+> - **Now (web/free-ride.js, web/peak-world.js; JS only, the core is unchanged):**
+>   - A location no row wants and nothing reads ahead is freed at once, as the PS2's eviction (T+8) frees the track: draw package,
+>     environment slice, collision.
+>   - A peak run reads ahead only its route's next row. Unfed read-ahead slices are dropped (`dropQueued`).
+>   - Draw releases wait while a needed package builds.
+>   - All Peak Race: p95 878 / max 1076 MB, core 128 MB flat, 99 of 125,776 frames over 34 ms, 0 stalls.
+>   - Every shape measured is smaller: career-shape lifetime peak 2620 vs 3044 MB.
+> - **pv peakRelease is ON.** Every tier now rides the career free ride in MOUNTAIN (`mountainFreeRide`: no tier split).
+> - **Checks:**
+>   - Capture gates pass: allpeak apr / p2r / apj, ctm/fr-dra4a-full, peak3/fr-throne-unload, peak2/fr-d-glide, peak1 fr / race /
+>     green.
+>   - Tests pass: test-peak-release / ctm-flow / ctm-stream / ctm-left / mountain-world / mountain-ride / peak-mountain / peak-run /
+>     collect-restream / big-challenges / world-warm.
+>   - Re-entry heights after release and re-feed: 0 lost. Gravitude's 28 cm changes are the world's own moving collision; they also
+>     appear without any release.
+>   - Desktop A/B: 0 stalls both ways.
+> - **Target** (headroom reasoning in mobile.md): at most 1.0 GB steady and 1.2 GB for peaks. The peak runs now meet the steady
+>   target. Not yet met, and none of it comes from the location release:
+>   - course-switch spikes of +1.2-1.9 GB WebKit Malloc for 1-3 s (event load / return), with the switch on or off;
+>   - 1.3-1.47 GB load transients (menu boot, direct boot);
+>   - a WebKit Malloc climb through a run;
+>   - about +200 MB kept from the menus (a second 128 MB wasm memory, probably the FE stage core);
+>   - the WebKit runaway (2 of 9 runs; its own agent now).
+> - **Measuring pitfall:** two WebKit windows side by side throttle the occluded one to about 28.5 fps. Take frame numbers from runs
+>   alone.
+> - **Tools and runs:** `local/browser-validation/whole-mountain-memory/`: apr.mjs (WebKit pilot + footprint), analyze.mjs,
+>   loadpeak.mjs, chr.mjs / abuf.mjs / retainers.mjs (Chrome heap), dyn.mjs, era5-release.mjs, runs/.
+
+> **Audio memory: voices let go of their nodes, only the playing / next songs keep their bars, speech lines by range (pv `speechRange`, off) (2026-09-29, audio leak agent):** see [audio-logic.md](audio-logic.md) 9.15 and 9.12 "Memory".
+> - **Node leak (no switch; nothing plays differently):**
+>   - A finished sfx voice disconnected only its output. Its source, gains, LFOs and panner stayed wired, and ended voices were held by `audio-world.js contactVoices` / `scriptVoices`.
+>   - Speech lines, music bars, stopped songs' chains and the LoadingScreen loop were never disconnected.
+>   - The 3BB588 pool-failure path left LFO sources looping forever.
+>   - Now every finished, stopped or failed chain disconnects, and an ended handle drops its nodes.
+>   - Chrome, Peak 2 Race from the menus (phone tier, live after GC): sources 17 -> 227 in 16 min before, 12 -> 10 after; panners 8 -> 218 before, 5 -> 5 after; gains 58 -> 220 before, 67 -> 69 after. Free ride stays flat too.
+> - **Range cache:**
+>   - `pathfinder.js musStreams` kept the last 4 songs' bars: 38.6 MB at 15 min. It now keeps only the song playing (loadSong role `play`) and the next one (role `next`, prefetchPicked): 15.9 MB.
+>   - Inside a song, a 24 MB safety cap: played bars go first, then LRU. Lower caps made the read-ahead fetch 2-4x the song again (simulated).
+> - **Speech (pv speechRange, off: the coordinator decides):**
+>   - The whole `.dat` of every bank used stayed for the session (21.6 MB of whole files at 15 min in the race; DJ_Hub_Char_Stories is 35 MB). Now each line is its own Range request into a 2 MB LRU (race 1.3 MB, free ride 1.7 MB).
+>   - Lines are fetched at dispatch and predicted at each post: the scheduler's next dispatch runs on a copy of its state.
+>   - Same ticks and PCM when a range answers within ~30 ms. Beyond that, a line is +1 tick per ~16 ms (70 ms: +3 ticks). Before, a bank's first line waited for its whole `.dat`.
+>   - `web/server/mp-server.mjs` now answers Range requests from the file, not its precompressed .gz: `.dat` files gzip to 80-84 %, so the host would have sent whole bodies.
+>   - Not checked: Cloudflare's answer to a Range request on a cache miss. A 200 keeps that bank whole, as before.
+> - **WebKit (phone tier, 10 min):** WebContent ran away from the DRA4 crossing in 4 of 6 runs, old audio and new alike, with wasm memory growing alongside (not audio). The flat runs are within the runs' spread (p50 1191 / 1164 MB).
+> - **Tests:** game-audio, audio-timeline, audio-sfx, audio-glitches (new "node lifetime"), ctm-audio, music-stream (roles), audio-decode, challenge-audio, audio-menu, and new test-speech-range (in test:all). audio-timeline, ctm-audio, game-audio and challenge-audio give the same output with speechRange on.
+> - **Files:** web/sfx.js, pathfinder.js, audio-speech.js, game-audio.js, audio-world.js, pv-flags.js (`speechRange`), server/mp-server.mjs, test-audio-glitches.mjs, test-music-stream.mjs, test-speech-range.mjs (new), package.json.
+> - **Open:** the game-audio `once()` cache keeps each sfx bank's bytes after its slot unloads (~0.1 MB per location bank).
+> - **Scratch:** `leak/` in this agent's scratchpad: nodes.mjs (Chrome node counts + snapshots), bigpaths.mjs / mapkeys.mjs / rootpath.mjs (snapshot retainers), churn2.mjs (stream-cap traffic), vite.old.config.mjs (serves the pre-fix audio modules on :5291).
+
+> **Pause contexts: one path, switches retired; the card hold and Continue on frames; the CTM overlays' sound set (2026-09-29, pause-contexts agent):** see [pause-contexts.md](pause-contexts.md).
+> - **Deleted:**
+>   - main.js's `paused` flag and `pause()`, the overlay's legacy halves, transportInWorld's `if(paused)pause(false)`;
+>   - cutscenes.js `idleFrozen`;
+>   - big-challenges.js's `pause` parameter;
+>   - pv `pauseContexts` / `cardFreeze` / `bcPromptAudio` (PV_DEFAULTS and every read).
+> - **The card on frames:**
+>   - The update that first sees a stopped NIS runs it to its next whole tick, then holds it, so the idle holds at t = 1.0 exactly (it was 1.0 or 2.0 with rAF jitter).
+>   - Continue is refused outside the ctm-objectives phase 5 on every input path (the wall-clock `cardOpenAt` guard is gone; `cardTicks` still times the card's draw).
+> - **The pad menus drive the UI frame counter:** one `phases.step()` before each PS2 pad update (web/gamepad-menus.js), so on a dropped display frame each key meets its own frame's phase.
+> - **QA:** `ssxQA.start()`'s hold is SIM-only (HOLD), so cutscene probes play under it.
+> - **Port bug fixed (finalpass "session" / "quit-save"):** ctm-quitsave, ctm-bcsure, ctm-session and ctm-sessconfirm played the front end's sounds (0 / 2 / 4) instead of the overlay's (9..13).
+>   - Evidence: 0x39B5E4 blocked end = snd 0xD; 0x20DB64 Triangle = kind 6 -> ev 9.
+>   - Fix: audio-menu.js PAUSE_SCREENS, plus `sfx()`.
+>   - Not added (unconfirmed): ctm-gopeak, ctm-enterlodge.
+> - **Checked:**
+>   - node: 33 related suites, including test-pause-contexts, test-ctm-flow, test-gamepad and test-start-rules.
+>   - ps2-captures: 1/1 (255 scenarios).
+>   - pauseprobe: 6/6 in Chrome and WebKit.
+>   - cardprobe: t = 1.0 in both.
+>   - finalpass: 15/15 in Chrome, 13-14/15 in WebKit. WebKit's misses are presses its headless rAF delivers a frame late; the gate records are exact.
+
+> **CTM events in the world: R6 settled, the Snow Jam gate scored, a free-ride speed-limit difference found (2026-09-29, CTM events-in-world agent; tools, tests and docs only):** see [ctm-events-in-world.md](ctm-events-in-world.md) §6.8.
+> - **Correction:** 2300F0 runs only online (WS3 enter tests [0x534B30], 0x234B14). Offline, nothing resets a first heat's world.
+>   - The card's Continue runs the rider manager's restart 129768 (via C vt+0xCC+0x28(3) at 0x236D28): the section activation is emptied and rescanned under the event kind, and the race clock is zeroed.
+>   - 230180's set-piece bucket-8 purge (0x2301C4) destroys the DeadNodes (destructor 0x360A28; entry probe: 47 calls).
+> - **Snow Jam gate scored:** `ctm-events/c0a-gate-arr` replaces the unscored c0a-gate.
+>   - Built from menus/ctm/state-transport-confirm with a stale ps2_menu_capture hook removed, then ara1-screen10, then an open-loop 314 neutral + 20 left.
+>   - Exact on `--course PEAK1 --peak-arrival` through 2852 (the gate at 2822 and its 30 riding ticks). It leaves at the NIS hold (2853).
+> - ~~compare-ps2-capture.mjs --peak-arrival: +0x2E4 seeded from the placement record~~: withdrawn. The physics agent showed that P−1 was right (records are taken after 11B3F8). The 0.09 cm/s is the missing +0x4CC seed and the game-tick seed; that agent is fixing the comparer (ctm-events-in-world.md §6.8).
+> - ~~For the physics owners: the port's 11B3F8 disagrees on a tuck-onset tick~~: withdrawn (comparer seeds, not the port). The details below are kept for the record.
+>   - +0x2E4 is 0.42 lower; physics diverge when the limit binds (bra2-tuck-late: exact through 2226, then 834.26 vs 831.58 cm/s).
+>   - With the tuck held through the arrival, the first tick's drive already differs (c0b-bra2-arr's 0.09 cm/s).
+>   - event-race shows the same +0x2E4 gap from tick 187 (ungated).
+>   - Repro: `local/ctm-events/caps/bra2-tuck-{late,early}.bin`.
+
+> **CTM events in the world: stage gates ready, six-rider career compares fixed (2026-09-29, CTM events-in-world agent; tools and tests only):** see [ctm-events-in-world.md](ctm-events-in-world.md) §6.7.
+> - **Career lineups:** derived career countdowns `local/reference/pcsx2/characters/career/ARA1-{qual,semi}-zoe` (with READMEs); `tools/export_lineups.py export-career` → `local/assets/native/ARA1/lineups-career/`. The final's document is unchanged. `build` was not run.
+> - **`web/ps2-capture-ai.mjs` `rosterOrder`** (used by `compare-ai-capture.mjs`): ps2_capture stores the computer riders' blocks in actor-address order, while documents list them in roster order.
+>   - WS13-rebuilt heats allocate their riders out of order, so every rider was compared with another's grid spot.
+>   - All 62 existing --ai-state captures have the identity order; event-race-ai, ko-attack and parity-ai/metro-race still pass exact to the end.
+> - **`web/test-ps2-captures.mjs`:** new `pending: SWITCH` cases, skipped unless `PENDING=1` / `ONLY`, and scored without failing:
+>   - `ctm-events/c0a-race`, `c0c-race` (human and six riders);
+>   - `c0b-ass1-arr` (exact through the gate tick + 30);
+>   - `c0b-bra2-arr` (open: 0.09 cm/s at the placement tick with the pilot pad);
+>   - `c0a-gate` (unscored until a PEAK1 seed).
+>   - Captures are linked from `local/ps2-capture/runs/ctm-events/`.
+
+> **Pause contexts and screen phases: the PS2's freeze stack and phase machine replace the port's pause flag, wall-clock lock and setTimeout outros (2026-09-29, pause-contexts agent):** see [pause-contexts.md](pause-contexts.md) (as built).
+> - **pv `pauseContexts` (off; proposed on together with ps2MenuInput):**
+>   - `web/pause-contexts.js`: the stack 0x5366E8 with the masks 0x4428F0. `paused` is derived (`isPaused()` = top mask bit 0x01), and the tick loop reads `simFrame()`: a pop runs the tick from the next frame (E11).
+>   - Owners:
+>     - main.js `overlay` (context 2 + the audio pause): pause menu / MCOMM / station prompt / map / FAQ. It pops at Return, Give Up and the Transport's Yes, and drops at Quit, Restart, a world load and the results.
+>     - the `ctm-objectives` screen: context 1.
+>     - big-challenges.js: context 3, audio:false.
+>     - port HOLDs named by world state: WS1 ride-in / event transport, WS10 cutscene hold, WS11 transport (no NIS hold), WS14 station cut (no NIS hold).
+>   - cutscenes.js: the NIS clock obeys bit 0x08 and the fade keeps its own clock.
+>   - startRun / stopRun `console.warn` any leaked owner and then clear the stack.
+> - **The phase machine always runs** (`web/screen-phases.js`, 0x39ECB0 phases 2/4/3/5/6/7; a 60 Hz UI frame counter from the pad menus' rAF loop). Its locks and outros (menu-rules.js data) apply with pv ps2MenuInput. Deleted: ui.js `inputLockUntil` and career-ui.js's `setTimeout` outro. With both switches off nothing changes.
+> - **Frames:** MCOMM +60 dead / +61 taken (PS2 +60 / +62), Yes / No +23 / +31, Map +23 / +31, Rider Details +32 / +38, No -> pause +83 (+82 dead): two passes, no +2 constant.
+> - **Checked:**
+>   - node: test-pause-contexts (new, in test:all).
+>   - test-ctm-flow (the stub steps the phases, plus a +21 / +83 block), test-gamepad and test-start-rules (PS2 pad-history variants): all pass with {}, {pauseContexts}, {ps2MenuInput} and both.
+>   - Also: cutscenes, big-challenges, ctm-*, fe-screens, audio-*, presentation (one regex updated).
+>   - ps2-captures: 1/1 (255 scenarios, at their baselines; the comparer imports none of the edited files).
+>   - Browser, Chrome and WebKit, muted: local/ctm-decomp/screens/pauseprobe.mjs 6/6 each (E11 on the UI clock; an MCOMM Transport to Yellow on MOUNTAIN, 9.1 s / 11.2 s, nothing held after). cardprobe.mjs: the idle held at t = 1.0 with fadeT running. finalpass.mjs with `PV=ps2MenuInput,pauseContexts`: 12/15 Chrome, 11/15 WebKit. The misses are session and quit-save (failing before), the rAF-flaky repeat, and WebKit's rAF-counted +60.
+> - **Follow-up once on:** delete the legacy branches (the `paused` flag, `pause()`, cutscenes `idleFrozen`, pv bcPromptAudio, the transportInWorld `if(paused)pause(false)`).
+> - **Notes:**
+>   - finalpass's first MCOMM check pressed at Start + 61, not +60 (fixed).
+>   - career-ui.js's card guard `cardOpenAt` is still wall-clock (untouched, covered by the ctm-objectives lock under ps2MenuInput).
+>   - The `seq.t >= 1` card rule is rAF-jitter sensitive (legacy froze at t = 1.998 in one Chrome run).
+
+> **CTM events in the world, stage 0 evidence (2026-09-29, CTM events-in-world agent; no game code changed):** see [ctm-events-in-world.md](ctm-events-in-world.md) §6. Silent ARMSX2 on derived states, runs in `local/ctm-events/caps/`.
+> - **The gate on the PS2, Snow Jam / Metro-City / R&B slope style:**
+>   - WS1 at the gate tick; all AI riders created 2 ticks later (C+0x78 1 → 6, or 3 at R&B);
+>   - the human in its own control for 31 ticks, then NIS-held (control 13, +0xAC4 = 1) until the grid placement 542-546 ticks after the gate;
+>   - the shared RNG nearly still under the hold (3 changes at ARA1 / BRA2, 14 at ASS1).
+> - **A CTM countdown's world equals Single Event's** (octree, patch order and instance sets). The human carries about 170 words of free-ride state.
+>   - Replayed on today's ARA1 event package, the CTM first heat is exact through the countdown and diverges at the push-off (tick 182).
+>   - The first heat keeps free ride's DeadNode start fences and the hidden gate volume (2300F0 does not remove DeadNodes; 230180 does).
+>   - The CTM collectibles and markers differ from Single Event's (game type).
+> - **WS13:** 201 world ticks under the gondola with the human held.
+> - **WS15:** session point 1 at once, the AIs gone within about 10 ticks, WS4 11 samples after the confirm, no load.
+> - **New capture:** the first CTM six-rider capture (`c0a-race`, --ai-state) waits for a career lineup document before it can gate.
+> - Unknowns R1-R4 settled, R5 / R6 partly settled (builtin 68 has no kind gate; 3A6800 = the load-flags rewrite). The rest need code stages.
+
+> **CTM events in the world, no load screens in or out: design (2026-09-29, CTM events-in-world agent; no game code changed):** see [ctm-events-in-world.md](ctm-events-in-world.md).
+> - **PS2 (traced):** the gate 22D6C8 resets nothing; WS1 builds the riders one 11C298 step a tick under the fly-over with the world ticking. ~~WS3 enter always runs 2300F0~~ (corrected in the entry above: 2300F0 is online only). The card's Continue runs the rider manager's restart 129768 (the activation list emptied, a rescan under the event kind, the race clock zeroed); WS13 / WS15 run 230180 (world reset). WS15 is 230180 + session point 1 + white fade, then WS1 arg 0 → WS2 → WS3 → WS4.
+> - **Recommendation, option C:** CTM events run inside the streamed-world core; the event package supplies only per-event data (riders, lineups, race event, start seeds, progress meter, freestyle rules, camera triggers); Single Event keeps its packages (as the PS2's WS10 load does). B (a second core warmed under the fly-over) is rejected: +250 MB on phones, still black in WebKit and on phones, and the global-core refactor.
+> - **Staged plan**, one default-off switch each: stage 0 evidence (PS2 captures c0a-c0d, CTM-vs-Single-Event countdown memory diffs); `worldUnderCuts` (#10 and the arrival-NIS item: the normal tick with the human held, no new core entry); `eventWorldData`; `eventInWorld`; `eventInWorldAi`; `eventReturnInWorld`.
+> - **Core blockers found:** no event start seed in streamed worlds (`browser_select_event_course` only in a plain init); parse caches skip appended loads; `peak_stream` / path banks are per rider context and `deliver_paths` is "player 0"; section DeadNodes are human-only with no shared-world replay kind; no rider-context destroy; the GO LiveComps are filtered from the peak exports.
+> - Scratch: `local/ctm-events/` (notes-ps2.md, package-diff.sh).
+
+> **CTM free-ride fixes from the scripted-content decomp: Big Challenge decline reset, the Transport's one-list fade, station stage calls, the deferred FAQ; streamed-world Spline pieces in the core (2026-09-29, CTM fixes agent):** see [ctm-parity.md](ctm-parity.md) "Free-ride fixes from the scripted-content decomp" and [set-pieces.md](set-pieces.md) "Streamed worlds". All switches are off until the coordinator turns them on. The live core has the core parts (see ctm-parity.md for its sha256).
+> - **pv `bcDecline`** (core `mission_lifecycle`):
+>   - a declined / quit Big Challenge resets the rider (30B658 / 30B758 -> 1235F8: control 9, white fade, route placement at tick 21, control 4 at tick 41), so the offer does not come straight back;
+>   - an event gate ends a running challenge (builtin 67's 30B7F8);
+>   - world state 10 enter clears the active challenge, its HUD and the offers (309030 / 308988).
+>   - Checked: test-big-challenges "lifecycle"; Chrome = WebKit per tick against PS2 bigchal/tri-offer.
+> - **pv `transportFade`:**
+>   - The in-world Transport is one NIS list: departure, in-air, the held loop and the backcountry heli drop.
+>   - The destination is requested when the loop starts.
+>   - The release fades the still-playing loop to black over 30 ticks, and the placement comes at R+29.
+>   - The world then fades in under the HUD while the bars slide out over 30 ticks and the HUD is squeezed inside them. The dome switches after the list.
+>   - A 30-tick skip lock at the start.
+>   - Checked in Chrome and WebKit against PS2 crossing/to-c-fade.
+> - **pv `departCalls`:**
+>   - gond_dep / heli_dep channel-0 calls now run on the station's stage track, with their cleanups.
+>   - The gondola still does not move: the station depart LiveComps are in no livecomp.json.
+>   - TRANSP has no stage seed, so the in-air calls have no functions.
+> - **pv `faqDefer`:** the Green "?" FAQ opens once the ride runs, instead of being dropped under a pause / prompt.
+> - **Found, not fixed (reported):** main.js transportInWorld's held path never unpauses. A Transport picked from the MCOMM never ticks: the rows never load, and after the 2-minute cap the rider is placed without them.
+> - **pv `peakSplines`** (core `set_piece_streamed`; see set-pieces.md "Streamed worlds"):
+>   - A streamed world's set-piece tables are its event locations' Spline pieces, trigger owners, spline LiveComps and ParentModifier children. A location's pieces go at its unload (0x3551A8).
+>   - Draw counts: fr-dra4a-full's spline trigger ticks and apr-start's EBC3 cessna now match the PS2; apr-start is draw-count exact on every tick.
+>   - Drawing needs the re-split packages in local/ctm-fix/export: PEAK1..3 `--batches-only` and MOUNTAIN attached.json. The coordinator copies them.
+>   - Not built: the MultiSplines (chairlifts, traffic, bins, trams) and the resident blimp loops.
+> - Tests: test-big-challenges, test-cutscenes; ps2-captures on the scratch cores (streamed worlds and resets, all at their baselines).
+
+> **Post-event Transport freeze found and fixed (pv `switchGate`, ON); world-arrival stalls (pv `worldWarm`, off: the coordinator decides) (2026-09-29, CTM stalls agent):** see [course-switch.md](course-switch.md) "The course being built runs nothing" and "World arrivals warm under the load screen", [ctm-parity.md](ctm-parity.md) "The post-event Transport freeze".
+> - **Freeze (Owen's Safari session t93ez0j6: MOUNTAIN/18 "to game", then silence):** during a course switch the global `core` is the new instance from the start of `loadCourse`, while its init runs in slices across frames. The Transport's held loop (`cutscenes.js acrossSwitch`) kept lighting its actors (`fe-preview light`: `_malloc`, `_reset_rider_lighting`, `_shade_rider_lighting`) and resetting painters (`_weather_fade_reset`) through `host.core` every frame on that half-built core, and drew the new course's objects (render hooks) early.
+>   - Counted: 97-247 calls per Transport in WebKit, 145-1498 in Chrome, MOUNTAIN and per-peak worlds alike.
+>   - WebKit: 3 of ~12 Transport loads crashed in the new core (`call_indirect` / memory OOB in `_init_environment`, `_reset_rider`, `_init_animation`; the ARA1 fallback crashed too -> title). A corruption that does not trap can hang inside wasm: Owen's log.
+>   - Fix (main.js): `coreLoading` from `newCore()` to `live`; the cutscene host's `core` is null and `freeRideCourse()` -1 meanwhile; the held loop's draw (`renderAcross`) leaves out what the switch added. QA `window.__coreLoading`.
+>   - Checked: 0 calls into a loading core, WebKit 3/3 and Chrome 6/6 Transports (with / without mountainRide). Tests: presentation, cutscenes, ctm-flow, ride-warm, lazy-course, ctm-stream, gpu-recovery.
+>   - Open: `loadCourse` keeping the instance local until its init ends (its helpers read the global: a separate, test-gated refactor). hangWatch cannot report a wasm loop in WebKit (its worker's I/O goes through the frozen main thread); a Service Worker could.
+> - **Harness note:** every earlier WebKit / Chrome run of this flow never started the AudioContext (no gesture: decodeMaxMs 0). A synthetic keydown unlocks it; `?mute=1` keeps the master gain at 0 (silent).
+> - **Stalls (pv worldWarm, off):** the ride's first frame after a world load built what the never-awaited start-row rewarm had not reached: 2897 render objects + 28 blocking pipelines (Owen: 3.3 s + 3.3 s). In WebKit three's compile yields a whole rAF per item (no `scheduler.yield`), so the rewarm took 30-50 s.
+>   - `web/yield-shim.js` (task yields within a 4 / 8 / 12 ms frame budget, WebKit only); the start row compiled first with a DoubleSide pass for two-pass materials (their 'backSide' render objects); the rest of the world pass compiled alongside rideWarm; then 0.5 s of warm frames behind the opaque load screen; cutscene sets / actors compiled per side.
+>   - WebKit: first MOUNTAIN arrival load 3.8-5.0 -> 6.2-8.2 s, the 400-520 ms first-frame hitch gone (0 render objects, 1 pipeline after the load screen); Transport arrival 3.7-4.8 -> 4.1-5.1 s, 800 -> 27 render objects; BRA2 event load unchanged (7.6 s); lodge-door cut 5 -> 1 blocking pipelines.
+>   - `web/test-world-warm.mjs` (new, in test:all): 300 ticks identical and 0 pixels different, off vs on.
+>   - Left: the held loop's straight-to-canvas draw (~20 pipelines at the switch), the Transport arrival's last 11 pipelines, the character select's FE builds.
+> - **Files:** `main.js`, `free-ride.js`, `cutscenes.js`, `yield-shim.js` (new), `pv-flags.js`, `test-world-warm.mjs` (new), `package.json`. Scratch tools: `fz/` in this agent's scratchpad (`owen2.mjs` Owen-shape WebKit flow with audio, `flow.sh` / `chromeflow.mjs` core-call counting, `buildlog.js` render-object / pipeline creation log, `oldserve.mjs` serves an old deployed bundle over the dev server's data).
+
+> **CTM audio: world switches carry the audio, post-event DJ commentary, saved first visits, DJ queue rules, mail icon freeze (2026-09-29, CTM audio agent; every switch off):** see [audio-logic.md](audio-logic.md) 9.14 and [ctm-decomp-freeride.md](ctm-decomp-freeride.md) ranked 2, 9, 10, 11, 12.
+> - **pv `worldSwitchAudio`:** a Transport into another page world (the post-event map, or another peak on the per-peak worlds) now runs code 20 at the confirm, as the PS2 does (postevent2 ticks 15440-15442): Stop, pick, Radio BIG intro + pool-5 chatter, the destination song 10 ms later.
+>   - `career-ui.js goWorld` calls `gameAudio.travelSwitch`; `transportAfterEvent` calls `eventMap()`, so the chartune plays under the map; `crossWorld` carries without code 20.
+>   - Over the switch, leaveWorld keeps the song, timers, speech, pending DJ and `'nis'` voices. There is no LoadingScreen loop, and the next free-ride worldLoaded makes no 2867E8 / 2A4A78 and runs WS10 (`ws10`: first-visit flags, the pktrans resume).
+>   - `freeRideCourse` runs WS10 too. That fixes the desktop in-world Transport into an unvisited backcountry: pktrans had stayed paused and code 19 took the wrong branch.
+>   - Checked in Chrome and WebKit: the timeline matches, with no `loading` / `worldload`. The unswitched path does two world loads when the run starts before the load-screen notification.
+> - **pv `postEventDj`:** the 2A45C0 / 2A4660 record in `finish()`. main.js passes the KOs (+0x128) and +0x114 (the score object port calls it the Uber count) from `score_object_dump`, and the freestyle place. The 2A4770 commentary runs first in hubChatter: Char_Progress / Aggression / High_Trick_Score, or by the destination when nothing was earned during a travel.
+> - **pv `djVisited`:** main.js `gameAudio.context` passes `visited` (careerUI.visitedMask) and `peak2Locked`. Free_Ride_Intro is gated on 146008.
+> - **pv `djQueueRules`:** Radio BIG intro stops the current line. A pause resume leaves the DJ queue alone unless +0x5828 is set. Its setter 28FAE0 (menu case 0x208C28) has no port equivalent identified, so for now it is never set.
+> - **pv `mailFreeze`:** the event's posts start the icon at 182 frames, and the Message Center freezes it instead of clearing it. The blink under the finish HUD is still missing (the port decides the result at the results).
+> - **Files:** web/game-audio.js, audio-speech.js, sfx.js (`stopAll({ keep })`), career-ui.js, career-messages.js, main.js, pv-flags.js; new web/test-ctm-audio.mjs (in test:all); test-messages.mjs extended.
+> - **Tests:** test-ctm-audio, game-audio, audio-timeline, audio-menu, audio-glitches, challenge-audio, messages, now-playing and audio-sfx all pass, with the switches off and on.
+> - **Not checked:** the NIS voices over the switch (headless shows none in the held loop either way); a real career post-event run in a browser (the commentary is covered by the unit test only).
+> - **Harness:** `local/browser-validation/ctm-audio/switch-audio.mjs chrome|webkit [pv]` (ARA1 -> map carry -> heli ride -> MOUNTAIN), with the run logs beside it.
+
+> **CTM screens and menus decompiled against the port; the input layer fixed behind pv `ps2MenuInput` (2026-09-29, CTM screens decomp agent):** see [ctm-decomp-screens.md](ctm-decomp-screens.md).
+> - **Decomp:** every CTM screen, overlay and menu, traced with addresses:
+>   - the MCOMM and pause family (overlays 1..5), the Yes / No popups and the other popups;
+>   - the Transport map and Session;
+>   - the lodge and its sub-screens, and the memory-card screens;
+>   - the card, finish panel, results, records, reward list and replay menu.
+>   - Plus the shared engine: the pad history 0x321298, UIMenu 0x39B000, the LUI thread ops 0x42 / 0x43 / 0x41, and the state phases 0x39ECB0.
+> - **Measured on the PS2** (silent ARMSX2, `local/ctm-decomp/screens/menuprobe.py`: memory and UI sound calls per pad sample):
+>   - the 24 / 12 repeat and a 3-update edge debounce;
+>   - wrap on the MCOMM, pause, lodge and Yes / No; the error at the non-wrapping ends;
+>   - the intro input lock (MCOMM +62, Yes / No +31, Map +31, Rider Details about +40) and the Yes / No outro (No -> pause input at +83);
+>   - the MCOMM intro replay on returns, and the cursor memory;
+>   - the world frozen through the pause stack.
+> - **Landed by the coordinator from this work:**
+>   - behind pv `ps2MenuInput` (off): web/menu-rules.js, gamepad-menus.js, ui.js, career-ui.js, audio-menu.js, big-challenges.js;
+>   - with no switch: a Chrome-only bug where generic-menu moves were silent (ui.preKey).
+>   - Final pass in Chrome and WebKit (`finalpass.mjs`): GO, except that the lodge FE lock should be 27 frames from the switch, not 40 (ranked 1a).
+> - **Still open** (ranked list at the top of the doc):
+>   - the finish panel's Cross skip;
+>   - the Transport cursor / go-to-peak rule / INFO;
+>   - the skipped Save game flow;
+>   - Triangle doing things on the card, records and lodge questions;
+>   - the buy popup's double action;
+>   - the lodge cursor across visits;
+>   - the gallery grid; Career Highlights;
+>   - sounds (replay-ui kinds, silent lodge Triangles);
+>   - the results Quit confirm;
+>   - the flat screen re-entry.
+>   - Open capture requests are listed in section 8.
+> - No game code edited by this agent. Scratch: `local/ctm-decomp/screens/`.
+
+> **CTM world states and event lifecycle decompiled; four fixes landed behind switches (2026-09-29, CTM world-state decomp agent):** see [ctm-decomp-world-states.md](ctm-decomp-world-states.md).
+> - **Decomp:** all 16 world states (WS1..WS16: objects, vtables, enter / update / exit, default next states, every requester of 0x231250). Also the pause contexts and what each mask bit stops, the overlay command word gp-0x9F4 and the close dispatcher, the popups, the "Loading..." reason bits (S+0x94), and the GameModeMan handlers by mode. WS8 / WS9 / WS16 have no requester in retail.
+> - **Ranked differences** (the doc's table). Fixed by the coordinator behind default-off switches, verified in Chrome and WebKit (`local/ctm-decomp/qa/`):
+>   1. **Next heat / Final Round kept the qualifier's riders** (pv `ws13Rebuild`): now the semi / final = lineup.js roundEntries.
+>   4. **Rival and peak-run cards over black** (pv `ws13Rebuild`): readyView now runs there too.
+>   6. **The start-gate idle kept moving under the card** (pv `cardFreeze`): PS2 context 1 freezes the NIS; the fade runs on its own clock.
+> - **Next for the coordinator:** 5, **Cross skips the finish panel** (a fresh edge from WS5 + 225; auto-close +405 / +285 DNF; PS2 runs `caps/fin-*`).
+> - **Rival lineup data:** a PS2 Snow Jam career final countdown (Mac in slot 1) proved every rider leaf equals the Single Event tables. Only the rival's skin part was missing.
+>   - `tools/export_lineups.py` gains `export-career` and `build --out`; the career skin parts are taken strictly (same course, or course independent).
+>   - New ARA1 / BRA2 lineups.json in `local/ctm-decomp/lineups/out/` (test-lineups passes on them); the coordinator installs them.
+>   - Peak 2 finals (Nate) still need a CRA3 / DRA4 slot-1 grid spot for his scale.
+> - **Still open:**
+>   - the event entry and exit loads (ranks 2 / 3, structural);
+>   - the missing "Loading..." reasons: at the finish, through WS13 (rank 7);
+>   - the peak-run Restart without a reload (8);
+>   - the gate / heat / transport not ending a Big Challenge (9, scripted-content agent);
+>   - the Session world reset (12, unconfirmed).
+> - **Tools:** `local/ctm-decomp/{d, ps2dis.py, calls.py, scan.py, nextset.py, ui_trace_capture.py}`.
+
+> **CTM course limits: wall scrapes held like the PS2, the one-way volumes push (pv `loadFlags`, on), builtins 99 / 101 decoded (2026-09-29, course-limits agent):** see [peak-mountain.md](peak-mountain.md) "Course limits in free ride" and [obstacle-collision.md](obstacle-collision.md) "Back-to-back soft collisions". **Live core rebuilt** (core.wasm sha256 1057624cb92bf3aa..., core.js c491dafd8b1861fd...), identical to the scratch build: the full capture suite (253) passed on it with CORE_JS, so it is not stamped yet.
+> - **One-way volumes:** in the port no connector's `onewayvolume_*` ever pushed back. `stage_flags()` fell back to the authored word, so builtin 7's `| 0x100` gave 0x200100 with no static route (PS2 0x200322). Now it falls back to the load's runtime flags (authored high half + bit 1, the rule for every untouched instance in 794 PS2 savestates): core `stage_load_flags`, pv `loadFlags` (on), set in `free-ride.js` and `peak-capture.mjs` (`LOAD_FLAGS`). PS2 capture `course-limits/p3b-zig3000`: pushed 41.667 cm/s a tick at The Throne -> E; position-exact with it, 23 m off without. Chrome and WebKit: 0x200122 on every volume.
+> - **Walls:** a soft collision starting while the previous soft's clip still faded ended after 2 ticks (the completion check took any channel-2 sequence of that clip; 312AE8 takes the first). `animation_bridge.cpp`, no switch (core physics, full suite unchanged). New gates `course-limits/p3b-right3000`, `course-limits/gs-zig3000`.
+> - **Builtins 99 / 101:** 99 = game options (Multipliers / Power-ups / Point icons, *0x5308D0, 0 in every CTM savestate): nil takes the same branch. 101 = an attention point whose chain ends in an empty stub. No effect; documented in stage-scripts.md.
+> - **Matched:** the per-instance collision state over all 22 course / station starts; the streamer's row timing (new `PEAK_AUTO=1` diagnostic in peak-capture.mjs); 20 new 3000-tick captures (PEAK1 / 2 / 3, MOUNTAINF, the CTM world start) with walls, crashes and 12 resets exact; the page replays world-start captures position-exact (`local/course-limits/page-replay.mjs`).
+> - **Open (not course limits, for the physics / rail owners):** `course-limits/p2-right3000` 3312 (a rail exit: the PS2 spends one tick in motion 1); `mt-left3000` 6152 (28 cm of contact push-out applied before an air reset's freeze; the placement is exact).
+> - **Diagnostics added:** core exports `world_instance_states` and `stage_seed_boost` (comparer `PEAK_SEED_BOOSTS`); tools in `local/course-limits/`.
+
+> **mountainRide back ON (desktop), career-final rival data installed (2026-09-29, coordinator):**
+> - **pv mountainRide: ON again**, at Owen's request. It had been switched off without a note. It's desktop only (free-ride.js mountainFreeRide: iOS / Android / quality=low keep the per-peak worlds + crossWorld until pv peakRelease is on). The PS2 streams the peak boundaries seamlessly. The post-Transport freeze fix (pv switchGate) is still in verification; Owen's freezing session had mountainRide on.
+> - **Peak runs:** All Peak Race / Jam and the Peak 2 Race always run in MOUNTAIN on every device (peakRunWorld). The phone memory for them (pv peakRelease) is being measured and fixed by the whole-mountain memory agent.
+> - **Installed:** web/public/assets/{ARA1,BRA2}/lineups.json from tools/export_lineups.py (the world-states decomp agent: Mac's skin part + skin_scale + career_skins, taken from a derived Snow Jam career-final countdown; additive only; sha256 c7476e7f... / bd25e18b...; new inodes). A career final now has the rival (pv ws13Rebuild). Peak 2 finals (CRA3 / DRA4, rival Nate) still need a derived countdown for grid[1][3f7fffff].
+
+> **CTM free-ride scripted content decompiled against the port: messages, NIS triggers, Big Challenge offers, crossings / Transport, DJ and place audio, every stage program of the streamed worlds (2026-09-29, CTM free-ride decomp agent):** see [ctm-decomp-freeride.md](ctm-decomp-freeride.md) (a ranked list of 20 differences at the top, one rule table per system). Research only, no game code changed.
+> - **Shipped config:** pv `mountainRide` is OFF, so the peak boundary (DRA4_A / ERA5_C) is a world load (`crossWorld`) where the PS2 streams one world. That is the top difference.
+> - **Next biggest:**
+>   - every world switch plays load-screen audio instead of the PS2's in-world code-20 travel audio;
+>   - no Spline / MultiSpline / ParentModifier set piece moves in PEAK1-3 / MOUNTAIN: flybys, chairlift chairs, traffic, searchlights. PS2 free-ride savestates hold live SplineModifiers (vtable 0x48F250);
+>   - the Transport's held loop hard-cuts on release, streams about 120 ticks early, skips the PS2's page wait, and is three NIS lists instead of one;
+>   - the world freezes under the arrival cutscenes;
+>   - station departures drop their stage calls, and TRANSP is in no seed;
+>   - the Big Challenge decline reset (1235F8) and the prompt audio (fixes were landing during the audit: core `mission_lifecycle`, pv `bcPromptAudio`);
+>   - the post-event DJ commentary (2A4770, captured);
+>   - first-visit DJ lines per page load instead of the saved mask, and the Peak 2 lock gate;
+>   - the mail icon posting at the results instead of the finish tick.
+> - **Matches:** all 33 message posters, every NIS list trigger / flag / skip rule, the offer volumes and queue, the riding-crossing WS11 / WS10 timing, the arrival placements, the section coverage, and the seeds against the disc.
+> - **New silent PS2 captures:** `local/ps2-capture/ctm-decomp/{crossing/to-c-x,crossing/to-c-fade,bigchal/tri-offer,bigchal/down-no,bigchal/no-offer,audio/postevent,audio/postevent2}`. Scratch tools are in `local/ctm-decomp/`.
+> - **Doc corrections listed there:**
+>   - peak-mountain.md "Cutscene hooks" (the location intros are implemented);
+>   - cutscenes.md (the Peak 2/3 heli arrivals are triggered);
+>   - ctm-parity.md (the ~1850-frame WS10 stop is the DBC2 movie);
+>   - audio-logic.md 9.9 (146008 is the Peak 2 lock);
+>   - characters.md (the "tutorial counter" is the event object's state);
+>   - WS11's enter is 0x2368A0.
+
+> **Per-frame JS garbage cut 40% (pv `sceneLightingOff` + `threeLean`, both ON after the WebKit check: BRA2 identical state and pixels at 8 in-race checkpoints, changes and switches) (2026-09-29, GC-churn work, continued after the coordinator hit its usage limit):** see [web-render-performance.md](web-render-performance.md) "Per-frame garbage".
+> - **Measure:** Chrome sampling heap profiler, steady race, BRA2 + ARA1 at the phone tier and desktop (`local/browser-validation/gcchurn/`). Real objects, which Safari pays for too: **18.9 -> 14.1 MB/s** (13.2 with sceneLightingOff). V8-only HeapNumbers stay at about 25 MB/s.
+> - **Changed (live, behaviour identical):**
+>   - new `web/heap-views.js` (`heapU32` / `heapI32`, `setUpdateRange`);
+>   - set-pieces-renderer update (logs read in place, pools, indexed loops);
+>   - livecomp-animation (matrices recomputed in place, same EE/VU ops);
+>   - attached-setpieces (delta slots, no Map / string keys);
+>   - rider-shadow (fit / rows into per-rider records, bit-exact on 200k inputs);
+>   - weather, board trail and snow read in place;
+>   - set-piece particle records pooled (`readParticleEffects(core, pool)`);
+>   - setUpdateRange in 8 renderers.
+> - **pv sceneLightingOff (off):** `renderer.lighting.enabled = false` (main.js init, not with `?originalWorld=0`). No game material uses three lights, maps or environment. With lighting on, three rebuilt the LightsNode cache key on every draw (the dynamic key is cached per `renderer.info.calls`).
+> - **Checked (Chrome):**
+>   - targeted tests pass (livecomp x4 courses, attached, set-pieces(-renderer), particle sprites 20,459 bit-exact, rider-shadow, weather, board-trail, fog-puffs, snow, stage-world, presentation, light-glow). ERA5's 2 livecomp failures are pre-existing.
+>   - Old vs new trees in the browser, BRA2 / CRA3 / DRA4 / ERA5, 12 in-race checkpoints each: identical scene state and pixels.
+>   - sceneLightingOff on vs off: identical apart from rider interpolation noise.
+> - **pv threeLean (off):** three r186 patched through a Vite plugin (web/three-patches.js, from tools/gen_three_patches.py; Owen approved): 11.3 MB/s with both switches (-40%); Chrome A/B pixel-identical on BRA2 / CRA3. The 5173 dev server needs a restart with `--force` to re-bundle three.
+> - **Not checked in WebKit:** the screen was locked, which stops WebKit rendering (every page, the old tree included, stays on its loading screen). With the screen unlocked, run `wkcmp.mjs` and then `wkrace.mjs` (baseline in `runs/`), then switch sceneLightingOff on.
+> - **Comparison pitfalls:**
+>   - pass `&lineupSeed=` / `&presentationSeed=`: the lineup is clock-seeded, and CRA3 otherwise races different riders;
+>   - compare objects as a multiset;
+>   - rider pixels vary by a few levels between any two runs (real-time `renderAlpha`).
+> - **Left (MB/s):**
+>   - three r186 internals, about 3.5: the `needsUpdate` dynamic key (`hash$1` rest args), `Bindings._update` string keys, `updateTexture(t, options = {})`, render-list push / sort. These need a three patch: Owen decides.
+>   - `ai-racers.js` per-tick sync, about 0.9: game tick path, change only with the AI capture gates.
+>   - rider-frame, 0.35.
+>   - trick-HUD text, game-audio relSnapshot, weather layer records.
+>   - a long tail under 0.1 each, about 7 in total.
+
+> **Warms that outlived their course fixed (pv `compileAbort`, off until the coordinator switches it on); peak-run HUD TypeError fixed (2026-09-28, blend-space agent):** see [course-switch.md](course-switch.md) "Warms that outlive their course".
+> - **Cause of the per-switch WebKit growth and of the "GPUDepthStencilState.format is required" errors:** three r186 `compileAsync` builds its items one at a time between yields. `unloadCourse` waited 1.5 s for the world warms; on WebKit the rest kept building after the dispose. That re-uploaded disposed geometry and textures and failed pipelines on the old world pass's destroyed depth texture.
+> - **Fix:** `web/compile-abort.js`:
+>   - `fog-renderer.js` installs the wrapper.
+>   - `main.js unloadCourse` calls `abortCompiles(1000)` before `freeRide.stop()`.
+>   - A dropped item leaves no state; its object builds on first draw.
+> - **Numbers** (WebKit, 25 loads, cutscenes on, polled once per 3 s):
+>   - WebContent footprint at the event: 1741 MB off vs 1024 MB on after 24 loads.
+>   - Live textures: +32 off vs +5 on.
+>   - Depth-format errors: 2-3 per event return off, 0 on.
+>   - Load times unchanged.
+> - **Peak-run HUD:** `main.js ui.freeRideHud` now takes the active event's tier row only for a peak run (mode 6..11), as the core's `peakSetup` hook does. A single event left active threw `undefined (r[3])` every HUD frame on MOUNTAIN / PEAK peak runs.
+> - **Left:**
+>   - One DataTexture per peak-world visit is never destroyed.
+>   - three's pipeline cache grows about 9 per cycle, with the switch on or off; the GPU process stays flat.
+> - **Tools:** `local/browser-validation/blend-space/hang/`:
+>   - `memwk.mjs`: vmmap footprint and regions per load.
+>   - `leaktex.mjs`: live textures by the course that created them.
+>   - `depthfmt.mjs`: depth-format failure trace.
+>   - `mem.mjs`: Chrome heap snapshots.
+
+> **CTM batch: Transport held ride, 15 cm, game tick, release leaks, hang watchdog, WebKit load memory (2026-09-28, CTM agent):** see [ctm-parity.md](ctm-parity.md) (NIS hold + Transport ride, game tick, page runs, "WebKit WebContent peaks") and [mobile.md](mobile.md) "Hangs".
+> - **Transport held ride (pv nisTick, on):** the Transport holds the rider through `nis_hold` while the world ticks, as on the PS2 (anchor 29 heli locator 5; heli_inair #149 / heli_inair_zoe #122 roots match the capture, `test-cutscenes.mjs`). The lodge / booth rider sits 15 cm under the locator (key 0 z = -15).
+> - **pv gameTickKeep (on):** JS placements inside a streamed world keep the game tick (1298C8 restarts only at a world load, WS2 or an event type-5 crossing), including placeRegion's grid reset.
+> - **Release leaks (pv peakRelease, still off):** read-ahead collision is now freed (`releaseIdleCores`), and gpu-copies restores are forgotten on release and dispose (`forgetGpuRestore`). The JS heap is flat over Transport cycles. WebKit still holds about 300-500 MB after a Transport; re-measure with pv compileAbort.
+> - **Hardening (deployed):** a pause try/catch around the NIS release, `nisWatch` (a door / booth hold left on in 'game' is released after 30 frames), the `nisPosed` guard.
+> - **pv hangWatch (on, web/diagnostics.js):** a worker posts `hang` / `hang-end` when the page's 250 ms pings stop for 8 s while it is visible. In WebKit all worker I/O goes through the main thread, so the events leave only once the page recovers; a permanent freeze shows as the next session's `previous-session-died`.
+> - **WebKit load memory:** clean peaks are in ctm-parity.md. The largest excursions are per-frame JS garbage (16 MB/s in a race) that JSC lets pile up by about 1 GB, and dead wasm cores. The coordinator fixed `replayTriggersCore` (main.js unloadCourse). Proposed: cut per-frame garbage, reuse one wasm Memory across loads (core build), release the Transport departure (to be checked against a PS2 row trace first).
+> - **Open:** the combined peak re-export (env split + lit banks/regions + moving splits incl. drawn_spline_pieces + ParentModifier children) is next. peakAttached still needs its browser check.
+
+> **Regenerated set-piece seeds landed; ravens / eagles section-streamed, blimp rebuild programs guarded (2026-09-28, AI-parity agent):** see [set-pieces.md](set-pieces.md) "Regenerated location seeds". **Core62** (core.wasm sha256 24aaa0e955f7c664..., core.js c8f6b928258c... unchanged) is live, identical to the scratch build.
+> - **Seeds:** new `web/generated/set_piece_seed_{BHP1,CHP2,CRA3,EHP3}.hpp`. They add slot-1 seeds BHP1 63247, CHP2 203799 / 152343 / 231191, CRA3 332056 (eagle a) and EHP3 19756 / 28460. Old rows are verbatim and the rest is byte-identical.
+> - **jsons:** `local/event-activation/{BHP1,CBA2,CHP2,CRA3,EBA3,EHP3}/set-pieces.json` updated too. They gain the tram `multisplines` (CBA2 152086, CHP2 226327, EBA3 91433, EHP3 38444; previously `[]`), which tools/export_peak_world.py event_moving reads at the next prepare. Backups are in the AI-parity scratchpad.
+> - **Ravens / eagles (all real):** resident looping Splines whose own slot-1 program rebuilds them. A section leave destroys them.
+>   - PS2 savestates: CHP2 203799 gone between 2820 and 3218, CRA3 332056 between 818 and 1218, EHP3 19756 between 3618 and 4018.
+>   - Port now: 3161, 1161, 3881. Before, they flew on for the whole run.
+> - **Blimps:** real seeds, but their owners' programs (BHP1 52495 / 39, CHP2 96279 / 82) return at `builtin52(blimp) == 1`, because the blimp is resident.
+>   - `engine/section_streaming.hpp` Event gets `guarded`, and `web/section_gameplay.inc` skips `section_start_piece` for it: no VM run, no spline launch.
+>   - Without this, the new seeds launched a second blimp Spline at tick 19.
+> - **Check:** new `web/test-set-piece-seeds.mjs` (in test:all; core60 fails it). Every spline / position / MultiSpline entity at 33 kept PS2 states of bhp1 / chp2 / perpendiculous / cra3-full is exact.
+> - **Gates:** 33 capture scenarios on these courses pass, sim-diff is identical, and stage-world / set-pieces / set-pieces-locations / attached-core pass.
+
+> **Backcountry helis drawn in the world (pv `heliWorld`, off; the audit's list-parity bug; 2026-09-28, visual-parity agent):** see [set-pieces.md](set-pieces.md) "Moving lit instances", os609.
+> - **PS2, derived capture** `local/ps2-capture/runs/heli/abc1-moved2` (happiness-ready, the heli instance moved 30 m in front of the camera by poke, silent): the PS2 draws the os609 LiveComp at flags 0x...305 and 0x...105 alike. An entity in the renderer's dynamic list carries 0x100 or 0x200 (the list's parity, 0x1030F4..0x103160), so the countdown audit's 'none' (0x50015205) was wrong.
+> - At its real place the heli hovers about 5 m behind and above the start camera for the whole race, so no race frame shows it (PS2 and page alike).
+> - `tools/export_event_membership.draw_class` accepts 0x200. A re-audit also unhides ASS1 ravensplineanimb, CHP2 blimpa / blimpads, BHP1 blimpads / blimplights, ABC1 snowsheet_1000 and the EBC3 summit pole; packages change only when re-prepared.
+> - Page: `set-pieces-renderer.js` draws the heli meshes while their player runs; `cutscene-stage-sets.js adoptWorldCopy` keeps them hidden while an arrival set stands in.
+> - Checked in Chrome and WebKit: the moved heli at the PS2's place and pose (the rotor phase differs); switch off, absent; ABC1 race frames unchanged. Tests: presentation, set-pieces-renderer, visual-parity, peak2-events.
+> - Ready to switch on.
+
 > **Avalanche trails drawn (pv `avalancheTrails`, off; 2026-09-28, visual-parity agent):** see [avalanche.md](avalanche.md) "Trails", Draw.
 > - `web/avalanche-trails.js` evaluates particle entry 0xA00 (the rider snow's model) on the core's `avalanche_trails()` rings; fog0, GS 0x44, priority 7 in the encoded pass. Particles per birth = kernel N / ring slots.
 > - The retail trails are nearly invisible on the PS2 too: the kernel colour base holds the flake colour with alpha 0 (tumbler +0x1E0), so sprite alpha is 0..2 of 128. PS2 RAM: EBA3 820 15 of 180 sprites with alpha 1, ERA5 none. Alpha-0 sprites are skipped (same pixels).

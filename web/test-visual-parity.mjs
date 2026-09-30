@@ -458,7 +458,7 @@ else {
 //      colour: 'black', hud: true}) after a course arrival (not a station or backcountry, whose cuts fade themselves); ui.js draws that
 //      overlay first and the HUD over it.
 { const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8'), ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8'), cs = fs.readFileSync(new URL('cutscenes.js', import.meta.url), 'utf8');
-  check(/if\(s&&\(dest<14\|\|\(dest>=17&&pv\('stationArrival'\)\)\)&&pv\('arrivalFade'\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:30,colour:'black',hud:true\}\);/.test(main)
+  check(/if\(s&&\(dest<14\|\|\(dest>=17&&pv\('stationArrival'\)\)\)&&pv\('arrivalFade'\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:30,colour:'black',hud:true(,bars:pv\('transportFade'\))?\}\)/.test(main)
     && /if\(this\.cutscene\?\.overlayUnderHud\)this\.cutscene\.draw\(c,this\);/.test(ui) && /if\(this\.cutscene\?\.overlay&&!this\.cutscene\.overlayUnderHud\)\{/.test(ui)
     && /get overlayUnderHud\(\) \{ return !!overlay\?\.hud; \}/.test(cs) && PV_DEFAULTS.arrivalFade === true,
     'transport arrival: 30-tick fade from black under the HUD (arrivalFade on)'); }

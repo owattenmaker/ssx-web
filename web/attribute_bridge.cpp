@@ -45,3 +45,6 @@ EMSCRIPTEN_KEEPALIVE float* rider_attribute_stats(){
     return out;
 }
 }
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/attribute_bridge.inc"
+#endif

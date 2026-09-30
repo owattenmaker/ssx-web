@@ -29,8 +29,24 @@ void stage_event_visual_seed_apply(); // web/stage_world.inc: ready-state visual
 extern "C" void place_rider_region(float,float,float,float,float,float,int); // web/animation_bridge.cpp (11D390)
 void weather_event_seed_apply(); // web/weather.inc: the ready state's Weather painters, snowfall layers, camera splash
 void weather_event_contact_seed(); // web/weather.inc: the grid contact rider+0x460 of the ready state (the painters' point)
+// event_grid_start (web/animation_bridge.cpp, a CTM event in the streamed world) runs this with the world kept: no world reset at an
+// offline event start (2300F0 is online only), so the stage world (the Big Challenge markers' Hide nodes of 308DB8, pickups,
+// crashbag rollers) stays as free ride left it (PS2 c0a-full: flg_ARA1_BigCFlag_1002 a type-16 node from 2066 through the race).
+RIDER_LOCAL bool browserEventWorldKept=false;
+// 11D390's event branch (0x11D564) on the rider as it stands, without the Single Event anchor's seed (pv eventReturnInWorld: world
+// state 14's enter 0x236250 runs 11D390(human) at 0x2363DC after a results Transport, before the map, while the event kind still
+// holds; PS2 c0a-ret7: its 112180 re-attaches the human's route; core transport_map_enter): 11FE78(3) and 11FEC8(6), the grid hold's
+// control entry (the start controller, as start_event enters it) and the tail's +0x2E8 / +0x2EC / +0x2F0 / +0x2F4 = 0. The rider's
+// own words stay (its presentation lift, limit, normals).
+extern "C" void grid_hold_enter(){
+ boostState.window=physicsState.boostWindow=0;boostState.modifier=0;boostState.superTime=0;boostState.tier=physicsState.boostTierCounter=0;
+ startControl={};const auto entry=originalStartControlEnter(startControl,physicsState.reverseStance);startTilt=physicsState.presentationLift.current;
+ graph.sequences.clear();graph.sampledLocal.reset();graph.requestedSemantics.fill(438);graph.defaultMirror=entry.mirror;graph.defaultRoot={};const auto sc=originalSinCos(entry.rootHalfAngle);graph.defaultRoot.rotation={0,0,sc[0],sc[1]};
+ if(!graph.enter(entry.semantic,-1,~uint64_t(0),true))throw std::runtime_error("Missing original grid animation");
+ graph.startPose=startControl.pose;physicsState.controlState=6;gs=physicsState;physicsState.animationIndex=entry.semantic;physicsState.animationClass=graph.currentClass(2);previousGround=true;previousHeld=false;browserStarting=browserStartFrame=browserStartFrozen=true;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE void start_event(){
- apply_snow_jam_dead_nodes();reset_animation();stage_event_visual_seed_apply();weather_event_seed_apply();browser_reset_pickups();begin_event_clock();begin_event_rider();if(!eventRouteLoaded)throw std::runtime_error("Missing event route seed");resetRoute=initialEventRoute;/*grid anchor retains path 2 at distance 0 (rider+490..4CC)*/
+ apply_snow_jam_dead_nodes();reset_animation();stage_event_visual_seed_apply();weather_event_seed_apply();if(!browserEventWorldKept)browser_reset_pickups();begin_event_clock();begin_event_rider();if(!eventRouteLoaded)throw std::runtime_error("Missing event route seed");resetRoute=initialEventRoute;/*grid anchor retains path 2 at distance 0 (rider+490..4CC)*/
  // Backcountry rival events (docs/backcountry.md): no countdown and no start controller. 234AD0 sends event kinds 4..6 to
  // 233AA0; the riders keep the ready state (control 0, motion 0, start velocity) and ride from the first tick.
  // The Continue re-places the riders before tick 0 (rider manager 0x1297C8 -> 11D390 while rider+0x880 == 7): 11D660

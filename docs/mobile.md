@@ -281,6 +281,202 @@ race with computer riders since the one-core change (was ~1.7-2 GB), near the iO
 needs a real device; (3) a real device is needed for WebGPU vs
 WebGL on iOS, thermal throttling, the iOS 18 switch haptic and Safari's real memory ceiling.
 
+## Whole-mountain memory (2026-09-29, whole-mountain memory agent)
+
+The All Peak Race / Jam and the Peak 2 Race always run in the streamed MOUNTAIN world (web/free-ride.js `peakRunWorld`), on every
+device. With pv `peakRelease` on, the career free ride uses MOUNTAIN on phones too (`mountainFreeRide`: no tier split).
+
+**Target and headroom.** WebContent `phys_footprint` (macOS WebKit, the same accounting iOS uses for jetsam: WebKit Malloc, JS heap,
+wasm, and the page's GPU resources charged to WebContent as "graphics"):
+- at most **1.0 GB steady** (p95 over a run);
+- at most **1.2 GB for peaks** (loads, hubs).
+
+Why:
+- iOS gives WebContent the lower of WebKit's memory-pressure limit and the jetsam limit. That limit depends on the device's RAM and
+  on the system's state.
+- Reports: about 3 GB on an iPhone 15 Pro. On an iPhone 12 Pro, about 3 GB right after a reboot, falling to about 1.5 GB after a
+  few days. iPhones get an ActiveHard limit of 2048 MB. The 4 GB iPhones (11 / 12 / 13 / SE 3) are below the 6 GB figures.
+- So 1.5 GB is the floor to plan for. 1.2 GB leaves 20% for what the Mac measurement cannot see: iOS's JSC heap sizing and GPU driver
+  allocations differ, and other tabs and system load lower the limit.
+- The field logs have an iPhone killed 10 s into a BHP1 race (2026-09-24), when that race measured about 1.0-1.2 GB here. That is
+  consistent with a limit near 1.2-1.5 GB on that phone.
+- The GPU process (measured below) has its own limit and is not counted in the tab's.
+
+**Tools** (`local/browser-validation/whole-mountain-memory/`):
+- `apr.mjs`: WebKit through web/webkit-driver.mjs, with ?mute=1 and the driver's page mute. Audio is unlocked by a synthetic keydown,
+  so decoding runs.
+  - A lean in-page pilot rides the AIP race paths of the route with a fake standard pad. It keeps frame counters, not per-frame arrays.
+  - `footprint -p` of our WebContent and GPU processes is sampled every ~1.5 s outside the page, by category. The page is polled every
+    3 s (docs/first-load.md).
+  - Modes: `--mode 8|11|7` (a peak run, direct boot, or `--menu 1` from the menus) and `--mode free`. The free mode is the career
+    free ride in MOUNTAIN from E, with legs `18,T21,19,T17,18,T20,17` (ride to a course, `T<n>` a Transport). It compares the terrain
+    heights under every location's path points on its first pass with every later pass (collision holes).
+- `analyze.mjs`: footprint by course segment and timeline.
+- `loadpeak.mjs`: the CTM agent's career shape: menu, career, BRA2 event, Give Up, Transport, goWorld(18).
+- `chr.mjs`: Chrome heap snapshots. `abuf.mjs` / `retainers.mjs`: ArrayBuffer and node retainer chains.
+- Runs and logs are in `runs/`.
+
+**Where the memory went with peakRelease off** (All Peak Race, 844x390):
+- collision is never freed in a peak run (the release had a `!route` guard), so core HEAPU8 went 154 -> 319 MB, and 39 locations
+  were loaded at the finish;
+- the peak run read far beyond the PS2's rows:
+  - the windowed prefetch held the next 2 route rows;
+  - planAhead fetched every connector's row at a hub (ESS3 / EHP3 / EBA3 at E, CBA2 / CHP2 at C, DSS2 at D, ABA1 at A, BHP1 at B);
+  - a station built the nearest connector's course, not the route's;
+- draw packages stayed 45 s after their location left (a Transport's departure too).
+
+**With pv peakRelease** (web/free-ride.js, web/peak-world.js; docs/ctm-parity.md "The PS2's location release"): the PS2's rule. A
+location no row wants and nothing reads ahead is released at once: draw package, environment slice and collision. This is the
+eviction at T+8, which returns every record of the track (3A8528 / 3A8230).
+- The 45 s hold stays only for a station's other ways on.
+- Unfed read-ahead slices nothing wants are dropped (`peak.dropQueued`).
+- A peak run reads ahead only its route's next row (`routeNext`), and a station builds the route's row.
+- A single peak world no longer background-feeds the rest of the peak.
+
+| WebKit, quality=low | peakRelease | end | WebContent p50 / p95 / max (MB) | GPU proc max | core HEAPU8 | frames > 34 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| All Peak Race 844x390 | off | results | 1036 / 1187 / 1318 | 646 | 154 -> 319 | 3.1% (2nd run beside it) |
+| All Peak Race 844x390, alone | on | results | 800 / 878 / 1076 | 640 | 128 | 99 of 125,776, max 82 ms; 0 stalls |
+| All Peak Race 390x844 | on | results | 801 / 881 / 1089 | 593 | 128 | 0.11%, max 59 ms |
+| All Peak Jam 844x390 | off | results | 981 / 1090 / 1273 | 686 | 319 | 0.6% |
+| All Peak Jam 844x390 | on | results | 845 / 1129 / 1243 | 653 | 128 | 0.8% (other runs beside it) |
+| Peak 2 Race, from the menus | on | results | 1071 / 1298 / 1319 | 589 | 128 | (other runs beside it) |
+| Free ride E -> B, T21, E -> C, T17, A -> B, T20, D -> A (44 min), phone tier | on | done | 1104 / 1337 / 1446 | 959 | 128 | 2.3% (other runs beside it); 1 stall poll |
+| Career shape, 4 event cycles (loadpeak) | off (per-peak worlds) | done | lifetime peak 3044 | | | |
+| Career shape, 4 event cycles (loadpeak) | on (MOUNTAIN) | done | lifetime peak 2620 | | | |
+
+- Frame counts from runs with another WebKit run beside them are machine contention: the same build alone had 0.08%.
+- The free ride's re-entry heights, 19 location passes: 0 lost.
+  - E_ERA5 / ERA5 differ at 27 of 73 probes, by up to 28 cm. The same change appears within the first pass with no release at all
+    (Chrome, `dyn.mjs`: the heights change once the rider is in Gravitude and stay). It is the world's own moving collision, not a
+    release hole; the core frees and re-feeds these four locations exactly (node, every order).
+- **Frame counts with two WebKit windows** are not usable: the occluded window runs at about 28.5 fps (b-apr-on: 77,168 frames in
+  45 min; j-desk-on-A: 9,692 in 5.7 min). Compare frames from runs alone only.
+- **Draw releases wait while a needed build runs.** While the draw package of a wanted row, or of the row a connector leads to, is
+  still building, the releases wait (at most RELEASE_MS). An immediate release's disposals competed with that build in WebKit.
+  Before this: desktop free ride, 23 stall polls (Snow Jam entered 36 s after its build started, at a load average of 40).
+- **Desktop (1280x800, quality high), peakRelease on**, the whole free ride with three Transports:
+  - re-entry heights 0 lost / 0 differ on 19 location passes;
+  - 1.3% of frames over 34 ms (a load average of about 40);
+  - WebContent p50 1245 / p95 1406 MB;
+  - core 128 MB.
+- **Desktop A/B, run side by side** (off vs on with the deferral):
+  - Yellow station -> Snow Jam: 0 stall polls in both;
+  - Green station -> Blue station: 0 stall polls in both;
+  - WebContent p95 1129 (off) vs 1041 MB (on).
+- **pv peakRelease is ON** (2026-09-29).
+
+**Still above the target** (none of these comes from the location release; all show with peakRelease off too):
+1. **Course-switch spikes** (career shape): WebKit Malloc +1.2-1.9 GB for 1-3 s, at an event load or about 30 s into the world ride
+   after a return. Peaks 2.6-3.0 GB. Attributed in "Load spikes" below: the "30 s into the ride" one is the booth map's LUI garbage under this Mac's
+   JSC heap policy; the event-load one was old cores still resident (two plain fixes).
+2. **Load transients**: 1.3-1.47 GB for about a second, at a direct boot into MOUNTAIN and at the menu boot. Under the phone heap policy these boots stay at 1.0-1.2 GB ("Load spikes").
+3. **WebKit Malloc climbs through a run** and never drops: +170 MB per 30 min direct, +360 MB in the menu-flow Peak 2 Race.
+   - Chrome's JS heap is flat over the same run (107 -> 129 MB after GC).
+   - A Chrome heap diff shows audio nodes never disconnected: GainNode +605, AudioParam +1264, sources and panners +220 each in
+     14 min.
+   - The music stream's `rangeBytes` Map keeps about 30 MB.
+4. **The menus**: entering from the menus keeps about +200 MB for the whole run, including a second 128 MB wasm memory (probably the
+   FE stage core). Fixed: it was the menu boot course's core, kept by two loadCourse closures ("Load spikes").
+5. **A WebKit runaway** in 2 of 9 runs (one with the switch off, one on):
+   - from the load on: WebKit Malloc +5-8 MB/s, "JS VM Reservations" 200 -> 1200 MB, JIT code 20 -> 360 MB;
+   - it reaches 5-8 GB in 25 min, with the game still at 60 fps and three.js counts flat;
+   - not reproducible on demand; handed to its own investigation. Data: `runs/*runaway*`, `*.sample.txt`.
+
+## Load spikes (2026-09-29, load-spike agent)
+
+The short WebKit peaks around loads, after the whole-mountain memory work. Scratch tools, copied to `local/browser-validation/load-spikes/`:
+- `probe.js`: injected before any module by `vite.spike.config.mjs` (port 5302) or `vite.bisect.config.mjs` (5303, with `?bisect=` source switches). It keeps 250 ms buckets of:
+  - fetch bodies, JSON.parse / stringify, TextDecoder / TextEncoder, typed-array allocations and copies, worker messages;
+  - WebGPU writes, mapped buffers, shaders, pipelines and bind groups; 2D-canvas calls; wasm instances and grows;
+  - performance marks; full collections, from FinalizationRegistry markers held 1.5 s;
+  - every instance's WebAssembly.Memory in a FinalizationRegistry (never deref'd).
+- `run.mjs`: WebKit through the driver. Shapes `career` (the career shape), `menu`, `direct` (`?course=MOUNTAIN&peakMode=8&autostart=1`), `event` (`?course=BRA2&autostart=1`) and `map` (the station map held).
+  - `footprint` is sampled outside the page and the page is polled every 3 s.
+  - `--ram 6` sets `__XPC_JSC_forceRAMSize` on the driver: JSC's heap policy for a 6 GB phone.
+- `tl.mjs` (footprint per second beside the probe's counters), `sum.mjs` (per-phase max / median), `batch.sh`.
+- `bootcore.mjs`: FinalizationRegistry-only core liveness, with forced full collections.
+- `chralloc.mjs`: Chrome allocation sampling with garbage included.
+
+**Two heap policies.** This Mac has 64 GB, so JavaScriptCore runs its "Aggressive" growth mode: `Heap.cpp proportionalHeapSize`, 3·e^(-2x) + 1, about 3.9x the live heap before a full collection, with an eden budget to match.
+- A phone runs the default mode: 2x below 25% of RAM, 1.5x above.
+- JSC options reach WebContent as `__XPC_JSC_*` variables on the driver. Checked: `__XPC_JSC_useJIT=false` makes a loop 40x slower.
+- `__XPC_JSC_forceRAMSize=6442450944` gives the phone policy. The earlier numbers in this file are the Mac policy.
+
+**Attribution** (career shape, 2 event cycles, phone tier):
+1. **"About 30 s into the world ride" is not a load.**
+   - The arrival at station 18 opens the booth map (ctm-peaks). On it, WebKit Malloc climbs 100-110 MB/s with no fetch, typed-array, JSON or GPU traffic (probe), until a full collection frees 1.1 GB at once (Mac policy: 590 -> 1808 MB, WebContent 2226 MB; no full collection for 28 s).
+   - Chrome, same screen: 47 MB/s of JS garbage (the game screen: 20 MB/s). About 25 MB/s is the LUI player's per-frame objects (lui-player.js draw / abs / shape / sprite), 4 MB/s ctm-map.js override and 4.5 MB/s peak-set-pieces update.
+   - The world load after a Transport shows the same map: 500 of its 875 MB of JS allocations. When a load is slow (machine load), the map's garbage makes the peak: 3090 MB in one Mac-policy run after a 20 s world load.
+   - Under the phone policy the map did not spike in any run.
+2. **Old cores resident at the next load.** WebAssembly Memory reached 371-429 MB at an event load (3 cores) against 128 MB for the new one, WebContent 1602-1633 MB (phone policy). Two holders:
+   - `acrossBefore` (pv switchGate's held draw) kept the released course's objects, and through their closures its core, until the new course went live.
+     - **Fixed (plain):** pruned to what is still in the scene right after unloadCourse. renderAcross only tests scene children against it, so the draw is the same. unloadCourse also drops `worldRewarm`.
+   - The menu flow's boot course core (128 MB, ~93 MB of data) stayed alive through the whole first career ride and every forced full collection, in every run (FinalizationRegistry on its memory; JIT on, DFG off or JIT off alike). With `?ai=0` it was freed.
+     - The holder: loadCourse's non-free-ride branch set `ui.cb.standings` / `ui.cb.lineup` to arrow functions made inside loadCourse, and the streamed world never sets them again.
+     - In JavaScriptCore those closures kept that loadCourse call's scope, and with it the boot course's core and about 130 MB of its load. Probably JSC keeps an async function's locals that live across an await in the scope its closures capture (not confirmed from the engine). Chrome freed it.
+     - Found by bisection: a vite transform turning off the opponent models, the opponent lighting, the opponent FX and the rider icons changed nothing; setting the two callbacks to null freed it at the next full collection (WebContent 953 -> 810 MB).
+     - **Fixed (plain):** module-level `aiStandings` / `aiLineup` (the same module variables; the worldEvent path too). After the fix, menu -> career and menu -> Peak 2 Race, both policies: freed at the first full collection (4 of 4).
+     - The runaway agent's "held through its 5 computer-rider groups" were these closures, not the groups.
+3. **No full collection for 20-40 s after a load**, both policies. The load's garbage stays resident until one comes: a forced full collection took WebContent from 1020-1259 to 607-842 MB (phone policy) and from 948 to 607 MB (Mac policy, Peak 2 Race), 5 s into the ride.
+4. **The load's own transient** (phone policy): the first career load (menus -> MOUNTAIN) reached malloc 1.0-1.2 GB plus graphics ~260 MB, WebContent 1412-1465 MB, for 1-2 s at the end of the load and warm.
+   - It lines up with ~30k bind groups, the pipeline warm, 57 MB/s of mapped-at-creation vertex uploads and the load's garbage.
+   - Chrome sampling of that load: ~96 MB/s of JS allocations. The largest sites are asset()'s bounds loop and three's compile path (getMaterialCacheKey, NodeBuilder), the render under the load screen, and worker result clones.
+   - Chrome's `expandByPoint` / `fromArray` totals are V8 HeapNumber boxing; JSC stores doubles unboxed, so they are not WebKit garbage.
+5. **Fetch bodies:** web/downloads.js held 3-4 copies of every asset body while a load read it: the chunk list plus its join (pv flyover off), the shared copy (kept SHARE_MS), `new Response(bytes)`'s copy and `arrayBuffer()`'s copy. That is 100-250 MB of ArrayBuffers per load.
+
+**Switches (off):**
+- **pv `switchGC`** (web/switch-gc.js, test-switch-gc.mjs; JavaScriptCore only). It is the gc-watchdog kick: one-page WebAssembly.Memory objects, a full collection ~100 ms after the first.
+  - Before a new core: while an earlier core's memory is alive (FinalizationRegistry), kick until it is freed, a full collection has passed without freeing it, or 800 ms have passed.
+  - After the load, before `ready`, still under the load screen: one full collection (collectNow, at most 600 ms).
+  - Measured: 50-250 ms per switch. Aged FinalizationRegistry markers confirm the collection. `window.__switchGC` keeps the last 20.
+  - Liveness never uses WeakRef.deref(): a deref during a concurrent collection keeps its target for that cycle. The first version polled deref() and no core was ever freed inside its wait; the old loadpeak RECORDER derefs `__coreRefs` every 100 ms too.
+- **pv `loadCopies`** (web/downloads.js, test-downloads.mjs section 11). A body of known size is read into one buffer, and each caller's Response reads the shared bytes: arrayBuffer / bytes / blob make the caller's one copy, text / json decode them. `body` / clone() copy only when asked, and the Response lets go of the bytes once read.
+  - Two earlier versions were worse in WebKit (1647-2031 MB). One gave the Response a JS stream body; the other kept the shared bytes for as long as a caller's scope kept its Response (the texture archive job keeps its archive's Response).
+
+**Results** (WebKit through the driver, phone tier, WebContent lifetime `phys_footprint_peak`, MB; one value per run; other agents'
+WebKit / Chrome runs beside them, load average 20-30):
+
+| Career shape, 2 event cycles | phone policy | Mac policy |
+| --- | --- | --- |
+| before (this morning's tree) | 986, 1633 | 2242 |
+| acrossBefore pruned only | 1465, 1479 | |
+| both plain fixes | 1347, 1120, 1688, 1266, 1199 | 1370, 2845 (a), 1292, 1231 |
+| + pv switchGC | 1174, 1014, 1229 | 3090 (b), 1420 |
+| + pv switchGC, loadCopies | 983, 1085, 1225, 1051 | 1487 (c), 1418 (c) |
+
+(a) The event after the first load stayed at 1.96 GB: no full collection (the runaway's stall; the watchdog waits 40 s).
+(b) A 20 s world load under machine load with the Transport map up: its LUI garbage, malloc 1589 -> 2657 MB in 9 s.
+(c) At the menu boot, before any switch (switchGC changes nothing there).
+
+With both plain fixes, the phone-policy peaks are the first career load (menus -> MOUNTAIN, 1186-1249 MB) or an event load's garbage.
+With switchGC the old cores are gone before the new one is made. Phone policy, the last two runs of each (medians per phase): event load
+691 / 712 MB against 757 / 806 MB; the rides after a load 697-947 MB against 773-959 MB.
+
+| One load (one run each) | phone: fixes / + switchGC, loadCopies | Mac: fixes / + switchGC, loadCopies | before (Mac, whole-mountain agent) |
+| --- | --- | --- | --- |
+| menu boot (lazy boot course behind the menus) | 1140 / 1030 | 1395 / 1408 | 1377-1417 |
+| All Peak Race, direct boot, 40 s | 1008 / 1058 | 1135 / 1186 | 1307 |
+| BRA2 Single Event, direct boot, 30 s | 1200 / 1108 | 1485 / 1580 | |
+
+- A whole All Peak Race (apr.mjs, direct, phone policy, switchGC + loadCopies, one run): results reached, WebContent p50 689 / p95 821 /
+  ride max 971 MB, lifetime peak 988 MB, 394 of 122,132 frames over 34 ms (other runs beside it). The earlier Mac-policy run: p95 878 /
+  max 1076 / lifetime 1307 MB.
+- The single loads are the load's own transient: switchGC has nothing to collect before them. Under the phone policy they are at
+  1.0-1.2 GB; under the Mac policy 1.1-1.6 GB.
+- The boot core (bootcore.mjs; FinalizationRegistry, forced full collections) was retained in all 11 runs with the computer riders on
+  before the closure fix, and freed in 4 of 4 after it (menu -> career and menu -> Peak 2 Race, both policies). Ride at +20 s, then
+  after a forced full collection: phone career 1259 -> 842 MB, phone Peak 2 Race 1020 -> 608 MB, Mac Peak 2 Race 948 -> 607 MB (the Mac
+  career ride had run one on its own: 978 -> 975 MB).
+- Costs: switchGC 150-250 ms before a new core (1-3 memories) and 50-70 ms after the load (1 memory), under the load screen. The
+  loadCopies runs had the boot course's load 0.9-1.3 s longer (4 of 4: 3.4-4.0 s against 2.5-3.1 s); not understood, so it stays off.
+- Recommendation: switchGC on after a check on iOS hardware (it uses the same fast-memory kick as pv gcWatchdog, which is on).
+
+**Open:**
+- The LUI player's per-frame garbage on the map / load screens (Mac policy: it makes the post-Transport and booth-map spikes).
+- The load's own transient at the first career load.
+- switchGC on iOS hardware: the kick's fast-memory threshold is smaller there (the runaway agent: 2 memories on the iOS Simulator).
+
 ## Field crashes and diagnostics (2026-09-26)
 
 From the host's field reports (`~/ssx-host/logs/diag.log`, web/diagnostics.js; 116 sessions 2026-09-24..26):
@@ -319,6 +515,139 @@ From the host's field reports (`~/ssx-host/logs/diag.log`, web/diagnostics.js; 1
   `test-downloads.mjs`. The two field fetch errors were downloads aborted by the player leaving a slow first load.
 - **Unknown course at boot** (CRA3/ERA5, our own smoke tests while the Peak 2/3 data was being swapped in): a course
   missing from courses.json now falls back to Snow Jam and the menus instead of a dead "Load failed" card.
+
+- **Hangs (pv `hangWatch`, on; 2026-09-28):** a freeze with no error and no pagehide looked the same as a killed
+  WebContent process. The page now pings a small blob worker every 250 ms with the screen, the course, the last
+  performance marks, and `step` / `recent` (the last events that are not heartbeats). When the pings stop for 8 s while
+  the page is visible, the worker posts `{kind: 'hang', since, gapMs, last}` to /mp/diag itself, again every 30 s with
+  `lasting: true`, and `{kind: 'hang-end', lastedMs}` when the pings come back. It stays silent while hidden, and it
+  ignores a gap in which the worker itself stalled (machine sleep).
+  - Chrome (scratch `ctm/hang/hangtest.mjs`, a proxy that keeps the POSTs): no event in 20 s of idle. A 12 s main-thread
+    block gives `hang` at +8.0 s and `hang-end` at +12.0 s. A 40 s block gives `hang` at +8 s, `lasting` at +38 s and
+    `hang-end` at +40 s.
+  - WebKit runs all of a dedicated worker's I/O through the page's main thread: fetch, WebSocket, IndexedDB, Cache
+    and OPFS each finished only when a 10 s block ended (Chrome: 1-31 ms; `ctm/hang/offmain.mjs`). So in Safari the
+    hang events carry the worker's times but are only sent once the page recovers. A freeze that never ends shows up
+    as the next session's `previous-session-died` (cause foreground, `agoS`).
+  - A killed process takes the worker with it: no hang event, then `previous-session-died`.
+- **The WebKit memory runaway: JavaScriptCore stops running full collections (pv `gcWatchdog`, off; 2026-09-29):**
+  - **Symptom** (whole-mountain memory agent, 2 of 9 phone-tier WebKit runs): from the load on, WebKit Malloc +3-8 MB/s,
+    "WebAssembly Memory" (vmmap "JS VM Reservations") 200 -> 1200 MB, JIT code 20 -> 360 MB, 5-8 GB in 25 min, at 60 fps with
+    flat three.js counts. The GPU process grows too. A phone kills the tab within minutes.
+  - **Detector** (scratch `rw/probe.js`, then `web/gc-watchdog.js`): a marker object held 3 s (so it is old generation), then
+    dropped and registered with a FinalizationRegistry. Only a full collection frees an old object. Healthy WebKit frees each
+    one 3-7 s after its drop. In every runaway the last one is freed during the world load, and none after that (125+ s,
+    100+ markers waiting). The `sample`s of the runaways show only EdenGCActivityCallback collections; a healthy one shows
+    FullGCActivityCallback. So everything only a full collection frees piles up: old-generation per-frame garbage, dead cores
+    (the old courses' 128 MB memories), jettisoned JIT code and stubs (the 512 MB JIT pool fills, then LLInt), GPU / audio
+    wrappers. Chrome is not affected.
+  - **Cause** (JSC source, `heap/Heap.cpp`, `GCActivityCallback.cpp`, WebCore `OpportunisticTaskScheduler.cpp`):
+    - the full-GC timer's delay is `lastFullGCLength / gcTimeSlice(bytes x deathRate)`, where deathRate =
+      (sizeBefore - sizeAfter) / sizeBefore of the last full collection, and 0 when sizeAfter >= sizeBefore. With deathRate 0
+      the delay is infinite and `scheduleTimer` never arms it again;
+    - extra memory (ArrayBuffers, wasm memories) allocated while a concurrent full collection runs is added to the visited
+      extra memory (`reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell`), but the cycle's allocation counter is reset
+      at that collection's end, so it is in sizeAfter and not in sizeBefore. A world load allocates big buffers all the
+      time (packages, the new core's 128 MB memory, grows), so the load's last full collection can end with
+      sizeAfter > sizeBefore. Timing-dependent: about 1 load in 3-5 in the menu -> MOUNTAIN shape;
+    - after that only the eden timer runs, and its requests are Eden-scoped (`shouldDoFullCollection` ignores
+      m_shouldDoFullCollection for a scoped request). A full collection then needs an allocation-limit collection
+      (more than maxEdenSize allocated between two eden timer firings), which normal play never reaches.
+  - **What brings full collections back** (measured on live runaways; scratch `rw/trial.mjs --exp`):
+    - 2 x 1 GB and 2 x 4 GB ArrayBuffers (untouched, ~0 footprint): nothing;
+    - `new WebAssembly.Memory({initial: 1})`, a single 64 KB one: full collections back at once. 108 waiting markers were
+      freed; footprint 1589 -> 927 MB (WebAssembly Memory 494 -> 102: the dead cores go, malloc 819 -> 616, JIT 30 -> 20).
+      Another runaway with 2 x 1 GB Memories: 2106 -> 1548 MB, JIT 60 -> 23, and full collections every ~5 s after it.
+    - Why: JSC's BufferMemoryManager (`runtime/BufferMemoryHandle.cpp` tryAllocateFastMemory) asks for
+      `collectAsync(Full)` once half of the process's fast-memory slots are in use (`maxNumWasmFastMemories` 8 with a large
+      gigacage, else 3), and `collectSync(Full)` when none is left. The game's cores already hold slots.
+    - Fresh idle page (scratch `rw/kicksrv.mjs`): 1-3 one-page memories do nothing, the 4th gives a full collection
+      ~100 ms later, every time. iOS Simulator Safari (iPhone 17 Pro, iOS 26.5): 2 are enough (a smaller threshold), and no
+      RangeError. Not checked on iOS hardware.
+  - **Where it shows** (scratch `rw/trial.mjs`, WebKit, phone tier, the marker probe; Mac = this 64 GB Mac's JSC policy,
+    "Aggressive" growth, about 3.9x the live heap before a full collection; phone = `__XPC_JSC_forceRAMSize=6442450944` on the
+    driver, JSC's default 2x / 1.5x policy):
+    - menu -> MOUNTAIN free ride (`cb.freeRide(21, {reload})`): Mac about 8 in 43 runs; phone 0 in 22.
+    - menu -> Peak 2 Race (`cb.peakRun(7)`, the audio agent's "DRA4 crossing" runaway, 4 of their 6): Mac 1 in 6 of mine;
+      phone 0 in 2. It is the same stall and it starts at the load: last full collection 2 s into the ride
+      (t = 37.5 s), none in the next 10 min. The footprint crept +1 MB/s, then +5-8 MB/s from the DRA4 streaming at 4.5-5 min
+      (3.2 GB, JIT 156 MB at 10 min). Their four runaways have the same JIT climb.
+    - minimal repro page (below): Mac 3 in 19; phone 0 in 10.
+    - pv worldWarm is not the cause (worldWarm on 0 / 10, off 2 / 9, run side by side).
+    - Under the phone policy the stall was never seen. Likely (not confirmed from the engine): the deathRate-0 state is the
+      same, but with the default policy maxEdenSize is about the heap size, so allocation-limit (unscoped) collections come
+      often and run full. Not checked on iPhone hardware, where the tab limit is also far lower.
+  - **Kick cost** (longest rAF gap in the 4 s after it): on a 1.25 GB runaway (fx-4), 62 ms once (normal frames there
+    18-30 ms), footprint 1251 -> 838 MB. On the repro page, 21 ms.
+  - **pv `gcWatchdog`** (off; `web/gc-watchdog.js`, started in main.js after installYieldShim, JavaScriptCore only by user
+    agent, QA `window.__gcWatchdog`):
+    - old and young markers once a second. Stalled = an old marker has waited 40 s with nothing old freed, while young
+      markers are still freed (eden collections run). An idle page that allocates nothing runs neither, and is not a stall.
+      40 s is over twice the longest healthy gap between full collections: 17 s on the Mac (7 x 10-min Peak 2 Races, every
+      full collection timed), 13 s under the phone policy; another agent saw 28 s once on the Mac;
+    - it waits up to 5 s for a safe moment (the load screen, `isPaused()`, a cutscene), then adds one one-page memory a
+      second, held until an old marker is freed, at most 6 per episode, 30 s between episodes. A dropped one-page memory is
+      freed by the next eden and its slot comes back (tiny:1 twice did nothing on a runaway), so they are held. It stops
+      at the first memory that crosses the threshold, so it never reaches the collectSync(Full) case. The collection frees
+      them too (10 rounds of 4 in a row all succeed);
+    - `web/test-gc-watchdog.mjs` (in test:all): healthy never fires, idle never fires, a stall recovers at the 4th memory,
+      the safe-moment path, gives up after 6;
+    - WebKit with it on: 26 game runs (23 menu -> MOUNTAIN, 3 Peak 2 Races x 10 min) with 0 kicks and 0 runaways (no stall
+      happened in them either). The repro page with it on: 1 stall in 7, found at 45.5 s, full collections back 3.0 s
+      later after 4 memories, longest frame 21 ms, and none after.
+    - A stall starting again later in a ride (streaming during a full collection) is possible: after one revival in a
+      MOUNTAIN runaway, full collections came only when forced. The watchdog kicks again after 40 s + the cooldown.
+  - **Our side:**
+    - main.js `acrossBefore` (pv switchGate's scene before a switch) and `loadBefore` (loadCourse) were module-level Sets
+      never cleared. They held the previous course's whole scene until the next switch, and through its closures
+      (`userData.shadowRider.core` -> `load` -> `human`) that course's core. In the memory agent's Chrome snapshot, the old core
+      is reachable only through them. Both are now cleared when the new course goes live (plain fix, no switch). Chrome, the
+      same menu flow: only the live core's memory is left.
+      Since the load-spike work acrossBefore is also pruned right after unloadCourse (it held the old course through the whole next load).
+    - ~~Still open (WebKit): the menu flow's lazy boot course core stays alive through the whole ride~~ Settled (load-spike agent, "Load
+      spikes" above): real, not a probe artifact (FinalizationRegistry-only counting, forced full collections, JIT off too). The holder was
+      `ui.cb.standings` / `ui.cb.lineup`, arrow functions made inside the boot course's loadCourse that the streamed world never set again;
+      in JavaScriptCore they kept that loadCourse call's scope and with it the core (the 5 computer-rider groups hung off the same scope).
+      Now module-level functions: freed at the first full collection (menu -> career and menu -> Peak 2 Race, both heap policies).
+    - A caution for probes: `WeakRef.deref()` polled while a concurrent collection runs keeps its target for that cycle (a switchGC
+      version that polled deref() never saw a core freed); count with a FinalizationRegistry.
+    - Bind-group / sampler bursts (~240/s) are new render objects drawn for the first time (streamed content): three's
+      `getForRender -> _createBindings`. Not per frame, and the same with pv threeLean off.
+    - Seen, not followed: in 2 of 6 180-s MOUNTAIN runs with full collections working, WebKit Malloc climbed 2-3 MB/s from
+      ~120 s in ERA5 with JIT flat and no new locations (the other 4 flat on the same path).
+  - **WebKit bug report (draft, for Owen to file):**
+    - Title: "JSC: full-GC activity timer is never re-armed after a full collection with zero death rate; heap grows without
+      bound (only Eden collections run)".
+    - `GCActivityCallback::didAllocate` computes `lastGCLength / gcTimeSlice(bytes * deathRate)`. `FullGCActivityCallback::deathRate`
+      returns 0 when `sizeAfterLastFullCollection >= sizeBeforeLastFullCollection`, so the delay is infinite and
+      `scheduleTimer` returns without arming the timer. Nothing re-arms it until some other full collection happens.
+    - sizeAfter can exceed sizeBefore in normal use: extra memory reported during a concurrent full collection for an
+      already-marked cell goes to `reportExtraMemoryVisited` (counted in sizeAfter), while `m_*BytesAllocatedThisCycle` is
+      zeroed in `updateAllocationLimits`, so those bytes are in no cycle's sizeBefore.
+    - After that, the Eden timer's requests are `CollectionScope::Eden`, and `shouldDoFullCollection()` returns Eden for a
+      scoped request even when `m_shouldDoFullCollection` is set. So no full collection happens unless an unscoped
+      allocation-limit collection occurs, which a steady 60 fps app with an active Eden timer never reaches.
+    - Effect: old-generation garbage, jettisoned JIT code, dead WebAssembly memories and DOM / WebGPU / WebAudio wrappers are
+      never freed: WebContent reaches 5-8 GB in 25 min (Safari 26 / macOS 27, WebKit 22625.1.29.11.27); iOS kills the tab.
+    - Minimal repro (scratch `rw/reprosrv.mjs`, `?mb=4&every=100&touch=1`): per-frame garbage (20k small objects a frame),
+      a 4 MB ArrayBuffer filled and kept every 100 ms for 10 s (the "load"), then dropped; an old-generation
+      FinalizationRegistry marker every second. 2 of 9 runs stalled: the last marker freed at 7.5 / 8.4 s (inside the load),
+      none in the next 42 s; 4 one-page WebAssembly.Memory objects then freed them all at once (both). Untouched buffers
+      (32 MB every 100 ms) and wasm memory grows (8 MB every 200 ms): 0 of 7.
+    - Both policies: over 29 runs of that repro on this Mac (64 GB RAM, JSC's Aggressive heap growth) 3 stalled (2 of them
+      among 10 runs that also register a young object in a FinalizationRegistry each second: no effect). With
+      `JSC_forceRAMSize=6442450944` (the default 2x / 1.5x growth, as on phones) 0 of 10, and the game's two shapes 0 of 24
+      (Mac: menu -> free ride about 8 of 43). The zero-deathRate state should be reached the same way; the likely reason it does
+      not last is that with the default growth an allocation-limit (unscoped) collection comes soon and runs full (not
+      confirmed from the engine). So the report matters most for large-RAM Macs, and should be checked on iPhone hardware.
+    - Suggested fix: floor deathRate for the full timer (e.g. at a small epsilon) or re-arm it after the next Eden
+      collection, and let an Eden-scoped timer request be upgraded when m_shouldDoFullCollection is set.
+  - Scratch tools (this agent's `rw/`): `vite.rw.config.mjs` (a dev server on 5281 that injects `probe.js`: instantiation,
+    Memory, GPU object and WeakMap counts with stacks, the full-GC markers, load events), `trial.mjs` (repeated WebKit trials
+    of a shape: apj / apr / fr / free menu flow; footprint; verdicts; `--exp` kicks; `--find`), `kicksrv.mjs` / `kickwk.mjs`
+    (the fresh-page kick test), `reprosrv.mjs` / `reprowk*.mjs` (the minimal repro, `?wd=1` with the watchdog, `?yo=1` young
+    markers), `finder.js` / `finder2.js` / `ident.js` (in-page retainer walks), `chrfree.mjs` (Chrome snapshot of the menu flow), `pathto.mjs` (heap-snapshot retainer paths
+    with the WeakMap ephemeron edges excluded).
 
 Report format: every event has `screen` and `course`; errors repeat at most 3 times, then `repeat` events count them;
 400 events per session with 40 kept for priority kinds (errors, GPU, pagehide); heartbeat every 10 s for 10 minutes,

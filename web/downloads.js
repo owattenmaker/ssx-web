@@ -55,7 +55,7 @@ async function downloadOnce(url) {
     state.active++; state.files++; state.expected += length; if (!state.since) state.since = performance.now(); counted = true;
     // A known size: the body goes straight into one buffer (no chunk list plus a second full copy to join it: on a phone the
     // Snow Jam package's ~68 MB peaked twice over while it arrived, docs/presentation.md); else the chunks are joined at the end.
-    let chunks = [], whole = length && pv('flyover') ? new Uint8Array(length) : null;   // (with pv flyover until verified)
+    let chunks = [], whole = length && (pv('flyover') || pv('loadCopies')) ? new Uint8Array(length) : null;   // (with pv flyover / loadCopies until verified)
     const reader = response.body.getReader();
     for (;;) {
       watchdog(); const { done, value } = await reader.read(); if (done) break;
@@ -111,9 +111,44 @@ globalThis.fetch = function fetch(input, init) {
   }
   return entry.then((r) => { // the Response constructor copies the bytes (each caller may transfer its buffer to a worker)
     const headers = new Headers(r.headers); headers.delete('content-encoding'); headers.delete('content-length');
+    if (pv('loadCopies')) return sharedResponse(r, headers);
     return new Response(r.bytes, { status: r.status, statusText: r.statusText, headers });
   });
 };
+
+// pv loadCopies (docs/mobile.md "Load spikes"): a caller's Response whose body is read from the shared bytes. new Response(bytes) copied
+// them, and arrayBuffer() / json() read that copy into another: with the shared copy and the download's chunk list plus its join, a load
+// held 3-4 copies of every file while it read it (WebKit Malloc). Here arrayBuffer() / bytes() / blob() make the caller's one copy (it may
+// transfer or edit it), text() / json() decode the shared bytes directly; `body` and clone() make a copy only when asked for. The values
+// are the Response's: UTF-8 with the BOM dropped (TextDecoder), JSON.parse of that text. The Response itself has no body (null): a first
+// version gave it a JS ReadableStream body and WebKit kept more memory with it (2 runs, docs/mobile.md "Load spikes").
+const nativeBodyUsed = Object.getOwnPropertyDescriptor(Response.prototype, 'bodyUsed')?.get;
+// The Response lets go of the shared bytes once its body is read: a caller whose scope keeps the Response (an async function's
+// locals: the texture archive job keeps its whole archive's Response) must not keep a whole file with it.
+function sharedResponse(r, headers) {
+  let bytes = r.bytes, used = false, stream = null;
+  const init = { status: r.status, statusText: r.statusText, headers };
+  const res = new Response(null, init);
+  const consumed = () => used || (stream ? !!nativeBodyUsed?.call(stream) : false);
+  const take = (read, native) => {
+    if (stream) return stream[native]();   // `body` was asked for: the stream's copy is the body from here
+    if (used) return Promise.reject(new TypeError('Body has already been consumed.'));
+    used = true; const b = bytes; bytes = null;
+    try { return Promise.resolve(read(b)); } catch (e) { return Promise.reject(e); }
+  };
+  const text = (b) => new TextDecoder().decode(b);
+  Object.defineProperties(res, {
+    bodyUsed: { get: () => consumed(), configurable: true },
+    body: { get: () => { if (!stream && used) return null; if (!stream) { stream = new Response(bytes.slice(), init); bytes = null; } return stream.body; }, configurable: true },
+    arrayBuffer: { value: () => take((b) => b.slice().buffer, 'arrayBuffer'), configurable: true, writable: true },
+    bytes: { value: () => take((b) => b.slice(), 'bytes'), configurable: true, writable: true },
+    text: { value: () => take(text, 'text'), configurable: true, writable: true },
+    json: { value: () => take((b) => JSON.parse(text(b)), 'json'), configurable: true, writable: true },
+    blob: { value: () => take((b) => new Blob([b], { type: headers.get('content-type') ?? '' }), 'blob'), configurable: true, writable: true },
+    clone: { value: () => { if (stream) return stream.clone(); if (used) throw new TypeError('Body has already been consumed.'); return sharedResponse({ ...r, bytes }, headers); }, configurable: true, writable: true },
+  });
+  return res;
+}
 
 // Prefetch (web/ctm-event.js, pv flyover): the download starts (shared like any request) and its one copy of the bytes waits for
 // the first request of that URL (then SHARE_MS as usual), at most PREFETCH_KEEP_MS. A plain fetch() + arrayBuffer() would hold

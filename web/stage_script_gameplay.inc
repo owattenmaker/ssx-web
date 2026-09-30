@@ -238,6 +238,22 @@ RIDER_LOCAL extern bool browserObjectRoutes; // web/world_bridge.cpp (pv finishF
 StageArg mission_builtin_call(int,const StageArg*,int); // web/mission_gameplay.inc (Big Challenges)
 #include "stage_world.inc" // LiveComp timers, particle effects, sound requests (the entities the programs build)
 #include "avalanche_gameplay.inc" // builtins 94 / 95: the recorded avalanches (docs/avalanche.md)
+#ifdef SSX_SNAPSHOT_REGISTRY
+#include "world_snapshot.hpp"
+// The rider-context snapshot's hook (web/world_snapshot.hpp; docs/replay.md §2a): the stage VM's run-time state (the PS2's
+// WScriptMan gp+0xCE8, 0x30BB10 / 0x30BD20), its loaded programs kept (web/snapshot-policy.mjs).
+namespace {
+struct StageVmRuntime{bool present=false;ssx::OriginalScriptVM::RuntimeSnapshot vm;};
+RIDER_LOCAL_LAZY std::array<StageVmRuntime,2> stageVmSnapshot;
+void stage_vm_snapshot_save(unsigned slot){auto& s=stageVmSnapshot[slot];s.present=stageVm.has_value();if(stageVm)stageVm->saveRuntime(s.vm);}
+bool stage_vm_snapshot_check(unsigned slot){const auto& s=stageVmSnapshot[slot];if(s.present!=stageVm.has_value())return false;return !stageVm||stageVm->programCount()==s.vm.programs;}
+bool stage_vm_snapshot_restore(unsigned slot){const auto& s=stageVmSnapshot[slot];if(s.present!=stageVm.has_value())return false;return !stageVm||stageVm->restoreRuntime(s.vm);}
+uint64_t stage_vm_snapshot_hash(){if(!stageVm)return 0;ssx::OriginalScriptVM::RuntimeSnapshot now;stageVm->saveRuntime(now);uint64_t h=ssx_snapshot::mix(1469598103934665603ull,now.programs);h=ssx_snapshot::mix(h,uint64_t(now.depth));for(const auto& t:now.tables)h=ssx_snapshot::hash_value(t,h);return h;}
+size_t stage_vm_snapshot_bytes(){size_t n=0;for(const auto& s:stageVmSnapshot)n+=s.vm.tables.size()*sizeof(ssx::OriginalScriptTable);return n;}
+struct StageVmSnapshotHook{StageVmSnapshotHook(){ssx_snapshot::hooks().push_back({"stageVm (run-time state)",&stage_vm_snapshot_save,&stage_vm_snapshot_restore,&stage_vm_snapshot_hash,&stage_vm_snapshot_bytes,&stage_vm_snapshot_check});}};
+[[maybe_unused]] StageVmSnapshotHook stageVmSnapshotHook;
+}
+#endif
 static bool stage_launch_spline(uint32_t resource); // web/set_piece_gameplay.inc: builtin19 of a timer program (slot 5)
 // Builtin dispatch (table 0x441F38). Returns the result value (nil unless noted).
 static StageArg stage_builtin(int index,const StageArg* args,int count){
@@ -328,7 +344,10 @@ static StageArg stage_builtin(int index,const StageArg* args,int count){
   return nil;}
  case 67:{ // 302048 -> 22D6C8(streamer, 0x445E40[key0]) (web/peak_world.inc)
   std::array<uint32_t,2> f{0xffffffffu,0xffffffffu};stage_parse(f,std::array<int32_t,2>{1,1},args,count);
-  extern void browser_peak_builtin67(int32_t,int32_t);if(stage_current_human)browser_peak_builtin67(int32_t(f[0]),int32_t(f[1]));return nil;}
+  extern void browser_peak_builtin67(int32_t,int32_t);if(stage_current_human)browser_peak_builtin67(int32_t(f[0]),int32_t(f[1]));
+  // 0x3021A4..0x3021B8: key1 0 and 0x445E40[key0] != 1 -> 30B7F8 (every mission reset: a running Big Challenge ends) before 22D6C8
+  if(stage_current_human&&int32_t(f[1])==0&&!(f[0]<8u&&(std::array<int32_t,8>{2,3,4,5,1,1,1,0})[f[0]]==1)){void browser_mission_gate();browser_mission_gate();}
+  return nil;}
  case 13:stage_meshanim_builtin(args,count);return nil;                        // 2FCFF0 MeshAnim break pieces (0x351B40)
  case 27:{ // 2FF850: player (-1 current), effect type, amount -> 10F1C0(rider, type, amount)
   std::array<uint32_t,3> f{0xffffffffu,0u,0u};stage_parse(f,std::array<int32_t,3>{1,1,2},args,count); /*types 0x446530*/
@@ -436,7 +455,8 @@ void browser_stage_track_setup(uint32_t track){
  for(const auto& st:stageTables->stages)if(st.track==track)for(uint32_t g=0;g<st.globalCount;g++){
   const int program=stageTables->globals[st.firstGlobal+g];if(program>=0)stage_run_program(st.firstProgram+uint32_t(program),st.track,true);}
 }
-void browser_stage_track_teardown(uint32_t track){if(stageCollectionTrack==int32_t(track)){stageCollection={};stageCollectionTrack=-1;}browser_mission_track_teardown(track);}
+void browser_set_piece_track_teardown(uint32_t); // web/set_piece_gameplay.inc (pv peakSplines)
+void browser_stage_track_teardown(uint32_t track){if(stageCollectionTrack==int32_t(track)){stageCollection={};stageCollectionTrack=-1;}browser_mission_track_teardown(track);browser_set_piece_track_teardown(track);}
 extern "C" EMSCRIPTEN_KEEPALIVE void set_stage_collect_row(int track,uint32_t lo,uint32_t hi){if(track>=0)stageCollectRows[uint32_t(track)]={lo,hi};}
 extern "C" EMSCRIPTEN_KEEPALIVE int stage_collect_track(){return stageCollectionTrack;}
 // The host set the collect path / rows after the run's stage reset (free ride has no event start, web/free-ride.js afterReset):
@@ -586,6 +606,10 @@ static void stage_collectible_award(uint32_t resource,int32_t id){
 // Host input (web/main.js, before every race start / restart): path = 0x535C11 (0 career, 1 single event, 2 multiplayer)
 // and the course's career collect mask (lo = list indexes 0..31, hi = 32..63). Default: single event.
 extern "C" EMSCRIPTEN_KEEPALIVE void set_stage_collect_state(uint32_t path,uint32_t lo,uint32_t hi){stageCollectPath=path;stageCollectMask[0]=lo;stageCollectMask[1]=hi;}
+// The collectible slot ctx+0x2C0 as 30C4A8 filled it: [id, count, resources in list order]. The career bit of a collectible is its list
+// index (30C4A8 stores the resource at +0xC + 4 * count, then 1538E8(profile, 0, index = count, id); 0x30C510..0x30C548), so a savestate's
+// collected set (its DeadNode collectibles in a CTM race) maps to the mask through this list (web/compare-ai-capture.mjs --in-world-ai).
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_collection_list(){RIDER_LOCAL static std::vector<uint32_t> out;out.assign({uint32_t(stageCollection.id),uint32_t(stageCollection.resources.size())});out.insert(out.end(),stageCollection.resources.begin(),stageCollection.resources.end());return out.data();}
 int browser_stage_collect_path(){return int(stageCollectPath);} // 0x535C11 (web/peak_world.inc: the crossing's game-tick restart)
 // 11A228 / 119608 / 117718: 0x535C10 (event kind 4 = free ride) and 0x535C11 (0 = Conquer the Mountain) -> tricks pay cash.
 static bool score_points_to_career(){return browserEventKind==4&&stageCollectPath==0;}

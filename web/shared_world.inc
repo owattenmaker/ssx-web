@@ -16,6 +16,13 @@
 //   7 section MultiSpline release (leave scan of the section activation, web/section_gameplay.inc): authored resource
 //   6 stage trigger contact (121818 -> 355770 guard -> 30A060 slot 2, web/stage_script_gameplay.inc): resource, human (builtin 39: the player object is human)
 //   8 painter reset 0x2C03E8 (a rider's FX reset 0x111890 at its reset placement / teleport: every world painter wrapper, web/weather.inc)
+//   9 world node state (pv eventInWorldAi, docs/ctm-events-in-world.md stage 4; logged only by a core with shared_world_nodes on, the
+//     streamed world's human): resource, node type (0 none, 6 DeadNode, 16 Hide, 19 RestoreNode), collision-world runtime flags
+//     known + flags, stage flags known + flags. In the streamed world the stage and section programs of the resident locations run in the
+//     human's context only (the computer riders' contexts hold the event package, whose own seeds are Single Event's); every change the
+//     programs make to an instance's state (0x2FC420 DeadNode / RestoreNode, 0x2FFB50 Hide / Unhide, the flag builtins: stage_set_flags)
+//     reaches the other contexts, as in the PS2's one world. Logged also while the human replays another rider's contact (its programs'
+//     answer to that contact). world_node_states / world_node_states_apply copy the whole state of a list of instances the same way.
 RIDER_LOCAL bool sharedWorldReplay=false;
 RIDER_LOCAL static std::vector<uint32_t> sharedWorldLog;
 void shared_world_log(std::initializer_list<uint32_t> words){
@@ -24,6 +31,30 @@ void shared_world_log(std::initializer_list<uint32_t> words){
  for(auto it=words.begin()+1;it!=words.end();++it)sharedWorldLog.push_back(*it);
 }
 static uint32_t shared_float(float x){return std::bit_cast<uint32_t>(x);}
+RIDER_LOCAL static bool sharedWorldNodes=false;RIDER_LOCAL static uint32_t sharedWorldNodesKept=0; // kind 9 records this context kept its own state for (below)
+static void shared_world_node_words(uint32_t resource,uint32_t* w){ // kind 9's payload (6 words) from this context's state
+ w[0]=resource;w[1]=uint32_t(stage_node_state(resource));
+ const auto* i=set_piece_instance_at(resource);w[2]=i&&i->eventRuntimeFlags?1u:0u;w[3]=w[2]?*i->eventRuntimeFlags:0u;
+ const auto it=stageFlags.find(resource);w[4]=it!=stageFlags.end()?1u:0u;w[5]=w[4]?it->second:0u;
+}
+void shared_world_node_changed(uint32_t resource){ // web/stage_world.inc stage_set_flags (every node and flag change ends there)
+ if(!sharedWorldNodes||sharedWorldLog.size()>65536)return;
+ uint32_t w[6];shared_world_node_words(resource,w);sharedWorldLog.insert(sharedWorldLog.end(),{9u,6u,w[0],w[1],w[2],w[3],w[4],w[5]});
+}
+static void shared_world_node_apply(const uint32_t* w){
+ const uint32_t resource=w[0];const int type=int(w[1]);auto* instance=set_piece_instance_at(resource);if(!instance)return; // an instance of another location
+ // A live entity of the human's world that this context does not hold (the CTM collectibles' MagnetModifier pickups, built by the
+ // section programs, which run in the human's context only): the flags route it to an entity this context cannot answer. The context
+ // keeps its own state (the event load's: a DeadNode for those pickups). On the PS2 the magnet answers only the instance-contact query
+ // (0x357538, filter 1) and its gate 0x357660 refuses a computer rider (only a human becomes its target), so a computer rider's contact
+ // has no effect; unconfirmed: whether such a contact can win 105398's contact selection over another one in the same tick.
+ if(w[2]&&originalInstanceBodyRoute(w[3],true)==OriginalInstanceBodyRoute::Entity&&!instance->entity&&!instance->answerBox&&!stageMagnets.count(resource)){++sharedWorldNodesKept;return;}
+ if(type){stageNodeState[resource]=type;if(auto* st=stage_instance(resource)){st->entity=StageNoopEntity;st->dead=type==6;st->restored=type==19;}}
+ else if(stageNodeState.erase(resource)){if(auto* st=stage_instance(resource);st&&st->entity==StageNoopEntity){st->entity=StageNoEntity;st->dead=false;st->restored=false;}}
+ if(auto* i=set_piece_instance_at(resource))i->eventRuntimeFlags=w[2]?std::optional<uint32_t>(w[3]):std::nullopt;
+ if(w[4]){stage_note_countdown_flags(resource);stageFlags[resource]=w[5];if(auto* st=stage_instance(resource)){st->flags=w[5];st->flagsKnown=true;}}
+ else{stageFlags.erase(resource);if(auto* st=stage_instance(resource))st->flagsKnown=false;}
+}
 void shared_world_log_contact(const OriginalInstanceContactPacket& p,const OriginalInstanceContactRecord& r){
  shared_world_log({1u,p.instance,uint32_t(p.node),shared_float(r.point[0]),shared_float(r.point[1]),shared_float(r.point[2]),shared_float(r.point[3]),
   shared_float(r.direction[0]),shared_float(r.direction[1]),shared_float(r.direction[2]),shared_float(r.direction[3]),
@@ -51,9 +82,24 @@ EMSCRIPTEN_KEEPALIVE void world_event_apply(const uint32_t* e){
    case 6:browser_stage_replay(e[2],e[3]!=0);break;
    case 7:browser_release_section_lift(e[2]);break;
    case 8:weather_painters_reset();break;
+   case 9:shared_world_node_apply(e+2);break;
    default:throw std::runtime_error("Unknown shared world event");
   }
  }catch(...){sharedWorldReplay=false;rng=savedRandom;throw;}
  sharedWorldReplay=false;rng=savedRandom;
+}
+// pv eventInWorldAi: this core logs its node states (kind 9); the streamed world's human only (web/ai-race.js).
+EMSCRIPTEN_KEEPALIVE void shared_world_nodes(int on){sharedWorldNodes=on!=0;}
+// The node states of a list of instances in this context: [count, then kind 9's 6 words per resource].
+EMSCRIPTEN_KEEPALIVE uint32_t* world_node_states(const uint32_t* resources,int count){
+ RIDER_LOCAL static std::vector<uint32_t> out;out.assign(1,0u);
+ for(int k=0;k<count;++k){uint32_t w[6];shared_world_node_words(resources[k],w);out.insert(out.end(),w,w+6);++out[0];}
+ return out.data();
+}
+// Another context's world_node_states list into this one (the instances this context has; no draw, no rider effect). Returns the
+// records applied (not those of another location, nor the live entities kept above).
+EMSCRIPTEN_KEEPALIVE int world_node_states_apply(const uint32_t* list){
+ int n=0;const uint32_t kept=sharedWorldNodesKept;for(uint32_t k=0;k<list[0];++k){const uint32_t* w=list+1+6*k;if(set_piece_instance_at(w[0])){shared_world_node_apply(w);++n;}}
+ return n-int(sharedWorldNodesKept-kept);
 }
 }

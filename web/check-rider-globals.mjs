@@ -20,6 +20,7 @@ const SHARED = [
   /riderFxRenderScale/,                                        // web/boost_gameplay.inc: pv streamers (rider geometry scale), every rider
   /^_ZN10__cxxabiv1L10eh_globalsE$|^_ZN12_GLOBAL__N_18freelistE$|^_ZN12_GLOBAL__N_14heapE$|^current_timeout_ms$|^current_intervals_ms$/, // libc++abi / malloc / runtime state (shared as always; -flto puts it in the LTO object)
   /chairEntityShared|multiSplineShared/,                         // web/set_piece_gameplay.inc: chair entities / lift evaluations reused only on bit-identical inputs
+  /ssx_snapshot|snapshotRegistry_/,                            // web/world_snapshot.hpp: the snapshot's registry (the TLS layout, one for every context)
   /avalancheShared/,                                           // web/avalanche_gameplay.inc: the loaded avalanche definitions, taken by the other contexts of that location
 ];
 const map = fs.readFileSync(process.argv[2], 'utf8');

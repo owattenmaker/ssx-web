@@ -4,6 +4,8 @@ import { FixedStepClock } from './fixed-step-clock.js';
 // pose / world state, the shared visual and game RNG words and the human's score object: the words a change to the
 // game loop must reproduce bit for bit (QA: traces before / after the change).
 export const TRACE_OUT_FLOATS = 45; // rider_state 16, pose_physical 12, race_end 8, camera 9
+import { pv } from './pv-flags.js';
+
 export function gameTrace(human, npcCores, out) {
   let h = 0x811c9dc5 >>> 0;
   const mix = (u32) => { for (let i = 0; i < u32.length; i++) h = Math.imul(h ^ u32[i], 16777619) >>> 0; };
@@ -48,6 +50,11 @@ export function readTrickHudSlots(core) {
 }
 
 export const POST_FINISH_TICKS = 409, RESULTS_TICKS_FINISH = 408, RESULTS_TICKS_TIME_UP = 288;
+// pv finishSkip (docs/ctm-decomp-world-states.md): the finish-standings overlay 0xC (race, 1E8098) / 0xD (freestyle) opens 180 ticks after
+// WS5 enter (= the port's finish + 3); its update and events start once its transition-in ends (WS5 + 225), and a NEW Cross edge from then
+// (UI event 5, 1E8160 with +0xA0 set) closes it: 39F840, WS_advance 0x231320 -> WS12 (a podium list queued) or WS7, the results on that tick.
+// A Cross held from before does not count (the 0x321298 edge rule). ARMSX2 race-q fin-mash-cross: accepted at WS5 + 230, WS7 at + 231.
+export const FINISH_SKIP_FROM = 228;
 const NO_STICKS = [0, 0, 0];
 const f32 = (core, ptr, n) => new Float32Array(core.HEAPF32.buffer, ptr, n);
 const trickNames = new TextDecoder();
@@ -69,6 +76,7 @@ export function createGameTick(host, { trace = null } = {}) {
     const rec = { core, ticksLeft, clock: s.clock, prepassBoost: f32(core, core._boost_hud_info(), 13).slice(), prepassSlots: s.wantPrepassSlots ? readTrickHudSlots(core)?.slots ?? null : undefined };
     s.replay?.record(input);   // the run's pad for its replay (web/replay.js; ignored while a replay plays)
     core.HEAPF32.set(input, s.padPtr >> 2);
+    s.worldAiBefore?.(); // (pv eventReturnInWorld: WS15's riders leave at the WS4 restart, before this tick's passes; main.js)
     if (s.aiActive) s.aiRace.beginTick(); else { s.soloTickStart?.(core); s.mpGame?.beginTick(); }   // soloTickStart: a solo event's anchor RNG (main.js, pv eventAnchorRng)
     const cmd = f32(core, core._pad_tick(s.padPtr), 24).slice();
     rec.cmdAir = cmd[14] === 4 || cmd[14] === 5; // controllers 4 passive air, 5 air: Simple keyboard mode routes new direction presses to the D-pad
@@ -91,7 +99,7 @@ export function createGameTick(host, { trace = null } = {}) {
     if (core._stage_teleport_info) { const n = f32(core, core._stage_teleport_info(), 1)[0];
       if (n !== teleports.get(core)) { if (teleports.has(core) && n > 0) { rec.placement = true; s.lastResetPlacement = f32(core, core._reset_info(), 8)[2]; s.state = f32(core, core._rider_state(), 16).slice(); if (s.posePhysicalFrame) s.posePhysicalFrame = f32(core, core._pose_physical(), 12).slice(); } teleports.set(core, n); } }
     if (!s.replay?.active) s.rideTick?.(s.state, !!(rec.placement || rec.rescue)); // field stats: distance ridden (main.js gameHost -> diagnostics.js diagRide; reads only)
-    s.freeRide?.tick(); s.bigChallenges?.tick();
+    s.freeRide?.tick(); s.bigChallenges?.tick(); s.faqTick?.(); s.worldAiTick?.(); // (pv eventInWorldAi: the event's riders held at their NIS actors under WS1, main.js) // world state 4: the offer read 0x230890, then the deferred FAQ 0x2309A4 (pv faqDefer)
     if (s.aiActive) {
       s.aiRace.endTick();
       // 0x2D4C08 per game tick: relationship icons over the computer riders (level = their record about the human, 3 for the peak rival)
@@ -120,7 +128,11 @@ export function createGameTick(host, { trace = null } = {}) {
     // EndRace requests the results, but the original shows them (and starts the replay) only when the finish HUD is done: 408 ticks after the
     // finish, 288 after a TIME'S UP (+0x480: 125228 timeout or pause Give Up); PS2 pipe-finishov/pipe-brake/pipe giveup captures, docs/career-events.md
     if (s.raceInfo[3]) s.resultsPending = true;
-    if (s.resultsPending && s.finished && s.postFinishTicks + 1 >= (core._race_timed_out?.() ? RESULTS_TICKS_TIME_UP : RESULTS_TICKS_FINISH)) {
+    // the Cross channel of the pad history (0x321298: after an edge the next three updates ignore the input), for pv finishSkip
+    const cross = s.finishCross ??= { held: 0, age: 0 }; let crossPressed = false;
+    if (cross.age < 3) cross.age++; else { const held = input[10] > 0 ? 1 : 0; if (held !== cross.held) { cross.held = held; crossPressed = held === 1; cross.age = 0; } }
+    const skip = crossPressed && s.resultsPending && s.finished && s.postFinishTicks + 1 >= FINISH_SKIP_FROM && pv('finishSkip');
+    if (s.resultsPending && s.finished && (skip || s.postFinishTicks + 1 >= (core._race_timed_out?.() ? RESULTS_TICKS_TIME_UP : RESULTS_TICKS_FINISH))) {
       s.resultsPending = false;
       const result = f32(core, core._race_result_info(), 6); if (!result[0]) throw Error('Results requested without finish record');
       rec.results = { ticks: result[1], dnf: !!core._race_timed_out?.(), rows: s.aiActive ? s.aiRace.results(result[4]) : undefined, standings: s.aiActive ? s.aiRace.standings() : undefined };
@@ -130,7 +142,10 @@ export function createGameTick(host, { trace = null } = {}) {
     if (s.replay && !s.replay.active) s.replay.observe(!!s.state[8], s.score, !!f32(core, core._crash_info(), 1)[0], !!f32(core, core._reset_info(), 1)[0]);
     s.clock += 1 / 60;
     // the original keeps the finish camera (POST_RACE_1) running behind the results until its replay starts 409 camera updates after the finish
-    if (s.finished && ++s.postFinishTicks >= POST_FINISH_TICKS) s.running = false;
+    // pv eventReturnInWorld (main.js gameHost.liveStopAt): an in-world event has no page replay behind its results, and the PS2's live ticks
+    // end where its auto replay starts (0x2706B8: finish + 288 TIME'S UP / + 408 FINISH, counting the finish tick; PS2 c0a-ret2 records
+    // 3032..3320, the Give Up's coast), whose results-time state 0x2706F0 restores at the Transport
+    if (s.finished && ++s.postFinishTicks >= (s.liveStopAt?.(!!core._race_timed_out?.()) ?? POST_FINISH_TICKS)) s.running = false;
     if (trace) trace(rec);
     return rec;
   }
@@ -171,7 +186,7 @@ export function createGameTick(host, { trace = null } = {}) {
     if (p.terrainRefinement) p.terrainRefinement.update(Array.from(p.state.slice(0, 3)), f32(core, core._terrain_contact_info(), 12)[0], rec.clock);
     if (rec.trick !== undefined && !replaying) p.trick = rec.trick;
     if (rec.finish && !replaying) p.careerRunEnd(rec.finish, rec.finishDump);
-    if (rec.results && !replaying) { p.paused = false; p.clearInput(); p.ui.showResults({ rider: p.selectedRider.name, ...rec.results }); p.replay?.resultsShown(); }
+    if (rec.results && !replaying) { p.leavePause(); p.clearInput(); p.ui.showResults({ rider: p.selectedRider.name, ...rec.results }); p.replay?.resultsShown(); }
     // pad vibration: this step's rumble calls (core audio events 30/31) + the 0x125B18 decay, before sfx-game drains the queue (web/rumble.js)
     p.rumble.tick(core, !replaying && !p.finished && (p.ui.feScreens?.vibration?.() ?? false));
     // game audio tick: core audio events, board loops, crowd, world sounds, painters, speech (web/game-audio.js)

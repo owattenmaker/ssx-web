@@ -4,11 +4,12 @@
 //   pv audioInterrupt     a context that stopped takes no new voices, holds (movie, hidden page) are counted, resume is retried
 //   pv sfxStartAfterDecode a sound's layers decode before its start time is read (no late start / skipped attack)
 //   web/audio-stats.js    late / missed bars, stolen / dropped voices, slow decodes
+//   node lifetime         finished / stopped voices, bars and songs disconnect their whole chain; the streamed .mus keeps a bounded set of bars
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
-import { prepareSong, createPathfinderPlayer } from './pathfinder.js';
+import { prepareSong, createPathfinderPlayer, createMusStream } from './pathfinder.js';
 import { decodeMusicSample, toAudioBuffer } from './audio-decode.js';
 import { decodeAudioJob } from './audio-decode-job.js';
 import { audioStats, audioStatsSnapshot } from './audio-stats.js';
@@ -422,6 +423,72 @@ test('ctmRestartAudio: the pause Restart keeps the song (resumed at the Yes, eve
     assert.deepEqual(ev, ['restart 1', 'code 20', 'pick', 'play 0', 'event 0'], 'results Restart');
     assert.ok(ga._music() && !ga._music().finished);
   } finally { setPv('ctmRestartAudio', null); L.done(); }
+});
+
+// Node lifetime (docs/audio-logic.md 9.15): a connected node stays alive (Chrome) and processed (WebKit) for the session.
+function trackingContext() {
+  const ctx = fakeContext(), nodes = [];
+  const track = (make) => (...a) => { const n = make(...a); const cut = n.disconnect; n.disconnect = () => { n.disconnected = true; cut?.call(n); }; nodes.push(n); return n; };
+  for (const k of ['createGain', 'createBufferSource', 'createStereoPanner', 'createBiquadFilter']) ctx[k] = track(ctx[k].bind(ctx));
+  const end = (s) => s.onended?.(); // what the browser does when a source stops
+  return { ctx, nodes, end };
+}
+test('node lifetime: a finished or stopped sfx voice disconnects its whole chain (sources, gains, LFOs, panner, output)', async () => {
+  const bytesOf = (p) => new Uint8Array(fs.readFileSync(path.join(AUDIO, p)));
+  const { ctx, nodes, end } = trackingContext(), engine = { unlocked: true, live: true, context: ctx, bus: () => ({}) };
+  const sfx = createSfx({ engine, fetchJson: async (p) => JSON.parse(fs.readFileSync(path.join(AUDIO, p))), fetchBytes: async (p) => bytesOf(p) });
+  await sfx.loadBank(SLOT.MAIN, 'zBxsfx');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // every sound of the bank once (LFO and envelope layers included), ended by the browser: all nodes let go 50 ms on
+  let n0 = nodes.length, played = 0;
+  const bank = sfx.bankOf(SLOT.MAIN);
+  for (let sound = 0; sound < (bank.json.entries?.length ?? 0); sound++) {
+    const v = sfx.play({ slot: SLOT.MAIN, sound, bus: 'BOARD', position: [0, 0, 0] }); if (!v) continue; played++;
+    const mine = nodes.slice(n0); n0 = nodes.length;
+    assert.ok(mine.every((x) => !x.disconnected), 'nothing let go while it plays');
+    for (const s of mine.filter((x) => x.start)) end(s);
+    await wait(60);
+    assert.ok(mine.every((x) => x.disconnected), `sound ${sound}: ${mine.filter((x) => !x.disconnected).length} of ${mine.length} nodes still connected`);
+    assert.equal(v.layers.length, 0, 'the handle drops its layers');
+    v.setBend(0x2000); v.setWheel(10); v.stop(); // a stale handle: no effect, no throw
+  }
+  assert.ok(played > 20, `played ${played}`);
+  // stopped (250 ms fade): connected through the fade, let go after it
+  const v = sfx.play({ slot: SLOT.MAIN, sound: 3, bus: 'BOARD' }), mine = nodes.slice(n0); n0 = nodes.length;
+  v.stop(0.05); await wait(20); assert.ok(mine.every((x) => !x.disconnected), 'connected during the fade');
+  await wait(150); assert.ok(mine.every((x) => x.disconnected), 'let go after the fade');
+  assert.equal(sfx.voiceCount, 0);
+});
+test('node lifetime: music bars let go when they end or are cut now; a stopped song lets go of its gains (with and without the declick)', async () => {
+  for (const declickMs of [0, 5]) {
+    const { ctx, nodes, end } = trackingContext();
+    const p = createPathfinderPlayer({ context: ctx, destination: ctx.destination, song: song('Go'), random: lcg(5), autoPump: false, declickMs });
+    p.start(0, 0); ctx.currentTime = 0.4; p.pump();
+    const [first, second] = ctx.sources;
+    end(first); assert.ok(first.disconnected && (!declickMs || first.dest.disconnected), `declick ${declickMs}: an ended bar lets go (with its declick gain)`);
+    assert.ok(!second.disconnected, 'the next bar stays');
+    p.pause(); assert.ok(second.disconnected, `declick ${declickMs}: a bar stopped before it started lets go at once`);
+    p.resume(); ctx.currentTime = 1; p.pump(); p.stop();
+    for (const s of ctx.sources) end(s);
+    if (declickMs) await new Promise((r) => setTimeout(r, 80));
+    const left = nodes.filter((x) => !x.disconnected);
+    assert.deepEqual(left, [], `declick ${declickMs}: ${left.length} of ${nodes.length} nodes still connected after Stop`);
+  }
+});
+test('node lifetime: a streamed .mus keeps its bars up to the budget, the least recently used ones go (not recent ones, not a 200)', async () => {
+  let T = 0; const bytes = (n) => new Uint8Array(n);
+  const s = createMusStream(async (a, b) => ({ start: a, bytes: bytes(b - a) }), { budgetBytes: 3000, keepMs: 1000, clock: () => T });
+  for (let i = 0; i < 3; i++) { await s.load(i * 1000, 1000); T += 400; }
+  assert.equal(s.bytesLoaded, 3000); assert.equal(s.evicted, 0);
+  T += 2000; s.has(1000, 1000);                 // bar 1 used again: the most recent of the old ones
+  await s.load(5000, 1000);                     // over the budget: the least recently used old bar goes
+  assert.ok(!s.has(0, 1000) && s.has(1000, 1000) && s.has(2000, 1000) && s.has(5000, 1000)); assert.equal(s.evicted, 1); assert.equal(s.bytesLoaded, 3000);
+  await s.load(6000, 1000); await s.load(7000, 1000); // all recent: over the budget, kept
+  assert.equal(s.bytesLoaded, 5000, 'bars used in the last keepMs stay');
+  assert.ok(await s.load(0, 1000), 'an evicted bar loads again');
+  const w = createMusStream(async () => ({ start: 0, bytes: bytes(20000) }), { budgetBytes: 3000, keepMs: 0, clock: () => T });
+  await w.load(0, 1000); T += 5000; await w.load(3000, 1000);
+  assert.ok(w.has(0, 1000) && w.evicted === 0, 'a whole-file answer (200) is never evicted');
 });
 
 let failed = 0;

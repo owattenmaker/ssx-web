@@ -31,7 +31,7 @@ static void section_multi_spline_count(uint32_t resource,int delta);
 // tick is the set-piece tick minus the base of the last restart. The scan period (tick - A+0xD0 >= 20, signed) then waits
 // for the distance or a -1 rescan, as on the PS2.
 RIDER_LOCAL static int32_t sectionTickBase=0;
-static void section_reset(){sectionActivation=sectionTemplate;chunkStreaming=chunkTemplate;sectionLog.clear();sectionScans=0;sectionTickBase=0;sectionsRunning=sectionsLoaded&&browser_same_world(sectionLocation,setPieceLocationName);}
+static void section_reset(){auto points=std::move(sectionActivation.points);sectionActivation=sectionTemplate;sectionActivation.points=std::move(points); /*a NIS director's point outlives a race reset (it is the director's)*/chunkStreaming=chunkTemplate;sectionLog.clear();sectionScans=0;sectionTickBase=0;sectionsRunning=sectionsLoaded&&browser_same_world(sectionLocation,setPieceLocationName);}
 // Called before the race_begin of the restart tick (chairliftTicks - 1 then is this tick): the scans of that tick read value.
 void browser_section_tick_restart(uint32_t value){sectionTickBase=int32_t(chairliftTicks)-int32_t(value);}
 extern "C" EMSCRIPTEN_KEEPALIVE int init_sections(const char* text){
@@ -74,6 +74,27 @@ void section_seed_state(const std::vector<std::pair<uint32_t,bool>>& listed,int3
 // Streamed world (web/peak_world.inc): 230338 (row -> 1/2) sets A+0xD0 = -1; 230360 -> 103308 (row 5 -> 7) drops the
 // location's instances from the list.
 void browser_section_rescan(){if(sectionsRunning)sectionActivation.rescan=true;}
+// 129768 (the rider manager's restart, C vt+0xCC+0x28(3) at WS2's exit: a CTM round card's Continue, 0x236D28) -> 0x103358: the
+// activation list emptied (flags unlisted, entities kept) and a rescan at the end of the next tick. PS2 c0a-full-ai: A+0xD8 132 -> 0 with
+// A+0xD0 = -1 at the countdown's tick 0, 147 listed at tick 1, the slot-1 programs of the unbuilt pieces run again (pv eventInWorld, main.js).
+extern "C" EMSCRIPTEN_KEEPALIVE void section_restart(){if(sectionsRunning)sectionActivation.reset();}
+// 230180 (the CTM world reset: WS13 Next heat / results Restart, WS14 to the same course, WS15, cGame_restart 2302A8): the set-piece
+// buckets 1 and 8 purged (8: the DeadNodes, destructor 0x360A28; PS2 r6-dtor), the missions, the stage world and its programs, the
+// rollers and pickups back to their load state (the port's reset_race world part, browser_reset_pickups); the activation list is kept
+// (no 0x103358: PS2 c0d-ws15 75 entries through WS15). pv eventReturnInWorld (main.js). Unconfirmed item by item against 230180's
+// callees (26CA90, 309030, 2D9B40, 22E7C8, 3A6800, 26F228, 2789E0, 15DB58, 229498, 343BC0, 357B38, 309F18, 308C60, 28B180).
+void browser_reset_pickups();
+extern "C" EMSCRIPTEN_KEEPALIVE void ctm_world_reset(){browser_reset_pickups();}
+// A NIS director's camera point in the activation (engine/section_streaming.hpp Activation::points): on = 1 adds it (0x281370 ->
+// 0x1033B0, when the script starts) or, while it is in, sets where it is (0x281100: the outer camera's +0x20 = the rendered eye as the
+// previous tick's camera update left it, copied in the director's update before this tick's 0x101B60); on = 0 removes it (0x281400 ->
+// 0x1033F8, the script's end). Both force a scan. PS2 cm, the rider's frame (physicsState.position). Returns the point count.
+extern "C" EMSCRIPTEN_KEEPALIVE int section_point(int on,float x,float y,float z){
+ if(!on)sectionActivation.removePoint();
+ else if(sectionActivation.points.empty())sectionActivation.addPoint({x,y,z});
+ else sectionActivation.points.back().pos={x,y,z};
+ return int(sectionActivation.points.size());
+}
 void browser_section_drop_track(uint32_t track){if(sectionsRunning)sectionActivation.dropTrack(track);}
 // Mid-run seed (web/peak-capture.mjs): the live entity class of an instance in a PS2 savestate (export_sections entity_kind).
 void browser_section_seed_entity(uint32_t resource,const std::string& kind){if(!sectionsRunning)return;if(auto* i=sectionActivation.find(resource))i->entity=ssx::sections::entityKindFromName(kind);}
@@ -108,7 +129,7 @@ static int section_scan(){
   using ssx::sections::Action;
   uint32_t word=0;
   for(unsigned k=0;k<e.rngDraws;k++)word=browser_shared_random_next(); // 0x317810 (builtin3 key 8, builtin19)
-  if(e.action==Action::Slot1)section_start_piece(e.resource,e.program);
+  if(e.action==Action::Slot1&&!e.guarded)section_start_piece(e.resource,e.program); // guarded: returned at its builtin52 head (the blimps' rebuild programs)
   else if(e.action==Action::Destroy)section_stop_piece(e.resource,false);
   else if(e.action==Action::MultiSplineRelease||e.action==Action::MultiSplineAcquire)section_multi_spline_count(e.resource,e.action==Action::MultiSplineAcquire?1:-1); // not a destroy: the entity update decides (set_piece_gameplay.inc)
   else if(e.action==Action::Slot3)stage_world_section_leave_program(e.resource,e.program);

@@ -147,6 +147,13 @@
 // through the lodge door with both; every station's race fences die in free ride as in the PS2 savestates; Chrome and WebKit.
 // finishFences on (2026-09-27): the PS2 All Peak Race pushes into the ERA5 / ARA1 finish barriers (apr-part4, apr-finish) stop /
 // crash the rider at the same spot in the page (Chrome and WebKit); off, it rides through and is reset.
+// loadFlags (not a presentation item: core stage_load_flags, web/free-ride.js): an instance no program has touched holds the
+// load's runtime flags (authored high half copied down with bit 1, 34FC1C: 0x200000 -> 0x200022), so builtin 7's one-way
+// volumes (flags | 0x100) keep their static route and push a rider riding back up a connector, as on the PS2 (0x200322, entity 8);
+// off, the authored word: 0x200100, no route, no push (docs/peak-mountain.md "Course limits").
+// loadFlags on (2026-09-29): PS2 capture course-limits/p3b-zig3000 (The Throne -> E, zigzag) is pushed 41.667 cm/s a tick by
+// mdl_EBC3_E_onewayvolume_1000; the comparer follows it position-exact with the volume built (PEAK_SEED_BOOSTS), without the push it is 23 m off in 12 s; the streamed-world
+// capture gates are unchanged; Chrome and WebKit show 0x200122 on every connector volume.
 // CTM start and free-ride streaming (docs/ctm-flow.md "Start and streaming", CTM-stream agent): ctmWorldAudio (the free-ride world
 // load's audio 2867E8 / 234F40 runs when the load screen closes, so a new career's plane intro plays pktrans under the ABC1 movie
 // and the plane NIS and 28E8C0(19) comes at the ride start, as the PS2 does; the load-screen loop no longer runs on under them),
@@ -411,7 +418,11 @@
 // context) a location whose draw package is released (out of the world for RELEASE_MS) also frees its collision in the core
 // (core peak_world_free_track: terrain patches, instance nodes, grind rails; refused while collidable or in the section octree) and is
 // fed again at its next want (web/peak-world.js releaseCore), as the PS2 frees a location's Section Allocator blocks at T+8 and reads
-// it again. Keeps a whole-mountain session's core memory bounded. Off until its page runs are verified.
+// it again. Keeps a whole-mountain session's core memory bounded. ON since 2026-09-29 (page runs: docs/mobile.md "Whole-mountain memory").
+// Since 2026-09-29 (whole-mountain memory agent, docs/mobile.md "Whole-mountain memory"): the PS2's rule, in free ride and the peak runs
+// alike (both one rider context): a location no row wants and nothing reads ahead is released at once (draw package, environment
+// slice, collision; the 45 s hold stays only for a station's other ways on), unfed read-ahead slices nothing wants are dropped, a peak
+// run reads ahead only its route's next row (no 2-row window, no off-route rows), and a single peak no longer feeds the rest of the peak.
 // xboxRiders (web/quality.js riderTextures, web/texture-archive.js, web/fe-options.js 'Texture set'; docs/xbox-textures.md section 8):
 // the Xbox HD rider texture set (WARDROBE/<ID>/textures-xbox.tex / gear-xbox.tex: the Xbox's own DXT blocks, 2x the PS2 texels)
 // is the default on desktops (PS2 on iOS / Android / the low tier) and Options > Display & Touch gets its 'Texture set' row.
@@ -430,6 +441,10 @@
 // the PS2 rider draw state per material (37A610 -> 363C20 -> 3626D8): 'alph' / 'ea*' materials blended (GS ALPHA 0x44) with Z written
 // only above alpha 92 of 128 (ATST GREATER 92, AFAIL FB_ONLY), every other material opaque with its alpha unused (ATST ALWAYS), instead
 // of one alphaTest 0.35 for every batch.
+// compileAbort (web/compile-abort.js; main.js unloadCourse): at a course unload, the pipeline warms still being built (three's compileAsync
+// builds its items one at a time between yields, against the render context of the call) stop after their current item, before the
+// course's passes and objects are disposed. Off: they carried on after the dispose and uploaded the disposed geometry and textures
+// again (nothing disposes them again), and their pipelines failed on the destroyed depth-stencil texture (WebKit, a world switch).
 // sortedClass (web/main.js asset; docs/visual-parity.md 44): the render queue key 364240 puts a state's sort mode (word1 bits 0..1) under
 // its priority: 0 (opaque) 1023, 1 (static-model class 1, ALPHA 0x44 AREF 92) 1022, 2 (classes 2 / 3, the depth-sorted translucents) its
 // depth key, so class-1 models draw before every sorted one. three sorted them together by distance: a large glass pane (class 2)
@@ -465,6 +480,9 @@
 // avalanches the core plays back (builtin 94): the AvaSpline pieces move with their tumblers (core moving_instances(), batches split by
 // prepare.py), a piece hidden at the start shows while its tumbler drives it, a released one (entity vt+0x08(3)) goes; the rumble loop
 // 0x29DEF0 (bank slot 8 sound 2, bus 5, volume 0x29E438 from the human's nearest tumbler, 2 s fade out). Off: the pieces stay put.
+// heliWorld (web/set-pieces-renderer.js; docs/set-pieces.md "Moving lit instances"): the backcountry heli os609 in the air (ABC1 / DBC2 /
+// EBC3), a LiveComp with flags & 4, drawn at its world place while its player runs (the hover 551..677 over the start), hidden with its
+// copy while an arrival set stands in. The countdown audit had it 'none' from the renderer list's 0x100 / 0x200 parity.
 // avalancheTrails (web/avalanche-trails.js; docs/avalanche.md "Trails"): the avalanche emitters' dust trails (0x2D9130 -> 0x2D8EA8 ->
 // 0x371688 colour emitters, particle entry 0xA00, fog0, GS 0x44, priority 7) from the core's avalanche_trails() rings.
 // beamEncoded (web/rival-beam.js; docs/visual-parity.md 41.9): the rival locator beam (0x2E3AF8, priority 7) drawn in the encoded pass
@@ -524,7 +542,113 @@
 // the press only after the menu had switched to the ride, the one press did both (Owen, Safari + Xbox pad: BRA2's heat card ->
 // game -> ctm-pause at one instant). Now the menus' press stays spent until the button is released, and the menus' own synthetic
 // keys never pause through the keyboard path.
-export const PV_DEFAULTS = Object.freeze({ avalancheTrails: true, beamEncoded: true, sparkleWorld: true, effectOrder: true, peakRelease: false, fsCelebrate: true, sectionClock: true, rivalRelations: true, bigChallengeAudio: true, help: true, cheat: true, skyClear: true, boostLight: true, aiFx: true, worldWrap: true, plane: true, heli: true, flyover: false, rivalIcon: true, planeFx: true, heliSky: true, regionTick: true, planeCam: true, sparkle: true, nisProjection: true, bcHeli: true, heliLight: true, heliHover: true, acrossLoop: true, raceHud: true, hudText: true, luiResults: true, replay: true, finishBanner: true, recoverMeter: true, hudStandings: true, luiLights: true, cashGap: true, streamers: true, resultsMenu: true, attract: true, bootMovies: true, transportMap: true, fsStandings: true, mcommIcons: true, byteBlend: false, careerRider: true, lodgeDetails: true, playerName: true, riderMusic: true, lazyCourse: true, uberLayout: true, lodgeCheats: true, additiveNoZ: true, lodgeRewards: true, stationFences: true, freshRider: true, finishFences: true, ctmWorldAudio: true, streamGate: true, streamAhead: true, streamWarm: true, sliceLoad: true, eventSlices: true, feCompileSpread: true, bootChain: true, lodgeWorldLoad: true, riderPrefetch: true, sharedParse: true, boothTeleport: true, rivalCard: true, sprayReset: true, rivalCardAi: true, luiWrap: true, dropCamera: true, staticWorld: true, sharedWorldMaterials: true, staticRefresh: true, gpuRestore: true, gpuRelease: true, refreshCap: false, setPieceSkip: true, skipEmpty: true, staticRefreshWide: true, warmSpread: true, softSprites: false, softGlyphs: true, sharedIndex: true, glslKeys: true, warmPost: true, feMorphTiers: true, refKeys: true, liveRest: true, oneMatrixPass: true, dropStreamer: true, musicStream: true, dropPose: true, liveCompObject: true, readyLight: true, rideWarm: true, switchIcon: true, painterWorldLoad: true, bindPoseProbe: true, shadowAtlasInit: true, hudHints: true, singlePause: true, menuRiders: true, audioDeclick: true, audioInterrupt: true, musicWorkerDecode: true, sfxStartAfterDecode: true, musicLookahead: true, sfxWarmFirst: false, musicPrefetchNext: true, heatSong: true, ctmRestartAudio: true, arrivalFade: true, genericFogOff: true, pdaOptions: true, pauseRestart: true, loopFadeOnce: true, lodgeLui: true, stallCap: true, eventAnchorRng: true, stallKeys: true, buyAttribs: true, startRules: true, sessionMap: true, finishLui: true, stationArrival: true, sessionFade: true, riderPoseGate: true , bcSpeed: true, bcBanner: true, awardCascade: true, freshEvent: true, careerReload: true, transportLists: true, stationFlow: true, ctmSmallFixes: true, crossWorld: true, mountainAudio: true, bankEvict: true, mountainRide: false, unlistedPickup: true, rewardRng: true, crossingArrival: true, newGameReset: true, boothDj: true, ws13Rival: true, doorNoPlace: true, relAging: true, nisTick: true, gameTickKeep: true, peakAttached: false, hangWatch: true, xboxRiders: true, zoeBoot: true, sharedSamples: true, trophyLui: true, riderDrawState: true, encodedBlend: true, envMap: true, cutsceneBytes: true, frame8: true, sortedClass: true, cables: true, fogPuffs: true, terrainGlint: true, avalanche: true, snowBuckets: true, lodgeSave: true, fePopup: true, litLiveComp: true, lodgeFlash: true, stateCursor: true, introLead: true, litInstances: true, equipLoading: true, titleStart: true, startConsume: true});
+// finishSkip (web/game-tick.js): a new Cross from the finish + 228 closes the finish panel at once (the PS2's 1E8160 event 5); the
+// port always waited 408 / 288 ticks.
+// ws13Rebuild (web/career-ui.js ws13Riders; main.js ui.cb.heatLineup; docs/ctm-decomp-world-states.md): a race's Next heat / Final
+// Round and the results' Restart rebuild the round's computer riders before the gondola, as world state 13 enter (0x235AA0) does; a
+// rival challenge's Restart shows its card over the ready state (it was over black).
+// ps2MenuInput (web/gamepad-menus.js; docs/ctm-decomp-screens.md): menu directions repeat at the PS2's 24 / 12 frames (0x321298;
+// the port's pad repeated every 110 ms, 1.8x too fast), held arrow keys repeat the same way (the port ignored them), and the stick
+// counts as held from about 0.38 deflection (raw < 79 / > 176), not 0.5.
+// threeLean (web/three-patches.js, set as globalThis.__ssxThreeLean by main.js before the renderer exists): three r186's per-draw
+// dynamic cache key, bind group key, updateTexture options and sampler key without per-call garbage (the same results).
+// sceneLightingOff (main.js init; docs/web-render-performance.md "Per-frame garbage"): renderer.lighting.enabled = false. The game
+// draws with MeshBasicNodeMaterials and adds no three.js light, light / AO map or environment (the PS2 lighting is the game's own
+// nodes), so the shaders are the same; with lighting on, three rebuilt every draw's dynamic cache key (Nodes.getCacheKey is cached per
+// draw call, renderer.info.calls) through LightsNode.getCacheKey(true): a Set, arrays and a record per node property, per draw.
+// ?originalWorld=0 (the fallback materials take the batch lightmap through three's lightMap) keeps three's lighting.
+// worldWarm (CTM stalls agent, docs/course-switch.md "World arrivals warm under the load screen"): a Conquer the Mountain world load
+// (menu -> career, a Transport across a world switch) waits under the load screen for the start row's pipeline compile (free-ride.js
+// rewarm, before: fired and not awaited, so the ride's first frame built 3000 buffers / 7000 bind groups / 20 pipelines, 3.3 s in
+// Owen's Safari), then warms what the world pass draws besides the locations (sky, set pieces, rider shadows, post passes) with the
+// race warm-up's frames behind the opaque load screen (compile-only under the Transport's visible held loop). Also: web/yield-shim.js
+// (three's compile yields without a whole frame per item where scheduler.yield is missing: WebKit), the start row compiled first, a
+// DoubleSide pass for two-pass materials (their 'backSide' render objects), cutscene sets and actors compiled per side. Event loads unchanged.
+// bcDecline (web/big-challenges.js -> core mission_lifecycle; docs/ctm-parity.md "Big Challenge lifecycle"): No / Triangle at the offer,
+// No at the fail prompt or at "Restart Challenge?", and Quit Challenge reset the rider (30B658 / 30B758 -> 1235F8: control 9, the
+// white fade, the route placement, 41 ticks) so the offer does not come straight back; an event gate (builtin 67, 0x3021B8 -> 30B7F8)
+// ends a running challenge; world state 10's enter (0x2356A8 -> 309030 / 308988) clears the active challenge, its HUD and the offers.
+// switchGate (CTM stalls agent, docs/course-switch.md "The course being built runs nothing"): during an in-page course switch the page's
+// global core is the new course's instance from the start of loadCourse, while its init runs in slices across frames. The Transport's held
+// loop keeps drawing over the switch (cutscenes.js acrossSwitch) and, every frame, lit its actors through host.core (fe-preview light:
+// _malloc, _reset_rider_lighting, _shade_rider_lighting) and ran the fade's painter reset (_weather_fade_reset) on that half-built core,
+// and its draw of the whole scene ran the new course's render hooks (set pieces, fog puffs) before they were set up. WebKit runs showed
+// the result: "Out of bounds call_indirect" inside the new core's _init_environment / _reset_rider (the load fell back to the title), and a
+// TDZ error in set-pieces-renderer's fog-puff residency. Now host.core is null while a core is being built (as it already was during the
+// unload), and the held loop's own draw leaves out what the switch added (the list's set, actors, skies and alpha fill still draw).
+// On (2026-09-29): 0 calls into a new core during its loadCourse in WebKit (3 Transports) and Chrome (6, with and without mountainRide);
+// off: 97-1498 calls per Transport, and 3 of ~12 WebKit Transport loads crashed in the new core.
+// CTM audio / DJ / mail agent (docs/ctm-decomp-freeride.md ranked 2, 9, 10, 11, 12; docs/audio-logic.md 9.14):
+// worldSwitchAudio (web/game-audio.js travelSwitch / carry, career-ui.js goWorld / crossWorld / transportAfterEvent): a Transport that
+// changes the page's world (the post-event return, another peak on the per-peak worlds) runs code 20 in the world at the confirm (28F520
+// Stop, 28EBAC..28EEB4: pick, the destination song 10 ms later, Radio BIG intro (0,1) + hub chatter pool 5; PS2 ctm-decomp/audio/postevent2
+// ticks 15440-15442), and the switch carries the audio (the song, timers, pending DJ, the NIS voices; no LoadingScreen loop, no 2867E8 /
+// 2A4A78 at the next world load; WS10 enter 2B3A98 resumes a paused pktrans); crossWorld carries it without code 20. The podium song plays
+// on under the results' map until the confirm. Before: the load-screen loop, a new world-load song and DJ kind 2 / 4.
+// postEventDj (web/game-audio.js finish / hubChatter): the post-event record 2A45C0 / 2A4660 at every CTM finish (place, course, KOs +0x128
+// in races, Ubers +0x114; reset at round 1, armed at the final or a one-round event) and the commentary 2A4770 at the next hub chatter
+// (2A2E50): Char_Progress 0x2102 (1st), Aggression 0x212E (>= 5 KOs), High_Trick_Score 0x212F (>= 27 Ubers, 24 in Big Air / backcountry),
+// a random one avoiding the last; nothing earned during a travel: hub chatter / Terrain_Info / Event_Intro by the destination.
+// djVisited (main.js gameAudio.context, web/game-audio.js visited / djTimer): the first-visit flags 579C come from the rider's saved visited
+// mask P+0xACC (145D38, careerUI.visitedMask) instead of a per-page mask, and Free_Ride_Intro (and its 579C clear) needs Peak 2 locked
+// (146008 = P+0x278 bit 12, 28E730).
+// djQueueRules (web/audio-speech.js radioBigIntro, web/game-audio.js pause): Radio BIG intro 2A26F0 stops the current line first (2B11B0 at
+// 0x2A272C); a pause resume (289BB8) stops speech and clears the pending DJ only after an in-game song change (+0x5828, 28FAE0), so an
+// MCOMM visit no longer drops queued DJ lines.
+// mailFreeze (web/career-messages.js): the event's messages post on the finish tick on the PS2 (125108 -> 238358 -> 154EE8) and the icon
+// runs 182 frames under the finish HUD before WS5's overlays freeze it (race-f fin 0.050 -> res 3.033 -> f95-after 3.050), so the port's
+// results-time post starts the icon at 182 frames: the next ride shows its last ~2 s, not 5 s; opening the Message Center freezes the
+// icon (HUD events 3 / 4) instead of clearing it.
+// faqDefer (web/main.js 'faq' / faqOpen, web/game-tick.js): the Green Base Station "?" (stage builtin 100 -> 1E3510) touched while a
+// pause, prompt or menu is up opens the Message Center's FAQ once the ride runs again (world state 4 0x2309A4 polls gp-0x1024 each
+// update after the offer read); the port dropped it. The FAQ is marked shown at the contact (1475C0), as on the PS2.
+// transportFade (web/free-ride.js transport, web/cutscenes.js 'transport-ride' / releaseFade / skipLock, main.js transportInWorld, ui.js
+// hudSqueeze, core peak_world_transport phases 2 / 3; docs/ctm-parity.md "The Transport's presentation"): the in-world Transport as the
+// PS2 plays it: one NIS list (27A860: departure, in-air, held loop, the appended heli drop), the destination requested at the loop's start
+// (0x2366C4), the release fading the still-playing loop to black over 30 ticks (27A9F0 -> 2766D0 -> 277980) with the placement at R+29,
+// the world fading in under the HUD while the bars slide out over 30 ticks, the dome switch after the list (0x235808), no skip for the
+// first 30 ticks (0x236550). Before: three lists with a hard cut at the release.
+// departCalls (web/cutscenes.js hubCall, main.js stageTrack): a Transport step's kind-7 channel-0 stage calls without a staged set run on
+// the script's hub location (0x2808E8: the scdat container's track globals), e.g. gond_dep #126 / heli_dep #147 at a station (the depart
+// LiveComp, the sound loops, the heli snow spray, SetNodeState), with the recorded cleanup at the step end. Before, they were dropped.
+// eventReturnInWorld (docs/ctm-events-in-world.md stage 5; needs eventInWorld): back from an in-world event (results Transport -> the
+// map) with no world load: main.js cb.freeRide ends the event in place (cb.eventInWorldEnd) and transports inside the world (the same
+// location: WS15's Session point 1 and white fade). QA.
+// nisSectionPoint (docs/ctm-events-in-world.md stage 4): every NIS the streamed world plays (arrivals, station cuts, Transport rides, the
+// events' fly-over / approach) adds its director's camera point to the section activation, as the PS2 does (0x281370 -> 0x1033B0,
+// 0x281100 the outer camera's +0x20; cutscenes.js sectionFeed -> core section_point). pv eventInWorldAi turns it on for the events alone.
+// eventInWorldAi (docs/ctm-events-in-world.md stage 4; needs eventInWorld): the in-world event's computer riders run in rider contexts fed
+// from the streamed world's resident locations (per-context collision, path banks, section node states), made at the gate while the
+// fly-over plays, reused (reset, not destroyed) for the next event. QA, not for players yet.
+// eventInWorld (docs/ctm-events-in-world.md stage 3; needs eventWorldData, and worldUnderCuts for the PS2's hold): the CTM gate's event runs
+// inside the streamed world with no course switch: main.js cb.eventInWorld (core event_course_seed, init_race with the event's document,
+// the event type / game mode, the grid spawn), WS1's approach and idle in the world (cb.introInWorld), the card, then the countdown and the
+// run through startRun's event start. The human only (no computer riders until eventInWorldAi); QA, not for players yet.
+// eventWorldData (docs/ctm-events-in-world.md stage 2; web/ctm-event-plan.js): at the event gate the event package's own small data (the
+// computer riders, the race event document, the grid spawn, the progress meter, the slope-style list, the camera triggers, the GO LiveComp
+// starts) is read while the fly-over plays, into careerUI.eventPlan. Inert: stage 3 (eventInWorld) uses it.
+// worldUnderCuts (docs/ctm-events-in-world.md stage 1, section 6.2 / 6.8): the world ticks under the CTM cuts as on the PS2, the human held by
+// the cut's rider actor (core nis_hold) instead of a HOLD context that stopped the simulation:
+// - WS1 (the event gate's fly-over in the streamed world): no 'WS1 ride-in' HOLD; the rider rides the 30-tick fade in its own control, then
+//   is held from the fly-over's first tick (PS2 caps/c0a-gate: gate 3440, control 13 / +0xAC4 1 from 3471).
+// - WS10 arrivals (the new-career plane, the backcountry first-visit lists, the heli drops): the ride starts before the list with the rider
+//   held and is placed when the list ends; only the movie steps (FMV, lists 29..31) push a HOLD (PS2 new-career: 917 ticks under #153 /
+//   #163 with +0xAC4 = 1, none during the ABC1 movie).
+// Off: the world stops for the whole cut (the HOLD contexts of docs/pause-contexts.md).
+// peakSplines (core set_piece_streamed from web/free-ride.js / web/peak-capture.mjs PEAK_SPLINES; docs/set-pieces.md "Streamed worlds"):
+// the event locations' Spline set pieces (the dragon / osprey / eagle / cessna / rocket flybys ...) launch in the streamed worlds at
+// their contact / timer programs (builtin 19, one 0x317830 draw each), and a location's pieces go at its unload (0x3551A8).
+// speechRange (memory, docs/audio-logic.md 9.15): a speech line loads as its own byte range of the bank's .dat (a Range request, like
+// musicStream) into a small LRU, fetched when the line is resolved or predicted, instead of the whole .dat kept for the session
+// (DJ_Hub_Char_Stories_eng.dat alone is 35 MB).
+// gcWatchdog (memory, WebKit only; docs/mobile.md "Hangs"): web/gc-watchdog.js. When JavaScriptCore has stopped running full collections
+// (a load-time full GC left its timer unarmed: the WebKit memory runaway), a few one-page WebAssembly.Memory objects make it run one.
+// loadCopies (memory, docs/mobile.md "Load spikes"): web/downloads.js reads a body of known size straight into one buffer (no chunk list
+// and join) and hands each caller its bytes without the Response body copy (arrayBuffer: one copy of the shared bytes; json / text:
+// decoded from them). Before: 3-4 copies of every asset body while a load read it.
+// switchGC (memory, WebKit only; docs/mobile.md "Load spikes"): web/switch-gc.js. Before a course's new core is made, while an earlier
+// course's core is still alive (JavaScriptCore frees a wasm memory only in a full collection), the gc-watchdog kick asks for one.
+export const PV_DEFAULTS = Object.freeze({ speechRange: false, heliWorld: true, avalancheTrails: true, beamEncoded: true, sparkleWorld: true, effectOrder: true, peakRelease: true, fsCelebrate: true, sectionClock: true, rivalRelations: true, bigChallengeAudio: true, help: true, cheat: true, skyClear: true, boostLight: true, aiFx: true, worldWrap: true, plane: true, heli: true, flyover: false, rivalIcon: true, planeFx: true, heliSky: true, regionTick: true, planeCam: true, sparkle: true, nisProjection: true, bcHeli: true, heliLight: true, heliHover: true, acrossLoop: true, raceHud: true, hudText: true, luiResults: true, replay: true, finishBanner: true, recoverMeter: true, hudStandings: true, luiLights: true, cashGap: true, streamers: true, resultsMenu: true, attract: true, bootMovies: true, transportMap: true, fsStandings: true, mcommIcons: true, byteBlend: false, careerRider: true, lodgeDetails: true, playerName: true, riderMusic: true, lazyCourse: true, uberLayout: true, lodgeCheats: true, additiveNoZ: true, lodgeRewards: true, stationFences: true, loadFlags: true, freshRider: true, finishFences: true, ctmWorldAudio: true, streamGate: true, streamAhead: true, streamWarm: true, sliceLoad: true, eventSlices: true, feCompileSpread: true, bootChain: true, lodgeWorldLoad: true, riderPrefetch: true, sharedParse: true, boothTeleport: true, rivalCard: true, sprayReset: true, rivalCardAi: true, luiWrap: true, dropCamera: true, staticWorld: true, sharedWorldMaterials: true, staticRefresh: true, gpuRestore: true, gpuRelease: true, refreshCap: false, setPieceSkip: true, skipEmpty: true, staticRefreshWide: true, warmSpread: true, softSprites: false, softGlyphs: true, sharedIndex: true, glslKeys: true, warmPost: true, feMorphTiers: true, refKeys: true, liveRest: true, oneMatrixPass: true, dropStreamer: true, musicStream: true, dropPose: true, liveCompObject: true, readyLight: true, rideWarm: true, switchIcon: true, painterWorldLoad: true, bindPoseProbe: true, shadowAtlasInit: true, hudHints: true, singlePause: true, menuRiders: true, audioDeclick: true, audioInterrupt: true, musicWorkerDecode: true, sfxStartAfterDecode: true, musicLookahead: true, sfxWarmFirst: false, musicPrefetchNext: true, heatSong: true, ctmRestartAudio: true, arrivalFade: true, genericFogOff: true, pdaOptions: true, pauseRestart: true, loopFadeOnce: true, lodgeLui: true, stallCap: true, eventAnchorRng: true, stallKeys: true, buyAttribs: true, startRules: true, sessionMap: true, finishLui: true, stationArrival: true, sessionFade: true, riderPoseGate: true , bcSpeed: true, bcBanner: true, awardCascade: true, freshEvent: true, careerReload: true, transportLists: true, stationFlow: true, ctmSmallFixes: true, crossWorld: true, mountainAudio: true, bankEvict: true, mountainRide: true, unlistedPickup: true, rewardRng: true, crossingArrival: true, newGameReset: true, boothDj: true, ws13Rival: true, doorNoPlace: true, relAging: true, nisTick: true, gameTickKeep: true, peakAttached: false, hangWatch: true, xboxRiders: true, zoeBoot: true, sharedSamples: true, trophyLui: true, riderDrawState: true, encodedBlend: true, envMap: true, cutsceneBytes: true, frame8: true, sortedClass: true, compileAbort: true, cables: true, fogPuffs: true, terrainGlint: true, avalanche: true, snowBuckets: true, lodgeSave: true, fePopup: true, litLiveComp: true, lodgeFlash: true, stateCursor: true, introLead: true, litInstances: true, equipLoading: true, titleStart: true, startConsume: true, sceneLightingOff: true, threeLean: true, worldWarm: true, switchGate: true, ps2MenuInput: true, ws13Rebuild: true, bcDecline: false, finishSkip: false, worldSwitchAudio: true, postEventDj: false, djVisited: false, djQueueRules: false, mailFreeze: false, faqDefer: false, transportFade: false, departCalls: false, peakSplines: false, gcWatchdog: true, worldUnderCuts: false, eventWorldData: false, eventInWorld: false, eventInWorldAi: false, nisSectionPoint: false, eventReturnInWorld: false, loadCopies: false, switchGC: false});
 const overrides = new Map();
 function fromQuery() {
   const q = new URLSearchParams(globalThis.location?.search ?? '').get('pv');

@@ -92,6 +92,11 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     return out;
   }
   const rowOf = (course) => manifest.residency.find((r) => r.course === course);
+  // pv peakRelease (docs/ctm-parity.md "The PS2's location release"): the PS2 frees a location when its row is evicted (7 -> 0, T+8:
+  // every record of the track, 3A8528 / 3A8230), so a location no row wants and nothing reads ahead is released at once (before: 45 s
+  // after it left, and a peak run never freed its collision). A peak run reads ahead only its route's next row.
+  const psRelease = pv('peakRelease');
+  const routeNext = (course) => { if (!psRelease || !route) return null; const at = route.indexOf(course); return at >= 0 ? rowOf(route[at + 1]) ?? null : null; };
   // The locations to hold around a course: its row, then the next two courses of the run's route (a peak run), or every row
   // sharing a location with it (free ride / off the route).
   function windowAround(course) {
@@ -107,6 +112,9 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     // current row's connectors lead down to); the window's other rows are the ones uphill (the hub the rider came from, where no
     // connector leads), fetched and fed for nothing
     if (!route && ahead && pv('mountainRide')) { prefetched = new Set(); return; }
+    // pv peakRelease: a peak run reads ahead only the route's next row (planAhead, routeNext), as the PS2 reads only what an Unload
+    // trigger asks for; the window's two rows ahead held 3 rows' collision and environment for the whole run
+    if (route && ahead && psRelease) { prefetched = new Set(); return; }
     prefetched = windowAround(course);
     for (const code of prefetched) { requestCore(code); peak.requestEnv(code); }
   }
@@ -173,7 +181,10 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     // nothing animates) and awaited as a whole (one await per mesh took 20-30 s of WebKit pipeline round trips for a hub).
     const twoPass = (x) => x.transparent && x.side === T.DoubleSide && !x.forceSinglePass;
     const mats = new Set(); for (const m of meshes) for (const x of Array.isArray(m.material) ? m.material : [m.material]) if (x && twoPass(x)) mats.add(x);
-    const passes = mats.size ? [[T.BackSide, meshes], [T.FrontSide, meshes.filter((m) => (Array.isArray(m.material) ? m.material : [m.material]).some((x) => mats.has(x)))]] : [[null, meshes]];
+    const twoMeshes = mats.size ? meshes.filter((m) => (Array.isArray(m.material) ? m.material : [m.material]).some((x) => mats.has(x))) : [];
+    // pv worldWarm: then once more as DoubleSide, as the draw lists it (a BackSide pass under passId 'backSide', then the FrontSide one):
+    // that pass's render object and bindings exist before the first draw, whose pipeline lookup then finds the BackSide build above
+    const passes = mats.size ? [[T.BackSide, meshes], [T.FrontSide, twoMeshes], ...(pv('worldWarm') ? [[T.DoubleSide, twoMeshes]] : [])] : [[null, meshes]];
     try {
       for (const [side, list] of passes) {
         if (side != null && drawn && !covered()) { for (const x of mats) x.side = T.DoubleSide; if (side === T.FrontSide) break; }
@@ -220,12 +231,16 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   // read or built ahead, not drawn, not prefetched. The release above only follows the draw packages, so a way not taken kept its
   // courses' collision for the session (MOUNTAIN long ride: ASS1, CHP2, EHP3, EBA3 fed under the Transport, wasm 154 -> 221 MB).
   const coreSeen = new Map();
+  // The PS2's rule (the eviction frees the track at T+8, 3A8230): no hold. Freed as soon as nothing wants it (refused while its row
+  // is still collidable or in the octree, 5 / 7: tried again next frame); a read ahead fetched but not fed that nothing wants any more
+  // drops its slices (peak.dropQueued: the JS copies of its collision documents).
   function releaseIdleCores(now, want) {
     for (const [code, l] of peak.locations) {
+      const held = render.has(code) || want.has(code) || aheadBuild.has(code) || aheadKeep.has(code) || aheadNext.has(code) || prefetched.has(code);
+      if (l.core === 'queued' && !held && peak.dropQueued?.(code)) { coreSeen.delete(code); continue; }
       if (l.core !== 'loaded') { coreSeen.delete(code); continue; }
-      if (render.has(code) || want.has(code) || aheadBuild.has(code) || aheadKeep.has(code) || aheadNext.has(code) || prefetched.has(code)) { coreSeen.set(code, now); continue; }
-      if (!coreSeen.has(code)) { coreSeen.set(code, now); continue; }
-      if (now - coreSeen.get(code) > RELEASE_MS) { if (peak.releaseCore(code)) coreSeen.delete(code); else coreSeen.set(code, now); } // refused (collidable): try again later
+      if (held) { coreSeen.set(code, now); continue; }
+      if (peak.releaseCore(code)) coreSeen.delete(code);
     }
   }
   function drainEvents() {
@@ -278,6 +293,14 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     },
     // 11D390 (a location entry in free ride and the peak runs, kinds 4..6): courses < 14 -> 11DE60(rider, 1, 2) (session
     // point 1), backcountry 14..16 -> 11DE60(rider, player 0, 1) (grid slot), stations 17..21 -> 11DE60(rider, 0, 2).
+    // pv eventReturnInWorld (web/event-return.js): the location's paths.json variant that spawnFor reads (12A340's variant pick)
+    bankFor(course) {
+      const code = manifest.residency.find((r) => r.course === course)?.code, loc = byCode.get(code);
+      const variant = loc && loc.id >= 17 && loc.id <= 21 ? (eventKind === TIME_CHALLENGE_KIND ? 1 : eventKind === POINTS_CHALLENGE_KIND ? 2 : 0) : 0;
+      const variants = loc && pathBanks.get(loc.id)?.variants; return variants?.[String(variant)] ?? variants?.['0'] ?? null;
+    },
+    // pv eventReturnInWorld: world state 15's return placed the rider itself (web/event-return.js sessionReturn), no reset / re-attach here
+    sessionReturned() { freshPending = false; regionPlaced = false; },
     arrivalFor(course, opts) { const [index, kind] = arrivalRow(course); const s = api.spawnFor(course, index, kind, opts); if (s) s.entry = true; return s; },
     // A world load inside the loaded world (pv lodgeWorldLoad: the lodge's Return to Game, 0x1A11C0 -> 118loadoutlodge -> WS10):
     // the next placement is a new rider's (0x125EB8, fresh_rider_start) at the location entry 11D390, as after start().
@@ -315,6 +338,8 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
       core._peak_world_event_kind(kind); core._peak_world_game_mode(mode);
       core._peak_world_builtin108?.(pv('stationFences') ? 1 : 0); // stage builtin 108: the stations' peak-race / jam fences follow the game mode (pv stationFences)
       core._stage_object_route?.(pv('finishFences') ? 1 : 0); // the finish barriers' Object collision route (builtin 0 key 1, pv finishFences)
+      core._set_piece_streamed?.(pv('peakSplines') ? 1 : 0); // pv peakSplines: the event locations' Spline pieces launch in the streamed world (builtin 19)
+      core._stage_load_flags?.(pv('loadFlags') ? 1 : 0); // untouched instances hold the load's runtime flags (34FC1C): the one-way volumes keep their route (pv loadFlags)
       // Rider lighting (web/environment_bridge.cpp): every IRR bank the Peak 1 Lighting painters and the 22E180 defaults use;
       // the painter region's section follows the rider (update), the default bank follows the Load triggers (22D088).
       if (core._lighting_banks) { const banks = await fetch(manifestRoot + 'lighting-banks.json').then((r) => (r.ok ? r.text() : null)).catch(() => null);
@@ -349,7 +374,7 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     update,
     // pv bootChain (main.js unloadCourse): the warms in flight settled, at most `ms` (stop() first: no new ones start)
     settle(ms = 1500) { return Promise.race([Promise.allSettled([...inflight]), new Promise((r) => setTimeout(r, ms))]); },
-    stop() { stopped = true; for (const job of releasing.splice(0)) for (const step of job) step(); setPieces?.dispose(); core._lighting_streamed_off?.(); core._peak_world_stop(); started = false; for (const s of render.values()) if (s.group) { group.remove(s.group); releaseLocation(s.group); } render.clear(); /* releaseLocation: textures, atlas and render objects too (main.js course change) */ peak.dispose(); parent.remove(group); },
+    stop() { stopped = true; for (const job of releasing.splice(0)) for (const step of job) step(); setPieces?.dispose(); core._lighting_streamed_off?.(); core._stage_load_flags?.(0); core._peak_world_stop(); started = false; for (const s of render.values()) if (s.group) { group.remove(s.group); releaseLocation(s.group); } render.clear(); /* releaseLocation: textures, atlas and render objects too (main.js course change) */ peak.dispose(); parent.remove(group); },
   };
   // Per frame: draw packages for the wanted rows (and their neighbours), visibility = resident, releases, feeding.
   function update(budgetMs = 3) {
@@ -362,15 +387,20 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     const drawn = new Set(current.filter((r) => r.state === ROW.ACTIVE).map((r) => r.code));
     listeners.drawn?.(current.filter((r) => r.state === ROW.ACTIVE).map((r) => r.track)); // light glows etc. of the drawn locations
     let released = false;
+    // pv peakRelease: a draw package the rider needs (a wanted row's, or the row a connector leads to) still building: the releases wait
+    // (their disposals compete with that build in WebKit; a stalled Load trigger held the game longer), at most RELEASE_MS
+    const building = psRelease && [...render].some(([c, sl]) => sl.state === 'building' && (want.has(c) || aheadBuild.has(c)));
     for (const [code, slot] of render) {
       if (!slot.group) continue;
       slot.group.visible = drawn.has(code); sparkle?.setVisible(code, slot.group.visible);
       if (slot.group.visible && !slot.released && now - (slot.shownAt ??= now) > 2000) { slot.released = true; slot.group.userData.releaseGpuCopies?.(); } // pv gpuRelease: no compile ran (streamWarm off): after its first draws
       if (want.has(code) || aheadBuild.has(code) || aheadKeep.has(code)) slot.lastSeen = now;
-      else if (now - slot.lastSeen > RELEASE_MS && (!ahead || !released)) { setPieces?.detach(code); sparkle?.detach(code); group.remove(slot.group); if (ahead) { releasing.push(releaseSteps(slot.group)); released = true; } else releaseLocation(slot.group); render.delete(code); if (!prefetched.has(code)) { peak.dropEnv(code); if (!route && pv('peakRelease')) peak.releaseCore(code); } } // pv peakRelease: the core's collision too (free ride: one rider context)
+      // pv peakRelease: at once (the PS2's eviction), but a row read ahead for a way on not taken (a station's other connectors) keeps
+      // the 45 s: the rider may still turn to it
+      else if (now - slot.lastSeen > (psRelease && !building && !aheadNext.has(code) && !prefetched.has(code) ? 0 : RELEASE_MS) && (!ahead || !released)) { setPieces?.detach(code); sparkle?.detach(code); group.remove(slot.group); if (ahead) { releasing.push(releaseSteps(slot.group)); released = true; } else releaseLocation(slot.group); render.delete(code); if (!prefetched.has(code)) { peak.dropEnv(code); if (psRelease) peak.releaseCore(code); } } // pv peakRelease: the core's collision too (one rider context: a free ride or a peak run)
     }
     if (releasing.length) releasePump(idle() ? 12 : 2); // (pv streamAhead: one location a frame, disposed a few steps a frame)
-    if (!route && pv('peakRelease')) releaseIdleCores(now, want);
+    if (psRelease) releaseIdleCores(now, want);
     // A location that is (or is about to be) collidable without its data in the core: hold the game like the original's
     // +0x1D0 wait (2306B8 skips the gameplay part of the frame) and feed with a large budget.
     // pv streamGate: the draw package is part of the location's data (the PS2 reads both in one): an active row whose package is still
@@ -399,14 +429,15 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   // rides on a connector, the row it leads to is built (hidden) ahead of its Unload trigger.
   const chunkOf = (code) => manifest.streaming?.find((r) => r.code === code)?.chunk ?? 1e9;
   function planAhead(course) {
-    const next = aheadLocations(manifest.residency, course, chunkOf).filter((c) => byCode.get(c)?.root);
+    const onRoute = routeNext(course); // pv peakRelease: a peak run's route row only (the other connectors' rows: fed for nothing)
+    const next = aheadLocations(manifest.residency, course, chunkOf).filter((c) => byCode.get(c)?.root && (!onRoute || onRoute.locations.includes(c)));
     // a single way on (Happiness -> Green Base Station, Snow Jam -> Blue Base Station): the rider meets that Unload trigger for sure, so
     // the row is also built (hidden) the first time nothing animates (the arrival movie): the PS2 has its reads done long before the
     // Load trigger, and a page build while riding costs frames (Safari: 7-12 s of pipelines for a hub)
-    const single = new Set(nextRows(course).length === 1 ? next : []);
+    const single = new Set(onRoute || nextRows(course).length === 1 ? next : []);
     aheadKeep = single; aheadNext = new Set(next);
     aheadQueue = [...next.map((code) => ({ kind: 'core', code })), ...next.map((code) => ({ kind: 'draw', code })), ...[...single].map((code) => ({ kind: 'build', code }))];
-    if (!windowed) for (const code of prefetchOrder(course)) if (!next.includes(code)) aheadQueue.push({ kind: 'core', code, feed: true }); // one fetched location waits for its feed
+    if (!windowed && !psRelease) for (const code of prefetchOrder(course)) if (!next.includes(code)) aheadQueue.push({ kind: 'core', code, feed: true }); // one fetched location waits for its feed (pv peakRelease: never, the PS2 reads only the rows asked for)
   }
   const nextRows = (course) => { const row = rowOf(course), out = []; for (const c of row?.locations ?? []) { const d = connectorDest(manifest.residency, c); if (d && d !== row && !out.includes(d)) out.push(d); } return out; };
   const warmed = new Set();
@@ -437,7 +468,9 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
     // one-slice-a-frame work on a phone at 4x CPU); another connector takes over only once it is 25 m nearer.
     if (!dest || dest.course === here) {
       const row = rowOf(here), outs = (row?.locations ?? []).filter((c) => { const d = connectorDest(manifest.residency, c); return d && d !== row && peak.locations.get(c)?.bounds; });
-      if (outs.length > 1) {
+      const nx = routeNext(here); // pv peakRelease: a peak run's station builds its route's row, not the nearest connector's
+      if (outs.length > 1 && nx && outs.some((c) => connectorDest(manifest.residency, c) === nx)) dest = nx;
+      else if (outs.length > 1) {
         const st = new Float32Array(core.HEAPF32.buffer, core._rider_state(), 3), dist = (c) => { const [lo, hi] = peak.locations.get(c).bounds, dx = Math.max(lo[0] - st[0], 0, st[0] - hi[0]), dz = Math.max(lo[2] - st[2], 0, st[2] - hi[2]); return Math.hypot(dx, dz); };
         const near = outs.reduce((a, b) => (dist(b) < dist(a) ? b : a));
         if (!outs.includes(aheadTarget) || dist(near) < dist(aheadTarget) - 25) aheadTarget = near;
@@ -464,7 +497,17 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   }
   api.ahead = () => ({ queue: aheadQueue.map((j) => `${j.kind}:${j.code}`), job: aheadJob && `${aheadJob.kind}:${aheadJob.code}`, build: [...aheadBuild], warmed: [...warmed] }); // QA
   api.region = () => region;
-  api.rewarm = async () => { for (const slot of [...render.values()].sort((a, b) => (a.group?.children.length ?? 0) - (b.group?.children.length ?? 0))) if (slot.group) { slot.times.rewarm = performance.now(); await warmSliced(slot.group, slot.group.visible, slot.group.userData.peakLocation); slot.times.rewarmed = performance.now(); slot.group.userData.releaseGpuCopies?.(); slot.released = true; } }; // pv gpuRelease after the compile // pv streamWarm (main.js loadCourse): the small ones first
+  // pv worldWarm: the start row's locations first (the arrival draws them; main.js warmWorld waits for api.rewarmLead under the load screen), then the
+  // rest (read-ahead builds), each part the small ones first. Off: every slot, the small ones first.
+  api.rewarmLead = null; api.rewarmLeadCodes = null;
+  api.rewarm = async () => {
+    const bySize = (a, b) => (a.group?.children.length ?? 0) - (b.group?.children.length ?? 0), slots = [...render.values()].sort(bySize);
+    const lead = pv('worldWarm') ? new Set(rowOf(core._peak_world_course())?.locations ?? []) : null, first = lead ? slots.filter((sl) => lead.has(sl.group?.userData.peakLocation)) : [];
+    const warmSlot = async (slot) => { if (!slot.group) return; slot.times.rewarm = performance.now(); await warmSliced(slot.group, slot.group.visible, slot.group.userData.peakLocation); slot.times.rewarmed = performance.now(); slot.group.userData.releaseGpuCopies?.(); slot.released = true; };
+    let leadDone = null; if (lead) { api.rewarmLead = new Promise((r) => { leadDone = r; }); api.rewarmLeadCodes = lead; }
+    try { for (const slot of first) await warmSlot(slot); } finally { leadDone?.(); }
+    for (const slot of slots) if (!first.includes(slot)) await warmSlot(slot);
+  }; // pv gpuRelease after the compile // pv streamWarm (main.js loadCourse): the small ones first
   api.prebuild = (code) => buildRender(code); // QA / idle prefetch of a location's draw package
   // QA: put the rider at a PS2 capture spot (source cm, heading from the source forward x/y, source cm/s).
   // QA: switch the streaming to a course's row as its Load trigger would (the data loads, then the row activates).
@@ -482,13 +525,26 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
   // Returns the native spawn for main.js (resetPhysics + afterReset). Cut hooks: web/cutscenes.js.
   // ticking (pv nisTick, main.js): the world runs under the ride with the rider held by the cut's actor (PS2 f95-after: the game tick runs
   // through the in-air ride and the held loop), so the game ticks run the streamer passes (game-tick.js -> tick()); none by hand here.
-  api.transport = async (dest, { rider = null, step = () => new Promise((r) => requestAnimationFrame(r)), firstVisit = false, ticking = false } = {}) => {
+  // pv transportFade (docs/ctm-parity.md "The Transport's presentation"): the ride is ONE list (27A860: departure, in-air, the held loop,
+  // then WS10's appended heli drop into a backcountry); the destination is requested when the held loop starts (0x2366C4 22CEA8(dest, 7)),
+  // the release (0x236AA8 -> 27A9F0) loads it without the dome (22D088), the loop plays on for 30 ticks fading to black and the list
+  // stops at R+29 (the rider placed by main.js then); the dome is allowed afterwards (0x235808). onRelease: world state 10 enter (R+1).
+  api.transport = async (dest, { rider = null, step = () => new Promise((r) => requestAnimationFrame(r)), firstVisit = false, ticking = false, onRelease = null } = {}) => {
     const row = rowOf(dest); if (!row || !started) return null;
     const here = core._peak_world_course();
     if (dest === here && !(dest >= 14 && dest <= 16)) { const s = api.spawnFor(dest, 1, 2); if (s) s.sameLocation = true; return s; } // state 15 (236058): Session point 1 and the white fade (main.js)
-    await playCutscene({ kind: 'transport-depart', id: 0xB, rider, location: dest });
+    const oneList = pv('transportFade');
     let done; const arrived = new Promise((r) => { done = r; });
-    const loop = playCutscene({ kind: 'transport-loop', id: null, rider, location: dest, until: arrived });
+    let loop;
+    if (oneList) {
+      let looping; const held = new Promise((r) => { looping = r; });
+      loop = playCutscene({ kind: 'transport-ride', id: null, rider, location: dest, until: arrived, firstVisit: !!firstVisit, skipLock: 30, onStep: (st) => { if (st.flags & 8) looping(true); } });
+      loop.then(() => looping(false), () => looping(false));
+      await held;
+    } else {
+      await playCutscene({ kind: 'transport-depart', id: 0xB, rider, location: dest });
+      loop = playCutscene({ kind: 'transport-loop', id: null, rider, location: dest, until: arrived });
+    }
     core._peak_world_transport(dest, 0); drainEvents();
     for (const code of row.locations) { requestCore(code); peak.prioritize(code); }
     let clock = performance.now(), passes = 0;
@@ -500,6 +556,13 @@ export async function createFreeRide({ core, load, asset, parent, disposeGroup, 
       if (core._peak_world_request_resident() && row.locations.every((c) => peak.loaded(c)) && row.locations.every((c) => render.get(c)?.state === 'ready' || render.get(c)?.state === 'failed')) break;
     }
     const spawn = api.arrivalFor(dest); if (spawn) spawn.transport = true; // 236960 -> 123F38 -> 11D390 from the loop's limbo
+    if (oneList) {
+      core._peak_world_transport(dest, 2); drainEvents(); update();   // 22D088(dest, 7) at the release, the dome not yet
+      done(); onRelease?.(); await loop;
+      core._peak_world_transport(dest, 3);   // 0x235808: list 1's head is no longer a Transport step
+      if (dest >= 17 && !pv('stationArrival')) await playCutscene({ kind: 'station-arrival', id: null, rider, location: dest });
+      return spawn;
+    }
     core._peak_world_transport(dest, 1); drainEvents(); update();
     done(); await loop;
     // pv stationArrival: world state 14 arg 1 queues no cinematic at a station. The walk-in lists 22 / 23 and the lodge prompt 0x1F

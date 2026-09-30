@@ -138,7 +138,7 @@ static OriginalBoostAwardEffects award_boost(float delta,uint32_t category=1){
  return e;
 }RIDER_LOCAL static uint32_t animationTick=0;RIDER_LOCAL static std::array<OriginalUpperPeer,6> peers;
 RIDER_LOCAL extern void (*browserRouteProgress)(float,int32_t);
-RIDER_LOCAL extern bool browserResetActive;RIDER_LOCAL extern bool browserNisHold;/* web/core.cpp nis_hold (rider+0xAC4) */RIDER_LOCAL extern void (*browserResetBegin)(int);RIDER_LOCAL extern void (*browserResetRerequest)(int);RIDER_LOCAL extern bool (*browserResetControl)();RIDER_LOCAL extern void (*browserResetClear)();
+RIDER_LOCAL extern bool browserResetActive;RIDER_LOCAL extern bool browserNisHold;/* web/core.cpp nis_hold (rider+0xAC4) */RIDER_LOCAL extern void (*browserResetBegin)(int);RIDER_LOCAL extern void (*browserResetDecline)();RIDER_LOCAL extern void (*browserResetRerequest)(int);RIDER_LOCAL extern bool (*browserResetControl)();RIDER_LOCAL extern void (*browserResetClear)();
 RIDER_LOCAL extern std::optional<std::array<float,3>> groundUnclampedVelocity;RIDER_LOCAL extern std::optional<std::array<float,3>> groundBoardNormalBefore;RIDER_LOCAL extern bool railStepConsumed;
 // 13F178 (0x13F278, word 0x4A115C) and 139C88 (0x13A734, word 0x4A1120) store 3 into the body's
 // active sphere mask (+0x28) around 13F488/13AA48 and restore 0xFFFFFFFF before 105398: the ground
@@ -551,8 +551,9 @@ RIDER_LOCAL static uint32_t resetPlacements=0,resetCompletions=0,resetObservers=
 static void clear_reset(){browserResetActive=false;resetRoute=initialResetRoute;routeProgressUpdates=0;resetControl={};resetPlacements=resetCompletions=resetObservers=0;resetReason=0;}
 static void score_wrong_way(); // web/score_gameplay.inc (11A088)
 static void rail_reset_leave(); // web/rail_gameplay.inc: 116120 from control 7 runs the control exit 132048
+RIDER_LOCAL static bool resetDecline=false; // begin_decline_reset: 1235F8's entry, not 116120's
 static void begin_reset(int reason){
- if(browserResetActive)return;audio_event(AE_RESET,float(reason)); /*116198: 29A220 (snd 0x7B, 28F108)*/if(reason==1||reason==4)score_wrong_way(); /*116120: reasons 1/4 call 11A088 first*/clear_start();if(resetPaths.empty()&&!evictedResetPaths.empty()){resetPaths=std::move(evictedResetPaths);evictedResetPaths.clear();resetRoute=evictedResetRoute;}if(resetPaths.empty())throw std::runtime_error("Original reset route data unavailable");
+ if(browserResetActive)return;if(!resetDecline){audio_event(AE_RESET,float(reason)); /*116198: 29A220 (snd 0x7B, 28F108)*/if(reason==1||reason==4)score_wrong_way();} /*116120: reasons 1/4 call 11A088 first*/clear_start();if(resetPaths.empty()&&!evictedResetPaths.empty()){resetPaths=std::move(evictedResetPaths);evictedResetPaths.clear();resetRoute=evictedResetRoute;}if(resetPaths.empty())throw std::runtime_error("Original reset route data unavailable");
  if(!crash.active&&!::grounded){if(!landingAirExitBaked)landing_air_exit();commit_rider_physics();}
  if(!crash.active&&::grounded&&!browserRailActive)originalLandingGroundLeave(physicsState,motionTick,lastGroundLeave); //116120 requestMotion(3) runs the ground exit 13F410 first: +0x208/+0x2BC/+0x2C8 decay to 0 (tech-select-ground 439)
  resetReason=reason;resetControl={reason>0,0};rail_reset_leave();detach_rail_for_crash();browserResetActive=true;browserCrashActive=false;crash.active=false;
@@ -562,6 +563,14 @@ static void begin_reset(int reason){
 }
 // 116120 while control 9 is already running: the reset control restarts from progress 0 (12F398 state) with the new reason.
 static void rerequest_reset(int reason){if(!browserResetActive)return begin_reset(reason);resetReason=reason;resetControl={reason>0,0};}
+// 1235F8(rider) (pv bcDecline; 30B658 / 30B758: a Big Challenge declined at the offer / fail / Restart Challenge? prompt, or quit):
+// owner+0x350 = 1, 11FEC8(9), 11FE78(3), the start phase owner+0x290 = 0. It is 116120's reset without its +0x2E8 / +0x2EC clears,
+// 11A088 (Wrong Way!), 29A220 (sound 0x7B) and the 270970 observer: the white fade, the route placement 20 ticks in and control 4
+// at 41 (PS2 local/ps2-capture/ctm-decomp/bigchal/tri-offer: control 9 at 3631, placed 16.2 m away at 3650, control 4 at 3671).
+static void begin_decline_reset(){
+ if(browserResetActive){clear_start();resetControl={true,0};return;} // 11FEC8(9) again: 12F230 restarts the progress
+ resetDecline=true;begin_reset(1);resetDecline=false;
+}
 // 11D660(rider, point, direction, semantic, clearance): the placement shared by the reset control (12F398, at the retained
 // route point) and the location entry 11D390 -> 11DE60 (a region row of the path bank; place_rider_region).
 // contactPose (0x123210, web/stage_teleport.inc): the placed pose is this tick's final one, so it gets 11EB98's board
@@ -626,15 +635,16 @@ std::vector<OriginalNpcPath> browser_parse_reset_paths(const json& list){
   for(const auto& e:p.at("events"))path.geometry.events.push_back({e.at("type").get<uint32_t>(),e.at("value").get<uint32_t>(),e.at("start").get<float>(),e.at("end").get<float>()});out.push_back(std::move(path));}
  return out;
 }
+static OriginalNpcRouteState read_reset_route(const json& r){OriginalNpcRouteState route{};route.pathIndex=r.at("path_index");route.closestPoint=r.at("closest_point").get<std::array<float,3>>();route.lookaheadPoint=r.at("lookahead_point").get<std::array<float,3>>();route.previousDistance=r.at("previous_distance");route.currentDistance=r.at("current_distance");route.lateralDistance=r.at("lateral_distance");route.heading=r.at("heading");/*rolling starts (docs/backcountry.md): the provider steers on tick 0, before any 121818 route update*/if(r.contains("previous_lookahead_point"))route.previousLookaheadPoint=r.at("previous_lookahead_point").get<std::array<float,3>>();const auto& c=r.at("cache");route.cache={c.at("origin").get<std::array<float,3>>(),c.at("distance"),c.at("segment")};return route;}
 static void setup_reset(const json& config){
  const auto& data=config.at("original_reset");resetPaths.clear();evictedResetPaths.clear();
  for(const auto& p:data.at("paths")){OriginalNpcPath path;path.geometry.origin=p.at("origin").get<std::array<float,3>>();path.geometry.low=p.at("low").get<std::array<float,3>>();path.geometry.high=p.at("high").get<std::array<float,3>>();path.geometry.segments=p.at("segments").get<std::vector<std::array<float,4>>>();path.flags38=p.at("flags38");path.field3C=p.at("field3c");for(const auto&e:p.at("events"))path.geometry.events.push_back({e.at("type"),e.at("value"),e.at("start"),e.at("end")});resetPaths.push_back(std::move(path));}
- auto readRoute=[](const json& r){OriginalNpcRouteState route{};route.pathIndex=r.at("path_index");route.closestPoint=r.at("closest_point").get<std::array<float,3>>();route.lookaheadPoint=r.at("lookahead_point").get<std::array<float,3>>();route.previousDistance=r.at("previous_distance");route.currentDistance=r.at("current_distance");route.lateralDistance=r.at("lateral_distance");route.heading=r.at("heading");/*rolling starts (docs/backcountry.md): the provider steers on tick 0, before any 121818 route update*/if(r.contains("previous_lookahead_point"))route.previousLookaheadPoint=r.at("previous_lookahead_point").get<std::array<float,3>>();const auto& c=r.at("cache");route.cache={c.at("origin").get<std::array<float,3>>(),c.at("distance"),c.at("segment")};return route;};
+ auto readRoute=read_reset_route;
  eventRouteLoaded=data.contains("event_route");if(eventRouteLoaded)initialEventRoute=readRoute(data.at("event_route"));
  const auto&r=data.at("route");initialResetRoute={};initialResetRoute.pathIndex=r.at("path_index");initialResetRoute.closestPoint=r.at("closest_point").get<std::array<float,3>>();initialResetRoute.lookaheadPoint=r.at("lookahead_point").get<std::array<float,3>>();initialResetRoute.previousDistance=r.at("previous_distance");initialResetRoute.currentDistance=r.at("current_distance");initialResetRoute.lateralDistance=r.at("lateral_distance");initialResetRoute.heading=r.at("heading");const auto& c=r.at("cache");initialResetRoute.cache={c.at("origin").get<std::array<float,3>>(),c.at("distance"),c.at("segment")};
  if(resetPaths.empty()||resetPaths.size()>200||initialResetRoute.pathIndex<0||size_t(initialResetRoute.pathIndex)>=resetPaths.size())throw std::runtime_error("Invalid reset path bank");
  resetAllowEnd=data.at("allow_path_end");resetStance=data.at("stance").get<int>()!=0;resetInputs.eventModeActive=data.at("event_mode_active");resetInputs.eventVariant=data.at("event_variant");resetInputs.deviceIndex=data.at("device_index");resetInputs.deviceEnabled=data.at("device_enabled");
- browserRouteProgress=follow_rider_route;browserResetBegin=begin_reset;browserResetRerequest=rerequest_reset;browserResetControl=step_reset;browserResetClear=clear_reset;clear_reset();
+ browserRouteProgress=follow_rider_route;browserResetBegin=begin_reset;browserResetDecline=begin_decline_reset;browserResetRerequest=rerequest_reset;browserResetControl=step_reset;browserResetClear=clear_reset;clear_reset();
 }
 
 // The glide checkpoint's live sequence lists (probe_rider_pose.py layers), seeded
@@ -1010,7 +1020,7 @@ completedMain=false;completedMainSemantic=graph.requestedSemantics[2];for(const 
 // and animation_post's return keeps the last ones written (docs/sim-performance.md "Renderer poses").
 if(!(riderHostFlags&4)){AnimationTransform toPresented;if(physicsAttached){const auto&q=presentedFrame.rotation;toPresented.rotation={-q[0],-q[1],-q[2],q[3]};const auto&t=presentedFrame.position;toPresented.position=originalAnimationCompose({{0,0,0},toPresented.rotation},{{-t[0],-t[1],-t[2]},{0,0,0,1}}).position;}
   // Renderer poses stay relative to the presented physical root.
-  for(unsigned i=0;i<worldPose.size();i++){const auto bone=physicsAttached?originalAnimationCompose(toPresented,worldPose[i]):worldPose[i];for(int k=0;k<3;k++)poses[i*7+k]=bone.position[k];for(int k=0;k<4;k++)poses[i*7+3+k]=bone.rotation[k];}}if(physicsAttached&&browserSoftActive){bool complete=false;for(const auto& sequence:graph.sequences)if(sequence.channel==2&&sequence.semantic==physicsState.animationIndex)complete|=sequence.completed;soft_animation_complete(complete);}graph.completeSequences();previousGround=grounded;previousHeld=jumpHeld;
+  for(unsigned i=0;i<worldPose.size();i++){const auto bone=physicsAttached?originalAnimationCompose(toPresented,worldPose[i]):worldPose[i];for(int k=0;k<3;k++)poses[i*7+k]=bone.position[k];for(int k=0;k<4;k++)poses[i*7+3+k]=bone.rotation[k];}}if(physicsAttached&&browserSoftActive){bool complete=false;for(const auto& sequence:graph.sequences)if(sequence.channel==2&&sequence.semantic==physicsState.animationIndex){complete=sequence.completed;break;}soft_animation_complete(complete);} /*312AE8: the FIRST channel-2 sequence (a new play is inserted first): a back-to-back soft collision's clip is not complete because the previous soft's same clip, completed and still fading behind it, is (course-limits/p3b-right3000 14776, docs/obstacle-collision.md)*/graph.completeSequences();previousGround=grounded;previousHeld=jumpHeld;
  info[0]=graph.requestedSemantics[2];info[1]=graph.currentClass(2);info[2]=grab.state;info[3]=scoreEvent;info[4]=graph.rig->bones.size();info[5]=graph.flags(2)&0xffffff;
  if(physicsAttached){
   // These are rider+208/+214/+220 in the original, shared by air and ground.
@@ -1167,6 +1177,11 @@ EMSCRIPTEN_KEEPALIVE float* trail_roof(){if(trailBuffersStale)build_trail_buffer
 // QA (compare-ps2-capture.mjs --peak-run): the human's route words of a PS2 record: +0x490 closest point, +0x4A0 lookahead,
 // +0x4B0 previous lookahead, +0x4C0/+0x4C4 distances, +0x4C8 lateral, +0x4CC heading (13C948 reads it as the fall line).
 EMSCRIPTEN_KEEPALIVE void reset_route_seed(const float* w){auto& r=resetRoute;for(unsigned k=0;k<3;k++){r.closestPoint[k]=w[k];r.lookaheadPoint[k]=w[3+k];r.previousLookaheadPoint[k]=w[6+k];}r.previousDistance=w[9];r.currentDistance=w[10];r.lateralDistance=w[11];r.heading=physicsState.headingOffset=w[12];}
+// QA (compare-ps2-capture.mjs --peak-arrival): the words a Transport arrival carries from the ride before it, which the
+// placement 11D390 and the route re-attach 112180 do not write: +0x4CC the route heading (13C948 reads it as the fall line on
+// the placement tick, before 121818 updates it) and +0x434 the location id (1218D0 writes it after the motion). In the browser
+// the rider keeps its own; a capture replay starts from a course seed, so it copies the placement record's.
+EMSCRIPTEN_KEEPALIVE void arrival_carry_seed(float heading,int location){resetRoute.heading=physicsState.headingOffset=heading;physicsState.riderType=location;gs.headingOffset=heading;gs.riderType=location;}
 // A location entry's placement (11D390 in free ride and the peak runs, kinds 4..6; web/free-ride.js spawnFor/arrivalFor).
 // 11D390: 117540 (score run reset), then 11DE60(rider, index, kind) at the path-bank region row's position/direction (PS2 cm):
 // 119368(score, 1), 11FEC8 control 0, 11FE78 motion 0 (its entry 13C7A8 runs BEFORE the placement: +0x390 = the old +0x370,
@@ -1175,9 +1190,83 @@ EMSCRIPTEN_KEEPALIVE void reset_route_seed(const float* w){auto& r=resetRoute;fo
 // with z = 0, 111890. transport = 1: the rider comes from the Transport loop's limbo placement (PS2 peak1-arrive-*: control
 // 13 / motion 3 with +0x370 = +0x380 = (0, 0, 1) on surface 0), as 236960 -> 123F38 -> 11D390 does.
 void start_ground_motion(); // web/core.cpp: 13C7A8
+// The rider's setup record (0x535B20 + i x 0x1C through 0x5305B0[rider+0x86C], getter 14A080: +0x11 the base character, +0x12 the
+// cheat id, +0x10 flags), what 11D390's free-ride branch and the stat getters read. A race's rider has its own character's record;
+// the port carries the words it feeds as the rider's document (the reset stance = its CHARDB stance, the body scale = 14EFA8's size).
+// CHARDB.DBL (loader 0x149C84 -> 0x530970, 10 rows of 0x88): +0x44 stance (1 goofy), +0x48 model size (14EFA8: x gp-0x6DF4 = 0.01).
+static constexpr int chardbStance[10]={1,0,1,0,0,0,1,0,1,0},chardbSize[10]={94,80,83,85,85,70,96,100,92,89};
+RIDER_LOCAL static float setupModelSize=-1.f; // 14EFA8(slot) when the record changed after the rider was made (-1: its own body scale)
+// 149A88(., slot) (0x149A88..0x149AE8): the slot's setup record cleared, +0x10 |= 2 and +0x11 = 4 (Zoe). PS2 c0a-ret3 (watch of
+// 0x535B20): slot 1 turns from Psymon to 4 at WS15's record; from then on 11D390's +0x324 is CHARDB[4].stance (0x11D3F8..0x11D424:
+// 14EF70 -> 14A080), 115B08 / 115AB0 read CHARDB[4]'s size, and the three stat getters 1494C0 / 1493D8 / 148D80 return 0.5 (1477E8, the
+// player setup: 0x149508 / 0x149420 / 0x148DC8; PS2 c0a-ret8 probe of 0x11B434). Which WS15 code calls it is unconfirmed (indirect).
+EMSCRIPTEN_KEEPALIVE void rider_setup_player_reset(){
+ constexpr int character=4;resetStance=chardbStance[character]!=0;
+ {terrain_original::Rounding rounding;setupModelSize=terrain_original::mul(float(chardbSize[character]),0.00999999977648258209f);} // cvt.s.w x gp-0x6DF4 (0x14F0D8)
+ npc_player_setup_stats();
+}
+static float setup_model_size(){return setupModelSize>=0?setupModelSize:physicsProfile.bodyScale;}
+#include "../engine/race_event.hpp"
+extern "C++" bool browser_race_replace_paths(std::vector<ssx::OriginalRacePath>,int); // web/race_bridge.cpp (this part of the file is inside extern "C")
+// 112180(rider, place) (docs/ctm-events-in-world.md stage 5). bank: the location's paths.json variant; slot: rider+0x86C.
+// - 26B5E0(0x4D33A0, type 1, rider+0x86C) at 0x1121AC: the exported kind-0 row of this slot (the start line), else the bank's first row;
+// - place (0x1121B8: its second argument): the start-row placement (0x1121C0..0x112248): point = row + dir x (90 x 14EFA8(slot) - 90)
+//   (115B08; VU vmulx / vadd), then 11D660(point, dir, 5, 0): its ground probe's normal is the +0x370 that a following 11DE60's 13C7A8
+//   copies into +0x390 (PS2 c0a-ret3: every computer rider's +0x390 = the start pad's (-0.0001, 0, 1) at WS15's record);
+// - the route caches: +0xAB4 = the row's race path, 26A638 -> +0x4D0 = +0x4D4 (0x1122A0); +0xAB8 = its reset path, 26A638 -> +0x490,
+//   +0x4C0 / +0x4C4 / +0x4C8, 26AB20 -> +0x4A0 at + 796 (0x1122E4..0x112318). +0x4CC is not written.
+static int start_row_reattach(const char* bankText,int slot,bool place){
+ const auto bank=json::parse(bankText);
+ const json* row=nullptr;for(const auto& r:bank.at("regions"))if(r.at("kind")==0&&r.at("index")==slot){row=&r;break;}
+ if(!row&&!bank.at("regions").empty())row=&bank.at("regions").at(0);
+ if(!row)return 0;
+ const auto p=row->at("position").get<std::array<float,3>>(),d=row->at("direction").get<std::array<float,3>>();
+ terrain_original::Vector point,dir{d[0],d[1],d[2]};
+ {terrain_original::Rounding rounding;const float offset=terrain_original::sub(terrain_original::mul(setup_model_size(),90.f),90.f);
+  for(unsigned k=0;k<3;++k)point[k]=terrain_original::add(p[k],terrain_original::mul(d[k],offset));}
+ if(place)reset_place_at(point,dir,0.f,5);
+ std::vector<ssx::OriginalRacePath> race;
+ for(const auto& q:bank.at("race_paths")){ssx::OriginalRacePath path;path.origin=q.at("origin").get<std::array<float,3>>();path.low=q.at("low").get<std::array<float,3>>();path.high=q.at("high").get<std::array<float,3>>();path.remainingAtOrigin=q.at("remaining_at_origin");path.segments=q.at("segments").get<std::vector<std::array<float,4>>>();
+  for(const auto& e:q.at("events"))path.events.push_back({e.at("type").get<uint32_t>(),e.at("value").get<uint32_t>(),e.at("start").get<float>(),e.at("end").get<float>()});race.push_back(std::move(path));}
+ browser_race_replace_paths(std::move(race),row->at("race_path").get<int>());
+ browser_reset_replace_paths(browser_parse_reset_paths(bank.at("reset_paths")),row->at("reset_path").get<int>());
+ return 1;
+}
+// 129160 (the rider manager's pose pass, 0x129160..0x1291DC; its one caller is world state 1's exit 0x234750 at 0x23488C): each
+// listed rider gets 11EB60(rider, 1.0) (one full-rate step: advance, local pose, completion batch; as 11D660's placement step),
+// 11EB98 and 3103F0(rider+0x780), with no provider, controller or physics pass. After a WS15 return that exit follows the riders'
+// removal (12B030) in the same frame, so only the human is listed (PS2 c0a-ret11: its 3135B0 slot advances run twice in the WS3
+// tick-0 window, its controllers' 311B20 once: c0a-ret10). 11EB98 / 3103F0's pose is the next tick's here (the gate is exact).
+EMSCRIPTEN_KEEPALIVE void rider_pose_step(){
+ if(browserNisHold)return;
+ {auto step=gs;step.timeScale=1;graph.advance(step,prewind.spin.current,prewind.flip.current);graph.completeSequences();}
+}
+EMSCRIPTEN_KEEPALIVE void place_rider_region(float x,float y,float z,float dx,float dy,float dz,int transport);
+// 11D390(rider)'s free-ride branch (the location entry of 1297C8(C, 1), pv eventReturnInWorld: WS15's 230180): 112180(rider, 1) then
+// 11DE60 / 11DF18 at the location's row (place_rider_region). Today's other place_rider_region callers keep it without 112180.
+EMSCRIPTEN_KEEPALIVE int location_entry_place(const char* bankText,int slot,float x,float y,float z,float dx,float dy,float dz){
+ if(!start_row_reattach(bankText,slot,true))return 0;place_rider_region(x,y,z,dx,dy,dz,0);return 1;
+}
+// World state 14's enter 0x236250 with arg 2 (the results' Transport; pv eventReturnInWorld), the human's part: the boost meter +0x2F8
+// = 0 (0x2362B4), then 11D390(human) (0x2363DC) while the event kind still holds, i.e. its event branch: 112180(human, 1) on the start
+// row and the grid hold (11FE78(3) / 11FEC8(6)). PS2 c0a-ret7: +0xAB8 -> the bank's path 2 before the WS14 frame's 112338; c0a-ret6b:
+// that frame's 1125C0 then writes +0x4CC = -2.9563, the heading WS15's record shows.
+EMSCRIPTEN_KEEPALIVE int transport_map_enter(const char* bankText){
+ boostState.meter=0;if(!start_row_reattach(bankText,0,true))return 0;grid_hold_enter();return 1;
+}
 EMSCRIPTEN_KEEPALIVE void place_rider_region(float x,float y,float z,float dx,float dy,float dz,int transport){
  browserNisHold=false; // 123B48 releases the NIS hold before 11D390
  if(browserResetActive)clear_reset();
+ // 11DE60 is straight-line code: every caller runs its 11FEC8(0) / 11FE78(0) (0x11DED8 / 0x11DEE4), so a running crash ends here.
+ // Control 8's exit (table 0x456B90 -> 12E690) is the wipeout speech 2A02D8 plus, on an even logic tick, 10E028(reaction 4), which
+ // 11D660 below clears again (+0x358 = 0). Motion 2's exit (table 0x456B10 -> 136F28) is empty. PS2 c0a-ret record 3031 -> 3032:
+ // the WS15 return's 1297C8 -> 11D390 of a rider mid-crash (2/8) gives 0/0 at the location row.
+ if(physicsState.controlState==8)audio_event(AE_CRASH_EXIT);
+ if(crash.active){crash.active=false;browserCrashActive=false;browserCrashExitFrame=false;}
+ // ... and a finished rider's control 10 (the finish stop, finish_gameplay.inc) ends with it: 11FEC8(0) replaces the controller (control
+ // 10 has no exit: 0x456B90[10] -> 0x111624). PS2 c0a-ret3: the human, in control 10 since the Give Up, is in control 2 on WS15's tick 1.
+ // So does the grid hold's start controller (control 6, no exit either: world state 14's hold before a WS15 return, transport_map_enter).
+ finish_reset();if(browserStarting)clear_start();
  if(transport){physicsState.normal=physicsState.previousNormal={0,0,1};const float limit=physicsProfile.speedLimit;physicsProfile=physicsMaterials[0];physicsProfile.speedLimit=limit;}
  push_score();originalScoreRunReset(scoreObject);pull_score();grab={};score_reset(true);
  start_ground_motion();const float depth1=physicsState.depth1,depth3=physicsState.depth3;
@@ -1186,6 +1275,60 @@ EMSCRIPTEN_KEEPALIVE void place_rider_region(float x,float y,float z,float dx,fl
  {terrain_original::Rounding rounding;graph.setRate(2,0);reset_resume_velocity();}passive={};prewind={};air={};airAnimation={};
  boostState.window=physicsState.boostWindow=0;boostState.modifier=0;boostState.superTime=0;boostState.tier=physicsState.boostTierCounter=0; // 11D390 tail: +0x2E8, +0x2EC, +0x2F0, +0x2F4 = 0
  physicsState.controlState=gs.controlState=0;gs=physicsState;::grounded=true;previousGround=true;previousHeld=false;heldAirMode=passiveMode=false;
+}
+// A CTM event run in the streamed world (pv eventInWorld, docs/ctm-events-in-world.md stage 3): the race start's grid placement
+// on the rider as free ride and WS1's hold left it. PS2: WS1's last tick 1289F0 = 1297C8(C, 0) places every rider, 11D390's event
+// branch (0x11D564: 11FE78(3), 11FEC8(6), the tail +0x470 -1, +0x2E8 / +0x2EC / +0x2F0 / +0x2F4 / +0x3FC / +0x474.. 0, the vt call,
+// 111890, 125038) does not call 11DE60 / 11DF18, and the Continue's 129768 -> 1297C8(C, 1) places them again with C+8 = 0.
+// PS2 c0a-full (the Snow Jam first heat ridden in from free ride), rider +0x100..+0xB40 at the countdown against the Single Event
+// anchor's (event-race record 18): equal except the words neither the hold nor the placement writes. The port's grid state is
+// the anchor's (start_event), so this runs it and keeps those words from the current rider:
+// - the motion-0 object's stamps (owner +0x10 ground focus, +0x14 last leave: the hold's motion-0 exit): 13C7A8 at the push-off
+//   scales the velocity by 0.7 + 0.01 x (tick - leave - 40) (<= 1); the game tick restarts at 0, so a CTM start keeps 0.7
+//   (c0a-race 182: the anchor's leave 0 gave 1, 160 cm/s fast);
+// - the boost meter +0x2F8, amount +0x2FC and drain +0x304 (11D390 zeroes only +0x2E8..+0x2F4; c0c-race carries the qualifier's
+//   0.621: WS13 has no cGame_restart);
+// - +0x380 / +0x390 (the last contact normal and the board normal).
+// - the retained speed limit +0x2E4 (after WS1's ~500 motion-3 ticks it is 11B3F8's motion-3 fixed point, the anchor's too).
+// The stage world is kept too (start_event without browser_reset_pickups): no world reset at an offline event start.
+// It resets the race session itself (reset_race, keeping the world): the page calls it instead of reset_race + reset_rider +
+// start_event, after event_route_seed.
+// Not carried (not modelled, or not read before they are rewritten in these runs): +0x360 (1 in CTM; the port has no cruise
+// latch 0x1162C8), +0x3C0/C4, +0x3F8, the race-path cache +0x4DC..+0x4E8, +0x5B4,
+// +0x764, +0x770, +0x9E0..+0xAE0. Used by the page instead of reset_rider + start_event; Single Event keeps start_event.
+extern "C" void reset_rider(float,float,float,float); // web/core.cpp
+extern "C" void reset_race(); // web/race_bridge.cpp
+extern "C" void speed_limit_seed(float); // web/core.cpp
+// The event's grid route (rider +0x490..+0x4CC): 11D390's 112180(rider, 1) re-attaches it at the course's grid row of the
+// location's bank; the result is the event document's original_reset.event_route (the anchor's words: PS2 c0a-full's countdown
+// +0x490 / +0x4C8 / +0x4CC equal ANIMATIONS/initial.json's). A streamed world's own document (init_animation) holds free ride's,
+// so the in-world event loads its course's before event_grid_start (start_event copies it into the route).
+EMSCRIPTEN_KEEPALIVE int event_route_seed(const char* text){const auto doc=animation_document(text);const auto& data=doc.at("original_reset");if(!data.contains("event_route"))return 0;
+ initialEventRoute=read_reset_route(data.at("event_route"));eventRouteLoaded=true;return 1;}
+EMSCRIPTEN_KEEPALIVE void event_grid_start(float x,float y,float z,float angle){
+ const uint32_t leave=lastGroundLeave,focus=groundFocusTick;const auto meter=boostState.meter,amount=boostState.amount;const auto drain=boostState.drainEnabled;
+ const auto previousNormal=physicsState.previousNormal,boardNormal=physicsState.boardNormal;const float limit=physicsProfile.speedLimit;
+ browserEventWorldKept=true;reset_race();reset_rider(x,y,z,angle);start_event();browserEventWorldKept=false; // the race session too (the page calls no reset_race first)
+ // The grid is on the ground (motion 3 over the anchor's contact). reset_rider's snap probes the course collision world, which a
+ // streamed world does not load (a miss leaves grounded false: the animation side then ran 1211F8 a second time, crouch 0.2 at GO).
+ ::grounded=true;airMotionThisTick=false;
+ speed_limit_seed(limit);
+ lastGroundLeave=leave;groundFocusTick=focus;boostState.meter=meter;boostState.amount=amount;boostState.drainEnabled=drain;physicsState.boost=amount;
+ physicsState.previousNormal=previousNormal;physicsState.boardNormal=boardNormal;gs.previousNormal=previousNormal;gs.boardNormal=boardNormal;gs.boost=amount;
+}
+// pv eventInWorldAi (docs/ctm-events-in-world.md stage 4): a CTM event's computer rider at the countdown. The PS2 builds it fresh at
+// gate + 2 (129E20), the approach NIS carries it (placed at its actor, then ticked held: +0x2E4 ramps under motion 3, +0x380 is the
+// held contact's normal; PS2 c0a-full-ai 3130..3370), 1297C8(C, 0) at WS1's last tick and (C, 1) at the Continue place it on its grid
+// row with 11D390, which keeps those words. So, as event_grid_start for the human: the Single Event start (npc_start_event: the anchor's
+// grid seed) with the carried words put back. Single Event keeps npc_start_event.
+EMSCRIPTEN_KEEPALIVE void npc_grid_start(){
+ const uint32_t leave=lastGroundLeave,focus=groundFocusTick;const auto meter=boostState.meter,amount=boostState.amount;const auto drain=boostState.drainEnabled;
+ const auto previousNormal=physicsState.previousNormal,boardNormal=physicsState.boardNormal;const float limit=physicsProfile.speedLimit;
+ npc_start_event();
+ ::grounded=true;airMotionThisTick=false;
+ speed_limit_seed(limit);
+ lastGroundLeave=leave;groundFocusTick=focus;boostState.meter=meter;boostState.amount=amount;boostState.drainEnabled=drain;physicsState.boost=amount;
+ physicsState.previousNormal=previousNormal;physicsState.boardNormal=boardNormal;gs.previousNormal=previousNormal;gs.boardNormal=boardNormal;gs.boost=amount;
 }
 // A world start's fresh rider (docs/peak-mountain.md "Fresh rider at a world start"): the world load builds the rider (constructor
 // 0x125EB8 over zeroed memory), so before its first placement 11D390 its +0x2E4 speed limit, +0x4CC route heading, +0x438 surface,
@@ -1204,6 +1347,9 @@ EMSCRIPTEN_KEEPALIVE void fresh_rider_start(){
  boost_state_seed(0,0,0,0,0,0,1); // +0x2E8..+0x2FC 0 and the +0x304 drain word 1 (11D390 keeps the meter and amount)
  gs=physicsState;
 }
+// pv eventInWorldAi: a CTM computer rider built at gate + 2 (129E20, constructor 0x125EB8 over zeroed memory): fresh_rider_start's words
+// and the board normal +0x390 zero too (PS2 c0a-full-ai: 0 in every rider from 3131 to the race, 11D390 does not write it).
+EMSCRIPTEN_KEEPALIVE void npc_fresh_rider(){fresh_rider_start();physicsState.boardNormal={0,0,0};gs.boardNormal={0,0,0};}
 EMSCRIPTEN_KEEPALIVE float* route_info(){RIDER_LOCAL static float v[14];v[0]=resetRoute.pathIndex;v[1]=resetRoute.previousDistance;v[2]=resetRoute.currentDistance;v[3]=resetRoute.lateralDistance;v[4]=resetRoute.heading;v[5]=routeProgressUpdates;v[6]=resetRoute.cache.segment;v[7]=resetRoute.cache.distance;for(unsigned i=0;i<3;i++){v[8+i]=resetRoute.closestPoint[i];v[11+i]=resetRoute.lookaheadPoint[i];}return v;}
 EMSCRIPTEN_KEEPALIVE float* reset_info(){RIDER_LOCAL static float v[9];v[0]=browserResetActive;v[1]=resetControl.progress;v[2]=resetPlacements;v[3]=resetCompletions;v[4]=resetReason;v[5]=resetRoute.pathIndex;v[6]=resetObservers;v[7]=resetRoute.currentDistance;v[8]=browserResetActive&&resetInputs.deviceEnabled&&resetInputs.deviceIndex>=0?originalResetFadeAlpha(resetControl.progress):0;return v;}
 EMSCRIPTEN_KEEPALIVE float* upper_request_info(){RIDER_LOCAL static float v[12];v[6]=float(riderMask8C0>>16);v[7]=float(riderMask8C0&0xffff);v[8]=float(riderMask8C8>>16);v[9]=float(riderMask8C8&0xffff);v[10]=float(riderMask8D0);v[0]=upperRequest358;v[1]=float(upperRequestTick354);v[2]=float(controllerGround.logicTick);v[3]=idleSeconds;v[4]=graph.requestedSemantics[1];v[5]=graph.currentClass(1);return v;} // QA: 10E028 pending kind/tick, logic tick, 115D48 clock; [6..10] channel-1 masks +8C0/+8C8 (hi16, lo16), +8D0
@@ -1405,7 +1551,19 @@ static void surface_landing_control(int control){
 // Conquer the Mountain; 1289F0 for type 0) -> 1297C8(rider manager, 0): +8 = 0 (the race clock +0xC runs on). PS2: ARMSX2
 // entry probe of 1297C8 on apr-full's crossing state (ra 0x128A28, stack 0x235504), docs/peak3.md.
 void browser_section_tick_restart(uint32_t value); // web/section_gameplay.inc
-void browser_game_tick_restart(uint32_t value){motionTick=value;browser_section_tick_restart(value);}
+extern "C" void browser_race_total_ticks_restart(int32_t value); // web/race_bridge.cpp (inside its extern "C" block): the race clock's copy of the same word
+void browser_game_tick_restart(uint32_t value){motionTick=value;browser_section_tick_restart(value);browser_race_total_ticks_restart(int32_t(value));}
 extern "C" EMSCRIPTEN_KEEPALIVE void game_tick_restart(uint32_t value){browser_game_tick_restart(value);}
 extern "C" EMSCRIPTEN_KEEPALIVE uint32_t game_tick(){return motionTick;}
 #include "stage_teleport.inc" // stage builtin 34 rider side 0x123210 (docs/stage-teleport.md; after the pose state it writes)
+// QA: one instance's collision / stage state by resource: [stage flags known, stage flags, body runtime flags set,
+// body runtime flags, body authored flags, stage entity type] (the body's eventRuntimeFlags route the collision queries).
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_instance_flags(uint32_t resource){
+ RIDER_LOCAL static uint32_t v[6];std::fill(std::begin(v),std::end(v),0u);
+ if(const auto* st=stage_instance(resource)){v[0]=st->flagsKnown;v[1]=st->flags;}
+ if(auto* w=set_piece_instance_at(resource)){v[2]=w->eventRuntimeFlags.has_value();v[3]=w->eventRuntimeFlags.value_or(0);v[4]=w->flags;}
+ v[5]=uint32_t(stage_entity_type(resource));return v;
+}
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/animation_bridge.inc"
+#endif

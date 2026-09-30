@@ -15,6 +15,7 @@
 import { playCutscene, COURSE_CODES } from './cutscenes.js';
 import { pv } from './pv-flags.js';
 import { prefetchDownload } from './downloads.js';
+import { loadEventPlan } from './ctm-event-plan.js';
 
 // pv flyover (docs/presentation.md "Hold after the fly-over"): the PS2 loads the event's riders under the fly-over and
 // holds at most a few ticks after it; the browser's switch to the event package runs after the fly-over. Its downloads
@@ -47,9 +48,20 @@ export async function rideIntoEvent({ ui, cu, mode, course, pause = null }) {
     // the venue fly-over in the streamed world (the location's scdat / scfilter list 2)
     let flown = false;
     const fly = playCutscene({ kind: 'intro', mode: 'flyover', location: code, restore: false }).catch((e) => { console.warn('Fly-over failed', e); }).finally(() => { flown = true; });
+    // pv eventWorldData (docs/ctm-events-in-world.md stage 2): the event's own data (riders, race event, grid spawn, GO starts) read while
+    // the fly-over plays, for the in-world event (stage 3); nothing uses it yet
+    if (pv('eventWorldData')) cu.eventPlan = loadEventPlan(entry).catch((e) => { console.warn('Event plan failed', e); return null; });
+    // pv eventInWorldAi (stage 4): the event's computer riders made under the fly-over (the PS2 makes them at gate + 2), for the in-world event
+    if (pv('eventInWorld') && pv('eventInWorldAi')) ui.cb.eventAiPrepare?.({ entry, mode });
     // pv flyover: the event package downloads once the fly-over's own files are in and its clock runs
     if (pv('flyover')) { await new Promise((r) => { const f = () => (flown || (cs.state?.t ?? 0) > 0 ? r() : requestAnimationFrame(f)); f(); }); prefetchEvent(entry.root || `/assets/${code}/`); }
     await fly;
+    // pv eventInWorld (docs/ctm-events-in-world.md stage 3): the event is set up in the streamed world itself (22D6C8 / WS1 in place, as
+    // the PS2 does): no course switch, the approach follows the fly-over's cut at once
+    if (pv('eventInWorld') && ui.cb.eventInWorld && cu.eventPlan) {
+      const plan = await cu.eventPlan;
+      if (plan && await ui.cb.eventInWorld({ plan, mode, entry })) { cs.clearOverlay?.(); cu.begin(mode, course, true, { rideIn: true, inWorld: true }); return true; }
+    }
     // black hold with the caption while the page switches to the event course; the round resumes at the approach
     cs.clearOverlay?.();
     ui.loading.world = (c, b) => cs.drawCover(c, ui);

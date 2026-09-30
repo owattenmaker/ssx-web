@@ -8,8 +8,10 @@
 import fs from 'node:fs';
 // CORE_JS=path/core.js: a private core (CORE_OUT=dir sh web/build-core.sh) instead of web/runtime, as compare-ps2-capture.mjs.
 const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
-import { createAiRacers, rngNext } from './ai-racers.js';
-import { readAiCapture } from './ps2-capture-ai.mjs';
+import { createAiRacers, rngNext, syncWorldNodes } from './ai-racers.js';
+import * as eventSnapshot from './event-snapshot.js';
+import * as eventReturn from './event-return.js';
+import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
 
 const args = process.argv.slice(2);
@@ -39,7 +41,14 @@ resources.terrainHash = JSON.parse(resources.terrainText).source_sha256;
 const doc = JSON.parse(argValue('--document') ? fs.readFileSync(argValue('--document'), 'utf8') : text(`${courseCode}/npc-riders.json`));
 for (const r of doc.riders) resources.riderText[r.package] = text(`${r.package}/rider.json`);
 // Human core: the same initialisation as compare-ps2-capture.mjs.
-let humanText = resources.initialText;
+// --ctm-full CODE (with --in-world-ai; pv eventInWorld + eventInWorldAi, docs/ctm-events-in-world.md stage 4): one capture from a Peak 1
+// location arrival through free ride, the event's gate, WS1's hold, the card and the race, the human on the streamed Peak 1 world as
+// web/compare-ps2-capture.mjs --course PEAK1 --peak-arrival --ctm-in-world runs it (web/ctm-in-world-setup.mjs, web/peak-capture.mjs), the
+// computer riders made by the page's in-world path and started at the countdown's tick 0 (record C) after the human's event_grid_start.
+// The riders are compared from C on (local/ctm-events/caps/c0a-full-ai: tools/ps2_capture.py build --ai-state + capture_card.py --ai-dynamic).
+const ctmFull = argValue('--ctm-full');
+if (ctmFull && !args.includes('--in-world-ai')) throw new Error('--ctm-full needs --in-world-ai');
+let humanText = ctmFull ? text('PEAK1/initial.json') : resources.initialText;
 if (humanRider && humanRider.id !== 'zoe') {   // the human's own settings (web/character-roster.js)
   const { humanSettings, composeCheat } = await import('./character-roster.js');
   const settingsOf = (pkg) => { const f = new URL(`public/assets/${pkg}/settings.json`, import.meta.url); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : null; };
@@ -56,20 +65,22 @@ if (humanRider && courseCode !== 'ARA1') {   // the human's own grid spot on thi
   if (grid) human._human_grid_seed(str(human, JSON.stringify(grid)));
 }
 human._animation_use_physics(1);
+if (!ctmFull) { // (--ctm-full: the streamed Peak 1 world, web/peak-capture.mjs loadPeakWorld below)
 human._init_world(put(human, resources.collision), resources.collision.length / 4);
 const hash = str(human, resources.terrainHash);
 human._init_terrain(str(human, resources.terrainText));
 human._init_world_collision(str(human, resources.worldCollisionText), hash);
 human._init_body_terrain(str(human, resources.terrainText));
 human._init_rails(str(human, resources.railsText), hash);
+}
 // Section activation 0x101B60 runs natively (web/section_gameplay.inc): its slot-1 draws (0x341bbc, builtin3 key 8)
 // are no longer injected from the capture. --no-sections keeps the older injection for comparison.
 const sectionsFile = new URL(`${courseCode}/SECTIONS/sections.json`, root);
-const nativeSections = !args.includes('--no-sections') && !!human._init_sections && fs.existsSync(sectionsFile);
+const nativeSections = !ctmFull && !args.includes('--no-sections') && !!human._init_sections && fs.existsSync(sectionsFile); // (--ctm-full: the streamed world's own)
 if (nativeSections) human._init_sections(str(human, fs.readFileSync(sectionsFile, 'utf8')));
 // Stage world (web/stage_world.inc): the particle / LiveComp-timer data the browser loads (set-pieces-renderer.js); its
 // timer programs draw the shared RNG (builtin3 key8/key6, builtin19). --no-stage-world leaves it out.
-const stageWorld = !args.includes('--no-stage-world') && loadStageWorld(human, root, courseCode);
+const stageWorld = !ctmFull && !args.includes('--no-stage-world') && loadStageWorld(human, root, courseCode);
 const drawsBetween = (a, b) => { const w = a.slice(); for (let n = 0; n <= 200; n++) { if (w.every((x, k) => x === b[k])) return n; rngNext(w); } return -1; };
 let tickDraws = [];
 let pendingRng = null; const rngBlips = [];
@@ -79,7 +90,27 @@ const rngTrace = process.env.RNG_TRACE ? process.env.RNG_TRACE.split(':').map(Nu
 // tools/export_world_visual_state.py export of the location's ready savestate) and checked against a capture that watches
 // 0x4ff018:0x18 (and 0x4a3afc:4).
 const sharedVisual = args.includes('--shared-visual');
-const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual,
+// --replay-return (pv eventReturnInWorld (b), the ctm-events/c0a-ret3 gate): the in-world results' auto replay as the page runs it
+// (web/event-snapshot.js): the countdown snapshot at the start, the results-time snapshot at the live stop, then the replay (the
+// countdown snapshot back and REPLAY_TICKS of the recorded run, default 600) before the Transport restores the results time.
+const replayReturn = args.includes('--replay-return');
+// --in-world-ai [--node-seed NODES.json] (pv eventInWorldAi, docs/ctm-events-in-world.md stage 4): the computer riders set up as the page's
+// in-world event makes them (web/main.js cb.eventAiPrepare): the first context takes the event package in parts with its body collision only
+// (web/load-slices.js feedContextWorld / feedEventRails: the camera terrain stays the human's), the others copy it by key; after the start
+// the human's node states go into their contexts and follow as kind 9 (web/ai-racers.js syncWorldNodes). --node-seed: the node states of
+// the capture's countdown savestate (local/ctm-events/caps/<run>.nodes.json: tools/export_peak_seed.py seed_state's nodes) put into the
+// human first (peak_world_seed), the CTM world the riders race in (the first heat's free-ride DeadNodes, the hidden gate volume).
+const inWorldAi = args.includes('--in-world-ai') ? await (async () => {
+  const { feedContextWorld, feedEventRails } = await import('./load-slices.js');
+  const { eventTerrainParts, eventWorldParts, eventRailParts, parseKey } = await import('./peak-world-batches.js');
+  const tb = read(`${courseCode}/terrain.json`), wb = read(`${courseCode}/world_collision.json`), rb = read(`${courseCode}/rails.json`);
+  const t = eventTerrainParts(tb.toString('utf8')), w = eventWorldParts(wb.toString('utf8')), r = eventRailParts(rb.toString('utf8'));
+  const cut = { hash: t.hash, keys: { world: parseKey(wb, t.hash), body: parseKey(tb, t.hash), rails: parseKey(rb, t.hash) }, terrain: t, world: w, rails: r };
+  const now = async () => {};
+  return { cut, prepareWorld: async (c) => { const h = str(c, cut.hash); try { await feedContextWorld(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); await feedEventRails(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); } finally { c._free(h); } } };
+})() : null;
+if (inWorldAi) resources.worldKeys = { ...inWorldAi.cut.keys, hash: inWorldAi.cut.hash };
+const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual, ...(inWorldAi ? { prepareWorld: inWorldAi.prepareWorld, hostAtStart: !!ctmFull, ...(ctmFull ? { anchorTick: 0 } : {}) } : {}),
   onDraws: (slot, before, controller, motion) => { if (controller || motion) tickDraws.push(`${slot}:c${controller}m${motion}`); },
   afterRider: (slot) => injectWorldDraws(slot) });
 if (doc.game_mode) for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._event_kind?.(doc.game_mode.kind);
@@ -103,7 +134,7 @@ if (!args.includes('--no-relations') && doc.relationships?.characters) {
 // (course-script object 0x341AA0 in the world pass 0x101B60). Their draws are taken from the capture's RNG log (--ai-state) at the same position:
 // after the rider whose pass drew them, or after every rider for world passes. Rider draws are
 // never injected.
-const WORLD_DRAW_CALLERS = new Set(nativeSections ? [] : [0x341bbc]); // 0x359460 (spline modifier from a rider's trigger) now runs natively in that rider's core
+const WORLD_DRAW_CALLERS = new Set(nativeSections || ctmFull ? [] : [0x341bbc]); // (--ctm-full: the streamed world's section activation runs natively) // 0x359460 (spline modifier from a rider's trigger) now runs natively in that rider's core
 let pendingWorld = null; let injected = 0;
 function injectWorldDraws(slot) {
   if (!pendingWorld) return 0; let n = 0;
@@ -114,19 +145,29 @@ function injectWorldDraws(slot) {
 // ---- capture ----
 const manifest = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8'));
 const RECORD = manifest.record || 8192;
-const raw = fs.readFileSync(capturePath);
+let raw = fs.readFileSync(capturePath);
+const inWorldSetup = ctmFull ? await import('./ctm-in-world-setup.mjs') : null, arrival = ctmFull ? inWorldSetup.arrivalSeeds(raw, RECORD) : null;
+if (arrival) raw = raw.subarray(arrival.P * RECORD); // the comparison starts at the arrival's placement record P
 const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-const records = [];
+const records = [], blockOf = rosterOrder(manifest);
 for (let at = 0; at + RECORD <= raw.length; at += RECORD) {
   const u = (o) => dv.getUint32(at + o, true), f = (o) => dv.getFloat32(at + o, true);
   records.push({ tick: u(4), index: u(28), control: u(20), position: [f(32 + 0x10), f(32 + 0x14), f(32 + 0x18)], velocity: [f(32 + 0xE0), f(32 + 0xE4), f(32 + 0xE8)],
-    others: [0, 1, 2, 3, 4].map((k) => ({ position: [f(3008 + 32 * k), f(3012 + 32 * k), f(3016 + 32 * k)], velocity: [f(3024 + 32 * k), f(3028 + 32 * k), f(3032 + 32 * k)] })),
+    // roster slot k's block (the record keeps actor-address order; a lineup document keeps roster order: ps2-capture-ai.mjs rosterOrder)
+    others: [0, 1, 2, 3, 4].map((k) => blockOf[k] ?? k).map((k) => ({ position: [f(3008 + 32 * k), f(3012 + 32 * k), f(3016 + 32 * k)], velocity: [f(3024 + 32 * k), f(3028 + 32 * k), f(3032 + 32 * k)] })),
     rng: Array.from({ length: 6 }, (_, k) => u(8896 + 4 * k)) });
 }
 const BUTTONS = ['Select', 'Start', 'L3', 'R3', 'DPadRight', 'DPadLeft', 'DPadUp', 'DPadDown', 'Triangle', 'Circle', 'Cross', 'Square', 'L1', 'R1', 'L2', 'R2'];
 const R255 = new Float32Array(new Uint32Array([0x3b808081]).buffer)[0];
 function towardZero(x) { let r = Math.fround(x); if (Math.abs(r) > Math.abs(x)) { const b = new Float32Array([r]); const u = new Uint32Array(b.buffer); u[0] -= 1; r = b[0]; } return r; }
 const axisByte = (v) => Math.floor((Math.max(-1, Math.min(1, v)) + 1) * 127.5 + 0.5);
+// The menu script's last pressed segment (the map confirm), the device pad WS15's frame reads.
+function returnPad(menus) { const pressed = menus.segments.filter((g) => g.buttons?.length); return pressed[pressed.length - 1]; }
+// The menu script's device pad (local/ctm-events/menu_pad.py) at a record: the record's watch of its sample counter (0x9C804, +1 per
+// device read, sampled right after this tick's read) picks the segment of the last read.
+const menuSampleWatch = (() => { let o = 0; for (const w of manifest.layout?.watches || []) { if (Number(w.address) === 0x9C800) return o + 4; o += w.length; } return -1; })();
+function menuSampleAt(i) { return menuSampleWatch < 0 ? -1 : dv.getUint32(i * RECORD + manifest.layout.watch_offset + menuSampleWatch, true); }
+function menuSegmentAt(sample) { let end = 0; for (const g of manifest.menus?.segments || []) { end += g.frames; if (sample - 1 < end) return g; } return {}; }
 function decodePad(seg) {
   const values = new Float32Array(24); const held = new Set(seg.buttons || []);
   BUTTONS.forEach((name, i) => { const on = held.has(name); values[i] = i >= 4 ? towardZero((on ? 255 : 0) * R255) : (on ? 1 : 0); });
@@ -144,6 +185,7 @@ function humanTick(pad) {
   globalThis.__compareStage = 'human';
   human.HEAPF32.set(pad, padPtr >> 2);
   const o = Array.from(f32(human, human._pad_tick(padPtr), 24));
+  if (process.env.PAD_TRACE && globalThis.__padTrace > 0) { globalThis.__padTrace--; console.error('pad', BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // PAD_TRACE (diagnostic): the return's first ticks
   globalThis.__compareStage = 'race_begin'; human._race_begin();
   globalThis.__compareStage = 'step_rider'; const state = f32(human, human._step_rider(o[0], o[6], o[2] ? 1 : 0, o[7]), 16);
   globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], o[12], o[7], 0, state[15], o[13]);
@@ -151,12 +193,73 @@ function humanTick(pad) {
   globalThis.__compareStage = 'race_end'; human._race_end();
   if (sharedVisual) globalThis.__pendingCameraHead = [pose[9], pose[10], pose[11]]; else human._step_camera_head(pose[9], pose[10], pose[11]);
 }
-function tick(pad, record = null) { tickDraws = []; pendingWorld = record && worldDraws ? record.rng.log.filter((e) => WORLD_DRAW_CALLERS.has(e.ra)).map((e) => ({ slot: e.rider ? (e.rider.slot < 0 ? 0 : e.rider.slot + 1) : null })) : null;
+// REPLAY_PROBE: a core's per-subsystem snapshot hashes (core snapshot_hashes: [n, then file index, lo, hi]) by file name.
+function snapshotHashes(c) { const p = c._snapshot_hashes(), n = new Uint32Array(c.HEAPU8.buffer, p, 1)[0], v = new Uint32Array(c.HEAPU8.buffer, p + 4, n * 3), out = {};
+  for (let k = 0; k < n; k++) { const q = c._snapshot_file(v[3 * k]); let e = q; while (c.HEAPU8[e]) e++; out[new TextDecoder().decode(c.HEAPU8.subarray(q, e))] = v[3 * k + 1] + ':' + v[3 * k + 2]; } return out; }
+// REPLAY_PROBE: 4 KB page hashes of the whole memory (FNV-1a over 32-bit words).
+function pageHashes(mem) { const w = new Uint32Array(mem.buffer, 0, mem.length >> 2), n = w.length >> 10, h = new Uint32Array(n); for (let p = 0; p < n; p++) { let x = 0x811c9dc5; for (let k = p << 10, e = k + 1024; k < e; k++) x = Math.imul(x ^ w[k], 16777619); h[p] = x; } return h; }
+// REPLAY_PROBE: a rough world-state fingerprint (the first 512 words behind each info export; layouts differ, so only which ones moved).
+const REPLAY_WORLD_EXPORTS = ['_stage_world_info', '_stage_builtin_counts', '_stage_world_meshanim_state', '_stage_world_flag_words', '_set_piece_info', '_set_piece_sections', '_mission_info', '_weather_info', '_race_world_state', '_stage_script_info', '_pickup_info', '_section_listed', '_world_events', '_peak_world_events', '_stage_teleport_info', '_camera_state_words', '_weather_keep_state', '_fog_keep_state', '_race_progress_info', '_score_object_dump', '_rider_state'];
+function replayWorldDump() { const out = {}; for (const f of REPLAY_WORLD_EXPORTS) { if (typeof human[f] !== 'function') continue; try { const p = human[f](); if (!p) continue; out[f] = Array.from(new Uint32Array(human.HEAPU8.buffer, p, 512)); } catch (e) { out[f] = String(e.message).slice(0, 40); } } return out; }
+function tick(pad, record = null) { if (globalThis.__rep?.recording) globalThis.__rep.list.push({ pad: Float32Array.from(pad), record }); tickDraws = []; pendingWorld = record && worldDraws ? record.rng.log.filter((e) => WORLD_DRAW_CALLERS.has(e.ra)).map((e) => ({ slot: e.rider ? (e.rider.slot < 0 ? 0 : e.rider.slot + 1) : null })) : null;
   globalThis.__compareStage = 'begin'; racers.beginTick(); humanTick(pad); globalThis.__compareStage = 'end'; racers.endTick();
+  if (globalThis.__rep) { const rep = globalThis.__rep, st = [human, ...racers.npcs.map((n) => n.core)].flatMap((c) => Array.from(f32(c, c._reference_motion(), 6))).concat(Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)).map((w) => w | 0));
+    if (rep.recording) rep.live.push(st); else if (rep.replaying) { const k = rep.at++, l = rep.live[k]; if (!rep.first && l && st.some((v, j) => Math.fround(v) !== Math.fround(l[j]))) { const j = st.findIndex((v, jj) => Math.fround(v) !== Math.fround(l[jj])); const prev = k > 0 ? rep.live[k - 1].slice(36).map((w) => w >>> 0) : rep.rng, u = (a) => a.slice(36).map((w) => w >>> 0); rep.first = { tick: k, field: j < 36 ? `rider ${Math.floor(j / 6)} ${['x', 'y', 'z', 'vx', 'vy', 'vz'][j % 6]}` : `rng ${j - 36}`, live: l[j], rerun: st[j], liveDraws: drawsBetween(prev, u(l)), rerunDraws: drawsBetween(prev, u(st)) }; } } }
   if (sharedVisual && globalThis.__pendingCameraHead) { human._step_camera_head(...globalThis.__pendingCameraHead); globalThis.__pendingCameraHead = null; } } // cameras after every rider pass (0x230D7C)
 
 // ---- event start and pre-anchor grid ticks ----
-human._reset_pad_history(); human._start_event(); racers.start();
+// --in-world-ai: a Conquer the Mountain race (0x535C11 = 0, web/stage-collect.js collectStart), so 30C4A8
+// leaves the uncollected collectibles to their section's slot-1 program (a LiveComp, magnet and halo) instead of making them DeadNodes.
+// The career's collected bits of the course come from the countdown savestate (--node-seed): a collectible is a DeadNode at a CTM
+// countdown only when 30C4A8's 1538E8 found its career bit, and that bit is its index in the collection list (core stage_collection_list:
+// 30C4A8 stores the resource at +0xC + 4 * count and asks 1538E8 for index = count). The list is the stage setup's: a first start with
+// nothing collected builds it, the mask then goes in before the run's own start. --collect-mask LO:HI overrides (QA).
+if (inWorldAi && !ctmFull && !args.includes('--single-collect')) { // (--ctm-full: free ride's own collect state, the CTM path)
+  let [lo, hi] = [0, 0];
+  if (argValue('--collect-mask')) [lo, hi] = argValue('--collect-mask').split(':').map((v) => Number(v) >>> 0);
+  else if (argValue('--node-seed') && human._stage_collection_list) {
+    human._set_stage_collect_state(0, 0, 0); human._reset_pad_history(); human._start_event();
+    const p = human._stage_collection_list(), head = new Uint32Array(human.HEAPU8.buffer, p, 2), list = Array.from(new Uint32Array(human.HEAPU8.buffer, p + 8, head[1]));
+    const dead = new Set(JSON.parse(fs.readFileSync(argValue('--node-seed'), 'utf8')).nodes.filter((n) => n[1] === 6).map((n) => n[0]));
+    list.forEach((r, k) => { if (dead.has(r)) { if (k < 32) lo = (lo | (1 << k)) >>> 0; else hi = (hi | (1 << (k - 32))) >>> 0; } });
+    console.error('collected', list.filter((r) => dead.has(r)).length, 'of', list.length, `mask ${lo.toString(16)}:${hi.toString(16)}`);
+  }
+  human._set_stage_collect_state(0, lo, hi);
+}
+let ctmPlan = null, peakWorld = null, ctmReturn = null;
+let d0Watch = -1; { let o = 0; for (const w of manifest.layout?.watches || []) { if (Number(w.address) === 0x1454BA0) d0Watch = o; o += w.length; } } // A+0xD0 of the Peak 1 world's activation (c0a-full's watch set)
+if (ctmFull) { for (const r of records) r.gameTick = r.tick; // (peak-capture.mjs: a game tick restart where the record's tick is not the previous + 1)
+  peakWorld = await (await import('./peak-capture.mjs')).loadPeakWorld({ core: human, root, captureManifest: manifest, dv, RECORD, records, arrival: true, world: 'PEAK1' });
+  const start = JSON.parse(text('PEAK1/start.json')); human._reset_animation(); human._reset_race(); human._reset_rider(...start.position, start.heading);
+  inWorldSetup.applyArrival(human, peakWorld, arrival);
+  ctmPlan = inWorldSetup.planCtmInWorld({ code: ctmFull, core: human, dv, RECORD, records, layout: manifest.layout, json: (p) => JSON.parse(text(p)) });
+  console.error('ctm full', ctmFull, 'gate record', ctmPlan.G, 'hold', ctmPlan.H, 'countdown', ctmPlan.C);
+  { const kindW = (() => { let o = 0; for (const w of manifest.layout.watches || []) { if (Number(w.address) === 0x535C08) return o; o += w.length; } return -1; })(), kindAt = (k) => dv.getInt8(k * RECORD + manifest.layout.watch_offset + kindW + 8);
+    let R = records.findIndex((r, k) => k > ctmPlan.C + 1 && kindAt(k) === 4 && kindAt(k - 1) !== 4);
+    // --coast-only (c0a-ret2 as captured: its WS15 request is not a player's, so only the race, the Give Up and the coast are scored):
+    // R is the first record after the menus' gap (the tick counter restarts), and the loop ends before it
+    if (args.includes('--coast-only')) { R = records.findIndex((r, k) => k > ctmPlan.C + 1 && r.tick < records[k - 1].tick); globalThis.__coastOnly = R; }
+    if (R > 0) { const riders = (k) => dv.getUint32(k * RECORD + 29248 + 0x78, true), out = records.findIndex((r, k) => k > R && riders(k) < riders(R));
+      const loc = peakWorld.manifest.locations.find((l) => peakWorld.manifest.residency.find((row) => row.course === 0)?.locations.includes(l.code) && l.id < 22);
+      const bank = JSON.parse(text(`${loc.root.replace(/^\/assets\//, '')}paths.json`)).variants['0'], entry = bank.regions.find((g) => g.kind + 1 === 2 && g.index === 1) ?? bank.regions[0];
+      // The Give Up (c0a-ret2): the tick script's Start pauses in the tick of the record that read it (index == the Start's), the pause
+      // menu's Give Up (1253D0) comes before the next tick; the EndRace coast (+0x480 TIME'S UP) runs until the auto replay starts. The
+      // results' Transport (0x2706F0) restores that results-time state, then the stop frame and the WS14 frame each run one tick (map
+      // savestate: total ticks = the last coast record's + 3, riders 3 ticks on) before the map holds the world until WS15.
+      let startIndex = -1; { let end = 0; for (const g of manifest.segments) { if (g.buttons?.includes('Start')) { startIndex = end; break; } end += g.frames; } }
+      const pauseAt = startIndex >= 0 ? records.findIndex((r) => r.index === startIndex) : -1, coast = menuSampleWatch >= 0 && pauseAt > 0 && pauseAt < R - 1;
+      const stopTicks = coast ? (manifest.menus_run?.map_total_ticks != null ? manifest.menus_run.map_total_ticks - (records[R - 1].tick + 1) : Number(argValue('--return-stop-ticks') ?? 2)) : 0;
+      ctmReturn = { R, out, entry, bank, pauseAt: coast ? pauseAt : -1, stopTicks }; console.error('ctm return: WS15 record', R, 'tick', records[R].tick, 'riders out at record', out, coast ? `pause at record ${pauseAt}, coast to ${R - 1}, ${stopTicks} ticks after the stop` : ''); } }
+} else { human._reset_pad_history(); human._start_event(); racers.start(); }
+if (inWorldAi && !ctmFull) { const seed = argValue('--node-seed'); if (seed) console.error('node seed', human._peak_world_seed(str(human, fs.readFileSync(seed, 'utf8'))), 'nodes');
+  syncWorldNodes(human, racers.npcs.map((n) => n.core)); }
+// --ctm-countdown: a CTM countdown savestate's human keeps the words core event_grid_start keeps (compare-ps2-capture.mjs
+// --ctm-countdown): the motion-0 stamps (owner +0x10 / +0x14; 13C7A8's push-off speed scale), the boost words, the normals.
+if (args.includes('--ctm-countdown')) { const o = manifest.layout.owner_00_40, r0 = (off) => dv.getFloat32(32 + off - 0x100, true), i0 = (off) => dv.getInt32(32 + off - 0x100, true);
+  human._ground_tick_seed(dv.getUint32(o + 0x10, true), dv.getUint32(o + 0x14, true));
+  human._boost_state_seed(r0(0x2e8), r0(0x2ec), r0(0x2f0), i0(0x2f4), r0(0x2f8), r0(0x2fc), i0(0x304));
+  const offs = [0x380, 0x384, 0x388, 0x390, 0x394, 0x398], w = human._malloc(8 * offs.length);
+  offs.forEach((off, k) => { human.HEAPF32[(w >> 2) + 2 * k] = off; human.HEAPF32[(w >> 2) + 2 * k + 1] = r0(off); }); human._ground_state_seed(w, offs.length); human._free(w); }
 if (sharedVisual) { // the ready savestate's visual state (start of race tick 0)
   const vsPath = args.includes('--visual-state') ? args[args.indexOf('--visual-state') + 1] : null;
   if (vsPath) { const vs = JSON.parse(fs.readFileSync(vsPath, 'utf8')); new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6).set(vs.visual_rng_4ff018);
@@ -170,7 +273,7 @@ const weatherWatch = args.includes('--weather') ? (() => { const map = JSON.pars
   return { rider: o(map.rider), camera: o(map.camera), layers: (map.layers || []).map(o), splash: o(map.splash), splash2: o(map.splash2), visual: o(0x4FF018), lcg: o(0x4A3AFC) }; })() : null;
 const weatherStats = { ticks: {}, exact: {}, first: {} };
 const neutral = new Float32Array(24);
-for (let t = 0; t < records[0].tick; t++) tick(neutral);
+if (!ctmFull) for (let t = 0; t < records[0].tick; t++) tick(neutral);
 racers.setSharedRng(records[0].rng);
 // Human score object + HUD bank (docs/tricks-scoring.md), seeded from the anchor record as compare-ps2-capture.mjs --event does
 // (stale front-end words in the bank), then compared per tick like it; and the boost words (+0x2F8 meter, +0x2F4 tier, +0x2F0 time).
@@ -179,7 +282,8 @@ const SCORE_WORDS = 0x1d0 / 4, HUD_WORDS = 44 * 6, SCORE_SKIP = new Set([0x1ac, 
 const scoreState = { ticks: 0, exact: 0, first: null, boostTicks: 0, boostExact: 0, firstBoost: null };
 if (scoreLayout && hudLayout && human._score_object_seed) { const w = new Uint32Array(SCORE_WORDS + HUD_WORDS);
   for (let k = 0; k < SCORE_WORDS; k++) w[k] = dv.getUint32(scoreLayout + 4 * k, true); for (let k = 0; k < HUD_WORDS; k++) w[SCORE_WORDS + k] = dv.getUint32(hudLayout + 4 * k, true);
-  const p = human._malloc(w.byteLength); human.HEAPU8.set(new Uint8Array(w.buffer), p); human._score_object_seed(p, records[0].tick); human._free(p); }
+  const p = human._malloc(w.byteLength); human.HEAPU8.set(new Uint8Array(w.buffer), p); human._score_object_seed(p, records[0].tick); human._free(p);
+  human._set_score_career_cash?.(dv.getInt32(hudLayout + 24 * 0x19 + 20, true)); } // HUD slot 0x19: the character block's cash (150960), as compare-ps2-capture.mjs
 function compareHumanScore(r, tick) {
   if (!scoreLayout || !hudLayout) return; const base = r * RECORD, web = new Uint32Array(human.HEAPU8.buffer, human._score_object_dump(), SCORE_WORDS + HUD_WORDS); let bad = null;
   for (let k = 0; k < SCORE_WORDS && !bad; k++) { const off = 4 * k; if (SCORE_SKIP.has(off)) continue; const pv = dv.getUint32(base + scoreLayout + off, true); if (pv !== web[k]) bad = { tick, key: 'score+0x' + off.toString(16), web: web[k] | 0, ps2: pv | 0 }; }
@@ -191,6 +295,9 @@ function compareHumanScore(r, tick) {
   scoreState.boostTicks++; if (ok) scoreState.boostExact++; else if (!scoreState.firstBoost) scoreState.firstBoost = { tick, web: [m[15], m[17], m[18]], ps2: [rr(0x2f8), ri(0x2f4), rr(0x2f0)] };
 }
 const aiCapture = manifest.layout?.ai_state ? readAiCapture(capturePath) : null;
+if (aiCapture && arrival) aiCapture.records.splice(0, arrival.P); // (--ctm-full: from the placement record, as `records`)
+// (--ctm-full: a free-ride baseline's build copies no computer rider into the default record blocks; their state is the AI blocks')
+if (aiCapture && ctmFull) records.forEach((r, i) => { const a = aiCapture.records[i]?.ai; if (a) r.others = a.map((x) => ({ position: x.position, velocity: x.velocity })); });
 const fieldFirst = racersFieldsInit();
 function racersFieldsInit() { return [0, 1, 2, 3, 4].map(() => ({})); }
 const note = (k, key, tick, web, ps2) => { if (!(key in fieldFirst[k])) fieldFirst[k][key] = { tick, web, ps2 }; };
@@ -211,8 +318,9 @@ const particleEval = stageDump ? await import('./set-piece-particle-eval.js') : 
 // run after every compared tick (the human core has run record i's command; record i + 1 holds the PS2 state after it), as in
 // compare-ps2-capture.mjs. Its summary is merged into the report.
 const tickHook = process.env.TICK_HOOK ? await import(new URL(process.env.TICK_HOOK, `file://${process.cwd()}/`).href).then((m) => m.create({ core: human, racers, dv, RECORD, captureManifest: manifest })) : null;
-for (let i = 0; i + 1 < records.length && i < limit; i++) {
+for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly > 0 && i >= globalThis.__coastOnly - 1); i++) {
   globalThis.__compareTick = records[i].tick;
+  if (process.env.REPLAY_PROBE && ctmPlan && i === (+process.env.REPLAY_PROBE_FROM || 0)) globalThis.__repWorldHashes = pageHashes(human.HEAPU8); // (the reference for the dirty set)
   if (weatherWatch) compareWeather(i, records[i].tick);
   if (sharedVisual && visWatch >= 0) { // the stream at the record point (loop start = after the previous tick's cameras)
     const at = i * RECORD + manifest.layout.watch_offset, ps2w = Array.from({ length: 6 }, (_, k) => dv.getUint32(at + visWatch + 4 * k, true)), webw = Array.from(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6));
@@ -221,7 +329,132 @@ for (let i = 0; i + 1 < records.length && i < limit; i++) {
     if (process.env.VISUAL_SPAN_AI && globalThis.__visPrev) { const [a, b2] = process.env.VISUAL_SPAN_AI.split(':').map(Number); if (records[i].tick - 1 >= a && records[i].tick - 1 <= b2) console.error('vspan', records[i].tick - 1, 'web', drawsBetween(globalThis.__visPrev[0], webw), 'ps2', drawsBetween(globalThis.__visPrev[1], ps2w)); }
     globalThis.__visPrev = [webw, ps2w];
   }
-  tick(padFor(records[i].index), aiCapture ? aiCapture.records[i + 1] : null);
+  if (ctmPlan) { // --ctm-full: the human alone until the countdown's tick 0, then the six riders (web/ctm-in-world-setup.mjs, as the page)
+    if (inWorldSetup.ctmInWorldBeforeTick(human, ctmPlan, i, { cstr: (t) => str(human, t), cfile: (f) => str(human, text(f)) }) === 'skip') continue;
+    if (i === ctmPlan.C && !args.includes('--no-section-restart')) human._section_restart?.(); // 129768 -> 0x103358 at the Continue (main.js startRun)
+    if (i === ctmPlan.C) { racers.start({ gridStart: !!globalThis.__riderHold }); syncWorldNodes(human, racers.npcs.map((n) => n.core));
+      if (process.env.RNG_AT_C) { const w = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)); console.error('rng at the countdown record', records[i].tick, 'web behind', drawsBetween(w, records[i].rng), 'ahead', drawsBetween(records[i].rng, w), 'next record behind', drawsBetween(w, records[i + 1].rng)); }
+      if (args.includes('--rng-at-countdown')) racers.setSharedRng(records[i].rng); } // (diagnostic: the free-ride stretch's RNG is not scored here)
+    // REPLAY_PROBE (diagnostic, pv eventReturnInWorld (b)): the page's replay start state (web/replay.js liveStart -> main.js snapshot) and
+    // every tick's pad from here to the live stop; at the live stop the in-world restart and the re-run are compared with the live state.
+    if ((process.env.REPLAY_PROBE || replayReturn) && i === ctmPlan.C) globalThis.__rep = { recording: true, list: [], live: [], at: 0, rng: Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)),
+      visual: Array.from(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6)), lcg: human._visual_lcg_word ? new Uint32Array(human.HEAPU8.buffer, human._visual_lcg_word(), 1)[0] : null };
+    if (replayReturn && !process.env.REPLAY_PROBE && i === ctmPlan.C) { eventSnapshot.snapshotAttach({ human, racers, qa: true }); globalThis.__rep.js = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_COUNTDOWN, { human, racers }); }
+    if (process.env.REPLAY_PROBE && i === ctmPlan.C) globalThis.__rep.world = replayWorldDump();
+    if (process.env.REPLAY_PROBE && i === ctmPlan.C) console.error('replay probe context bytes', human._rider_context_bytes?.(), 'memory', human.HEAPU8.length);
+    if (process.env.REPLAY_PROBE && i === ctmPlan.C) globalThis.__rep.mem = new Uint8Array(human.HEAPU8);
+    if (process.env.REPLAY_PROBE && i === ctmPlan.C && human._snapshot_init) { // the rider-context snapshot (web/world_snapshot.hpp): sizes at the countdown's save
+      const cstr = (c, p) => { if (!p) return null; let e = p; while (c.HEAPU8[e]) e++; return new TextDecoder().decode(c.HEAPU8.subarray(p, e)); };
+      const heap0 = human._snapshot_heap_used?.(); eventSnapshot.snapshotAttach({ human, racers, qa: true }); globalThis.__rep.js = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_COUNTDOWN, { human, racers });
+      globalThis.__rep.hash0 = [human, ...racers.npcs.map((n) => n.core)].map((c) => snapshotHashes(c));
+      const n = human._snapshot_entries(), rows = []; for (let k = 0; k < n; k++) rows.push({ name: cstr(human, human._snapshot_entry_name(k)), file: cstr(human, human._snapshot_entry_file(k)), bytes: human._snapshot_entry_heap ? [human, ...racers.npcs.map((n) => n.core)].reduce((a, c) => a + c._snapshot_entry_heap(k), 0) : human._snapshot_entry_bytes(k), size: human._snapshot_entry_size(k), flags: human._snapshot_entry_flags(k) });
+      { const heap1 = human._snapshot_heap_used?.(); eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_RESULTS, { human, racers }); console.error('snapshot heap: init + slot 0', heap1 - heap0, 'bytes; + slot 1', human._snapshot_heap_used() - heap1, '; snapshot_bytes', eventSnapshot.snapshotBytes({ human, racers }), '; first saves by context (slot 0 / slot 1):', [human, ...racers.npcs.map((n) => n.core)].map((c) => c._snapshot_slot_heap(0) + '/' + c._snapshot_slot_heap(1)).join(' ')); }
+      globalThis.__rep.entryHash0 = [human, ...racers.npcs.map((n) => n.core)].map((c) => Array.from({ length: n }, (_, k) => c._snapshot_entry_hash(k))); globalThis.__rep.entryRows = Array.from({ length: n }, (_, k) => ({ name: cstr(human, human._snapshot_entry_name(k)), file: cstr(human, human._snapshot_entry_file(k)), flags: human._snapshot_entry_flags(k) }));
+      rows.sort((a, b) => b.bytes - a.bytes); console.error('snapshot bytes per context:', [human, ...racers.npcs.map((n) => n.core)].map((c) => c._snapshot_bytes()).join(' '), 'entries', n);
+      console.error('snapshot largest copies (all six contexts, one slot):', rows.slice(0, 40).map((r) => `${r.name} (${r.file}) ${r.bytes}`).join(' | ')); }
+    if (process.env.REPLAY_PROBE && i === ctmPlan.C && globalThis.__repWorldHashes) { const h = pageHashes(human.HEAPU8), w = globalThis.__repWorldHashes; globalThis.__rep.dirty = h.map((x, p) => (p < w.length && x === w[p] ? 0 : 1)); console.error('replay probe pages dirtied from the first record to the countdown:', globalThis.__rep.dirty.reduce((a, b) => a + b, 0), 'of', h.length); }
+    // --ctm-full through the return (pv eventReturnInWorld; local/ctm-events/caps/c0a-ret): the Give Up's pause, results and map leave a gap
+    // in the records; record R (free ride's kind again, the game tick back at 0) is WS15 (236058). Before it, as the page's cb.freeRide ->
+    // cb.eventInWorldEnd -> startRun -> the in-world Transport: the event's settings go (kind 4 / mode 12, free ride's race document, no event
+    // seed), the world resets (230180: startRun's reset_race), 11DE60 / 11DF18 place the human at Session point 1 and the race's riders on the
+    // same row (PS2: all six there, riding in rider pairs), and at the WS4 restart (C+0x78 6 -> 1) the riders go.
+    // Record R is the placement itself (all six at the row, no tick after it: c0a-ret 3032), so it replaces the tick that makes record R.
+    // REPLAY_SNAP_N (diagnostic): the whole memory as the web had it N ticks after the countdown's tick 0, put back before WS15.
+    if (process.env.REPLAY_SNAP_N && ctmPlan && i === ctmPlan.C + +process.env.REPLAY_SNAP_N) { globalThis.__replaySnap = { mem: new Uint8Array(human.HEAPU8), tick: records[i].tick }; console.error('replay snapshot at record', i, 'tick', records[i].tick, 'bytes', globalThis.__replaySnap.mem.length); }
+    if (ctmReturn && i === ctmReturn.R - 1 && globalThis.__replaySnap) { human.HEAPU8.set(globalThis.__replaySnap.mem, 0); console.error('replay state put back (tick', globalThis.__replaySnap.tick, ')'); }
+    // The tick that read the Start finishes after the pause menu: its record (written after the menu) holds the device pad's sample
+    // (c0a-ret2 record 3032: sample 356, the Yes's Cross) and the human is finished in it (+0x470 = 1/60 in the next record)
+    if (ctmReturn && ctmReturn.pauseAt > 0 && i === ctmReturn.pauseAt) { if (globalThis.__rep?.recording) globalThis.__rep.list.push({ giveUp: true }); human._race_give_up(); console.error('give up before record', i, 'tick', records[i].tick); }
+    if (ctmReturn && i === ctmReturn.R - 1 && ctmReturn.pauseAt > 0) { // the last coast tick, then the Transport's stop frame and the WS14 frame
+      tick(process.env.COAST_DEVICE ? decodePad(menuSegmentAt(menuSampleAt(i))) : padFor(records[i].index), aiCapture ? aiCapture.records[i + 1] : null);
+      if (replayReturn && globalThis.__rep?.recording) { const rep = globalThis.__rep; rep.recording = false; // the results-time snapshot, the replay, the Transport's restore
+        const results = eventSnapshot.snapshotSave(eventSnapshot.SNAPSHOT_RESULTS, { human, racers }); const rngAt = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6));
+        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_COUNTDOWN, rep.js, { human, racers });
+        const n = Math.min(+(process.env.REPLAY_TICKS ?? 600), rep.list.length); for (let k = 0; k < n; k++) { const e = rep.list[k]; if (e.giveUp) human._race_give_up(); else tick(e.pad, e.record); }
+        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_RESULTS, results, { human, racers });
+        const same = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)).every((w, k) => w === rngAt[k]);
+        console.error('replay return: results-time snapshot saved, the replay ran', n, 'ticks from the countdown snapshot, the results time restored (RNG', same ? 'as saved)' : 'DIFFERS)'); }
+      if (globalThis.__rep?.recording) { const rep = globalThis.__rep; rep.recording = false;
+        const dump = () => { const all = [human, ...racers.npcs.map((n) => n.core)].map((c) => { const ptr = c._ground_state_dump(), cnt = f32(c, ptr, 1)[0]; return Array.from(f32(c, ptr + 4, cnt * 2)); });
+          return { riders: all, rng: Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)), visual: Array.from(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6)), tick: human._game_tick?.() }; };
+        { const a = rep.mem, b = human.HEAPU8, P = 4096; let pages = 0, bytes = 0; const regions = []; for (let o = 0; o < a.length; o += P) { let d = 0; for (let k = o; k < Math.min(o + P, a.length); k++) if (a[k] !== b[k]) d++; if (d) { pages++; bytes += d; const r = regions[regions.length - 1]; if (r && r[1] === o) r[1] = o + P; else regions.push([o, o + P]); } }
+          if (rep.dirty) { let outside = 0; for (let o = 0, p = 0; o < a.length; o += P, p++) { let d = false; for (let k = o; k < Math.min(o + P, a.length) && !d; k++) d = a[k] !== b[k]; if (d && !rep.dirty[p]) outside++; } console.error('replay probe race-changed pages outside the pre-countdown dirty set:', outside); }
+          console.error('replay probe memory changed since the countdown:', pages, 'pages of 4 KB,', bytes, 'bytes,', regions.length, 'runs; largest', regions.map((r) => r[1] - r[0]).sort((x, y) => y - x).slice(0, 8).join(' '), 'memory now', b.length, 'tls', human._rider_context_current?.()); rep.mem = null; }
+        if (rep.entryHash0) { const cs = [human, ...racers.npcs.map((n) => n.core)], changed = new Map(); cs.forEach((cc, ci) => rep.entryHash0[ci].forEach((h, k) => { if (cc._snapshot_entry_hash(k) !== h) changed.set(k, (changed.get(k) ?? '') + ci); }));
+          console.error('snapshot entries changed by the race (context indices):', changed.size, [...changed].map(([k, who]) => `${rep.entryRows[k].name}${rep.entryRows[k].flags & 1 ? '' : '*'}:${who}`).join(' '));
+          const unchanged = rep.entryRows.map((r, k) => ({ ...r, k })).filter((r) => !changed.has(r.k) && !(r.flags & 1)); console.error('snapshot container entries unchanged by the race:', unchanged.length, unchanged.map((r) => r.name).join(' ')); }
+        const live = dump(), call = (t, f) => { const p = str(human, t); try { return f(p); } finally { human._free(p); } };
+        // the countdown snapshot back (web/event-snapshot.js, as the page's replay restart), then the self-check: every subsystem's
+        // hash as at the save
+        eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_COUNTDOWN, rep.js, { human, racers });
+        [human, ...racers.npcs.map((n) => n.core)].forEach((c, ci) => { const now = snapshotHashes(c), was = rep.hash0[ci], bad = Object.keys(was).filter((f) => was[f] !== now[f]); console.error('snapshot self-check context', ci, bad.length ? 'differs: ' + bad.join(' ') : 'equal'); });
+        if (rep.entryHash0) [human, ...racers.npcs.map((n) => n.core)].slice(0, 1).forEach((c, ci) => { const bad = rep.entryRows.map((r, k) => ({ ...r, k })).filter((r) => !(r.flags & 2) && c._snapshot_entry_hash(r.k) !== rep.entryHash0[ci][r.k]); console.error('snapshot self-check entries differing (human):', bad.map((r) => `${r.name}${r.flags & 1 ? '' : '*'}`).join(' ')); });
+        { const w = replayWorldDump(); for (const f of Object.keys(rep.world)) { const a = rep.world[f], b = w[f]; const n = Array.isArray(a) && Array.isArray(b) ? a.filter((x, k) => x !== b[k]).length : (a === b ? 0 : 'n/a'); if (n) console.error('replay probe world', f, 'words differing at the restart', n, Array.isArray(a) ? a.findIndex((x, k) => x !== b[k]) : ''); } }
+        rep.replaying = true; for (const e of rep.list) { if (e.giveUp) human._race_give_up(); else tick(e.pad, e.record); } rep.replaying = false; console.error('replay probe first difference', JSON.stringify(rep.first));
+        const again = dump(); console.error('replay probe: ticks', rep.list.length, 'game tick live', live.tick, 're-run', again.tick, 'rng same', live.rng.every((w, k) => w === again.rng[k]), 'visual same', live.visual.every((w, k) => w === again.visual[k]));
+        live.riders.forEach((a, r) => { const b = again.riders[r], bad = []; for (let k = 0; k < a.length; k += 2) if (Math.fround(a[k + 1]) !== Math.fround(b[k + 1])) bad.push('0x' + a[k].toString(16) + ' ' + a[k + 1] + ' ' + b[k + 1]);
+          console.error('replay probe rider', r, 'fields differing', bad.length, bad.slice(0, 12).join(' | ')); }); }
+      const transport = manifest.menus.segments.find((g, k) => g.buttons?.includes('Cross') && manifest.menus.segments.slice(0, k).reduce((a, x) => a + x.frames, 0) >= (manifest.menus_run?.results_cross_from ?? 1000)) ?? {};
+      // The stop frame's tick, world state 14's enter (web/event-return.js transportMapEnter, as the page), then the WS14 frame's tick
+      for (let k = 0; k < ctmReturn.stopTicks; k++) {
+        if (k === 1 && !process.env.RETURN_NO_WS14) eventReturn.transportMapEnter({ human, cstr: (t) => str(human, t), bank: ctmReturn.bank });
+        tick(decodePad(transport), null); }
+    }
+    // Record R is the placement itself (all six at the row, no tick after it: c0a-ret3 3321), so it replaces the tick that makes record R:
+    // world state 15's enter as the page runs it (web/event-return.js sessionReturn)
+    if (ctmReturn && i === ctmReturn.R - 1) { ctmReturn.placedNow = true; ctmReturn.rowR = rows.length; // (the row of record R)
+      if (process.env.PAD_TRACE) globalThis.__padTrace = +process.env.PAD_TRACE;
+      eventReturn.sessionReturn({ human, racers, cstr: (t) => str(human, t), bank: ctmReturn.bank, entry: ctmReturn.entry, freeRideDoc: text('PEAK1/initial.json') });
+      console.error('return at record', i, 'tick', records[i].tick, 'riders out at', ctmReturn.out);
+      if (process.env.PAIR_TRACE) console.error('stance after placement', [human, ...racers.npcs.map((n) => n.core)].map((c) => new Uint32Array(c.HEAPU8.buffer, c._pair_view(), 140)[135]).join(' '));
+    }
+    if (process.env.PAIR_TRACE && ctmReturn && i === ctmReturn.R + 1 && !globalThis.__pairWrap) { globalThis.__pairWrap = true; const h = human.module ?? human; const host = (human.module ?? human).pairHost ?? globalThis.Module?.pairHost;
+      const hm = racers.human?.module; const mod = [human.module, human].find((m) => m && m.pairHost); if (mod) { const t0 = mod.pairHost.translate; mod.pairHost.translate = (slot, x, y, z) => { console.error('translate tick', records[i].tick, 'slot', slot, [x, y, z].map((v) => v.toFixed(2)).join(',')); return t0(slot, x, y, z); }; } else console.error('no pairHost found'); }
+    if (process.env.PAIR_TRACE && ctmReturn && i === ctmReturn.R + 2 && globalThis.__pairWrap) { const mod = [human.module, human].find((m) => m && m.pairHost); /* keep */ }
+    if (ctmReturn && i === ctmReturn.out) { eventReturn.sessionRidersLeave({ human, racers }); ctmReturn.gone = true; ctmReturn.rowOut = rows.length; } // (record out's bones are the WS2 frame's paused-pass pose, applied here after record out is scored)
+    peakWorld.beforeTick(i);
+    // The NIS director's camera point (core section_point; 0x281370 / 0x281100 / 0x281400): in from WS1's hold (the fly-over's start),
+    // renewed where the capture's A+0xD0 reads -1 (the next script's director: remove + add), out at the Continue; at every tick the
+    // outer camera's +0x20 as this record holds it (the previous tick's camera update, which 0x281100 copies before 0x101B60).
+    if (human._section_point && !args.includes('--no-section-camera') && i >= ctmPlan.H && i <= ctmPlan.C) {
+      const at = i * RECORD + (manifest.layout.outer_camera_000_480 ?? 4288) + 0x20, eye = [dv.getFloat32(at, true), dv.getFloat32(at + 4, true), dv.getFloat32(at + 8, true)];
+      const renewed = d0Watch >= 0 && i > ctmPlan.H && dv.getInt32(i * RECORD + manifest.layout.watch_offset + d0Watch, true) === -1;
+      if (i === ctmPlan.C) human._section_point(0, 0, 0, 0);
+      else { if (renewed) human._section_point(0, 0, 0, 0); human._section_point(1, ...eye); }
+    }
+    if (process.env.RNG_AT_C && i < ctmPlan.C) { const w = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)), b = drawsBetween(w, records[i].rng), a = drawsBetween(records[i].rng, w); if (b !== globalThis.__rngOffB || a !== globalThis.__rngOffA) { globalThis.__rngOffB = b; globalThis.__rngOffA = a; console.error('rng record', i, 'tick', records[i].tick, 'web behind', b, 'ahead', a); } }
+    if (i < ctmPlan.C) { humanTick(padFor(records[i].index)); human._fx_pass?.(-1); human._section_pass?.();
+      if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number), p = human._set_piece_sections(), n = new Uint32Array(human.HEAPU8.buffer, p, 2), L = new Uint32Array(human.HEAPU8.buffer, p + 8, n[0] * 6);
+        const seen = globalThis.__secSeen ?? 0; if (records[i].tick >= a && records[i].tick <= b) { const pos = Array.from(f32(human, human._reference_motion(), 3)).map(Math.round); console.error('section', records[i].tick, 'scans', n[1], 'pos', pos.join(','), 'new', Array.from({ length: n[0] - seen }, (_, k) => Array.from(L.subarray(6 * (seen + k), 6 * (seen + k) + 5)).join('/')).join(' ')); } globalThis.__secSeen = n[0]; }
+      inWorldSetup.ctmInWorldAfterTick(human, ctmPlan, i);
+      // Under WS1's hold the NIS actor carries the rider (the approach and idle clips): the page follows it every tick (main.js
+      // onHumanActor -> nis_hold); here the recorded rider position of the next record (after this tick) stands in for the actor's.
+      // The section scan's human point is that position (PS2 c0a-snap: rider+0x110 moves -129756 -> -131138 through the approach).
+      // The riders under WS1 (core npc_grid_start's carried words): fresh riders placed at their approach actors from the record where the
+      // capture first shows them off their load placement, then ticked held there each tick after the human's pass (the rider manager's order).
+      if (aiCapture && !args.includes('--no-rider-hold') && i >= ctmPlan.H && i + 1 < ctmPlan.C - 1) {
+        const ai = aiCapture.records[i]?.ai, prevAi = aiCapture.records[i - 1]?.ai;
+        if (!globalThis.__riderHold && ai && prevAi && ai.some((a, k) => a.position[0] !== prevAi[k].position[0] && prevAi[k].position[0] !== 0)) globalThis.__riderHold = { from: i, fresh: true };
+        if (globalThis.__riderHold) { const h = globalThis.__riderHold;
+          racers.holdTick((slot) => { const a = aiCapture.records[i].ai[slot - 1], v = new DataView(a.raw.actor_000_b40.buffer, a.raw.actor_000_b40.byteOffset, 0xB40); return [a.position[0], a.position[1], a.position[2], v.getFloat32(0x1B0, true), v.getFloat32(0x1B4, true)]; }, { fresh: h.fresh });
+          if (h.fresh) console.error('riders held from record', i, 'tick', records[i].tick); h.fresh = false; }
+      }
+      if (!args.includes('--hold-fixed') && i >= ctmPlan.H && i + 1 < ctmPlan.C - 1) { const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true); human._nis_hold(1, q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)); }
+      continue; }
+  }
+  if (ctmReturn?.placedNow) ctmReturn.placedNow = false; // (the placement record: nothing ticks)
+  else if (ctmReturn?.gone) { humanTick(padFor(records[i].index)); human._fx_pass?.(-1); human._section_pass?.(); } // (the riders left at the WS4 restart)
+  // The return's first tick reads the menu pad (menu_pad.py's device script), not the tick script: the map confirm's Cross (menu samples
+  // 2054..2062) is still held when WS15 runs and ps2_capture's pad hook comes back on only after that tick (PS2: record R + 1 control 2,
+  // the prewind; R + 2 control 5, the jump when the tick script's neutral pad releases it).
+  else if (ctmReturn && i === ctmReturn.R && manifest.menus && !process.env.RETURN_TICK_PAD) tick(decodePad(menuSampleWatch >= 0 ? menuSegmentAt(menuSampleAt(i)) : returnPad(manifest.menus)), aiCapture ? aiCapture.records[i + 1] : null);
+  // (the coast is the tick script's: menu_pad.py's pad switch is ps2_capture's F_SCORE word, which every coast record's log rewrites, so
+  // ps2_capture's pad hook drives the human again from the first record after the pause; COAST_DEVICE feeds the menu pad instead)
+  else if (ctmReturn && ctmReturn.pauseAt > 0 && process.env.COAST_DEVICE && i >= ctmReturn.pauseAt && i < ctmReturn.R - 1) tick(decodePad(menuSegmentAt(menuSampleAt(i))), aiCapture ? aiCapture.records[i + 1] : null); // the coast: ps2_capture's pad hook is off, the device pad drives
+  else tick(padFor(records[i].index), aiCapture ? aiCapture.records[i + 1] : null);
+  if (process.env.SECTION_TRACE && ctmPlan && i >= ctmPlan.C && ((i < ctmPlan.C + 3) || (records[i].tick >= +process.env.SECTION_TRACE.split(':')[0] && records[i].tick <= +process.env.SECTION_TRACE.split(':')[1]))) { const p = human._set_piece_sections(), n = new Uint32Array(human.HEAPU8.buffer, p, 2), L = new Uint32Array(human.HEAPU8.buffer, p + 8, n[0] * 6), seen = globalThis.__secSeen ?? 0;
+    console.error('section after tick', records[i].tick, 'scans', n[1], 'new', Array.from({ length: n[0] - seen }, (_, k) => Array.from(L.subarray(6 * (seen + k), 6 * (seen + k) + 5)).join('/')).join(' ')); globalThis.__secSeen = n[0]; }
+  if (process.env.RNG_AT_C && ctmPlan && i >= ctmPlan.C && (i < ctmPlan.C + 3 || (process.env.RNG_WIN && records[i].tick >= +process.env.RNG_WIN.split(':')[0] && records[i].tick <= +process.env.RNG_WIN.split(':')[1]))) { const w = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)); console.error('after tick', records[i].tick, 'web vs record', records[i + 1].tick, 'behind', drawsBetween(w, records[i + 1].rng), 'ahead', drawsBetween(records[i + 1].rng, w)); }
   const ps2 = records[i + 1];
   tickHook?.tick({ i, tick: ps2.tick, core: human, racers });
   if (stageSnaps?.has(ps2.tick)) stageCompare.push(compareStageWorld(human, stageSnaps.get(ps2.tick), { allDiffs: !!process.env.STAGE_WORLD_ALLDIFFS }));
@@ -239,6 +472,20 @@ for (let i = 0; i + 1 < records.length && i < limit; i++) {
   if (process.env.HUMAN_TRACE) { const [a, b] = process.env.HUMAN_TRACE.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= b) {
     console.error(`human ${ps2.tick} ps2 ctl ${ps2.control} pos ${ps2.position.map((x) => x.toFixed(4))} vel ${ps2.velocity.map((x) => x.toFixed(4))}`);
     console.error(`      web ctl ${motion[11]} gnd ${motion[10]} pos ${motion.slice(0, 3).map((x) => x.toFixed(4))} vel ${motion.slice(3, 6).map((x) => x.toFixed(4))}`); } }
+  if (process.env.BONE_TRACE && (ctmReturn ? i >= ctmReturn.R - 3 && i <= ctmReturn.R + (+process.env.BONE_TRACE > 1 ? +process.env.BONE_TRACE : 6) : false)) { const wb = human._world_pose_bones(), nb = f32(human, wb, 1)[0], w = f32(human, wb + 4, nb * 7), at = (i + 1) * RECORD + manifest.layout.world_bones_32x32;
+    let worst = 0, wi = -1; const per = []; for (let b = 0; b < Math.min(nb, 32); b++) { let m = 0; for (let k = 0; k < 3; k++) { const d = Math.abs(w[b * 7 + k] - dv.getFloat32(at + b * 32 + 4 * k, true)); m = Math.max(m, d); if (d > worst) { worst = d; wi = b; } } per.push(+m.toFixed(3)); } if (+process.env.BONE_TRACE > 1) console.error('bones per', ps2.tick, per.join(' '));
+    console.error('bones', ps2.tick, 'count', nb, 'worst position diff', worst.toFixed(4), 'bone', wi, 'web b0', Array.from(w.slice(0, 7)).map((x) => x.toFixed(2)).join(','), 'ps2 b0', Array.from({ length: 8 }, (_, k) => dv.getFloat32(at + 4 * k, true).toFixed(2)).join(',')); }
+  if (process.env.SEQ_TRACE && ctmReturn && i >= ctmReturn.R + 5 && i <= ctmReturn.out + 2) { const p = human._animation_sequences_info(), n = f32(human, p, 1)[0], v = f32(human, p + 4, n); const rows = []; // SEQ_TRACE (diagnostic): the human's animation sequences after each tick
+    for (let k = 0; k + 26 <= n; k += 26) rows.push(`ch${v[k]} sem${v[k + 1]} w${v[k + 4].toFixed(3)}/${v[k + 5].toFixed(3)} fade${v[k + 6].toFixed(3)} clip${v[k + 11]} t${v[k + 12].toFixed(4)} r${v[k + 3].toFixed(3)}`); console.error('seq', i + 1, ps2.tick, rows.join(' | '));
+    { const at = (i + 1) * RECORD + manifest.layout.sequences_6x216_channel_address_d0, cnt = dv.getUint32((i + 1) * RECORD + manifest.layout.sequence_count, true), out = [];
+      for (let q = 0; q < Math.min(cnt, 6); q++) { const b = at + q * 216; out.push(`ch${dv.getUint32(b, true)} ` + Array.from({ length: 52 }, (_, w) => { const u = dv.getUint32(b + 8 + 4 * w, true), f = dv.getFloat32(b + 8 + 4 * w, true); return (Math.abs(f) > 1e-6 && Math.abs(f) < 1e6) ? +f.toFixed(4) : (u < 0x10000 ? u : '0x' + u.toString(16)); }).join(',')); }
+      console.error('ps2seq', i + 1, ps2.tick, cnt, out.join(' || ')); } }
+  if (process.env.PAIR_TRACE && ctmReturn && i >= ctmReturn.R - 1 && i <= ctmReturn.R + 9) { const hm = f32(human, human._reference_motion(), 3); console.error('pos', ps2.tick, 'human web', Array.from(hm).map((x) => x.toFixed(1)).join(','), 'ps2', ps2.position.map((x) => x.toFixed(1)).join(','));
+    racers.npcs.forEach((n, k) => { const m = f32(n.core, n.core._reference_motion(), 3); console.error('pos', ps2.tick, n.character, 'web', Array.from(m).map((x) => x.toFixed(1)).join(','), 'ps2', ps2.others[k].position.map((x) => x.toFixed(1)).join(',')); }); }
+  if (process.env.PAIR_TRACE && ctmReturn && i >= ctmReturn.R - 1 && i <= ctmReturn.R + 9) console.error('pairs after record', i + 1, 'tick', ps2.tick, racers.pairCounts.join(','), 'world', racers.worldState.slice(0, 40).map((x) => +(+x).toFixed(1)).join(' '));
+  if (process.env.HUMAN_FIELD) { const [fa, fb] = process.env.HUMAN_FIELD.split(':').map(Number); if (ps2.tick >= fa && ps2.tick <= fb) { // HUMAN_FIELD=a:b (diagnostic): the human's ground_state_dump fields that differ from record i+1
+    const ptr = human._ground_state_dump(), cnt = f32(human, ptr, 1)[0], pairs = f32(human, ptr + 4, cnt * 2);
+    for (let j = 0; j < cnt; j++) { const o = pairs[2 * j], wv = pairs[2 * j + 1]; if (o + 4 > 0xb40) continue; const pv = dv.getFloat32((i + 1) * RECORD + 32 + o - 0x100, true); if (Math.fround(wv) !== pv || o === +process.env.HFIELD_OFF) console.error('hfield', ps2.tick, '0x' + o.toString(16), 'web', wv, 'ps2', pv); } } }
   if (!humanExact && !first.human) first.human = { tick: ps2.tick, errCm: dist(motion.slice(0, 3), ps2.position) };
   const rng = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6));
   // The record samples the RNG at the human's provider exit, after the next tick's entity pass (race_begin in the port): a world
@@ -259,7 +506,7 @@ for (let i = 0; i + 1 < records.length && i < limit; i++) {
     const rec = aiCapture.records[i], ranks = [rec.human.rank, ...rec.ai.map((a) => a.rank)], web = ranks.map((_, s) => racers.worldState[360 + s * 6]); // 2 riders in the backcountry rival events
     if (ranks.some((r, s) => r !== web[s]) && !first.rank) first.rank = { tick: rec.tick, web, ps2: ranks };
     for (let k = 0; k < rec.ai.length; k++) for (let b = 0; b <= rec.ai.length; b++) { const pr = rec.ai[k].pairRecords[b], wr = racers.worldState.slice(((k + 1) * 6 + b) * 10, ((k + 1) * 6 + b) * 10 + 10);
-      if ((pr.enabled !== 0) !== (wr[0] !== 0) || Math.fround(wr[2]) !== pr.distance || Math.fround(wr[3]) !== pr.bearing) { if (!first.records) first.records = { tick: rec.tick, slot: k + 1, other: b, web: wr.slice(0, 4), ps2: [pr.enabled, pr.human, pr.distance, pr.bearing] }; } }
+      if ((pr.enabled !== 0) !== (wr[0] !== 0) || Math.fround(wr[2]) !== pr.distance || Math.fround(wr[3]) !== pr.bearing) { const m = { tick: rec.tick, slot: k + 1, other: b, web: wr.slice(0, 4), ps2: [pr.enabled, pr.human, pr.distance, pr.bearing] }; if (!first.records) first.records = m; if (ctmReturn?.rowR != null && rows.length > ctmReturn.rowR && !first.returnRecords) first.returnRecords = { ...m, row: rows.length }; } }
     rowsRank.push(ranks.join('')); }
   if (rngTrace && aiCapture && ps2.tick >= rngTrace[0] && ps2.tick <= rngTrace[1]) { const log = aiCapture.records[i + 1].rng.log;
     const ps2Draws = []; for (const e of log) { const who = e.rider ? (e.rider.slot < 0 ? 0 : e.rider.slot + 1) : '?'; const last = ps2Draws[ps2Draws.length - 1]; if (last && last.who === who && last.ra === e.ra) last.n++; else ps2Draws.push({ who, ra: e.ra.toString(16), n: 1 }); }
@@ -333,7 +580,8 @@ function compareWeather(i, tick) {
   if (manifest.layout?.outer_camera_000_480 !== undefined) { const w = new Float32Array(human.HEAPU8.buffer, human._weather_info(), 11), base = i * RECORD + manifest.layout.outer_camera_000_480 + 0x20; for (let k = 0; k < 3; k++) note('camera.eye', Fb(w, 7 + k), dv.getUint32(base + 4 * k, true)); }
   if (m.lcg >= 0) note('lcg', new Uint32Array(human.HEAPU8.buffer, human._visual_lcg_word(), 1)[0], U(m.lcg));
 }
-const summary = { capture: capturePath, ticks: rows.length, humanScore: scoreState, firstHumanInexact: first.human, firstRngMismatch: first.rng, rngBlips: rngBlips.slice(0, 40), firstRankMismatch: first.rank || null, firstPairRecordMismatch: first.records || null, finalRanks: rowsRank[rowsRank.length - 1],
+const summary = { capture: capturePath, ticks: rows.length, ctmReturn: ctmReturn ? { row: ctmReturn.rowR ?? null, outRow: ctmReturn.rowOut ?? null } : null, humanScore: scoreState, firstHumanInexact: first.human, firstRngMismatch: first.rng, rngBlips: rngBlips.slice(0, 40), firstRankMismatch: first.rank || null, firstPairRecordMismatch: first.records || null, firstReturnPairRecordMismatch: first.returnRecords || null, // (from the in-world return's record on)
+  finalRanks: rowsRank[rowsRank.length - 1],
   ai: racers.npcs.map((n, k) => ({ slot: n.slot, character: n.character, firstInexact: first.ai[k], firstOver1cm: first.ai1cm[k], exactTicks: rows.filter((r) => r.ai[k].exact).length })),
   standings: racers.standings(), rngEvents, injectedWorldDraws: injected,
   fields: fieldFirst.map((fields) => Object.fromEntries(Object.entries(fields).sort((a, b) => a[1].tick - b[1].tick).slice(0, +(process.env.FIELDS_MAX || 12)))) };

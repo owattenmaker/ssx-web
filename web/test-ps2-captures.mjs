@@ -127,7 +127,7 @@ const cases = [
   // Peak 3 (docs/peak3.md): tuck runs from each countdown anchor / the Throne's rolling start (--isolate, section/chunk/viewer
   // watches; local/ps2-capture/runs/peak3/<name>-full, the gates cut before any event restart by local/peak3-logs/first_run.py).
   { name: 'peak3/much-2-much-event-tuck', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, why: 'Much-2-Much (EBA3) big air from the grid, tucked over the kickers to the finish (3167); physics, bones, score and boost exact to the end' },
-  { name: 'avalanche/eba3-rock-hit', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, why: 'Much 2 Much after the rock slide (trigger 540): steered past the tumbling rockslide_1001 at 1.8 m around 1111; its collision (the builtin-0 Object with the AvaSpline, entity route, bounds from the 2D9C00 matrix of the previous tumbler step) must not touch the rider (web/avalanche_gameplay.inc)' },
+  { name: 'avalanche/eba3-rock-hit', keepCheck: true, args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, why: 'Much 2 Much after the rock slide (trigger 540): steered past the tumbling rockslide_1001 at 1.8 m around 1111; its collision (the builtin-0 Object with the AvaSpline, entity route, bounds from the 2D9C00 matrix of the previous tumbler step) must not touch the rider (web/avalanche_gameplay.inc)' },
   { name: 'avalanche/eba3-rock-hit-a', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, why: 'Much 2 Much: the rider hits the tumbling rockslide_1001 at 1113 (105398 instance contact on the moving entity, rigid response 0x360B60 = 1); with the rocks static (core50) it left at 1113' },
   { name: 'avalanche/eba3-rock-hit-b', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, why: 'Much 2 Much: the same rock hit one tick earlier (1112) from a later, shorter steer' },
   { name: 'peak3/perpendiculous-event-tuck', args: ['--zoe', '--event', '--finish-place', '5'], stageWorld: true, exactThrough: END, scoreThrough: END, bonesThrough: 3866, boostThrough: END, why: 'Perpendiculous (EHP3) super pipe from the grid to the pipe end (4403): physics exact to the end; 3867 the posed root leaves the PS2 by ~3 cm (open); the finish (3996, 6th: 3660 against the reference posting from 509000) clears the boost meter (0x239230 by place, --finish-place 5)' },
@@ -157,7 +157,7 @@ const cases = [
   // the restart from the record's tick field (web/peak-capture.mjs -> core game_tick_restart), as it does the rows; the page's
   // model is web/peak_world.inc. Physics exact to the end; 12472 the E station split HUD 0x2A, posted by the page's
   // web/free-ride.js (not by the comparer).
-  { name: 'allpeak/apr-start', args: ['--zoe', '--course', 'MOUNTAIN', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: 12471, why: 'All Peak Race from Continue on the whole-mountain world: physics to the end across the EBC3_E crossing\'s game-tick restart (11883, driven from the record\'s 1298C8); 12472 the E station split (HUD 0x2A), which the page posts (web/free-ride.js) and the comparer does not' },
+  { name: 'allpeak/apr-start', keepCheck: true, args: ['--zoe', '--course', 'MOUNTAIN', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: 12471, why: 'All Peak Race from Continue on the whole-mountain world: physics to the end across the EBC3_E crossing\'s game-tick restart (11883, driven from the record\'s 1298C8); 12472 the E station split (HUD 0x2A), which the page posts (web/free-ride.js) and the comparer does not' },
   // The Peak 2 Race (seed MOUNTAIN2: its objectives card at Ruthless) on the same world: the first 6000 ticks (DBC2 at Ruthless;
   // the Unload into Yellow station D is at 13817). Physics exact to the end (the 1258 ground crash among the rocks: 104E70's
   // octree order). Score to the end (round 2, 2026-09-26): the PS2 collects mdl_DBC2_collecta_1001 at 1841 during a crash after
@@ -177,7 +177,37 @@ const cases = [
   // on mdl_DRA4_highwayRebuild_2049 (patch -1, normal (0.96, 0.28, 0)) a tick before the browser (open; not the 332DB8 scope: all
   // instances admitted from 8380 still meet it at 8405). Skipped on a core without the MOUNTAINF seed.
   { name: 'ctm/fr-dra4a-full', coreHas: 'MOUNTAINF', args: ['--zoe', '--course', 'MOUNTAINF'], exactThrough: 8403, bonesThrough: 8403, scoreThrough: 8403, why: 'CTM free ride on the whole mountain from Intimidator (seed MOUNTAINF): 7218 the combo payout in HUD slot 0x19 on its tick; 8404 the PS2 lands on a highway piece a tick earlier (open)' },
-  { name: 'peak3/fr-throne-unload', args: ['--zoe', '--course', 'PEAK3', '--seed-limit', '--seed-idle'], exactThrough: 15246, bonesThrough: 0, scoreThrough: 0, why: 'Peak 3 free ride across the EBC3 Unload (seed fr-ebc3-14302): 15035 a lost rail\'s passive exit lands on a scenery top (1057B8: control 13 -> 5, clip 268), 15036 the control-5 re-attach bakes about the pose pivot (134CB0); 15247 a soft collision (control 3) the browser does not enter (open)' },
+  // Conquer the Mountain events in the streamed world (docs/ctm-events-in-world.md sections 4 and 6): each build stage's gate, ready before
+  // the stage exists. `pending: SWITCH` cases are skipped unless PENDING=1 (or ONLY names them); then they are scored and reported, never
+  // failed, with `today` the current result on the event package / today's streamed path. When the stage lands, drop `pending`, move the
+  // case to its new comparer args (the in-world path) and keep exactThrough as the gate. `unscored: WHY` cases cannot be scored yet.
+  // The captures (silent ARMSX2, derived states) are local/ctm-events/caps/, linked from local/ps2-capture/runs/ctm-events/.
+  // --ctm-countdown seeds what core event_grid_start keeps from the carried rider (the motion-0 stamps: 13C7A8's push-off speed
+  // scale; the boost words; the normals). The human alone is exact until its idle upper reaction (115D48 at 1 s idle, 302 / 301),
+  // which looks at the computer riders within 10 m; the six-rider cases below are exact on the human to the end.
+  { name: 'ctm-events/c0a-race', args: ['--zoe', '--event', '--ctm-countdown'], exactThrough: 309, bonesThrough: 300, scoreThrough: 309,
+    why: 'CTM Snow Jam qualifier (first heat, ridden in from free ride) from its countdown: 302 the idle reaction picks a computer rider (six-rider case)' },
+  { name: 'ctm-events/c0c-race', args: ['--zoe', '--event', '--ctm-countdown'], exactThrough: 318, bonesThrough: 300, scoreThrough: 318,
+    why: 'CTM Snow Jam semi-final (WS13 Next heat: 230180, the gondola; the qualifier boost meter 0.621 carried) from its countdown: 301 the idle reaction picks a computer rider (six-rider case)' },
+  // The first heat in one capture (local/ctm-events/capture_card.py): the Snow Jam arrival, free ride into the gate (2822), WS1's hold
+  // (2853), the card, the countdown and 1150 race ticks, as the page runs it (compare-ps2-capture.mjs --ctm-in-world: the gate's
+  // seeds and document, the hold, event_grid_start at the Continue, which keeps the stage world: the Big Challenge markers stay the
+  // Hide nodes 308DB8 made at 2066, flg_ARA1_BigCFlag_1002 at race tick 829). Exact through race tick 1507. 1508: a soft collision on
+  // the PS2 with no instance contact (the 105D98 notify count unchanged): a computer rider, which stage 4 brings. 2822: the gate's
+  // score commit 12B180 and the event HUD bank are not seeded.
+  { name: 'ctm-events/c0a-full', args: ['--zoe', '--course', 'PEAK1', '--peak-arrival', '--ctm-in-world', 'ARA1'], exactThrough: 1507, bonesThrough: 0, scoreThrough: 2821,
+    why: 'CTM Snow Jam first heat in the streamed world, arrival -> free ride -> gate -> hold -> card -> race: 1508 a computer rider contact (stage 4)' },
+  { name: 'ctm-events/c0b-ass1-arr', pending: 'eventInWorld', bonesThrough: 0, scoreThrough: 0, today: 2478, args: ['--zoe', '--course', 'PEAK1', '--peak-arrival'], exactThrough: END,
+    why: 'R&B Transport arrival -> free ride into the RaceRideState gate (2448) -> WS1 (slope style): exact until the NIS hold at the gate + 31 (2479), which the port lacks' },
+  { name: 'ctm-events/c0b-bra2-arr', pending: 'eventInWorld', bonesThrough: 0, scoreThrough: 0, today: 2413, args: ['--zoe', '--course', 'PEAK1', '--peak-arrival'], exactThrough: END,
+    why: 'Metro-City Transport arrival -> the gate (2383) -> WS1: exact until the NIS hold at 2414, which the port lacks (the placement tick\'s 0.09 cm/s was the unseeded route heading +0x4CC)' },
+  { name: 'ctm-events/c0a-gate-arr', pending: 'eventInWorld', bonesThrough: 0, scoreThrough: 0, today: 2852, args: ['--zoe', '--course', 'PEAK1', '--peak-arrival'], exactThrough: END,
+    why: 'Snow Jam Transport arrival (menus/ctm/state-transport-confirm, its stale menu hook removed) -> 314 neutral + 20 left -> the RaceRideState gate (2822) -> WS1: exact until the NIS hold at the gate + 31 (2853), which the port lacks' },
+  { name: 'peak3/fr-throne-unload', keepCheck: true, args: ['--zoe', '--course', 'PEAK3', '--seed-limit', '--seed-idle'], exactThrough: 15246, bonesThrough: 0, scoreThrough: 0, why: 'Peak 3 free ride across the EBC3 Unload (seed fr-ebc3-14302): 15035 a lost rail\'s passive exit lands on a scenery top (1057B8: control 13 -> 5, clip 268), 15036 the control-5 re-attach bakes about the pose pivot (134CB0); 15247 a soft collision (control 3) the browser does not enter (open)' },
+  // Course limits (docs/peak-mountain.md "Course limits in free ride"): hard right into The Throne's ice blocks from the Peak 3 seed; back-to-back
+  // soft collisions 3 ticks apart: 312AE8 reads the FIRST channel-2 sequence, not the previous soft's completed clip still fading (14776).
+  { name: 'course-limits/p3b-right3000', args: ['--zoe', '--course', 'PEAK3', '--seed-limit', '--seed-idle'], exactThrough: END, bonesThrough: 0, scoreThrough: 0, why: 'Peak 3 free ride into the EBC3_E ice blocks: repeated soft collisions (control 3) as on the PS2' },
+  { name: 'course-limits/gs-zig3000', args: ['--zoe', '--course', 'PEAK1', '--peak-fresh'], exactThrough: END, bonesThrough: 0, scoreThrough: 0, why: 'CTM world start at Green Station (last lodge), zigzag for 3000 ticks: station fences, walls, crashes' },
   // Streamed Peak 2 world (docs/peak2.md section 6): free ride from Red Station (seed local/ps2-capture/peak2/frd-1800, region D)
   // down D -> D_DRA4 -> DRA4 (course 20 -> 3 at 3134, residency rows from the capture). Physics and bones exact to the end;
   // the trick score to the end: Conquer the Mountain free ride pays tricks as cash (2371: a 690-point trick is $1 through
@@ -225,6 +255,10 @@ const cases = [
   // their rows). Physics, score and boost exact to the end, body bones 0..23 too; the hair springs (24..28) carry the transport
   // pre-state the baseline does not hold (reported, not gated). The camera is not seeded.
   ...['ass1', 'aba1', 'bra2', 'bhp1'].map((l) => ({ name: `peak1-arrive-${l}`, args: ['--zoe', '--course', 'PEAK1', '--peak-arrival'], exactThrough: END, bonesThrough: 0, why: `Peak 1 free-ride Transport arrival at ${l.toUpperCase()}` })),
+  // Metro-City arrivals with the stick up (local/ctm-events/caps, from bra2-screen10; docs/core-gameplay-fidelity.md "Speed limit"):
+  // the tuck from the placement tick (13C948 on the carried route heading +0x4CC) and from 2070 (11B3F8's +0x2E4 on the tuck onset;
+  // the 2280 path switch at 1371 cm off the route, 112338's tick % 60 on the rider manager's +8).
+  ...['late', 'early'].map((n) => ({ name: `ctm-events/bra2-tuck-${n}`, args: ['--zoe', '--course', 'PEAK1', '--peak-arrival'], exactThrough: END, bonesThrough: 0, why: `Metro-City Transport arrival, tuck ${n === 'late' ? 'from 2070' : 'from the placement'}` })),
   // A world start's fresh rider (docs/peak-mountain.md "Fresh rider at a world start" / "Station fences"): the CTM last-lodge start at
   // Green Station (ctm-parity/states/start-lodge -> world load, state before tick 0 = local/ps2-capture/peak1/green-start-t0.p2s),
   // neutral pad: through the station's peak-race fence line (the invisible wall before pv stationFences, tick 230) into the lodge
@@ -356,7 +390,7 @@ const cases = [
   { name: 'booth/from-crash', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, bonesThrough: END, boostThrough: END, why: 'booth 0007 while crashing (motion 2 / control 8)' },
   { name: 'booth/from-passive-air', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, bonesThrough: END, boostThrough: END, why: 'booth 0007 in passive air (control 4)' },
   { name: 'booth/from-rail', args: ['--zoe', '--event'], stageWorld: true, exactThrough: 2302, scoreThrough: 2302, bonesThrough: 2302, boostThrough: END, why: 'booth 0007 while grinding (motion 4 / control 7): the speed leaves the PS2 by 0.04 cm/s at 2303 (extra lean / board lift; docs/stage-teleport.md 4: rail exit, open)' },
-  { name: 'setpieces/full', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, bonesThrough: 12368, scoreThrough: 12296, boostThrough: 12296, why: 'full Snow Jam run from the grid through the finish area with the stage world (the finish reset planes kill themselves in their section-enter program: builtin43 race != free ride -> builtin2 DeadNode); 12297 HUD slots 5/6 and the finish boost award (+0.35, also without the stage world: finish logic, physics agent); 12369 posed bones after the finish celebration' },
+  { name: 'setpieces/full', keepCheck: true, args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, bonesThrough: 12368, scoreThrough: 12296, boostThrough: 12296, why: 'full Snow Jam run from the grid through the finish area with the stage world (the finish reset planes kill themselves in their section-enter program: builtin43 race != free ride -> builtin2 DeadNode); 12297 HUD slots 5/6 and the finish boost award (+0.35, also without the stage world: finish logic, physics agent); 12369 posed bones after the finish celebration' },
   // Camera parity (docs/CAMERA_RECOVERY.md): --watch <camera>:0x390 and the visual RNG 0x4FF018.
   { name: 'cam-event-start', args: ['--zoe', '--event'], exactThrough: END, cameraThrough: END, why: 'event-start with the DEFAULT_3 camera (0x390 bytes) and visual RNG watched: the countdown-anchor camera seed (game tick 18) and every camera word' },
   { name: 'cam-event-race', args: ['--zoe', '--event', '--camera-shake-sync'], exactThrough: END, cameraThrough: END, why: 'event-race camera words: landing crash 899 (136C40 predictor restart before the camera), crash shakes (walk adopted from the PS2 when the visual RNG stream differs)' },
@@ -372,7 +406,7 @@ const cases = [
 const cwd = new URL('.', import.meta.url).pathname;
 const through = (v) => (v === undefined ? END : v);
 // booth/*: a core with the booth-contact injection (web/stage_teleport.inc); an older live core skips them.
-const coreHasBooth = fs.readFileSync(process.env.CORE_JS || new URL('runtime/core.js', import.meta.url), 'utf8').includes('stage_contact_inject');
+const coreJsText = fs.readFileSync(process.env.CORE_JS || new URL('runtime/core.js', import.meta.url), 'utf8'), coreHasBooth = coreJsText.includes('stage_contact_inject');
 // c.coreHas: a glide seed the case needs (web/generate-controllers.py compiles local/assets/native/<X> into the core); an older core skips it.
 const coreWasmText = (() => { try { return fs.readFileSync(process.env.CORE_JS ? process.env.CORE_JS.replace(/\.js$/, '.wasm') : new URL('runtime/core.wasm', import.meta.url)).toString('latin1'); } catch { return ''; } })();
 const run1 = (c) => new Promise((resolve) => {
@@ -381,7 +415,7 @@ const run1 = (c) => new Promise((resolve) => {
   if (c.name.startsWith('booth/') && !coreHasBooth) return resolve({ c, skip: true, why: 'the core predates stage_contact_inject (web/stage_teleport.inc)' });
   if (c.coreHas && !coreWasmText.includes(c.coreHas)) return resolve({ c, skip: true, why: `the core has no ${c.coreHas} seed` });
   const report = reportPath(c.name, 'regression.json');
-  const env = { ...process.env, ...(c.boardPress ? { BP_ALL_SEMANTICS: '1' } : {}), ...(c.stageWorld ? { STAGE_WORLD: '1' } : {}), ...(c.audio ? { TICK_HOOK: 'uber-audio-compare.mjs' } : {}), BONE_SCAN: '1', BONE_SCAN_MAX: '29' }; // stageWorld: sections + stage programs as the browser (web/stage_world.inc)
+  const env = { ...process.env, ...(c.boardPress ? { BP_ALL_SEMANTICS: '1' } : {}), ...(c.stageWorld ? { STAGE_WORLD: '1' } : {}), ...(c.audio ? { TICK_HOOK: 'uber-audio-compare.mjs' } : {}), ...(c.keepCheck && coreJsText.includes('_snapshot_save') ? { SNAPSHOT_KEEP_CHECK: '1' } : {}), BONE_SCAN: '1', BONE_SCAN_MAX: '29' }; // stageWorld: sections + stage programs as the browser (web/stage_world.inc)
   execFile(process.execPath, ['compare-ps2-capture.mjs', bin, '--pad', '--sync-rng', '--report', report, ...c.args, ...(c.boardPress ? ['--board-press'] : [])], { cwd, env, encoding: 'utf8', maxBuffer: 1 << 28 }, (error, _stdout, stderr) => resolve({ c, error, stderr, report }));
 });
 const check = ({ c, error, stderr, report }) => {
@@ -389,6 +423,8 @@ const check = ({ c, error, stderr, report }) => {
   const exactThrough = through(c.exactThrough), bonesThrough = through(c.bonesThrough), scoreThrough = through(c.scoreThrough);
   const m = /^bones (\d+)/m.exec(stderr || ''); if (m && Number(m[1]) <= bonesThrough) throw new Error(`${c.name}: posed body bones left the original at tick ${m[1]} (baseline bit-exact through ${bonesThrough === END ? 'the end' : bonesThrough})`);
   const { summary, rows } = JSON.parse(fs.readFileSync(report, 'utf8'));
+  // keepCheck (docs/replay.md §2a): the rider-context snapshot saved before the run and restored after it: its kept tables unchanged
+  if (c.keepCheck && coreJsText.includes('_snapshot_save') && summary.snapshotKeepCheck !== 'ok') throw new Error(`${c.name}: ${summary.snapshotKeepCheck ?? 'no snapshot keep check in the report'}`);
   const firstBad = rows.find((r) => !r.exact);
   const firstBadTick = firstBad ? firstBad.tick : END;
   if (firstBadTick !== END && firstBadTick <= exactThrough) throw new Error(`${c.name}: browser left the original at tick ${firstBadTick} (baseline exact through ${exactThrough === END ? 'the end' : exactThrough}; ${c.why})`);
@@ -397,6 +433,14 @@ const check = ({ c, error, stderr, report }) => {
   if (c.rollerTicks !== undefined && (summary.firstRollerMismatch || summary.rollerTicksExact < c.rollerTicks)) throw new Error(`${c.name}: roller state left the original (${summary.rollerTicksExact} exact roller ticks, baseline ${c.rollerTicks}; first mismatch ${JSON.stringify(summary.firstRollerMismatch)})`);
   if (c.boardPress) for (const [key, v] of Object.entries(summary.fieldFirst || {})) if (key.startsWith('bp.') && v.tick <= Math.min(exactThrough, firstBadTick - 1)) throw new Error(`${c.name}: board-press ${key} differs at ${v.tick} (web ${v.web}, PS2 ${v.ps2})`);
   if (summary.firstWordMismatch && summary.firstWordMismatch.tick <= Math.min(exactThrough, firstBadTick - 1)) throw new Error(`${c.name}: command words differ at ${summary.firstWordMismatch.tick}`);
+  // The retained speed limit rider +0x2E4 (11B3F8) while the physics are exact: the comparer reads record i's (the limit tick i ran
+  // with) against the browser's after tick i. A start seed's limit may differ from the savestate's and converge through 11B3F8's
+  // filter (bit-equal within ~130 ticks, before the ride): gated from the first equal tick, and it must become equal.
+  { const through = Math.min(c.limitThrough ?? exactThrough, firstBadTick - 1), l = summary.firstSpeedLimitDivergence, first = summary.firstSpeedLimitMismatch;
+    if (l && l.tick <= through) throw new Error(`${c.name}: speed limit +0x2E4 left the original at ${l.tick} (web ${l.web}, PS2 ${l.ps2})`);
+    // (by row: a CTM in-world capture restarts the tick count at the Continue)
+    const badRow = firstBad ? rows.indexOf(firstBad) : rows.length, agreedRow = summary.speedLimitAgreedRow ?? (summary.speedLimitAgreed === null ? null : rows.findIndex((r) => r.tick === summary.speedLimitAgreed));
+    if (first && (agreedRow === null || agreedRow >= badRow)) throw new Error(`${c.name}: speed limit +0x2E4 never reached the original (first ${first.tick}: web ${first.web}, PS2 ${first.ps2})`); }
   if (c.lightingReferences !== undefined) { const l = summary.lighting; if (!l) throw new Error(`${c.name}: no lighting summary (pass --lighting)`);
     if (l.referenceTicks < c.lightingReferences) throw new Error(`${c.name}: Lighting bank reference left the PS2 at ${l.firstReference?.tick} (${l.referenceTicks} ticks match, baseline ${c.lightingReferences})`);
     if (l.firstScalar && l.firstScalar.tick <= c.lightingScalarsThrough) throw new Error(`${c.name}: Lighting scalars left the PS2 at ${l.firstScalar.tick} (baseline exact through ${c.lightingScalarsThrough})`); }
@@ -426,13 +470,17 @@ let ran = 0;
 const only = process.env.ONLY ? new Set(process.env.ONLY.split(',')) : null;
 // A full pass on the live core stamps its sha256; deploy/deploy-staged.sh refuses a core without that stamp.
 const coreHash = () => createHash('sha256').update(fs.readFileSync(new URL('runtime/core.wasm', import.meta.url))).digest('hex'), coreAtStart = coreHash();
-const selected = cases.filter((c) => !only || only.has(c.name));
+// pending cases (a build stage's gate before its pv switch exists; docs/ctm-events-in-world.md): only with PENDING=1 or ONLY naming them.
+const pendingRun = (c) => process.env.PENDING === '1' || (only && only.has(c.name));
+for (const c of cases) if (c.pending && (!only || only.has(c.name)) && (c.unscored || !pendingRun(c))) console.log(`pending ${c.name} [pv ${c.pending}]: ${c.unscored ? 'unscored: ' + c.unscored : 'skipped (PENDING=1 scores it)'}`);
+const selected = cases.filter((c) => (!only || only.has(c.name)) && !(c.pending && (c.unscored || !pendingRun(c))));
 const parallel = Math.max(1, Number(process.env.PAR) || Math.min(12, (os.availableParallelism?.() ?? os.cpus().length) - 1));
 const results = new Array(selected.length); let next = 0;
 await Promise.all(Array.from({ length: Math.min(parallel, selected.length) }, async () => { while (next < selected.length) { const k = next++; results[k] = await run1(selected[k]); } }));
 const failures = [];
 for (const r of results) {
   if (r.skip) { console.log(`skip ${r.c.name}: ${r.why || 'capture not present'}`); continue; }
+  if (r.c.pending) { let msg; try { msg = check(r); } catch (e) { msg = e.message; } console.log(`pending [pv ${r.c.pending}] ${msg} (today: ${r.c.today})`); continue; }
   try { console.log(check(r)); ran++; } catch (e) { failures.push(e.message); console.error('FAIL ' + e.message); }
 }
 if (failures.length) throw new Error(`${failures.length} capture gate(s) regressed:\n${failures.join('\n')}`);
@@ -554,14 +602,61 @@ const aiCases = [
     // 2026-09-28: Psymon 2941 was 139A20's orientation tail skipped while he was airborne in control 7 after leaving a rail (2925).
     humanThrough: 7999, ai: [7999], rngThrough: 7999, ranks: true, records: true, weatherExact: /^(rider\.|camera\.cur|layer\d\.count|splash\.(snowfall|drops|crystals|pending))/,
     why: 'The Throne wind push (14.5 km/h), Weather painters' },
+  // CTM heats (docs/ctm-events-in-world.md section 6), pending like the ctm-events human cases above. The riders come from the career lineup
+  // document of the heat's countdown (tools/export_lineups.py export-career -> local/assets/native/ARA1/lineups-career/).
+  { name: 'ctm-events/c0a-race', pending: 'eventInWorldAi', today: 'with --in-world-ai: everything END (the ctm-events/c0a-race-riders gate)', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--in-world-ai', '--node-seed', '../local/ctm-events/caps/c0a-race.nodes.json'],
+    humanThrough: END, ai: [END, END, END, END, END], rngThrough: END, why: 'CTM qualifier, six riders, event package: the human exact to the end (--ctm-countdown), the RNG leaves at 461, the computer riders later' },
+  { name: 'ctm-events/c0c-race', pending: 'eventReturnInWorld', today: 'with --in-world-ai: everything END (the ctm-events/c0c-race-riders gate)', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-semi-zoe.json', '--in-world-ai', '--node-seed', '../local/ctm-events/caps/c0c-race.nodes.json'],
+    humanThrough: END, ai: [END, END, END, END, END], rngThrough: END, why: 'CTM semi-final, six riders (WS13 roster, riders allocated out of actor-address order: ps2-capture-ai.mjs rosterOrder)' },
+  // Stage 4 (pv eventInWorldAi): the computer riders set up as the page's in-world event makes them (compare-ai-capture.mjs --in-world-ai: the
+  // event package into the first context in parts, the others by key, the countdown savestate's node states through the human into their
+  // contexts) in a Conquer the Mountain race (0x535C11 = 0: the uncollected collectibles are listed and their slot-1 programs draw, 3 x
+  // 0x341bbc at tick 460; the semi with the qualifier's collected bits): all six riders, the RNG, ranks and pair records exact to the end.
+  // Captures: links to c0a-race / c0c-race (all 1400 / 1399 records).
+  // The whole run from the Snow Jam arrival (free ride, the gate, WS1's hold, fly-over, approach and idle, the card, the race) with the six
+  // riders in the streamed world (local/ctm-events/caps/c0a-full-ai: ps2_capture build --ai-state + capture_card.py --ai-dynamic;
+  // compare-ai-capture.mjs --ctm-full, as the page runs pv eventInWorld + eventInWorldAi): the NIS director's camera point in the section
+  // activation (core section_point), the riders fresh and held at their approach actors (ai-racers.js holdTick), npc_grid_start at the
+  // countdown, 129768's list clear (section_restart). Human, riders, RNG, ranks and pair records exact to the end (1666 race ticks).
+  { name: 'ctm-events/c0a-full-ai', coreExport: '_npc_grid_start', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json'],
+    humanThrough: 1665, ai: [1665, 1665, 1665, 1665, 1665], rngThrough: 1665, ranks: true, records: true, why: 'CTM qualifier from the Snow Jam arrival, six riders, in the streamed world' },
+  { name: 'ctm-events/c0a-race-riders', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--in-world-ai', '--node-seed', '../local/ctm-events/caps/c0a-race.nodes.json'],
+    humanThrough: 1399, ai: [1399, 1399, 1399, 1399, 1399], rngThrough: 1399, ranks: true, records: true, why: 'CTM qualifier, the in-world rider contexts (stage 4), the CTM collectibles (0x535C11 = 0)' },
+  { name: 'ctm-events/c0c-race-riders', coreExport: '_stage_collection_list', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-semi-zoe.json', '--in-world-ai', '--node-seed', '../local/ctm-events/caps/c0c-race.nodes.json'],
+    humanThrough: 1398, ai: [1398, 1398, 1398, 1398, 1398], rngThrough: 1398, ranks: true, records: true, why: 'CTM semi-final, the in-world rider contexts (stage 4), the qualifier\'s three collectibles collected' },
+  // Stage 5 (pv eventReturnInWorld): the in-world return (local/ctm-events/caps/c0a-ret3: the qualifier, the pause's Give Up, the coast to the
+  // auto replay's start, the results' Transport, the map's same-location confirm, all driven by ARMSX2's device pad through menu_pad.py).
+  // compare-ai-capture.mjs --ctm-full runs the page's own return (web/event-return.js): the Transport's stop and WS14 frames with WS14's
+  // enter, WS15 (free ride's settings, slot 1's player setup, every rider placed at Session point 1 through 11D390's free-ride branch),
+  // the riders in pairs for 8 ticks (WS1's phases 1 / 2 without them), the removal with WS1's exit and its pose pass (129160), then the
+  // human's free ride. --replay-return: through the results' auto replay (the countdown snapshot, 600 replayed ticks) and the Transport's
+  // results-time snapshot (web/event-snapshot.js, docs/replay.md §2a). Gate from the return's record: all six exact until the removal, the human to the end, the RNG and ranks
+  // everywhere, the pair records from the return. (The coast, race ticks 1700..1987, comes from the tick script, not the device pad: not gated here.)
+  { name: 'ctm-events/c0a-ret3', coreExport: '_snapshot_save', returnGate: true, args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--replay-return', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json'],
+    humanThrough: 0, ai: [], rngThrough: Infinity, ranks: true, records: true, why: 'CTM qualifier, the in-world return to Session point 1' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;
+  if (c.coreExport && !coreJsText.includes(c.coreExport)) { console.log(`skip ${c.name}: the core has no ${c.coreExport} export`); continue; }
+  if (c.pending && !pendingRun(c)) { console.log(`pending ${c.name} (six riders) [pv ${c.pending}]: skipped (PENDING=1 scores it)`); continue; }
+  if (c.pending) { const bin = runs + c.name + '.bin', report = reportPath(c.name, 'ai-regression.json');
+    if (!fs.existsSync(bin)) { console.log(`skip ${c.name}: capture not present`); continue; }
+    execFileSync(process.execPath, ['compare-ai-capture.mjs', bin, '--world-draws', '--report', report, ...c.args], { cwd: new URL('.', import.meta.url).pathname, stdio: ['ignore', 'ignore', 'inherit'] });
+    const { summary, rows } = JSON.parse(fs.readFileSync(report, 'utf8')); const firstHuman = rows.find((r) => !r.humanExact)?.tick ?? Infinity;
+    console.log(`pending [pv ${c.pending}] ${c.name} (six riders): human exact through ${firstHuman - 1}, computer riders ${summary.ai.map((a) => (a.firstInexact ? a.firstInexact.tick - 1 : 'all')).join('/')}, RNG through ${summary.firstRngMismatch ? summary.firstRngMismatch.tick - 1 : 'all'} (today: ${c.today})`);
+    continue; }
   const bin = runs + c.name + '.bin';
   if (!fs.existsSync(bin) || !fs.existsSync(runs + c.name + '.capture.json')) { console.log(`skip ${c.name}: capture not present`); continue; }
   const report = reportPath(c.name, 'ai-regression.json');
   execFileSync(process.execPath, ['compare-ai-capture.mjs', bin, '--world-draws', '--report', report, ...c.args], { cwd: new URL('.', import.meta.url).pathname, stdio: ['ignore', 'ignore', 'inherit'] });
   const { summary, rows } = JSON.parse(fs.readFileSync(report, 'utf8'));
+  if (c.returnGate) { const g = summary.ctmReturn; if (!g || g.row == null || g.outRow == null) throw new Error(`${c.name}: no in-world return in the report`);
+    const human = rows.findIndex((r, k) => k >= g.row && !r.humanExact); if (human >= 0) throw new Error(`${c.name}: human left the original ${human - g.row} records after the return (tick ${rows[human].tick}; ${c.why})`);
+    const ai = rows.findIndex((r, k) => k < g.outRow && r.ai.some((a) => !a.exact)); if (ai >= 0) throw new Error(`${c.name}: a computer rider left the original at row ${ai} (tick ${rows[ai].tick}; the return is row ${g.row})`);
+    if (summary.firstRngMismatch) throw new Error(`${c.name}: shared RNG differs at ${summary.firstRngMismatch.tick}`);
+    if (summary.firstRankMismatch) throw new Error(`${c.name}: race ranking +0xEC differs at ${summary.firstRankMismatch.tick}`);
+    if (summary.firstReturnPairRecordMismatch) throw new Error(`${c.name}: 10F560 pair record differs after the return (tick ${summary.firstReturnPairRecordMismatch.tick})`);
+    console.log(`${c.name}: all six exact from the return (row ${g.row}) to the removal (row ${g.outRow}), the human to the end (${rows.length - g.row} records), RNG / ranks everywhere, pair records from the return`); ran++; continue; }
   const firstHuman = rows.find((r) => !r.humanExact)?.tick ?? Infinity;
   if (firstHuman <= c.humanThrough) throw new Error(`${c.name}: human left the original at ${firstHuman} with real computer-rider RNG (baseline ${c.humanThrough}; ${c.why})`);
   c.ai.forEach((through, k) => { const bad = rows.find((r) => !r.ai[k].exact)?.tick ?? Infinity;

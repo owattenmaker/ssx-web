@@ -62,7 +62,11 @@ export function frontEndCue(bank) {
 export function busOfBank(name) { return name.startsWith('DJ_') ? 'DJ' : name.startsWith('PA_') ? 'PA' : name.startsWith('Arcade') ? 'ARCADESPEECH' : 'CHARACTER'; }
 
 // declickMs (pv audioDeclick, docs/audio-logic.md 9.13): a line stopped while it plays ramps out over this many ms (no click).
-export function createSpeech({ engine, json, bytes, random = Math.random, now = () => engine.context?.currentTime ?? 0, onPost = null, onLines = null, declickMs = 0 }) {
+// radioBigStops (pv djQueueRules): Radio BIG intro stops the current line before it posts (2A26F0: 2B11B0 at 0x2A272C, after the 29F0D8 gate).
+// range(path, start, end) -> Promise<{start, bytes}> (pv speechRange, docs/audio-logic.md 9.15): a line loads as its own byte range of
+// the bank's .dat into an LRU of lineCacheBytes (a 200's whole file serves its bank as before), fetched when a line is resolved or
+// predicted (predict: at a post, the scheduler's next dispatch on a copy of its state). Without it the whole .dat loads and stays.
+export function createSpeech({ engine, json, bytes, range = null, lineCacheBytes = 2 << 20, random = Math.random, now = () => engine.context?.currentTime ?? 0, onPost = null, onLines = null, declickMs = 0, radioBigStops = () => false }) {
   let events = null, banks = null, ready = null;
   const rng = new EaRng(Math.floor(random() * 0x7fff)); // 3DB790 seeded from the game rand (2ADF60)
   const st = createSpeechState();
@@ -85,6 +89,45 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
     if (!lines.has(name)) lines.set(name, Promise.all([json(`speech/${name}.json`), bytes(`speech/${name}.dat`)]).then(([j, d]) => ({ json: j, dat: d })));
     return lines.get(name);
   };
+  // One line's bytes: {line, dat} for decodeSpeechLine, or null (no such line).
+  const cached = new Map(); // `${bank}#${line}` -> {promise, size} (LRU order; size once in)
+  const wholeDat = new Map(); // bank -> its .dat, when the server answered a range with the whole file (200)
+  let cachedBytes = 0;
+  const lineStats = { fetched: 0, hits: 0, evicted: 0, predicted: 0 };
+  function lineData(bank, index) {
+    if (!range) return bankData(bank).then(({ json: j, dat }) => (j.lines[index] ? { line: j.lines[index], dat } : null));
+    const key = `${bank}#${index}`, hit = cached.get(key);
+    if (hit) { cached.delete(key); cached.set(key, hit); lineStats.hits++; return hit.promise; }
+    const entry = { size: 0 };
+    entry.promise = json(`speech/${bank}.json`).then((j) => {
+      const line = j.lines[index]; if (!line) return null;
+      if (wholeDat.has(bank)) return { line, dat: wholeDat.get(bank) };
+      lineStats.fetched++;
+      return range(`speech/${bank}.dat`, line.offset, line.offset + line.size).then((r) => {
+        if (r.bytes.length !== line.size) { wholeDat.set(bank, r.bytes); return { line, dat: r.bytes }; } // (a 200: kept for its bank, as before)
+        entry.size = line.size; cachedBytes += line.size; trimLines(key);
+        return { line: { ...line, offset: 0 }, dat: r.bytes };
+      });
+    });
+    entry.promise.catch(() => { if (cached.get(key) === entry) { cached.delete(key); cachedBytes -= entry.size; } });
+    cached.set(key, entry);
+    return entry.promise;
+  }
+  function trimLines(keep) {
+    for (const [k, e] of cached) { if (cachedBytes <= lineCacheBytes) break; if (k === keep || !e.size) continue; cached.delete(k); cachedBytes -= e.size; lineStats.evicted++; }
+  }
+  const prefetch = (list) => { if (range) for (const r of list ?? []) for (const it of r.items ?? []) lineData(it.bank, it.line).catch(() => {}); };
+  // The lines the next dispatch would resolve, on a copy of the scheduler (slots, EA random, history): fetched while the voice is still
+  // busy or the dispatch is a frame away. A later post can change the pick; the real dispatch fetches its own lines too.
+  function predict() {
+    if (!range || !sched) return;
+    try {
+      const copy = Object.assign(Object.create(Object.getPrototypeOf(sched)), sched, {
+        rng: Object.assign(Object.create(Object.getPrototypeOf(sched.rng)), sched.rng, { s: sched.rng.s.slice() }), state: structuredClone(sched.state),
+        slots: sched.slots.map((x) => ({ ...x })), count: sched.count.slice(), lastPosted: sched.lastPosted.slice(), lastPostedPlain: sched.lastPostedPlain.slice() });
+      const out = copy.dispatch(0, tick); if (out?.length) { lineStats.predicted++; prefetch(out); }
+    } catch {}
+  }
   const audible = (bus) => engine.busGain?.(bus) > 0;
   // 2B0290 / 2B0E28: the voice is free when idle or the playing line has < 500 ms left.
   const free = () => !voice || (!voice.loading && voice.end - now() < 0.5);
@@ -95,14 +138,14 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
     if (!sched || replay) return false;
     if (!requests.admit(0, eventId, refreshDup, { speaker })) return false;
     const ok = sched.post(eventId, args, tick, 0);
-    if (ok) { posts.push([tick, eventId.toString(16), speaker, ...args]); if (posts.length > 40) posts.shift(); onPost?.(eventId, speaker, args); }
+    if (ok) { posts.push([tick, eventId.toString(16), speaker, ...args]); if (posts.length > 40) posts.shift(); onPost?.(eventId, speaker, args); predict(); }
     return ok;
   }
   // 2B1758: resolve the best pending event now (sent on the next free frame).
   function flush() {
     if (!sched) return;
     const out = sched.dispatch(0, tick);
-    if (out?.some((r) => r.items.length)) { pending = out; busy = 0; }
+    if (out?.some((r) => r.items.length)) { pending = out; busy = 0; prefetch(out); }
   }
 
   // 3D9BD8 -> 2AF8A8 -> 2B04D8: stream the resolved lines back to back on the one voice.
@@ -115,12 +158,12 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
     const current = { loading: true, end: Infinity, sources: [], buses: new Set(), lines: items.map((it) => `${it.bank}#${it.line}`), speaker: items[0].speaker };
     voice = current;
     let data;
-    try { data = await Promise.all(items.map((it) => bankData(it.bank))); } catch (e) { console.warn('Speech bank unavailable', e); if (voice === current) voice = null; return; }
+    try { data = await Promise.all(items.map((it) => lineData(it.bank, it.line))); } catch (e) { console.warn('Speech bank unavailable', e); if (voice === current) voice = null; return; }
     if (voice !== current) return;
     let t = context.currentTime + 0.02;
     for (let i = 0; i < items.length; i++) {
-      const it = items[i], { json: j, dat } = data[i], line = j.lines[it.line];
-      if (!line) continue;
+      const it = items[i]; if (!data[i]) continue;
+      const { line, dat } = data[i];
       const bus = busOfBank(it.bank);
       const t0 = performance.now();
       const buffer = toAudioBuffer(context, decodeSpeechLine(dat, line));
@@ -129,18 +172,20 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
       if (declickMs > 0) { const g = context.createGain(); src.connect(g); g.connect(engine.bus(bus, it.speaker)); src.__fade = g; } else src.connect(engine.bus(bus, it.speaker)); // CHARACTER: per-speaker gain
       if (t < context.currentTime) audioStats.speechLate++;
       src.start(t); src.__at = t;
+      src.onended = () => letGo(src); // (a finished / stopped line lets go of its nodes)
       if (bus === 'DJ' && !current.buses.has('DJ')) { const at = t; setTimeout(() => { if (voice === current) engine.duck(0.65, 0.9999); }, Math.max(0, (at - context.currentTime) * 1000)); } // 29F000
       current.buses.add(bus); current.sources.push(src);
       t += buffer.duration;
     }
     current.loading = false; current.end = t;
   }
+  function letGo(src) { try { src.disconnect(); } catch {} try { src.__fade?.disconnect(); } catch {} }
   function stop() {
     const v = voice; voice = null; pending = null;
     const c = engine.context, t = c?.currentTime ?? 0, dk = declickMs / 1000;
     if (v) for (const s of v.sources) try {
       if (dk > 0 && s.__fade && s.__at < t) { const g = s.__fade.gain; g.cancelScheduledValues(t); g.setValueAtTime(1, t); g.linearRampToValueAtTime(0, t + dk); s.stop(t + dk); } // playing: ramp out
-      else s.stop();
+      else { s.stop(); letGo(s); } // (stopped at once, or never started: its ended event may never come)
     } catch {}
     if (v?.buses.has('DJ')) engine.release(0.5);
   }
@@ -166,7 +211,7 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
       if (busy === 1) {
         onIdle?.();
         const out = sched.dispatch(0, tick);
-        if (out?.some((r) => r.items.length)) { pending = out; busy = 0; }
+        if (out?.some((r) => r.items.length)) { pending = out; busy = 0; prefetch(out); }
       } else if (pending) { const p = pending; pending = null; busy = 1; send(p); }
     },
     // Pause resume (289BB8): queued speech is cancelled.
@@ -213,7 +258,7 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
     arcade(eventId, mask) { if (audible('ARCADESPEECH') && !replay && mask) post(eventId, [mask], { speaker: SPEAKER.ARCADE }); },
     // DJ (29F0D8 gate: DJ audible, i.e. DJ on and radio mode != 2).
     dj(eventId, args) { if (audible('DJ') && !replay) post(eventId, [LANG, ...args], { speaker: SPEAKER.DJ }); },
-    radioBigIntro(a1, a2) { api.dj(EV.RADIO_BIG_INTRO, [a1 ? 1 : 2, a2 ? 2 : 1]); },                                                                // 2A26F0
+    radioBigIntro(a1, a2) { if (radioBigStops() && audible('DJ')) stop(); api.dj(EV.RADIO_BIG_INTRO, [a1 ? 1 : 2, a2 ? 2 : 1]); },                                                                // 2A26F0
     artistIntro(sed) { const s = sed ?? -1; api.dj(EV.ARTIST_INTRO, [3, s < 0 || s === 999 ? 0 : s < 100 ? (2 ** s) >>> 0 : 0, s < 0 || s === 999 || s < 100 ? 0 : (2 ** (s - 100)) >>> 0]); }, // 2A2860
     eventIntro(loc, region = -1) { api.dj(EV.EVENT_INTRO, [courseBit(loc, region), 3]); },                                                          // 2A24B0 / 2A2568
     radioBigOutro() { api.dj(EV.RADIO_BIG_OUTRO, []); },                                                                                            // 2A27D8
@@ -239,7 +284,8 @@ export function createSpeech({ engine, json, bytes, random = Math.random, now = 
     // 2A10C0(audio, speaker): the request being spoken now (2B1220 -> 2AB150 -> the request's +0x80) is that speaker's (10 = the DJ)
     speaking(speaker) { return !!voice && voice.speaker === speaker; },
     debug() { return { ready: !!sched, tick, busy, voice: voice ? { loading: voice.loading, left: +(voice.end - now()).toFixed(2), buses: [...voice.buses], lines: voice.lines, speaker: voice.speaker } : null,
-      pending: sched ? sched.slots.filter((s) => s.active).map((s) => s.ev.id.toString(16)) : [], last: st.last.get(0)?.id?.toString(16) ?? null, posts: posts.slice() }; },
+      pending: sched ? sched.slots.filter((s) => s.active).map((s) => s.ev.id.toString(16)) : [], last: st.last.get(0)?.id?.toString(16) ?? null, posts: posts.slice(),
+      lineCache: { ...lineStats, lines: cached.size, kb: Math.round(cachedBytes / 1024), wholeBanks: [...wholeDat.keys()], banks: lines.size } }; },
   };
   return api;
 }

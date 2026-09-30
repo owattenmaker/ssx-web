@@ -310,6 +310,63 @@ through them and is then reset.
   - The Peak 1 Race meets ARA1's; the Peak 2 Race meets DRA4's and ARA1's.
   - The kind test is the same for all of them. The APJ at ERA5 / ARA1 has no PS2 state yet.
 
+### Course limits in free ride (2026-09-29, pv `loadFlags`)
+
+Owen: CTM course limits "feel slightly off" (boundaries, walls, resets). Tools in `local/course-limits/`:
+`scan_builtins.py`, `asm.py` MIPS listing from local/output, `lun.py` LUN listing, `ps2inst.py` / `scan_ps2.py` PS2 instance
+states, `port-states.mjs` + `compare.py` page-vs-PS2 instance diff, `capture-all.sh` / `cmp-all.sh` captures and comparisons,
+`page-replay.mjs` page replay of a world-start capture, `seed_boosts.py`. Captures: `local/ps2-capture/runs/course-limits/`.
+
+**Unported builtins 99 and 101: no effect in CTM.**
+- 99 (0x3061B0) answers the game options word *0x5308D0: selector 0 / 1 / 2 -> bit 6 Multipliers / 8 Power-ups / 7 Point
+  icons clear (others 1). Written only by the options setter 192088 (options screen 192380). All 162 calls are
+  `if 99(sel)==0: builtin29, return`; 0x5308D0 is 0 in all 794 PS2 free-ride savestates, and the port's nil (nil==0 false) takes
+  the same build branch.
+- 101 (0x306438) adds an attention point (instance, radius 1000, seconds) to the 64-slot manager W+0x84->+0xC->+0xA8
+  (0x101728 / 0x1013A8). Its only consumer ends in rider+0x5B0 (122CF0), read by nothing else; the change callback 11A0C0 is an
+  empty stub. It returns nil, as the port does.
+
+**The one-way volumes never pushed (fixed, pv `loadFlags`, on).**
+- Every hub connector (and ABA1) has a `*_onewayvolume_*` whose slot-1 program runs builtin 7 (0x2FBEC8, Boost entity type 8):
+  a human moving against the volume's +Y is pushed along +Y by 100 km/h x 0.9 per second (41.667 cm/s a tick) once armed.
+- The load's runtime flags of an untouched instance are the authored high half copied down with bit 1 (34FC1C:
+  0x200000 -> 0x200022, 0x210000 -> 0x210023); this holds for every untouched instance of the 794 PS2 free-ride savestates.
+- `stage_flags()` (web/stage_world.inc) fell back to the AUTHORED word for an instance nothing had changed, so builtin 7's
+  `| 0x100` gave 0x200100: no static route, the rider list (rider+0x5B8) never held the volume and it never pushed. PS2:
+  0x200122 / 0x200322 on every connector volume.
+- Port: core `stage_load_flags(on)`: the fallback is `originalPickupRestoredFlags(authored)`. `web/free-ride.js start` sets it
+  from pv `loadFlags` (stop clears it); `web/peak-capture.mjs` too (`LOAD_FLAGS=1/0`). Event courses do not set it and need
+  nothing: their volumes keep the static route (no runtime flags written; ABA1 and ARA1 checked in the page after 400 ticks).
+- Checked: `course-limits/p3b-zig3000` (Peak 3 seed fr-ebc3-14302, zigzag) is pushed by `mdl_EBC3_E_onewayvolume_1000` from
+  14525. Without the push the port is 30 cm off after 10 ticks and 23 m after 12 s; with the volume built (a mid-run seed only
+  lists it as a plain entity: `PEAK_SEED_BOOSTS=local/course-limits/boosts-p3b.json`, core `stage_seed_boost`, words from the
+  savestate) positions are exact for all 3001 ticks (the velocity sample is one push early during the 34 push ticks: the
+  record is written after the entity pass). The streamed-world gates (peak1 glide / green start / lodge / arrivals / race start,
+  peak2 fr-d-glide, peak3 throne, ctm/fr-dra4a-full, allpeak, weather/frd) are unchanged with it on. Chrome and WebKit, Crow's
+  Nest start: 0x200122 on A_ABA1 x2 and ABA1 with the switch, 0x200100 without.
+
+**Back-to-back soft collisions ended early (fixed, core).**
+- Scraping along a wall gives soft collisions a few ticks apart. The port's control-3 exit asked whether ANY channel-2 sequence
+  of the soft clip had completed; the previous soft's clip (completed, fading out behind the new one) answered yes, so the new
+  control 3 ended after 2 ticks and the rider left the wall. 312AE8 reads the first channel-2 sequence (a new play is inserted
+  first). `course-limits/p3b-right3000` (The Throne -> E ice blocks): 474 -> 3000 of 3000 ticks exact; full capture suite
+  (253) unchanged. See [obstacle-collision.md](obstacle-collision.md) "Back-to-back soft collisions".
+
+**Everything else matched.**
+- Instance state (PS2 instance+8 / +0xC node type over 794 savestates vs the page after every Peak 1-3 course and station
+  start, core export `world_instance_states`): the station and course-start fences and challenge reset planes die as on the
+  PS2 once their section lists them; Load volumes the PS2 has hidden are ones a ride through the connector hid; Big Challenge
+  gates follow the challenge status (not status-matched here).
+- Streaming (`PEAK_AUTO=1`: the core's own streamer instead of the capture's rows): A -> A_ARA1 -> ARA1, D -> DRA4 and E rows
+  change on the PS2's ticks; only unmeasured read times differ (11-25 ticks, the ride never waits) and the ARA1 path bank
+  arrives 2-4 ticks after the PS2's AIP dispatch (0.95 cm/s).
+- 20 new captures of 3000 ticks (hard left, hard right, zigzag, neutral from the PEAK1 / PEAK2 / PEAK3 / MOUNTAINF seeds and from
+  the CTM world start `peak1/green-start-t0`): walls, glass fences, crashes and 12 resets (request tick, the 20-tick freeze,
+  placement) are exact. The page itself replays the world-start captures position-exact for 3000 ticks (`page-replay.mjs`).
+- Left open: `p2-right3000` 3312 (D station, a rail exit: the PS2 spends one tick in motion 1 at the old position, the port
+  lands at once; physics / rail owners); `mt-left3000` 6152 (a reset requested in the air the tick after a soft contact: the
+  port applies the contact push-out, 28 cm, before the freeze; the placement is exact).
+
 ## Peak 1 Race / Peak 1 Jam (modes 6 / 9, kinds 5 / 6)
 
 - **Handlers:** 4 for the time challenge (init 23B268, split 23B5F8, results 23B468) and 7 for the points challenge (init 23C0D0, split 23C560, results 23C2D8). Both are solo, with no AI.
@@ -326,7 +383,7 @@ through them and is then reset.
   - Jam: ABC1 → ABC1_A → A → A_ASS1 → ASS1, finishing at R&B.
 - **Splits:** when a 22D088 enters a station, the difference to the tier row's split k is shown for 5 s: time `int(ticks × 0.016666668) − split` as ±H:MM:SS, or points `score − split × 100`.
 - **HUD** (0x1530C006 | 0x22): the clock counts down; the score shows; there is no progress meter. A Jam also shows
-  "GOAL: %d" (the target) on the clock's line from the left edge (2026-09-26, peak3.md section 6). Without a career run (the `&peakMode=` QA URL) the tier-0 row supplies the clock and the splits (`main.js peakSetup`).
+  "GOAL: %d" (the target) on the clock's line from the left edge (2026-09-26, peak3.md section 6). Without a career run (the `&peakMode=` QA URL) the tier-0 row supplies the clock and the splits (`main.js peakSetup`). The HUD (`ui.freeRideHud`) takes the same row as the core's `peakSetup` hook: the active career event's only when it is a peak run (mode 6..11), else the tier-0 row of the world's own mode. Before 2026-09-28 it took any active event's, so a single event left active (a QA switch from an event to `cb.peakRun`) indexed a missing row and threw a TypeError every HUD frame.
 - **Start in the browser:** the grid slot placement, 11DF18's 833.333 cm/s along the placed forward (as on the PS2), then `peak_run_start_seed` (the state the pre-card frames leave).
 - **Objectives card** ("68rival_pre"): "Rival Challenge / Peak 1 Race", "You've been challenged by Mac to a Peak Race!" (Griff for Mac), the route bullet, the pass bullet, and "Time to beat: 13:20".
 

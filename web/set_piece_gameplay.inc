@@ -10,6 +10,7 @@
 // 0x212325) on their own matrix, clone 0 keeping the authored bounds. All carry the entity:
 // the rigid predicate is 1 and the selected-contact callback adds the chair's surface velocity.
 #include "../engine/multi_spline_modifier.hpp"
+#include "streamed_world.hpp" // browser_streamed_world (pv peakSplines)
 #include "../engine/spline_modifier.hpp"
 #include <map>
 #include "generated/set_piece_seed.hpp"
@@ -160,7 +161,29 @@ struct SetPiecesEBC3 {static constexpr const auto& multiSplines=browser_set_piec
 struct SetPiecesBHP1 {static constexpr const auto& multiSplines=browser_set_pieces_bhp1::multiSplines;static constexpr const auto& multiSplineCars=browser_set_pieces_bhp1::multiSplineCars;
  static constexpr const auto& splineModifiers=browser_set_pieces_bhp1::splineModifiers;static constexpr const auto& splinePieces=browser_set_pieces_bhp1::splinePieces;static constexpr const auto& triggerOwners=browser_set_pieces_bhp1::triggerOwners;};
 #endif
+// pv peakSplines (web/free-ride.js / web/peak-capture.mjs -> set_piece_streamed): a streamed world's tables are its event locations'
+// Spline pieces and trigger owners (the resource ids are the event packages', source hash shared; docs/set-pieces.md "Streamed worlds").
+// The contact / timer / gated builtin 19 launches (0x2FDED0 -> 0x355AD0 -> 0x359460: one 0x317830 draw each) then run there as in
+// the events; the slot-1 enters already draw through the section pass. MultiSplines, resident loops and attached LiveComps are not
+// merged yet (they hold race-tick-0 state; the free-ride locations load without entities).
+RIDER_LOCAL static bool setPieceStreamed=false;
+static const SetPieceTables& set_piece_tables(const std::string& location);
+static std::vector<std::string> streamed_set_piece_locations(const std::string& world){
+ if(world=="PEAK1")return {"ARA1","BRA2","BHP1","ASS1","ABA1","ABC1"};
+ if(world=="PEAK2")return {"CRA3","DRA4","DSS2","CBA2","CHP2","DBC2"};
+ if(world=="PEAK3")return {"ERA5","ESS3","EBA3","EHP3","EBC3"};
+ if(browser_mountain_world(world))return {"ARA1","BRA2","BHP1","ASS1","ABA1","ABC1","CRA3","DRA4","DSS2","CBA2","CHP2","DBC2","ERA5","ESS3","EBA3","EHP3","EBC3"};
+ return {};
+}
+static const SetPieceTables& set_piece_tables_streamed(const std::string& world){
+ static std::map<std::string,SetPieceTables> cache; // shared, constant per world
+ auto found=cache.find(world);if(found!=cache.end())return found->second;
+ SetPieceTables t;t.location=world;
+ for(const auto& code:streamed_set_piece_locations(world)){const auto& l=set_piece_tables(code);t.pieces.insert(t.pieces.end(),l.pieces.begin(),l.pieces.end());t.owners.insert(t.owners.end(),l.owners.begin(),l.owners.end());}
+ return cache.emplace(world,std::move(t)).first->second;
+}
 static const SetPieceTables& set_piece_tables(const std::string& location){
+ if(setPieceStreamed&&browser_streamed_world(location))return set_piece_tables_streamed(location);
  static std::map<std::string,SetPieceTables> cache; // shared: tables built from the compiled seeds of a location (constant)
  auto found=cache.find(location);if(found!=cache.end())return found->second;
  SetPieceTables t;t.location=location;
@@ -250,7 +273,7 @@ static void section_multi_spline_destroyed(uint32_t resource); // web/section_ga
 void browser_release_section_lift(uint32_t resource); // below
 RIDER_LOCAL static bool sectionsRunning;
 // draw=false: the section pass (section_gameplay.inc) already took the builtin19 draw in program order.
-static void attached_launch(uint32_t resource); // web/attached_setpieces.inc
+static void attached_launch(uint32_t resource,bool draw); // web/attached_setpieces.inc
 static bool launch_spline_seed(const BrowserSplinePieceSeed& seed,bool draw);
 static void launch_spline_pieces(uint32_t owner,uint32_t slot,bool draw=true){
  if(!setPieceCourse||!setPieceTables)return;
@@ -327,7 +350,7 @@ static bool launch_spline_seed(const BrowserSplinePieceSeed& seed,bool draw){
   a.running=seed.args.running;a.acceleration=f(seed.args.acceleration);a.accelerationTime=f(seed.args.accelerationTime);
   if(a.startJitter!=0.f)throw std::runtime_error("Spline set piece with start jitter needs the shared RNG value");
   BrowserSplinePiece piece;piece.seed=&seed;piece.phase=1;piece.launchTick=chairliftTicks?chairliftTicks-1:0;
-  attached_launch(seed.resource); /* the LiveComp of the same program (builtin3 before builtin19) */
+  attached_launch(seed.resource,draw||!(setPieceStreamed&&browser_streamed_world(setPieceLocationName))); /* the LiveComp of the same program (builtin3 before builtin19); pv peakSplines: no second draw in a streamed section run */
   ssx::OriginalRandomState scratch;ssx::originalSplineConstruct(piece.spline,a,*record,scratch);if(draw)browser_shared_random_next(); /* the draw itself (value unused with jitter 0) */
   ssx::originalSplineAttach(piece.spline,{f(seed.matrix[12]),f(seed.matrix[13]),f(seed.matrix[14]),1.f},{f(seed.low[0]),f(seed.low[1]),f(seed.low[2])},{f(seed.high[0]),f(seed.high[1]),f(seed.high[2])},2u);
   browserSplinePieces.push_back(piece);++splineLaunches;section_entity_created(seed.resource);
@@ -528,6 +551,20 @@ void browser_attach_set_pieces(){
  if(!setPieceTables->pieces.empty()||!setPieceTables->owners.empty())setPieceCourse=true;
  attached_reset();reset_rail_livecomp_collision();
  section_reset(); // section activation back to the race-tick-0 entity set
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void set_piece_streamed(int on){ // pv peakSplines: the streamed world's tables (above), from now on
+ setPieceStreamed=on!=0;if(!browser_streamed_world(setPieceLocationName))return;
+ setPieceTables=&set_piece_tables(setPieceLocationName);if(!setPieceTables->pieces.empty()||!setPieceTables->owners.empty())setPieceCourse=true;
+ attached_reset(); // every location's spline LiveComps / ParentModifier children (none resident)
+}
+// 230360 -> 3551A8(gp+0x2898, 1 / 8, track) at a streamed location's unload (peak_world.inc set_state 7): the track's entities are
+// deleted (vt+0x08 / 0x0C), with no slot-3 program and no draw. Its launched Spline pieces go, and their owners' builtin 52 guards
+// with them (a new load builds new entities, which may launch again).
+void browser_set_piece_track_teardown(uint32_t track){
+ if(!setPieceStreamed||!browser_streamed_world(setPieceLocationName))return;
+ std::erase_if(browserSplinePieces,[&](const BrowserSplinePiece& p){if((p.seed->resource&0xffu)!=track)return false;spline_piece_collision_stop(p.seed->resource);return true;});
+ std::erase_if(splineOwnersFired,[&](uint32_t k){return ((k>>3)&0xffu)==track;});
+ for(auto& x:attachedLiveComps)if((x->resource&0xffu)==track)attached_destroy(x->resource);
 }
 // race_begin, before the rider: 0x35A560 then the LiveComp 0x3568B0 (clock dt 1/60 = 0x3C888889).
 static void advance_set_pieces(){

@@ -260,6 +260,39 @@ if (success) {
   console.log(`success: ${done - 1} ticks identical, completed at tick ${recs2[done].tick}: status 0x${recs2[done - 1].status.toString(16)} -> 0x${status.toString(16)}, cash +$${cashEv[0]}`);
 }
 
+// pv bcDecline (core mission_lifecycle): builtin 67's 30B7F8 (0x3021B8: an event gate ends a running challenge) and world state
+// 10 enter's 309030 -> 308988 (0x2356A8, the tick after a Load trigger: C+0x2A0 = -1, the HUD words, the offer ring cleared).
+{
+  const c3 = await createCore();
+  if (c3._mission_lifecycle && c3._mission_test_gate && c3._mission_test_load_trigger) {
+    const put3 = (text) => { const b = Buffer.from(text + '\0'); const p = c3._malloc(b.length); c3.HEAPU8.set(b, p); return p; };
+    const terrain = json('PEAK1/ARA1/terrain.json'), world = json('PEAK1/ARA1/world_collision.json'), rails = json('PEAK1/ARA1/rails.json');
+    const hash = put3(terrain.source_sha256), worlds = locationBatches(terrain, world, rails).filter((x) => x.kind === 'world');
+    c3._init_world_collision(put3(worlds[0].text), hash); c3._peak_world_begin(); c3._peak_world_reserve(65536, 4096);
+    for (const b of worlds.slice(1)) { c3._peak_world_append(1); c3._init_world_collision(put3(b.text), hash); c3._peak_world_append(0); }
+    c3._peak_world_commit();
+    const tp3 = c3._malloc(12); new Int32Array(c3.HEAPU8.buffer, tp3, 3).set(tracks); c3._mission_test_setup(4, tp3, 3);
+    const trig3 = c3._malloc(256), step3 = () => { c3._mission_test_rider(0, 0, 0, trig3, 0); c3._mission_test_tick(); };
+    const active = () => new Int32Array(c3.HEAPU8.buffer, c3._mission_hud(), 24)[0] >>> 0, running = () => c3._mission_running();
+    const start = () => { c3._mission_test_contact(OFFER); step3(); c3._mission_prompt(1, c3._mission_offer_pop()); for (let k = 0; k < 3; k++) step3(); };
+    for (let k = 0; k < 70; k++) step3();
+    start(); assert.equal(running(), 1, 'Speed Demon runs');
+    c3._mission_lifecycle(0); c3._mission_test_gate(); step3();
+    assert.equal(running(), 1, 'switch off: a gate leaves the challenge running (the old port)');
+    c3._mission_lifecycle(2); c3._mission_test_gate();
+    assert.equal(running(), 0, 'builtin 67: 30B7F8 stops the running challenge'); assert.equal(active(), 0xffffffff, '30B7F8: C+0x2A0 = -1');
+    step3(); c3._mission_prompt(1, 0x0472b867 | 0); for (let k = 0; k < 3; k++) step3(); assert.equal(running(), 1, 'Speed Demon runs again (the prompt\'s Yes)');
+    c3._mission_lifecycle(4); c3._mission_test_load_trigger(); step3();
+    assert.equal(active(), 0x0472b867, 'the Load trigger tick itself keeps the challenge (world state 10 enters on the next tick)');
+    step3();
+    const words = Array.from(new Int32Array(c3.HEAPU8.buffer, c3._mission_hud(), 24).slice(5, 21));
+    assert.equal(active(), 0xffffffff, '309030 / 308988: C+0x2A0 = -1'); assert.equal(running(), 0, 'no challenge runs after world state 10');
+    assert.equal(words[1] | words[4] | words[7], 0, '308988: the goal / count / timer HUD flags cleared');
+    assert.equal(new Int32Array(c3.HEAPU8.buffer, c3._mission_info(), 10)[9], 0, '30C760: the offer ring is empty');
+    console.log('lifecycle: an event gate (builtin 67) ends the challenge; world state 10 enter clears C+0x2A0, the HUD words and the offers');
+  } else console.log('lifecycle: core without mission_lifecycle (rebuild web/runtime)');
+}
+
 // World state 15 (236058: Session / a Transport to here / the post-event Transport to the same course; web/free-ride.js
 // placeRegion -> core mission_world_session): 30B7F8 before the placement (every mission inactive, the running challenge
 // stopped, the offers cleared), then 11DF18(rider, 1) -> 3099F8 posts WScript event kind 5 (docs/ctm-parity.md).

@@ -44,7 +44,7 @@ RIDER_LOCAL bool grounded=true,held=false,airbornePrewind=false;RIDER_LOCAL bool
 RIDER_LOCAL float output[16];
 RIDER_LOCAL OriginalJumpState lastChargedTakeoff;
 RIDER_LOCAL std::array<float,3> browserLandingTranslation{};
-RIDER_LOCAL float physicsInfo[6];RIDER_LOCAL float effectiveSpeedLimit=0;
+RIDER_LOCAL float physicsInfo[7];RIDER_LOCAL float effectiveSpeedLimit=0;RIDER_LOCAL static bool speedLimitHeld=false;
 // Computed initial values (the course seeds) are assigned by rider_statics_core() below, for every rider context.
 RIDER_LOCAL OriginalGroundProfile physicsProfile{};
 RIDER_LOCAL decltype(browserGroundMaterials()) physicsMaterials{};
@@ -59,6 +59,7 @@ RIDER_LOCAL std::optional<std::array<float,3>> browserDeparturePrePosition; // r
 // rider+0x2D4 (13F248) requests the reset 116120(rider,0,1) before 13F488/105398 (The Junction 0xB/0x3 patches).
 RIDER_LOCAL bool browserGroundResetPending=false;RIDER_LOCAL bool browserGroundCrashPending=false; // 13F1C8: a ground contact on surface 18 (web/animation_bridge.cpp post)
 RIDER_LOCAL static bool airControl0Request=false; // first airborne tick of control 0 (it only requests control 4)
+RIDER_LOCAL static bool wasAirControl0=false; // step_rider's control 0 in the air last tick (file scope: the rider-context snapshot restores it)
 RIDER_LOCAL bool browserCrashAir=false; // crash motion 2 submode 1 (publish_crash_actor), for the 1210B0 crash-air timers
 RIDER_LOCAL int browserCrashSurface=0; // crash actor surface: motion 2 contacts write rider+0x438 (camera surfaceId, pipe-air 793)
 // rider+0x434 (physicsState.riderType): location id of the contacted patch. 1218D0 (per-rider pass from 128AC0, after
@@ -97,7 +98,7 @@ void refresh_rider_scope(){const auto basis=originalOrientationBasis(physicsStat
  const auto b=originalRiderQueryBounds({p[0],p[1],p[2],1},{r[0],r[1],r[2],0},{f[0],f[1],f[2],0},{u[0],u[1],u[2],0});riderScope=terrain_original::RiderScope{{b.minimum[0],b.minimum[1],b.minimum[2]},{b.maximum[0],b.maximum[1],b.maximum[2]}};}
 // World state 14's rider actor hold (123640 -> 123B48; docs/ctm-parity.md "The NIS rider hold"): rider+0xAC4. nis_hold below.
 RIDER_LOCAL bool browserNisHold=false;
-RIDER_LOCAL bool browserResetActive=false;RIDER_LOCAL bool browserResetFromController=false;RIDER_LOCAL void (*browserResetBegin)(int)=nullptr;RIDER_LOCAL void (*browserResetRerequest)(int)=nullptr;RIDER_LOCAL bool (*browserResetControl)()=nullptr;RIDER_LOCAL void (*browserResetClear)()=nullptr;
+RIDER_LOCAL bool browserResetActive=false;RIDER_LOCAL bool browserResetFromController=false;RIDER_LOCAL void (*browserResetBegin)(int)=nullptr;RIDER_LOCAL void (*browserResetDecline)()=nullptr;RIDER_LOCAL void (*browserResetRerequest)(int)=nullptr;RIDER_LOCAL bool (*browserResetControl)()=nullptr;RIDER_LOCAL void (*browserResetClear)()=nullptr;
 RIDER_LOCAL bool browserPosedLandingEnabled=false,browserCrashActive=false,browserCrashExitFrame=false;RIDER_LOCAL int browserCrashResetReason=0;
 RIDER_LOCAL void (*browserCrashReset)()=nullptr;RIDER_LOCAL bool (*browserCrashControl)(bool)=nullptr;RIDER_LOCAL void (*browserCrashMotion)()=nullptr;
 RIDER_LOCAL void (*browserHardCrash)(int,const OriginalCollisionEvent&)=nullptr;
@@ -579,7 +580,13 @@ EMSCRIPTEN_KEEPALIVE float* jump_takeoff_info(){
  values[19]=lastChargedTakeoff.flags;values[20]=lastChargedTakeoff.motionMode;return values;
 }
 // QA (compare-ps2-capture.mjs): a mid-run baseline seeds the retained speed limit rider+0x2E4 (11B3F8 approaches it).
-EMSCRIPTEN_KEEPALIVE void speed_limit_seed(float cm){physicsProfile.speedLimit=cm;effectiveSpeedLimit=cm;}
+EMSCRIPTEN_KEEPALIVE void speed_limit_seed(float cm){physicsProfile.speedLimit=cm;effectiveSpeedLimit=cm;speedLimitHeld=false;}
+// QA (--seed-limit): a record's +0x2E4 is the limit its own tick uses (11B3F8 ran before the capture's provider hook), so the next
+// frame begin keeps it instead of stepping it again.
+EMSCRIPTEN_KEEPALIVE void speed_limit_seed_held(float cm){speed_limit_seed(cm);speedLimitHeld=true;}
+// QA (compare-ps2-capture.mjs --carry-seed): the motion-0 object's tick stamps (the motion owner +0x10 ground focus, +0x14 last
+// ground leave; 13C7A8 scales the velocity by 0.7 + 0.01 x (tick - leave - 40), capped at 1, when motion 0 is entered).
+EMSCRIPTEN_KEEPALIVE void ground_tick_seed(uint32_t focus,uint32_t leave){groundFocusTick=focus;lastGroundLeave=leave;}
 // Peak runs (modes 6..11; docs/peak-mountain.md): the run's setup placed the rider on the grid slot (11DE60 -> 11D660), and
 // the frames before the objectives card's Continue ran in the placement's reset motion: 11B3F8 in motion 1 retained
 // +0x2E4 = 0x45505556 and the ground queries left +0x380 = +0x370. Continue places it again at the same slot (11D660 writes
@@ -591,6 +598,7 @@ EMSCRIPTEN_KEEPALIVE float* physics_info(){
  physicsInfo[2]=physicsState.crouch.current;
  physicsInfo[3]=physicsState.boost;
  physicsInfo[4]=grounded?0:1;physicsInfo[5]=effectiveSpeedLimit/100.f;
+ physicsInfo[6]=physicsProfile.speedLimit; // rider+0x2E4 in cm/s, exact (QA: compare-ps2-capture.mjs; [0] is m/s and rounds)
  return physicsInfo;
 }
 EMSCRIPTEN_KEEPALIVE float* boost_info(){
@@ -634,6 +642,16 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   rideLatched=true;rideCommand.active=false;
  }
  rideAxes[0]=steering;rideAxes[1]=crouchTarget;rideAxes[2]=brakeTarget;rideAxes[3]=rideBoard;rideAxes[4]=rideSpin;rideAxes[5]=rideFlip;rideAxes[6]=jump;rideAxes[7]=boost;rideAxes[8]=rideCommand.grab;rideAxes[9]=applyTargets;
+ if(browserCrashResetReason==-2){browserCrashResetReason=0;if(!browserResetDecline)throw std::runtime_error("Reset controller unavailable");browserResetDecline();} // 1235F8 (web/mission_gameplay.inc mission_rider_decline): entered between ticks, stepped from this tick
+ // 11B3F8 is frame-begin work (120F20 -> 0x121024, the first rider pass), including crash/recovery frames: it sees the motion
+ // owner +0xDE0 (crash 2, reset/grid 3, rail 4, handplant 5) before this tick's 116120. The provider's ResetPath (Select), the
+ // 1210B0 collision timers and the controllers request the reset later in the tick (PS2 tech-select-ground 438 / -air 428,
+ // tech-oob-dance 3297: +0x2E4 from motion 0 / 1 on the request tick). A reset entered between ticks (the decline above) is
+ // already motion 3; the requests deferred from the previous tick (rail recovery, crash) leave motion 4 / 2, which 11B3F8
+ // treats as motion 3. speed_limit_seed_held: a mid-run seed's record already holds this tick's value.
+ if(speedLimitHeld)speedLimitHeld=false;
+ else physicsProfile.speedLimit=originalGroundSpeedLimit(physicsProfile,physicsState,npc_motion_mode());
+ effectiveSpeedLimit=physicsProfile.speedLimit;
  if(browserCrashResetReason){if(!browserResetBegin)throw std::runtime_error("Reset controller unavailable"); /*116120 leaves a rail through the control-7 exit 132048 and the motion-4 exit 13C5A0 (begin_reset), not a full rail reset (tech-select-rail 925)*/browserResetBegin(browserCrashResetReason<0?0:browserCrashResetReason);browserCrashResetReason=0;}
  browserCrashExitFrame=false;
  // 1210B0 (collision timers, before this tick's motion): +0x3F0 direction changes > 4.5 after the decay, or in the air
@@ -649,8 +667,6 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   // reset is already running (3F0 still above 4.5) re-enters it with the progress at 0 (tech-oob-dance: placement 3321).
   if(request&&!browserStarting){if(!browserResetBegin||!browserResetRerequest)throw std::runtime_error("Reset controller unavailable");if(browserResetActive)browserResetRerequest(2);else browserResetBegin(2);browserResetFromController=true;}}
  constexpr double dt=1./60;landingProbeInfo={};landed=0;output[15]=0;Vec3 old=position;
- // Original11B3F8 is frame-begin work, including crash/recovery frames.
- physicsProfile.speedLimit=originalGroundSpeedLimit(physicsProfile,physicsState,npc_motion_mode()); /*motion owner +0xDE0 at frame begin (crash 2, reset/grid 3, rail 4, handplant 5)*/effectiveSpeedLimit=physicsProfile.speedLimit;
  auto resetMotion=[&](){
   browser_boost_tick(boostState,boostProfile,physicsState.timeScale,3,9);physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;physicsState.boostTierCounter=boostState.tier;
   for(auto* value:{&physicsState.turn,&physicsState.brake,&physicsState.crouch,&physicsState.presentationLift,&physicsState.animationTurn,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll,&physicsState.balance280,&physicsState.adjustment28C,&physicsState.adjustment298})groundControlApproach(*value);
@@ -721,7 +737,7 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  // 114130 controller dispatch precedes the 1200D0 timer stage. Cruise
  // jump-entry and crouch-release return before boost dispatch; airborne
  // Square is a tweak input, not permission to thrust.
- {RIDER_LOCAL static bool wasAirControl0=false;const bool airControl0=!grounded&&physicsState.controlState==0;airControl0Request=airControl0&&!wasAirControl0;wasAirControl0=airControl0;}
+ {const bool airControl0=!grounded&&physicsState.controlState==0;airControl0Request=airControl0&&!wasAirControl0;wasAirControl0=airControl0;}
  if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&grounded&&bool(jump)==held&&!browserBoardPressFrame)
   originalBoostControl(boostState,boostProfile,boost,!held&&boost&&!boostHeld);
  // In the air, control 0 (131620 on the ride-off tick) only requests control 4 and returns before its boost dispatch; the
@@ -871,3 +887,6 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
 }
 }
 #include "replay_camera.inc" // the replay view (web/replay.js, docs/replay.md)
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/core.inc"
+#endif

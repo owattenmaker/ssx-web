@@ -239,3 +239,6 @@ EMSCRIPTEN_KEEPALIVE float* rail_query(float x,float y,float z){
 // Per rider context (web/rider_context.cpp): construct this translation unit's RIDER_LOCAL_LAZY containers.
 void rider_statics_rails(){rider_touch(&teeterVelocityTables);}
 static const bool riderStaticsRailsReady=(rider_statics_rails(),true);
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/rail_bridge.inc"
+#endif

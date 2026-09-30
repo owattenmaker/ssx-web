@@ -47,7 +47,8 @@ export async function createPeakSetPieces({core, parent, root = '/assets/PEAK1/S
   else try { coreStarts = core._init_stage_world(...ptrs) > 0 && !!liveText; } finally { ptrs.forEach((p) => core._free(p)); }
   const liveData = liveText ? JSON.parse(liveText) : null, flagData = flagText ? JSON.parse(flagText) : null, scrollData = uvText ? JSON.parse(uvText) : null;
   // pv peakAttached (docs/visual-parity.md 41.6): the ParentModifier children of every event course of the world, split on node 0 by the export
-  const attachedData = pv('peakAttached') && params.get('attached') !== '0' ? await text('attached.json').then((t) => (t ? JSON.parse(t) : null)) : null;
+  // (a world without the export: the dev server answers a missing file with index.html, which must not take the set pieces down)
+  const attachedData = pv('peakAttached') && params.get('attached') !== '0' ? await text('attached.json').then((t) => { try { return t ? JSON.parse(t) : null; } catch { console.warn('attached.json unavailable (tools/export_peak_world.py --batches-only)'); return null; } }) : null;
   const attached = attachedData ? new AttachedSetPieces(attachedData, {core}) : null;
   // Avalanches (web/avalanche_gameplay.inc): every location of the world with a recorded one (the world's peak.json roots).
   { const manifest = await fetch(root.replace(/SETPIECES\/$/, '') + 'peak.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);

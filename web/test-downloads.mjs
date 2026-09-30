@@ -78,4 +78,32 @@ r = await fetch(`/assets/m${on}.bin`); assert.deepEqual([...await text(r)], [5, 
 assert.equal(script.length, 0, 'every body read');
 }
 setPv('flyover', null);
+// 11. pv loadCopies: every reader gets the Response's values from the shared bytes (and the one-buffer read of 10)
+setPv('loadCopies', true);
+{ const enc = new TextEncoder(), doc = '\uFEFF{"a":[1,2,3],"s":"\u00e9t\u00e9"}', raw = enc.encode(doc);
+  const serve = (name, headers = { 'content-length': String(raw.length), 'content-type': 'application/json' }) => { calls = 0; script.push({ stream: () => body([raw.slice(0, 5), raw.slice(5)]), headers }); return fetch(`/assets/${name}`); };
+  const want = await new Response(raw).text();
+  r = await serve('n1.json'); assert.equal(r.bodyUsed, false); assert.deepEqual(await r.json(), JSON.parse(want)); assert.equal(r.bodyUsed, true);
+  await assert.rejects(r.text(), TypeError, 'a body reads once');
+  r = await serve('n2.json'); assert.equal(await r.text(), want, 'UTF-8, the BOM dropped as Response.text()');
+  r = await serve('n3.json'); const ab = await r.arrayBuffer(); assert.ok(ab instanceof ArrayBuffer); assert.deepEqual([...new Uint8Array(ab)], [...raw]);
+  r = await serve('n4.json'); const bl = await r.blob(); assert.equal(bl.type, 'application/json'); assert.deepEqual([...new Uint8Array(await bl.arrayBuffer())], [...raw]);
+  r = await serve('n5.json'); const rd = r.body.getReader(); const got = []; for (;;) { const { done, value } = await rd.read(); if (done) break; got.push(...value); } assert.deepEqual(got, [...raw], 'the stream');
+  await assert.rejects(r.json(), TypeError, 'read through the stream: used');
+  r = await serve('n6.json'); const c2 = r.clone(); assert.deepEqual(await c2.json(), JSON.parse(want)); assert.deepEqual(await r.json(), JSON.parse(want), 'clone()');
+  // two readers of one download: each its own buffer (the first transfers and edits its copy)
+  calls = 0; script.push({ stream: () => body([bytes(4, 7)]), headers: { 'content-length': '4' } });
+  const [p1, p2] = await Promise.all([fetch('/assets/n7.bin'), fetch('/assets/n7.bin')]); assert.equal(calls, 1);
+  const b1 = await p1.arrayBuffer(); new Uint8Array(b1).fill(0); structuredClone(b1, { transfer: [b1] });
+  assert.deepEqual([...new Uint8Array(await p2.arrayBuffer())], [7, 7, 7, 7], 'the shared bytes are untouched');
+  r = await fetch('/assets/n7.bin'); assert.deepEqual([...new Uint8Array(await r.arrayBuffer())], [7, 7, 7, 7], 'a later reader within SHARE_MS');
+  calls = 0; script.push({ status: 404, text: 'missing' }); r = await fetch('/assets/n8.bin'); assert.equal(r.status, 404); assert.equal(r.ok, false); assert.equal(await r.text(), 'missing');
+  r = await serve('n9.json', { 'x-decoded-length': String(raw.length), 'content-encoding': 'br', 'content-type': 'application/json' }); assert.equal(r.headers.get('content-encoding'), null); assert.equal(await r.text(), want);
+  calls = 0; script.push({ stream: () => body([enc.encode('{"broken"')]) }); r = await fetch('/assets/n10.json'); await assert.rejects(r.json(), SyntaxError);
+  calls = 0; script.push({ stream: () => body([bytes(3, 1), bytes(4, 2)]), headers: { 'content-length': '5' } });
+  r = await fetch('/assets/n11.bin'); assert.deepEqual([...await text(r)], [1, 1, 1, 2, 2, 2, 2], 'longer than announced');
+  calls = 0; script.push({ stream: () => body([bytes(3, 1)]), headers: { 'content-length': '9' } });
+  r = await fetch('/assets/n12.bin'); assert.deepEqual([...await text(r)], [1, 1, 1], 'shorter than announced');
+  assert.equal(script.length, 0, 'every body read'); }
+setPv('loadCopies', null);
 console.log('Downloads OK: retry on network errors, broken and stalled bodies, 408/429/5xx; 404 passes; final failure rejects');

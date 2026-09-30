@@ -132,9 +132,11 @@ static void attached_activate_children(uint32_t parent){
  for(auto& c:attachedChildren)if(c.parent==parent&&!c.active){c.modifier=ssx::originalParentConstruct(c.parent,c.node,c.offset);c.active=true;}
 }
 // 0x341AA0 at the spline piece's launch (program 54: builtin3 then builtin19 in the same program run).
-static void attached_launch(uint32_t resource){
+// draw=false (pv peakSplines, a streamed world's section run): the section pass already took the program's draws (builtin 3 key 8, builtin
+// 19) in program order; the LiveComp's random start word is not carried over (0: unconfirmed).
+static void attached_launch(uint32_t resource,bool draw=true){
  auto* x=attached_livecomp(resource);if(!x||x->active)return;
- x->live=ssx::originalLiveCompConstruct(x->model,x->authored,x->scale,0u,x->args,[]{return browser_shared_random_next();});
+ x->live=draw?ssx::originalLiveCompConstruct(x->model,x->authored,x->scale,0u,x->args,[]{return browser_shared_random_next();}):ssx::originalLiveCompConstruct(x->model,x->authored,x->scale,0u,x->args,[]{return 0u;});
  x->active=true;x->launchTick=chairliftTicks?chairliftTicks-1:0;attached_activate_children(resource);
 }
 // A section leave destroyed the entity (0x34FD90 -> dtor): the LiveComp and the ParentModifier children on it go with it,
@@ -143,59 +145,68 @@ static void attached_destroy(uint32_t resource){
  if(auto* x=attached_livecomp(resource))x->active=false;
  for(auto& c:attachedChildren)if(c.parent==resource)c.active=false;
 }
-static void attached_reset(){
- attachedLiveComps.clear();attachedChildren.clear();
+// The seeds of one location's attached set pieces (the event package's resource ids).
+static void attached_load_location(const std::string& code){
 #ifdef BROWSER_ATTACHED_ARA1
- if(setPieceLocationName=="ARA1")attached_load<browser_attached_ara1_ns>();
+ if(code=="ARA1")attached_load<browser_attached_ara1_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_BRA2
- if(setPieceLocationName=="BRA2")attached_load<browser_attached_bra2_ns>();
+ if(code=="BRA2")attached_load<browser_attached_bra2_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_BHP1
- if(setPieceLocationName=="BHP1")attached_load<browser_attached_bhp1_ns>();
+ if(code=="BHP1")attached_load<browser_attached_bhp1_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_ASS1
- if(setPieceLocationName=="ASS1")attached_load<browser_attached_ass1_ns>();
+ if(code=="ASS1")attached_load<browser_attached_ass1_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_ABA1
- if(setPieceLocationName=="ABA1")attached_load<browser_attached_aba1_ns>();
+ if(code=="ABA1")attached_load<browser_attached_aba1_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_ABC1
- if(setPieceLocationName=="ABC1")attached_load<browser_attached_abc1_ns>();
+ if(code=="ABC1")attached_load<browser_attached_abc1_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_CRA3
- if(setPieceLocationName=="CRA3")attached_load<browser_attached_cra3_ns>();
+ if(code=="CRA3")attached_load<browser_attached_cra3_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_DRA4
- if(setPieceLocationName=="DRA4")attached_load<browser_attached_dra4_ns>();
+ if(code=="DRA4")attached_load<browser_attached_dra4_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_DSS2
- if(setPieceLocationName=="DSS2")attached_load<browser_attached_dss2_ns>();
+ if(code=="DSS2")attached_load<browser_attached_dss2_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_CBA2
- if(setPieceLocationName=="CBA2")attached_load<browser_attached_cba2_ns>();
+ if(code=="CBA2")attached_load<browser_attached_cba2_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_CHP2
- if(setPieceLocationName=="CHP2")attached_load<browser_attached_chp2_ns>();
+ if(code=="CHP2")attached_load<browser_attached_chp2_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_DBC2
- if(setPieceLocationName=="DBC2")attached_load<browser_attached_dbc2_ns>();
+ if(code=="DBC2")attached_load<browser_attached_dbc2_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_ERA5
- if(setPieceLocationName=="ERA5")attached_load<browser_attached_era5_ns>();
+ if(code=="ERA5")attached_load<browser_attached_era5_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_ESS3
- if(setPieceLocationName=="ESS3")attached_load<browser_attached_ess3_ns>();
+ if(code=="ESS3")attached_load<browser_attached_ess3_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_EBA3
- if(setPieceLocationName=="EBA3")attached_load<browser_attached_eba3_ns>();
+ if(code=="EBA3")attached_load<browser_attached_eba3_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_EHP3
- if(setPieceLocationName=="EHP3")attached_load<browser_attached_ehp3_ns>();
+ if(code=="EHP3")attached_load<browser_attached_ehp3_ns>();
 #endif
 #ifdef BROWSER_ATTACHED_EBC3
- if(setPieceLocationName=="EBC3")attached_load<browser_attached_ebc3_ns>();
+ if(code=="EBC3")attached_load<browser_attached_ebc3_ns>();
 #endif
+}
+static std::vector<std::string> streamed_set_piece_locations(const std::string& world); // web/set_piece_gameplay.inc
+static void attached_reset(){
+ attachedLiveComps.clear();attachedChildren.clear();
+ // pv peakSplines: a streamed world's attached pieces are every event location's, and none is resident (the free-ride locations load
+ // without entities: a spline LiveComp is built with its piece, attached_launch)
+ const bool streamed=setPieceStreamed&&browser_streamed_world(setPieceLocationName);
+ if(streamed){for(const auto& code:streamed_set_piece_locations(setPieceLocationName))attached_load_location(code);return;}
+ attached_load_location(setPieceLocationName);
  for(auto& x:attachedLiveComps){
   if(!x->resident)continue;
   // Resident (built at the load): the race-tick-0 LiveComp words and channel caches.

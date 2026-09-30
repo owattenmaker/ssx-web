@@ -48,6 +48,9 @@ RIDER_LOCAL static int32_t missionRebuildIn=-1;              // ticks until the 
 RIDER_LOCAL static uint32_t missionTicks=0,missionProgramsRun=0,missionUnsupported=0;
 RIDER_LOCAL static bool missionSpeedBuiltin=false; // builtin 59 (3032C0) answered; web/big-challenges.js sets it from pv bcSpeed
 RIDER_LOCAL static int32_t missionOfferGate=0;                      // *(*(W+0x28)): 30A868 posts offers only while 0 or >= 10
+// pv bcDecline (web/big-challenges.js -> mission_lifecycle): bit 0 the 1235F8 reset of a declined / quit challenge, bit 1 builtin 67's
+// 30B7F8 (an event gate ends a running challenge), bit 2 world state 10 enter's 309030 -> 308988 (the context reset at a Load trigger).
+RIDER_LOCAL static int32_t missionLifecycle=0;RIDER_LOCAL static int32_t missionContextResetIn=-1;
 static int32_t mission_find_in(int list,uint32_t id);
 
 // ---- challenge table 0x43EE10 and the status word (153C88 .. 1541D0) ----------------------------------------------------------
@@ -288,7 +291,7 @@ void browser_mission_track_teardown(uint32_t track){ // 230360 -> 308FE0 -> 308F
 }
 // World start / stage VM reset (web/stage_script_gameplay.inc stage_vm_reset): no missions until the first WScript tick builds them.
 void browser_mission_reset(){missionPool.clear();for(auto& l:missionLists)l.clear();missionHud={};missionHud[3]=-1;missionHud[9]=-1;missionHud[11]=-1;missionEvents.clear();missionOffers={};missionOfferRead=missionOfferWrite=0;
- missionActive=-1;missionCurrent=missionCurrentTask=-1;missionPendingOp=0;missionPendingId=-1;missionRebuildIn=-1;missionTicks=0;missionUiEvents.clear();}
+ missionActive=-1;missionCurrent=missionCurrentTask=-1;missionPendingOp=0;missionPendingId=-1;missionRebuildIn=-1;missionContextResetIn=-1;missionTicks=0;missionUiEvents.clear();}
 
 // ---- events (3097E0 .. 3099F8) and the WScript tick (309270) ------------------------------------------------------------------
 static void mission_post_event(uint32_t kind,uint32_t a=0,uint32_t b=0){if(missionEvents.size()<32)missionEvents.push_back({0x70000u|kind,a,b});}
@@ -301,7 +304,17 @@ void browser_mission_trick(const std::array<uint32_t,2>& record){if(mission_mode
 // and New Line challenges listen for it). 20D1D8 / 235FD0 pass their own flag word to 11DF18 (not posted here).
 void browser_mission_placed(){if(mission_mode())mission_post_event(5);}
 // builtin 68 action 2 (22D088, the Load trigger) for the human: state 10, whose exit rebuilds the missions two ticks later.
-void browser_mission_load_trigger(){if(mission_mode())missionRebuildIn=1;}
+void browser_mission_load_trigger(){if(mission_mode()){missionRebuildIn=1;if(missionLifecycle&4)missionContextResetIn=1;}}
+// World state 10 enter (0x2356A8 -> 309030, the tick after the Load trigger): 30B1B8 destroys the three mission lists, 308988 resets
+// the context (C+0 .. +0x3C HUD words with +0xC / +0x24 / +0x2C = -1, +0x40 events, the +0x1C4 offer ring 30C760, +0x2A0 active and
+// +0x2B0 pending id -1, +0x2AC pending op 0), then 308BE0 builds the stages' plain WScript processes (3094C8, not modelled: none of
+// the port's). The missions come back at the exit (235868: 308F38 + 308C60, missionRebuildIn). Before, a challenge running across a
+// Load trigger lost its missions at the exit but kept C+0x2A0, its HUD words and any queued offer.
+static void mission_context_reset(){ // 309030 (missions only) + 308988
+ mission_clear();missionHud={};missionHud[3]=-1;missionHud[9]=-1;missionHud[11]=-1;missionEvents.clear();missionOffers={};missionOfferRead=missionOfferWrite=0;
+ missionActive=-1;missionPendingOp=0;missionPendingId=-1;
+}
+void browser_mission_gate(){if(mission_mode()&&(missionLifecycle&2))mission_reset_all();} // builtin 67 (0x3021B8): 30B7F8 before 22D6C8 for a gate whose 0x445E40 entry is not 1
 void browser_mission_tick(){ // 309270 (game update 2306A8 @230CF0: after the entity passes, before CrowdMan / MultiParticleMan)
  if(!mission_mode()){if(!missionPool.empty())mission_clear();return;}
  ++missionTicks;
@@ -309,6 +322,7 @@ void browser_mission_tick(){ // 309270 (game update 2306A8 @230CF0: after the en
  // the missions of every loaded stage are rebuilt (a running challenge ends with them). A stage that finished loading since
  // (a Transport arrival, the first tick) gets its missions without touching the others.
  if(missionTicks==1)missionRebuildIn=0;
+ if(missionContextResetIn>0)--missionContextResetIn;else if(missionContextResetIn==0){missionContextResetIn=-1;mission_context_reset();}
  if(missionRebuildIn>0)--missionRebuildIn;else if(missionRebuildIn==0){missionRebuildIn=-1;mission_build();}
  else if(stageTables){bool added=false;for(const auto& st:stageTables->stages)if(mission_track_live(st.track)&&mission_track_has_records(st.track)&&!mission_track_built(st.track)){mission_build_track(st.track);added=true;}
   if(added)mission_refresh_visuals();}
@@ -336,7 +350,8 @@ void browser_mission_tick(){ // 309270 (game update 2306A8 @230CF0: after the en
 
 // ---- rider side ------------------------------------------------------------------------------------------------------------------
 static void mission_rider_challenge_start(){push_score();originalHudPostPoints(scoreObject,0x1A,0,0,1.f);pull_score();} // 10F2B8 -> 11A0E0
-static void mission_rider_decline(){} // 1235F8(rider): not modelled (no visible effect in the PS2 prompt captures)
+RIDER_LOCAL extern int browserCrashResetReason; // web/core.cpp: -2 = the 1235F8 entry at the next tick (animation_bridge.cpp begin_decline_reset)
+static void mission_rider_decline(){if(missionLifecycle&1)browserCrashResetReason=-2;} // 1235F8(rider): called from the prompt between ticks; the reset control steps from the next tick
 // 1234D0 (rider vt+0x60, builtin 64): the challenge start point. 270970 (stats), P = M row 3, D = M * (1, 0, 0, 0), 119368
 // score reset, motion 3 + control 13, placement 11D660(P, D, semantic 5, clearance 0), owner +0x290 = 2, control 6 (the start
 // grid controller: 12BE20 entry, released by 12C028 in the race phase), 125038 fade stop, 111890 FX reset, and for devices 0 / 1
@@ -536,6 +551,7 @@ EMSCRIPTEN_KEEPALIVE void mission_prompt(int action,int32_t id){
  }
 }
 EMSCRIPTEN_KEEPALIVE void mission_speed_builtin(int on){missionSpeedBuiltin=on!=0;} // pv bcSpeed
+EMSCRIPTEN_KEEPALIVE void mission_lifecycle(int bits){missionLifecycle=bits;} // pv bcDecline (missionLifecycle)
 // Tests: builtin 59's value for a velocity (cm/s), as float bits.
 EMSCRIPTEN_KEEPALIVE uint32_t mission_test_speed(float x,float y,float z){return std::bit_cast<uint32_t>(mission_speed59({x,y,z}));}
 EMSCRIPTEN_KEEPALIVE int mission_running(){return mission_running_challenge()?1:0;} // 30B8C0
@@ -577,6 +593,8 @@ EMSCRIPTEN_KEEPALIVE void mission_test_rider(float x,float y,float z,const uint3
  physicsState.position={x,y,z};browserRiderTriggers.fill(0xffffffffu);for(int i=0;i<n&&i<63;i++)browserRiderTriggers[size_t(i)]=triggers[i];
 }
 EMSCRIPTEN_KEEPALIVE void mission_test_contact(uint32_t resource){stage_contact(resource,true,true);}
+EMSCRIPTEN_KEEPALIVE void mission_test_load_trigger(){browser_mission_load_trigger();} // builtin 68 action 2 for the human
+EMSCRIPTEN_KEEPALIVE void mission_test_gate(){browser_mission_gate();} // builtin 67's 30B7F8 (key1 0, a 0x445E40 entry other than 1)
 EMSCRIPTEN_KEEPALIVE void mission_test_tick(){browser_stage_entities_tick();}
 // Tests: the PS2 derived state bc-sd-lastgate pokes the running challenge (task index, task states, a table value).
 EMSCRIPTEN_KEEPALIVE void mission_test_set(int task,uint32_t symbol,int32_t value){

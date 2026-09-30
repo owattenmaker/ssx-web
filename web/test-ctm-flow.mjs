@@ -10,7 +10,9 @@ import { CareerScreens } from './career-ui.js';
 import { CharacterSelect } from './character-select.js';
 import { arrivalSteps, podiumSteps, heatSteps, transportSteps } from './cutscenes.js';
 import { CtmPda, ICON } from './ctm-pda.js';
-import { setPv } from './pv-flags.js';
+import { setPv, pv } from './pv-flags.js';
+import { createPauseContexts } from './pause-contexts.js';
+import { createScreenPhases } from './screen-phases.js';
 import { freeRideWorldOf } from './free-ride.js';
 import { switchesWorld } from './ctm-transport.js';
 
@@ -30,10 +32,12 @@ const careerAt = (r, pred) => r.career.find(([, c]) => pred(c))?.[1];
 // ---- the stub page ------------------------------------------------------------------------------------------------
 function page(storage = new Memory()) {
   const log = [];
+  const contexts = createPauseContexts(), phases = createScreenPhases({ rules: () => pv('ps2MenuInput'), contexts: () => contexts });   // as web/ui.js
   const ui = {
+    contexts, phases,
     screen: 'main', index: 0, ready: true, careerMode: true, log, riders: [{ id: 'zoe', name: 'Zoe' }], rider: { id: 'zoe', name: 'Zoe', kind: 'rider' },
     courses: data.courses.map((c) => ({ code: c.code, ready: true })), loading: {}, cutscene: { fadeFrom() {}, drawCover() {}, preFade: async () => {}, clearOverlay() {} },
-    set(s) { this.previousScreen = this.screen; this.screen = s; this.index = 0; log.push(['screen', s]); }, sync() {},
+    set(s) { this.previousScreen = this.screen; this.screen = s; this.index = 0; if (s !== this.previousScreen) phases.enter(s, this.previousScreen); log.push(['screen', s]); }, sync() {},
     items() { return cs.owns(this.screen) ? cs.items(this.screen) : []; },
     rememberRider() { log.push(['remember']); },
     cb: {
@@ -44,6 +48,8 @@ function page(storage = new Memory()) {
     },
   };
   const cs = new CareerScreens(ui); ui.careerUI = cs;
+  // a choice on a screen with an exit (pv ps2MenuInput) acts at its Stop: step the UI frames through it (web/screen-phases.js)
+  { const choose = cs.choose.bind(cs); cs.choose = (i) => { const r = choose(i); for (let k = 0; phases.leaving && k < 200; k++) phases.step(); return r; }; }
   cs.data = data; cs.career = new Career(data, { storage, shop });
   cs.loc = new (cs.loc.constructor)(data.strings);
   return { ui, cs, log, storage };
@@ -462,5 +468,34 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
       w.cs.freeRide = { course: 0 }; w.cs.goWorld(18); w.cs.courseChanged(18); assert.equal(r2.lastStation, 18, 'a transport arrives at once');
     } finally { setPv('crossingArrival', null); } }
   console.log('mountainRide: the whole mountain on the desktop tier, crossings keep the career on the rider\'s location');
+}
+// ---- pv ps2MenuInput through the screen phases (web/screen-phases.js): the race pause's Restart -> No, counted in UI frames (PS2
+// caps/yno81..87: the pause's input at +83, +81 dead), and the MCOMM Quit -> Yes -> the save question the same way ----------------------
+{
+  setPv('ps2MenuInput', true);
+  try {
+    const { ui, cs } = page(); ui.set('game'); ui.set('ctm-pause'); cs.go('ctm-restart', 1);
+    for (let k = 0; k < 40; k++) ui.phases.step();
+    const f0 = ui.phases.frame; cs.choose(1);
+    assert.equal(ui.screen, 'ctm-pause', 'No: back on the pause'); assert.equal(ui.phases.frame - f0, 21, 'No acts on the pass after its Stop (outro 20)');
+    assert.equal(ui.index, 1, 'on Restart');
+    let n = ui.phases.frame - f0; while (!ui.phases.accepts()) { ui.phases.step(); n++; }
+    assert.equal(n, 83, 'the pause takes input at +83');
+    const q = page(); q.cs.freeRide = { course: 17 }; q.ui.set('ctm-mcomm'); q.cs.quitFrom = 'ctm-mcomm'; q.ui.set('ctm-quit');
+    for (let k = 0; k < 31; k++) q.ui.phases.step();
+    const g0 = q.ui.phases.frame; q.cs.choose(0);
+    assert.equal(q.ui.screen, 'ctm-quitsave', 'Yes -> the save question'); assert.equal(q.ui.phases.frame - g0, 21);
+  } finally { setPv('ps2MenuInput', null); }
+  { // the card takes Continue from its phase 5 only (menu-rules.js ctm-objectives activate 30), from any input path
+    setPv('ps2MenuInput', true);
+    try {
+      const { ui, cs, log } = page(); cs.career.startEvent('zoe', MODE.RIVAL_TIME, 14, true); cs.result = { outcome: { round: 1 }, mode: MODE.RIVAL_TIME }; cs.restartToCard(true); await tick();
+      assert.equal(ui.screen, 'ctm-objectives'); assert.equal(ui.contexts.top, 1, 'the card holds context 1');
+      for (let k = 0; k < 30; k++) ui.phases.step(); cs.choose(0); assert.equal(ui.screen, 'ctm-objectives', 'Continue at +30: dead');
+      ui.phases.step(); cs.choose(0); assert.equal(ui.screen, 'game', 'Continue at +31: the ride'); assert.equal(ui.contexts.top, 0, 'and its context goes');
+      assert.deepEqual(last(log, 'ride'), ['ride', cs.freeRide?.course]);
+    } finally { setPv('ps2MenuInput', null); }
+  }
+  console.log('ps2MenuInput: Yes / No outros and the pause intro stepped in UI frames');
 }
 console.log('test-ctm-flow: CTM flow matches the PS2 trace (%d runs, %d observed screens)', Object.keys(ps2.runs).length, ps2.observed.length);

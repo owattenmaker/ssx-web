@@ -116,6 +116,7 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
   let playLog = null; // QA: [time, slot, sound, bus, volume, distance gain, layers] of recent requests
   let listener = null;          // {inv: camera matrixWorldInverse elements (browser metres)}
   const ctx = () => (engine.unlocked && engine.live !== false ? engine.context : null); // (live: pv audioInterrupt, a stopped context takes no voices)
+  const cut = (n) => { try { n?.disconnect(); } catch {} };
 
   function loadBank(slot, name) {
     const current = banks.get(slot);
@@ -302,7 +303,7 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
       let buffer; if (pre) { buffer = pre.get(layer); if (!buffer) continue; } else try { buffer = bufferFor(bank, sound, layer); } catch (e) { console.warn(`Sound ${bank.name}/${sound} failed`, e); continue; }
       const hw = allocate(poolOf(patch), patch.channels, T(0x06, 0));
       if (!hw) { // 3BB588: a layer without voices stops the layers already started; the request fails
-        for (const l of voice.layers) { for (const h of l.hw) release(h); try { l.source.stop(); } catch {} l.done = true; }
+        for (const l of voice.layers) { for (const h of l.hw) release(h); try { l.source.stop(); } catch {} for (const s of l.lfo) try { s.stop(); } catch {} l.done = true; cutLayer(l); }
         voice.layers.length = 0; break;
       }
       const source = context.createBufferSource(); source.buffer = buffer;
@@ -326,7 +327,7 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
       if (volTable) { // volume LFO: gain x tbl/127, 10 ms per step from index 0
         const lg = context.createGain(); lg.gain.value = 0;
         const ls = context.createBufferSource(); ls.buffer = lfoBuffer(`${bank.name}/${sound}/${layer.index}/v`, volTable, (v) => v / 127); ls.loop = true;
-        ls.connect(lg.gain); node.connect(lg); node = lg; ls.start(when); layer.lfo = [ls];
+        ls.connect(lg.gain); node.connect(lg); node = lg; ls.start(when); layer.lfo = [ls]; layer.lg = lg;
       }
       const pitchTable = patchTable(bank.bnk, tags, 0x20, 0x21);
       if (pitchTable) { // pitch LFO: (tbl - 64) x depth >> 6 cents, random start when tag 0x23 != 0
@@ -338,13 +339,13 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
       const pan = context.createStereoPanner ? context.createStereoPanner() : null;
       if (pan) { node.connect(pan); pan.connect(out); } else node.connect(out);
       voice.priority = Math.max(voice.priority, T(0x06, 0));
-      const entry = { source, pan, patchPan, lfo: layer.lfo ?? [], cents, wheelRange, hw, voice, done: false };
+      const entry = { source, pan, patchPan, lfo: layer.lfo ?? [], cents, wheelRange, hw, voice, done: false, nodes: [source, g, eg, layer.lg, pan] };
       for (const h of hw) h.layer = entry;
       voice.layers.push(entry);
       source.start(when); if (stopAt != null) try { source.stop(stopAt); } catch {}
       source.onended = () => { entry.done = true; for (const h of hw) release(h); if (voice.layers.every((l) => l.done)) finish(voice); };
     }
-    if (!voice.layers.length) { out.disconnect(); return null; }
+    if (!voice.layers.length) { cut(out); return null; }
     if (playLog) { playLog.push([+context.currentTime.toFixed(2), slot, sound, bus, volume, position ? +spatial(position, vanish).g.toFixed(2) : 1, voice.layers.length]); if (playLog.length > 400) playLog.shift(); }
     voice.setVolume = (v) => { voice.base = v; };
     voice.setBend = (b) => { // 2ABE78: clamped 0..0x3FFF, changes <= 0xFF ignored
@@ -362,7 +363,13 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
     voices.add(voice);
     return voice;
   }
-  function finish(voice) { if (voice.ended) return; voice.ended = true; voices.delete(voice); for (const l of voice.layers) for (const h of l.hw ?? []) release(h); for (const l of voice.layers) for (const s of l.lfo) try { s.stop(); } catch {} setTimeout(() => { try { voice.out.disconnect(); } catch {} }, 50); }
+  function finish(voice) { if (voice.ended) return; voice.ended = true; voices.delete(voice); for (const l of voice.layers) for (const h of l.hw ?? []) release(h); for (const l of voice.layers) for (const s of l.lfo) try { s.stop(); } catch {}
+    // (50 ms on, when every layer has ended or been stopped: the whole chain lets go, source, patch / envelope / LFO gains, LFO sources,
+    // panner and output. Connected nodes stayed alive for the session (Chrome kept +600 gains in 14 min of a race; WebKit's audio
+    // thread kept processing their automation), and the handle drops its layers: a caller's stale handle holds no nodes.)
+    setTimeout(() => { cut(voice.out); for (const l of voice.layers) cutLayer(l); voice.layers = []; voice.out = null; }, 50); }
+  // Every node of a voice layer, disconnected (idempotent; the hardware voices are released by the caller).
+  function cutLayer(l) { for (const n of l.nodes) cut(n); for (const s of l.lfo) cut(s); }
   // 2AD5F0 / 2ABB38: linear ramp of the voice volume to 0 over `seconds` (default stop 250 ms), then stop.
   function fadeOut(voice, seconds) {
     if (voice.ended || voice.fading) return; voice.fading = true;
@@ -402,8 +409,9 @@ export function createSfx({ engine, fetchJson, fetchBytes, random = Math.random,
       if (on) g.setTargetAtTime(0, t, 0.002); else { v.sent = -1; update(v, false); }
     }
   }
-  function stopAll({ slot = null, tag = null, owner = null, fade = 0.25 } = {}) {
-    for (const v of [...voices]) if ((slot == null || v.slot === slot) && (tag == null || v.tag === tag) && (owner == null || v.owner === owner)) fadeOut(v, fade);
+  // keep(v): voices left playing (game-audio.js world-switch carry: the transport NIS voices, tag 'nis').
+  function stopAll({ slot = null, tag = null, owner = null, fade = 0.25, keep = null } = {}) {
+    for (const v of [...voices]) if ((slot == null || v.slot === slot) && (tag == null || v.tag === tag) && (owner == null || v.owner === owner) && !keep?.(v)) fadeOut(v, fade);
   }
   return {
     SLOT, loadBank, unloadBank, bankOf, play, tick, stopAll, pauseAll, warm,

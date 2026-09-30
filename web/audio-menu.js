@@ -21,6 +21,7 @@ import { LuiScreen } from './lui-player.js';
 import { menuModel, stepMenu, firstEnabled } from './fe-screens.js';
 import { NowPlayingHud } from './now-playing.js';
 import { pv } from './pv-flags.js';
+import { PS2_END_ERROR_SCREENS } from './menu-rules.js';
 import { WIDESCREEN_MODES } from './widescreen.js';
 import { DISPLAY_ENTRY } from './fe-options.js';
 
@@ -214,7 +215,7 @@ export class AudioMenus {
     }
     if (this.audio?.setSettings) this.audio.setSettings(partial); else Object.assign(this.fallback ??= this.settings(), partial);
   }
-  sfx(name, screen = this.ui.screen) { try { this.audio?.ui?.(uiEvent(name, this.ingame(screen))); } catch {} }
+  sfx(name, screen = this.ui.screen) { try { this.audio?.ui?.(uiEvent(name, this.ingame(screen) || PAUSE_SCREENS.has(screen))); } catch {} }   // a CTM overlay's own call (ctm-quitsave Triangle): the overlay set 9..13
   songs() {
     const list = this.audio?.songs?.(); if (list?.length) return list;
     return (this.ui.careerUI?.career?.songs?.() || []).map((s, index) => ({ index, title: s.title, artist: s.artist, album: s.album }));
@@ -428,19 +429,22 @@ export class AudioMenus {
     // Left/Right values the screens cycle (options, rider, profile page, uber list, gear mode...).
     const sig = () => { const cs = ui.characterSelect, fe = ui.feScreens, cu = ui.careerUI; try { return JSON.stringify([ui.cameraView, ui.widescreen, ui.keyboardMode, ui.riderIndex, ui.rider?.id, cs?.cheat?.id, cs?.index, fe?.page, fe?.uberIndex, fe?.keyboard?.col, fe?.keyboard?.row, cu?.lodge?.gearMode, cu?.lodge?.category, cu?.goal]); } catch { return ''; } };
     const snap = () => ({ screen: ui.screen, index: ui.index, flash: !!(ui.feScreens?.flash || ui.characterSelect?.flash || this.flash), sig: sig() });
+    // The state before the key is taken by ui.js's first keydown listener (ui.preKey): a key dispatched on window itself (the pad menus,
+    // the touch deck) runs its window listeners in registration order in Chrome, so this capture listener saw ui.js's move already done.
+    ui.preKey = (e) => { this.before = { e, snap: snap() }; };
     addEventListener('keydown', (e) => {
       const s = ui.screen;
       if (!ui.ready || e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code) || this.owns(s) || s === 'game' || s === 'loading' || s === 'title' && (e.code !== 'Enter' || pv('titleStart'))) return;   // pv titleStart: ui.js leaveTitle plays the title's Start
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape'].includes(e.code)) return;
-      const before = snap(), ingame = PAUSE_SCREENS.has(s) || (s === 'options' && ui.optionsReturn !== 'fe-options' && !!ui.optionsReturn) || s === 'pause';
+      const before = this.before?.e === e ? this.before.snap : snap(), ingame = PAUSE_SCREENS.has(s) || (s === 'options' && ui.optionsReturn !== 'fe-options' && !!ui.optionsReturn) || s === 'pause';
       const off = !!ui.nav?.children?.[ui.index]?.disabled, keyboard = !!ui.feScreens?.keyboard;
       setTimeout(() => {
         const after = snap(), changed = after.screen !== before.screen || after.flash !== before.flash;
         const play = (name) => { try { this.audio?.ui?.(uiEvent(name, ingame)); } catch {} };
-        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') { if (after.index !== before.index && !changed) play('move'); }
+        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') { if (after.index !== before.index && !changed) play('move'); else if (!changed && !e.repeat && pv('ps2MenuInput') && PS2_END_ERROR_SCREENS.has(before.screen)) play('error'); }   // pv ps2MenuInput: a non-wrapping CTM list's blocked end (web/menu-rules.js)
         else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { if (changed || after.index !== before.index || keyboard || after.sig !== before.sig) play('move'); }
         else if (e.code === 'Enter' || e.code === 'Space') { if (keyboard) play('move'); else play(off ? 'error' : 'accept'); }   // keyboard popup 0x1CE254: typing a key = kind 1
-        else if (e.code === 'Escape') { if (changed && !PANELS.has(before.screen)) play('accept'); }
+        else if (e.code === 'Escape') { if (changed && !PANELS.has(before.screen) && !(pv('ps2MenuInput') && (before.screen === 'ctm-bcstart' || before.screen === 'ctm-bcfail'))) play('accept'); }   // pv ps2MenuInput: Triangle on 63bc_start / 90bc_fail is silent (0x1F7590 / 0x1F77F0)
       }, 0);
     }, true);
   }
@@ -638,4 +642,7 @@ const PANELS = new Set(['results', 'ctm-results', 'ctm-objectives', 'ctm-records
 // In-game menus (overlay listener 0x1A2F70, events 9..13): pause family, MCOMM and its transport map, results, and the
 // lodge (cFEStateLodge / BuyAttrib / CareerStats / LodgeRiderDetail are overlay states).
 const PAUSE_SCREENS = new Set(['pause', 'ctm-pause', 'ctm-giveup', 'ctm-restart', 'ctm-mcomm', 'ctm-quit', 'results', 'ctm-results', 'ctm-records',
-  'ctm-peaks', 'ctm-goals', 'ctm-events', 'ctm-confirm', 'ctm-lodge', 'ctm-attributes', 'ctm-details', 'ctm-saveprompt', 'ctm-saved']);
+  'ctm-peaks', 'ctm-goals', 'ctm-events', 'ctm-confirm', 'ctm-lodge', 'ctm-attributes', 'ctm-details', 'ctm-saveprompt', 'ctm-saved',
+  // 87yndialog's other screens (as ctm-quit / giveup / restart: 0x20DB64 Triangle = kind 6 -> ev 9) and the Session overlay 0x20 (its blocked end
+  // is snd 0xD, 0x39B5E4) with its in-screen confirm
+  'ctm-quitsave', 'ctm-bcsure', 'ctm-session', 'ctm-sessconfirm']);

@@ -161,20 +161,32 @@ export function trailSpritesFast(K, F, capacity, cursor, ringA, ringB, ringBits,
 }
 
 // Parse the core export (web/stage_world.inc stage_world_particles): effects with their word views.
-export function readParticleEffects(core) {
+// pool (optional, the renderer's; docs/web-render-performance.md "Per-frame garbage"): {effects: [], U, F} kept across frames. The
+// returned array and its records are the pool's, rewritten by the next call; a record's views are made again only when the heap
+// buffer, its word offset or its ring capacity changed (the views read the heap live, so the same views see this frame's words).
+export function readParticleEffects(core, pool = null) {
   if (!core._stage_world_particles) return [];
-  const p = core._stage_world_particles() >> 2, U = new Uint32Array(core.HEAPU8.buffer), Fv = new Float32Array(core.HEAPU8.buffer), n = U[p]; let at = p + 1; const effects = [];
+  const p = core._stage_world_particles() >> 2, buffer = core.HEAPU8.buffer;
+  if (pool && pool.buffer !== buffer) { pool.buffer = buffer; pool.U = new Uint32Array(buffer); pool.F = new Float32Array(buffer); pool.effects.length = 0; }
+  const U = pool ? pool.U : new Uint32Array(buffer), Fv = pool ? pool.F : new Float32Array(buffer), n = U[p]; let at = p + 1;
+  const effects = pool ? pool.effects : [];
   for (let k = 0; k < n; k++) {
     const kind = U[at], textureId = U[at + 1], blend = U[at + 2], resource = U[at + 3]; at += 4;
-    const K = U.subarray(at, at + 84), F = Fv.subarray(at, at + 84); at += 84;
-    const e = {kind, textureId, blend, resource, K, F};
+    let e = pool ? effects[k] : undefined;
+    if (e === undefined || e.at !== at) { e = {kind, textureId, blend, resource, K: U.subarray(at, at + 84), F: Fv.subarray(at, at + 84), at, ringAt: -1}; if (pool) effects[k] = e; }
+    else { e.kind = kind; e.textureId = textureId; e.blend = blend; e.resource = resource; }
+    at += 84;
     if (kind === 1) {
-      e.capacity = U[at]; e.cursor = U[at + 1]; at += 2;
-      e.ringA = Fv.subarray(at, at + 4 * e.capacity); at += 4 * e.capacity;
-      e.ringB = Fv.subarray(at, at + 4 * e.capacity); e.ringBits = U.subarray(at, at + 4 * e.capacity); at += 4 * e.capacity;
-    }
-    effects.push(e);
+      const capacity = U[at]; e.cursor = U[at + 1]; at += 2;
+      if (e.ringAt !== at || e.capacity !== capacity) {
+        e.capacity = capacity; e.ringAt = at;
+        e.ringA = Fv.subarray(at, at + 4 * capacity); e.ringB = Fv.subarray(at + 4 * capacity, at + 8 * capacity); e.ringBits = U.subarray(at + 4 * capacity, at + 8 * capacity);
+      }
+      at += 8 * capacity;
+    } else if (e.capacity !== undefined) { delete e.capacity; delete e.cursor; delete e.ringA; delete e.ringB; delete e.ringBits; e.ringAt = -1; }
+    if (!pool) effects.push(e);
   }
+  if (pool) effects.length = n;
   return effects;
 }
 

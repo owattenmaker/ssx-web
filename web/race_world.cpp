@@ -71,6 +71,16 @@ EMSCRIPTEN_KEEPALIVE void race_world_reset(const float* init){
  for(unsigned a=0;a<6;++a)for(unsigned b=0;b<6;++b)world.relationship[a][b]=int32_t(*p++);
  world.pacingNegative.fill(-50000);world.pacingPositive.fill(50000);world.designatedSlot.fill(-1);
 }
+// 0x10F3B8 (10F398, from 1297C8(C, 1): the rider manager's restart 129768, which 230180 calls through C vt+0xCC+0x28 with 3):
+// every record of the roster made again in place (0x10F420..0x10F4F4): +0 = a != b and b loaded (11D640; every rider here),
+// +8 = 1e10 ([gp-0x7CB0]), +0xC .. +0x20 = 0. The +4 kind word, the ranks and the relationship levels stay (web/ai-racers.js
+// resume, the WS15 return; the game tick restarts at 0 with it). Not modelled: +0x4D8 = 113128(rider), +0xE8 = -1.
+EMSCRIPTEN_KEEPALIVE void race_world_pair_restart(){
+ for(unsigned a=0;a<6;++a)for(unsigned b=0;b<6;++b){auto& r=world.records[a][b];r.pair=OriginalPairRecord{};r.pair.enabled=a!=b&&a<world.count&&b<world.count;r.flag1C=r.reaction20=0;}
+}
+// 128A48(C, mode) (0x128A48..0x128AB4): game info +0x74 = mode; mode 0 sets every rider's +0xEC to 0, another mode to its list index.
+// World state 1's phase 1 calls it with 0 after a WS15 return (0x234570; PS2 c0a-ret3: ranks and mode 0 from the return's tick 3).
+EMSCRIPTEN_KEEPALIVE void race_world_rank_mode(int mode){world.rankMode=mode;for(unsigned s=0;s<6;++s)world.rank[s]=mode==0?0:int32_t(s);}
 // Rank mode 2: each slot's score object total *(+0x790)+0x198 at the tick start (web/ai-racers.js beginTick).
 EMSCRIPTEN_KEEPALIVE void race_world_score(unsigned slot,int32_t total){if(slot<6)world.score[slot]=total;}
 // riders: per slot [x, y, z (source cm), +0x4D0 remaining, +0x878, +0x880 == 7]
@@ -114,6 +124,10 @@ EM_JS(void,js_pair_attack,(int victim,int attacker,float x,float y,float z,float
 RIDER_LOCAL uint32_t pairDisabledMask=0;
 // In-race relationship levels (0x155BF0 changed a record; web/lineup.js): 6x6 relationship(own, peer) for 10F560.
 EMSCRIPTEN_KEEPALIVE void race_world_set_relationships(const float* m){for(unsigned a=0;a<6;++a)for(unsigned b=0;b<6;++b)world.relationship[a][b]=int32_t(m[a*6+b]);}
+// A slot's setup record turned into a player setup (149A88(., slot): character 4, +0x10 |= 2; web/animation_bridge.cpp
+// rider_setup_player_reset for the rider's own words), the pair inputs 107888 resolves from it: 0x11FF98's weight is CHARDB[4].+0x40
+// (65: 0x530970 + id x 0x88 + 0x40) and the collision / attack stat getter 0x148F50 returns 0.5 (1477E8 set: 0x148F98).
+EMSCRIPTEN_KEEPALIVE void race_world_player_setup(unsigned slot){if(slot<6){pairWeight[slot]=65;pairStat[slot]=pairAttackStat[slot]=0.5f;}}
 // weights: [weight attribute, collision stat, attack stat] x 6, then knockdown cheat.
 EMSCRIPTEN_KEEPALIVE void race_world_pair_setup(const float* p){for(unsigned s=0;s<6;++s){pairWeight[s]=int(p[3*s]);pairStat[s]=p[3*s+1];pairAttackStat[s]=p[3*s+2];}pairKnockdownCheat=p[18]!=0;}
 // One slot's 0x107888 pass (after the shared pose). Returns the dispatch counts.
@@ -166,3 +180,6 @@ EMSCRIPTEN_KEEPALIVE float* race_world_pair_respond(int target,int attacker,floa
  out[0]=counts.checks;out[1]=counts.separations;out[2]=counts.impulses;out[3]=counts.attacks;out[4]=counts.reactions;return out;
 }
 }
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/race_world.inc"
+#endif

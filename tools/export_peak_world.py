@@ -236,7 +236,7 @@ def event_attached_doc(code):
 def event_attached(code, own):
     """ParentModifier children and drawn spline LiveComps of an event course (tools/export_attached_setpieces.py, web/attached-setpieces.js),
     split as web/prepare.py does: a child's meshes on node 0 (drawn with the parent's node matrix, 0x357108), a drawn spline LiveComp's
-    meshes per node. Returns ((resource, mesh) -> node, the children: drawn although the free-ride audit may hide their static draw)."""
+    meshes per node. Returns ((resource, mesh) -> node, the children). A child the free-ride audit hides stays hidden (web_package)."""
     doc = event_attached_doc(code); nodes = {}
     for x in doc.get('splineLiveComps', []):
         if x['drawn'] and x['resource'] in own:
@@ -381,7 +381,8 @@ def web_package(code, batches_only=False):
         hidden = sorted(set(hidden) | mine(sp['flags']))
     # The event course's moving instances and ParentModifier / spline-LiveComp splits (web/prepare.py: rollers, attached.json).
     moving = event_moving(code, own); attached_nodes, children = event_attached(code, own)
-    hidden = [r for r in hidden if r not in children]
+    # A child the free-ride audit hides (the blimp ads / lights of BHP1 and CHP2: children of spline LiveComps, which the streamed core
+    # does not run yet) keeps its hidden tag: the split is there for web/attached-setpieces.js, the draw stays as the audit says.
     live_nodes = {**({k: v for k, v in sp['livecomp_nodes'].items() if k[0] in own} if sp else {}), **attached_nodes}
     batches, new = batch_module.spatial_batches(d, vs, inds, triangle_blend=triangle_blend, triangle_wrap=triangle_wrap, triangle_env=triangle_env, hidden_resources=hidden,
         moving_resources=moving, lit_resources=event_lit(code, own),

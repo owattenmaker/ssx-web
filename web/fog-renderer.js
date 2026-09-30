@@ -1,12 +1,13 @@
 import {attachEncodedSnowComposite} from './snow-composite.js';import {copyFogState} from './fog-shared.js';
 import {depthStencilPassOptions} from './depth-stencil-target.js';
-import {pv} from './pv-flags.js';
+import {pv} from './pv-flags.js';import {trackCompiles} from './compile-abort.js';
 import {DataTexture,RGBAFormat,UnsignedByteType,NearestFilter,NoColorSpace,RenderPipeline} from 'three/webgpu';
 import {Fn,pass,texture,uniform,vec2,vec4,floor,round,mod,clamp,mix,select,screenUV} from 'three/tsl';import {fromFrame} from './frame-space.js';/* the frame's colour space (pv encodedBlend) */
 
 // Source-derived depth/CLUT/encoded-byte blend. The scene's lighting and GS
 // rasterization are not reproduced by this pass; see fog-painter-recovery.md.
 export function createFogRenderer(renderer,scene,skyScene,camera,stage='',snow=null,tint=null,sun=null,glow=null,glare=null){
+ if(pv('compileAbort'))trackCompiles(renderer);/* the warms through compileObject / compileAsync can be stopped at a course unload (web/compile-abort.js) */
  const palette=new DataTexture(new Uint8Array(1024),256,1,RGBAFormat,UnsignedByteType);
  palette.minFilter=palette.magFilter=NearestFilter;palette.generateMipmaps=false;palette.colorSpace=NoColorSpace;palette.needsUpdate=true;
  const slope=uniform(0),offset=uniform(0),enabled=uniform(0);

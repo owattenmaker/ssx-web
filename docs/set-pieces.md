@@ -482,11 +482,30 @@ moves each, from the stage programs (tools/set_piece_location.py + export_startf
 - Re-running the exporter today also changes the seeds of BHP1 / CHP2 / CRA3 / EHP3 (new pieces) and the multisplines of CBA2 /
   CHP2 / EBA3 / EHP3; the headers were left as they are (physics agent).
 
-**os609 helis (open).** The countdown audit classes them draw 'none': `export_event_membership.draw_class` needs flag 0x100 for an
-entity draw, and their flags 0x50015205 carry 0x200 instead (1032C0 / 101B60 keep the 0x100 / 0x200 pair as a list parity; the EBA3
-rocks alternate 0x345 / 0x245 with their entity alive). Their entity is a LiveComp (0x490B10 -> 0x356298: flags & 4), so the PS2 can
-draw them. Forced on, the page's LiveComp player puts the ABC1 heli 9 m from the start camera at tick 2 and behind the camera in all
-33 ABC1 frames; no kept PS2 frame shows it. The fix (draw_class accepting 0x200, re-audit, unhide) waits for one.
+**os609 helis (pv `heliWorld`, off).**
+- **Where:** the heli is a LiveComp (0x490B10) whose section program 3 loops frames 551..677 (the hover). Its node matrices in PS2
+  RAM (*(entity - 0x30 + 0x60), world) put it about 5 m from the start camera, above and behind it. It stays there the whole race
+  (ABC1 ticks 2 .. 3600), so no race frame shows it: every kept camera projects it behind.
+- **The draw rule, settled on the PS2:** derived state `local/ps2-capture/runs/heli/abc1-moved2` (happiness-ready + the pad script
+  `heli-abc1-look.json`; pokes of the heli instance +0x40 translation to 30 m ahead of the tick-40 camera; silent).
+  - The node matrices follow the instance matrix, and the PS2 draws the heli at ticks 40 and 60 (`abc1-moved2.tick40/60.png`).
+  - The flags are 0x50015305 at 40 and 0x50015105 at 60: drawn at both parities.
+  - So an entity in the renderer's dynamic list carries 0x100 or 0x200: 1032C0 / 101B60 add it with 0x100 and flip the pair each
+    rebuild (0x1030F4..0x103160), and 103358 clears 0x100 at a list reset. The countdown audit's 0x50015205 (0x200 alone) was
+    classed 'none' only because `draw_class` required 0x100.
+- **Fixes:**
+  - `tools/export_event_membership.draw_class` now takes 0x100 or 0x200. A re-audit also turns these entities from 'none' to
+    'entity': ASS1 ravensplineanimb, CHP2 blimpa / blimpad x 2, BHP1 blimpad x 2 / blimplights, ABC1 snowsheet_1000, EBC3 summit
+    flag pole. Their packages change only when they are re-prepared.
+  - Page, pv `heliWorld`: `set-pieces-renderer.js` draws the os609 LiveComp meshes while their player runs, as the liveCompObject
+    class. While an arrival set (SETS/<LOC>HELI, pv bcHeli / heliHover) stands in for the heli, the world meshes stay hidden with its
+    copy (`cutscene-stage-sets.js adoptWorldCopy`, also for meshes added after the set showed).
+- **Checked (Chrome, WebKit):**
+  - The same move applied in the page (a wrapper group at the poke's offset), camera pinned to the derived run's records: the heli
+    is at the PS2's place and pose at 40 / 60. The rotor phase differs, because the section loop starts at race tick 0 (the LiveComp
+    gap above).
+  - Switch off: absent.
+  - ABC1 race frames 60 / 181 / 400: 13 heli meshes in the scene, behind the camera, no pixel change (as on the PS2).
 
 ## MultiSpline section count and the Object-entity destroy (2026-09-28, core46)
 
@@ -508,3 +527,93 @@ draw them. Forced on, the page's LiveComp player puts the ABC1 heli 9 m from the
   - A section-built lift starts at refs 1 and records whether its owner is an Object entity (`stage_slot_calls(resource, 1, 3)`: no builtin 3).
   - In the entity pass, an Object-owned lift at refs <= 0 runs its slot-3 program, or is released (`browser_release_section_lift`, shared-world event 7). The section model then forgets its entity, so the next enter runs slot 1 again.
   - Before, the bin went at the leave tick itself (11341). Now it goes at 11342, as on the PS2.
+
+## Regenerated location seeds: section-streamed ravens / eagles, the blimps' guarded programs (2026-09-28, core62)
+
+- **Regeneration.** `tools/export_set_pieces.py --location` for BHP1 / CHP2 / CRA3 / EHP3 adds seven slot-1 seeds to `web/generated/set_piece_seed_<LOC>.hpp`:
+  - BHP1: blimpa 63247.
+  - CHP2: ravensplineanima 203799, ravensplineanimb 152343, blimpa 231191.
+  - CRA3: eaglesplineanima 332056.
+  - EHP3: eaglesplineanima 19756, eaglesplineanimb 28460.
+
+  The old rows are kept verbatim, and everything outside `splinePieces` is byte-identical. `local/event-activation/<LOC>/set-pieces.json` (BHP1, CBA2, CHP2, CRA3, EBA3, EHP3) gain `drawn_spline_pieces` and the tram `multisplines` entries: CBA2 152086, CHP2 226327, EBA3 91433, EHP3 38444. The previous jsons had `multisplines: []` although the headers carried the trams.
+- **PS2, ravens and eagles.**
+  - Each is a LiveComp with a looping Spline (end mode 1), resident from the load, whose own slot-1 program is builtins 3, 31, 19.
+  - A section leave destroys the entity (0x34FD90), and the next enter rebuilds it. This is the R&B raven B path (`loop_relaunch_seed`).
+  - Kept savestates (the modifier addresses stay the same between states, so the distance drops are loop wraps):
+    - `peak2/chp2-full`: 203799 lives through 2820 (modifier 0x5B8000) and is gone by 3218. 152343 lives through 3618.
+    - `peak2/cra3-full`: 332056 lives through 818 and is gone by 1218.
+    - `peak3/perpendiculous-full`: 19756 lives through 3618 and is gone by 4018. 28460 lives through 4018.
+  - Without the seeds, the port kept these loops flying, and drawn, after the destroy. Now they go at 3161, 1161 and 3881.
+- **PS2, the blimps.**
+  - BHP1 fencecollision_1001 (52495, program 39) and CHP2 96279 (program 82) start with `if builtin52(blimp) == 1 return`. The rest of the program rebuilds the blimp: builtin 0 on the blimpads, builtin 21, builtin 3 + 19 on the blimp, then builtin 18 parents.
+  - The blimp is resident all run, so the program returns at its head.
+  - The section model (`engine/section_streaming.hpp` runProgram) already skipped its draws. The port still ran `section_start_piece`: the VM program (builtin-0 entity marks on the blimpads and blimplights) and, with the new seeds, a second blimp Spline at tick 19.
+  - Now `Event::guarded` marks such an enter, and `section_scan` (`web/section_gameplay.inc`) skips `section_start_piece` for it.
+  - No other program is guarded with a live target: the Peak 1/2 streamed copies start without the blimp, and the other BHP1 guards belong to MultiSpline owners, whose enter runs no program.
+- **Check.** `web/test-set-piece-seeds.mjs` (new, in test:all) compares every Spline / Position / MultiSpline entity of the kept savestates. Launched pieces are bit-exact on distance and translation; resident loops are checked by presence.
+
+  | Capture | States | Spline entities | MultiSplines |
+  |---|---|---|---|
+  | setpieces-bhp1/full | 11 | 13/13 | 88/88 |
+  | chp2-full | 9 | 27/27 | 6/6 |
+  | perpendiculous-full | 10 | 21/21 | 9/9 |
+  | cra3-full | 3 (until the solo replay leaves at 1384) | 5/5 | none |
+
+  Core60 fails it: raven 203799 is still flying at 3218. Other checks, all passing:
+  - The capture gates of BHP1, CHP2, CRA3 (including AI), EHP3, CBA2, EBA3 and peak1-arrive-bhp1: 33 scenarios.
+  - Sim-diff core60 against core62 is identical.
+  - stage-world, set-pieces, set-pieces-locations and attached-core pass.
+- **Rendering.** The moving set of spline pieces is unchanged, because every new piece was already a resident `spline_modifiers` resource. The trams join `tools/export_peak_world.py event_moving` through the jsons' `multisplines` when the packages are prepared again.
+- **Open.** None of these captures shows a raven or eagle being rebuilt at a later enter after its destroy. That code path is the same as R&B raven B (`lineups-ASS1`).
+
+## Streamed worlds: Spline pieces and spline LiveComps (pv `peakSplines`, off; 2026-09-29, CTM fixes agent)
+
+**The gap.** `locationBatches` renames every streamed package's location to PEAK1..3 / MOUNTAIN. `set_piece_tables("PEAKn")` was
+empty, so `setPieceCourse` stayed false and none of the free-ride worlds' 74 + 19 Spline / MultiSpline programs moved: the dragon,
+osprey, raven, eagle, blimp, cessna, rocket and train flybys, the chairlift chairs, the BHP1 / ABA1 / BRA2 traffic and bins. Their
+trigger sounds still played. Decomp: [ctm-decomp-freeride.md](ctm-decomp-freeride.md) item 3.
+
+**PS2 rules.**
+- builtin 19 = 0x2FDED0 -> 0x355AD0 -> constructor 0x359460: exactly one shared-RNG draw (0x317830), even with zero jitter.
+- builtin 20 (0x2FE0C0 -> 0x359F88) and builtin 18 (0x2FDC60 -> 0x357038) make no draw.
+- A location's unload (0x230360 -> 0x3551A8(gp+0x2898, 1 / 8, track)) deletes its entities: no slot-3 program, no draw.
+- The resource ids of the event and the streamed packages are the same (source hash f4952d8a...).
+
+**Built (core, behind `set_piece_streamed(on)`; free-ride.js next to stage_object_route; peak-capture.mjs env `PEAK_SPLINES`):**
+- `set_piece_tables` for a streamed world is the union of its event locations' Spline pieces and trigger owners:
+  - PEAK1: ARA1, BRA2, BHP1, ASS1, ABA1, ABC1;
+  - PEAK2: CRA3, DRA4, DSS2, CBA2, CHP2, DBC2;
+  - PEAK3: ERA5, ESS3, EBA3, EHP3, EBC3;
+  - MOUNTAIN*: all 17.
+  - So the contact, timer and gated builtin 19 launches run there as in the events. The section pass already draws for the slot-1
+    enters.
+- `attached_reset` loads every location's spline LiveComps and ParentModifier children. None is resident (the free-ride locations load
+  without entities), and a section-run launch takes no second draw (`attached_launch(resource, draw)`; the LiveComp's random start
+  word is 0 there, unconfirmed).
+- `browser_set_piece_track_teardown(track)` runs from browser_stage_track_teardown (peak_world set_state 7). It drops that track's
+  pieces (collision back to the countdown flags), their owners' builtin 52 guards and its attached LiveComps.
+
+**Checked.**
+- Streamed gates with PEAK_SPLINES=1, all at their baselines: apr / p2r / apj-start, fr-dra4a-full 8403, fr-throne-unload, p3b-right3000,
+  fr-d-glide, frd-regions, fr-aara1-glide, arrive-ass1 / -bhp1.
+- Event set-piece gates with it off, all at their baselines: metro-event-race, uber-bag, rnb-event-tuck, setpieces/full, dra4-race-ai,
+  parity-ai/ass1, eba3-rock-hit, ebc3-wind-rail2.
+- RNG draw counts per tick (`RNG_NO_ALIGN=1 RNG_DRAWS_DUMP`, against the capture's RNG words; tool: the research `draws.py`):
+  - fr-dra4a-full's spline trigger ticks 356 / 1082 / 1551 / 4017 / 4049 now equal the PS2's (they were 1-2 short; `--sync-rng` hid it);
+  - allpeak/apr-start is draw-count exact on all 13,999 ticks (its only gap was the EBC3 cessna at 9925);
+  - no new mismatch.
+- Page (Chrome, PEAK1 at R&B, the scratch re-split packages served as an overlay): the ravens (mdl_ASS1_ravensplineanimb/c) launch
+  at their section, and their 10 LiveComp meshes draw on their splines (pv peakAttached).
+
+**Data (not in web/public/assets yet).** `tools/export_peak_world.py --peak N --batches-only --out <scratch>` for N = 1..3 and
+`export_mountain_world.attached(src, out)` for MOUNTAIN wrote the `moving_resource` / `livecomp_resource` split packages and
+SETPIECES/attached.json (local/ctm-fix/export). Without them there is nothing to draw: the switch then only moves the core state
+and the RNG. peak-set-pieces.js now survives a missing attached.json: the dev server answers a missing file with index.html.
+
+**Not built yet:**
+- the MultiSplines (the chairlifts, BHP1 traffic, BRA2 bins, the Peak 2/3 trams): section-built from construction states, with clone ids
+  per world;
+- the resident loops (blimps);
+- the ESS3 tram (no seed);
+- CRA3 ospreyfocus, the ABC1 tumbler owner 80902, and DSS2's five mission-start targets.

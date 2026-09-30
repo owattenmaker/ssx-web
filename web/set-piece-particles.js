@@ -16,6 +16,7 @@ import {registerEncodedEffect} from './snow-composite.js';
 import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 import {SPRITE_FLOATS, MAX_HALF_PIXELS, SOURCE_VIEWPORT, burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations} from './set-piece-particle-eval.js';
+import {setUpdateRange} from './heap-views.js';
 export {burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations};
 
 async function loadTextures(fetchJson, fetchBytes) {
@@ -77,21 +78,31 @@ export async function createSetPieceParticles({core, particlesDoc, origin = [0, 
   registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => { for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true; return false; }}); // main.js warmupRender shows every mesh (count 1, zero size): the encoded pass pipelines build during loading
   let scratch = new Float32Array(4096 * SPRITE_FLOATS);
   const state = {effects: 0, sprites: 0, dropped: 0, unknown: 0};
+  // Per-frame garbage (docs/web-render-performance.md): the effect records are pooled (readParticleEffects pool) and the batches'
+  // lists kept per key; keysThisFrame holds this frame's keys in first-appearance order, as the per-frame Map iterated them.
+  const pool = {effects: [], buffer: null, U: null, F: null}, lists = new Map(), keysThisFrame = []; let frameNo = 0;
+  const keyOf = (e) => { if (e.keyTexture !== e.textureId || e.keyBlend !== e.blend || e.keyKind !== e.kind) { e.keyTexture = e.textureId; e.keyBlend = e.blend; e.keyKind = e.kind; e.key = `${e.textureId}|${e.blend}|${e.kind}`; } return e.key; };
   return {
     group, state, meshes,
     // Once per rendered frame after the tick(s): read the core's effects and rebuild the batches.
     update() {
-      const effects = readParticleEffects(core);
+      const effects = readParticleEffects(core, pool);
       for (const m of meshes.values()) m.count = 0;
-      const buckets = new Map();
-      for (const e of effects) { const key = `${e.textureId}|${e.blend}|${e.kind}`; if (!buckets.has(key)) buckets.set(key, []); buckets.get(key).push(e); }
+      frameNo++; keysThisFrame.length = 0;
+      for (let i = 0; i < effects.length; i++) {
+        const e = effects[i], key = keyOf(e); let list = lists.get(key);
+        if (list === undefined) { list = []; list.frame = 0; lists.set(key, list); }
+        if (list.frame !== frameNo) { list.frame = frameNo; list.length = 0; keysThisFrame.push(key); }
+        list.push(e);
+      }
       state.effects = effects.length; state.sprites = 0; state.unknown = 0;
-      for (const [key, list] of buckets) {
+      for (let b = 0; b < keysThisFrame.length; b++) {
+        const key = keysThisFrame[b], list = lists.get(key);
         let target = meshes.get(key);
         if (!target) { const [texture, blend, kind] = key.split('|').map(Number); if (!maps.has(texture)) { state.unknown++; continue; } target = build({texture, blend, kind}); meshes.set(key, target); }
         let n = 0;
-        for (const e of list) {
-          const limit = scratch.length / SPRITE_FLOATS;
+        for (let j = 0; j < list.length; j++) {
+          const e = list[j], limit = scratch.length / SPRITE_FLOATS;
           n = e.kind === 0 ? burstSpritesFast(e.K, e.F, scratch, n, limit) : trailSpritesFast(e.K, e.F, e.capacity, e.cursor, e.ringA, e.ringB, e.ringBits, scratch, n, limit);
           if (n >= limit) { state.dropped++; const grown = new Float32Array(scratch.length * 2); grown.set(scratch); scratch = grown; }
         }
@@ -103,7 +114,7 @@ export async function createSetPieceParticles({core, particlesDoc, origin = [0, 
           col[i * 4] = scratch[o + 4] / 128; col[i * 4 + 1] = scratch[o + 5] / 128; col[i * 4 + 2] = scratch[o + 6] / 128; col[i * 4 + 3] = scratch[o + 7] / 128;
         }
         target.count = n; state.sprites += n;
-        if (n) { target.centre.clearUpdateRanges(); target.centre.addUpdateRange(0, n * 4); target.centre.needsUpdate = true; target.colour.clearUpdateRanges(); target.colour.addUpdateRange(0, n * 4); target.colour.needsUpdate = true; }
+        if (n) { setUpdateRange(target.centre, 0, n * 4); setUpdateRange(target.colour, 0, n * 4); }
       }
       for (const m of meshes.values()) { m.mesh.count = Math.max(m.count, 1); m.mesh.visible = m.count > 0; }
     },

@@ -87,6 +87,22 @@ export async function feedEventWorld(core, cut, hashPtr, { yieldFn = nextFrame, 
   } finally { core._peak_world_append(0); }
   const w = put(cut.keys.world), t = put(cut.keys.body); try { core._event_world_seal(w, t); } finally { core._free(w); core._free(t); }
 }
+// pv eventInWorldAi (docs/ctm-events-in-world.md stage 4): the same load into a computer rider's context of the streamed world, whose camera
+// terrain (shared by every context) is the streamed world's: no init_terrain, and the parts build the context's body collision only
+// (core event_world_bodies_only). The seal fills the parse caches the other contexts copy by cut.keys.
+export async function feedContextWorld(core, cut, hashPtr, { yieldFn = nextFrame, budgetMs = EVENT_BUDGET_MS, alive = null } = {}) {
+  const put = (t) => { const b = new TextEncoder().encode(t + '\0'), p = core._malloc(b.length); core.HEAPU8.set(b, p); return p; };
+  const call = (fn, text, ...rest) => { const p = put(text); try { return fn(p, ...rest); } finally { core._free(p); } };
+  const tick = stepper(yieldFn, budgetMs, alive);
+  core._event_world_begin(); core._event_world_bodies_only();
+  call(core._init_world_collision, cut.world.head, hashPtr); call(core._init_body_terrain, cut.terrain.head);
+  core._peak_world_append(1);
+  try {
+    for (const part of cut.world.parts) { call(core._init_world_collision, part, hashPtr); await tick(); }
+    for (const part of cut.terrain.parts) { call(core._terrain_part, part); await tick(); }
+  } finally { core._peak_world_append(0); }
+  const w = put(cut.keys.world), t = put(cut.keys.body); try { core._event_world_seal(w, t); } finally { core._free(w); core._free(t); }
+}
 // init_rails of the whole catalog, in parts.
 export async function feedEventRails(core, cut, hashPtr, { yieldFn = nextFrame, budgetMs = EVENT_BUDGET_MS, alive = null } = {}) {
   const put = (t) => { const b = new TextEncoder().encode(t + '\0'), p = core._malloc(b.length); core.HEAPU8.set(b, p); return p; };

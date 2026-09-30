@@ -104,7 +104,9 @@ struct Program {
     struct Draw {bool liveComp=false;uint32_t target=0;};   // target 0 = the running instance
     std::vector<Draw> draws;                        // builtin3 key8/key6 (only when it constructs), builtin19, builtin77
 };
-struct Event {uint32_t resource=0;bool enter=false;Action action=Action::None;int32_t program=-1;uint8_t rngDraws=0;};
+// guarded: the slot-1 program returned at its `if builtin52(guard) == 1` head (0x303130: the target's +0xC entity is set), so
+// nothing after it runs (BHP1 fencecollision_1001 / CHP2 96279: the resident blimp's rebuild programs 39 / 82).
+struct Event {uint32_t resource=0;bool enter=false;Action action=Action::None;int32_t program=-1;uint8_t rngDraws=0;bool guarded=false;};
 
 // 0x101B60 state.  Instances are kept sorted by resource.
 struct Activation {
@@ -112,6 +114,12 @@ struct Activation {
     std::map<int32_t,Program> programs;
     int32_t lastScan=-1;Vec3 last{};bool parity=true;             // +0xD0, +0x20, +0xD4 (ctor 1)
     bool rescan=true;                                             // +0xD0 == -1 (a seeded lastScan may be negative)
+    // Points after the human's (A+0 count > 1): a NIS director's camera point (0x281370 -> 0x1033B0 adds director+0x100; 0x281100
+    // copies the outer camera's +0x20, the rendered eye, into it each tick; 0x281400 -> 0x1033F8 removes it). 101B60 builds a box per
+    // point, scans when any point moved >= 2000 cm since the last scan, and collects an instance whose cell meets any box
+    // (PS2 c0a-snap: A+0 2 under the Snow Jam fly-over, 42 more pieces listed at 2854).
+    struct Point {Vec3 pos{},last{};};
+    std::vector<Point> points;
     // Streamed worlds (Peak 1, web/peak_world.inc): per track (resource & 0xFF) whether its instances are in the octree
     // (read completion 328C20 .. eviction 3284B8); null = every instance (one race location).
     const uint8_t* present=nullptr;
@@ -126,21 +134,28 @@ struct Activation {
         if(rescan||tick-lastScan>=kScanPeriod)return true;
         using namespace terrain_original;Rounding rounding;float s=0;
         for(unsigned a=0;a<3;++a){const float d=sub(last[a],pos[a]);s=add(s,mul(d,d));}
-        return kScanDistance<=sqrt(s);
+        if(kScanDistance<=sqrt(s))return true;
+        for(const auto& p:points){float t=0;for(unsigned a=0;a<3;++a){const float d=sub(p.last[a],p.pos[a]);t=add(t,mul(d,d));}if(kScanDistance<=sqrt(t))return true;}
+        return false;
     }
+    // 0x1033B0 / 0x1033F8: a point added (its last = where it is) or removed; either forces a scan (+0xD0 = -1).
+    void addPoint(const Vec3& pos){points.push_back({pos,pos});rescan=true;}
+    void removePoint(){if(!points.empty()){points.pop_back();rescan=true;}}
     // 0x101B60: returns false when no scan ran.  Events: leave first, then enter, each sorted by
     // resource; the caller runs them in this order (slot programs, destroys) at the end of the tick.
     bool update(int32_t tick,const Vec3& pos,std::vector<Event>& events){
         events.clear();if(!due(tick,pos))return false;
         Vec3 lo,hi;scanBox(pos,lo,hi);
+        std::vector<std::pair<Vec3,Vec3>> more;for(const auto& p:points){Vec3 a,b;scanBox(p.pos,a,b);more.push_back({a,b});}
+        const auto meets=[&](const Cell& c){if(looseOverlaps(c,lo,hi))return true;for(const auto& [a,b]:more)if(looseOverlaps(c,a,b))return true;return false;};
         std::map<Cell,bool> tested;std::vector<uint32_t> collected;
         for(uint32_t k=0;k<instances.size();++k){
             const Instance& i=instances[k];if(!eligible(i)||(present&&!present[i.resource&255u]))continue;
             const Cell c=collectCell(i.cell);auto t=tested.find(c);
-            const bool in=t!=tested.end()?t->second:tested.emplace(c,looseOverlaps(c,lo,hi)).first->second;
+            const bool in=t!=tested.end()?t->second:tested.emplace(c,meets(c)).first->second;
             if(in)collected.push_back(k);
         }
-        lastScan=tick;last=pos;parity=!parity;rescan=false;
+        lastScan=tick;last=pos;parity=!parity;rescan=false;for(auto& p:points)p.last=p.pos;
         std::vector<uint32_t> enter,leave;
         for(uint32_t k:collected){Instance& i=instances[k];if(!i.listed){enter.push_back(k);i.listed=true;}i.parity=!parity;}
         for(uint32_t k:list){Instance& i=instances[k];if(i.parity==parity){leave.push_back(k);i.listed=false;}}
@@ -156,17 +171,22 @@ struct Activation {
         for(uint32_t k:enter){  // 0x30A3A0
             Instance& i=instances[k];Event e;e.resource=i.resource;e.enter=true;
             if(i.entity!=EntityKind::None){if(i.entity==EntityKind::MultiSpline)e.action=Action::MultiSplineAcquire;}
-            else if(i.stage&&i.slot1>=0){e.action=Action::Slot1;e.program=i.slot1;e.rngDraws=runProgram(i,i.slot1);}
+            else if(i.stage&&i.slot1>=0){e.action=Action::Slot1;e.program=i.slot1;e.guarded=guarded(i,i.slot1);e.rngDraws=runProgram(i,i.slot1);}
             events.push_back(e);
         }
         return true;
     }
     // Slot-1 program bookkeeping: gameplay-RNG draws (in program order) and the entity left on the
     // running instance.  A builtin3 LiveComp on another instance also inserts it (0x34FB00).
+    bool guarded(Instance& self,int32_t id){
+        auto it=programs.find(id);if(it==programs.end())return false;const Program& p=it->second;
+        if(!p.guardSelf&&!p.guard)return false;
+        Instance* g=p.guardSelf?&self:find(p.guard);return g&&g->entity!=EntityKind::None;
+    }
     uint8_t runProgram(Instance& self,int32_t id){
         auto it=programs.find(id);if(it==programs.end())return 0;const Program& p=it->second;
         const uint32_t selfResource=self.resource;
-        if(p.guardSelf||p.guard){Instance* g=p.guardSelf?&self:find(p.guard);if(g&&g->entity!=EntityKind::None)return 0;}
+        if(guarded(self,id))return 0;
         uint8_t n=0;
         for(const auto& d:p.draws){
             if(!d.liveComp){++n;continue;}

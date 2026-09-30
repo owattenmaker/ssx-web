@@ -283,3 +283,26 @@ void browser_avalanche_moving(std::vector<float>& out,void(*append)(std::vector<
   }
  }
 }
+#ifdef SSX_SNAPSHOT_REGISTRY
+#include "world_snapshot.hpp"
+// The rider-context snapshot's hook (web/world_snapshot.hpp; docs/replay.md §2a): the PS2's own avalanche save and restore
+// (engine/avalanche.hpp): 0x2D9CB0 keeps per slot the playing avalanche's id and t; 0x2D9D68 (the one restore 0x26DBF0: the
+// replay's restart, its seeks and the Transport) releases every playing slot (its hidden instances returned: avalancheReleased)
+// and triggers each saved one again, brought to its t without the group speed factor, so a playing avalanche comes back as the
+// PS2 brings it back, not as it was saved. Code-ported, not capture-verified (docs/replay.md §2a).
+namespace {
+struct AvalancheSaved{bool saved=false;std::array<uint32_t,32> words{};};
+RIDER_LOCAL_LAZY std::array<AvalancheSaved,2> avalancheSnapshot;
+void avalanche_snapshot_save(unsigned slot){auto& s=avalancheSnapshot[slot];s.saved=true;s.words=ssx::originalAvalancheSave(avalancheWorld);}
+bool avalanche_snapshot_check(unsigned slot){return avalancheSnapshot[slot].saved;}
+bool avalanche_snapshot_restore(unsigned slot){const auto& s=avalancheSnapshot[slot];if(!s.saved)return false;avalanche_sync();
+ auto hidden=ssx::originalAvalancheRestore(avalancheWorld,s.words,[](uint32_t resource){ // instance +0x40, as the trigger (avalanche_trigger)
+  if(const auto* w=set_piece_instance_at(resource))return ssx::AvaQuad{w->authoredMatrix[12],w->authoredMatrix[13],w->authoredMatrix[14],w->authoredMatrix[15]};
+  return ssx::AvaQuad{0,0,0,1};},&stage_visual_random(),avalanche_flake());
+ avalancheReleased.insert(avalancheReleased.end(),hidden.begin(),hidden.end());return true;}
+uint64_t avalanche_snapshot_hash(){const auto w=ssx::originalAvalancheSave(avalancheWorld);return ssx_snapshot::fnv(w.data(),sizeof w,1469598103934665603ull);}
+size_t avalanche_snapshot_bytes(){return sizeof avalancheSnapshot;}
+struct AvalancheSnapshotHook{AvalancheSnapshotHook(){ssx_snapshot::hooks().push_back({"avalancheWorld (0x2D9CB0 / 0x2D9D68)",&avalanche_snapshot_save,&avalanche_snapshot_restore,&avalanche_snapshot_hash,&avalanche_snapshot_bytes,&avalanche_snapshot_check});}};
+[[maybe_unused]] AvalancheSnapshotHook avalancheSnapshotHook;
+}
+#endif

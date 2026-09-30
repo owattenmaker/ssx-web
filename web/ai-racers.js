@@ -52,7 +52,29 @@ export function riderContextCore(module, block) {
   for (const heap of ['HEAPU8', 'HEAPF32']) Object.defineProperty(view, heap, { get: () => module[heap] });
   return view;
 }
-export async function createAiRacers({ human: humanModule, resources, document: initialDoc, isolate = false, count = Math.min(SLOTS, initialDoc.riders.length + 1) /* 2 in the backcountry rival events (docs/backcountry.md) */, onDraws = null, afterRider = null, sharedVisual = false }) {
+// pv eventInWorldAi (docs/ctm-events-in-world.md stage 4, the in-world event's riders): `contexts` are rider-context blocks of an earlier
+// in-world race to set up again instead of new ones (a context has no destroy: its world, animation and NPC state are replaced in place);
+// `contextSetup(core)` runs in each context before its world; `prepareWorld(core)` loads the course world into the first context (the event
+// package in parts, which fills the parse caches the others copy by resources.worldKeys); `hostAtStart`: the human core's hooks from start();
+// `anchorTick` 0: the riders ride from the countdown's tick 0 (1297C8 placed them at the Continue; 10B790's grid command draws on tick 0,
+// PS2 c0a-full-ai), not held to a Single Event anchor tick.
+// Off: unchanged.
+// pv eventInWorldAi (docs/ctm-events-in-world.md stage 4): the human's world node states (DeadNode / Hide / RestoreNode, the instance
+// flags; web/shared_world.inc world_node_states) into each computer rider's context, for the instances that context holds, and the
+// human's later changes as kind 9 world events from here on (shared_world_nodes). Run after the riders' start (their own event seeds).
+export function syncWorldNodes(human, cores) {
+  if (!human?._world_node_states) return;
+  human._shared_world_nodes(1);
+  for (const c of cores) {
+    const sp = c._world_instance_states(), count = new Uint32Array(c.HEAPU8.buffer, sp, 1)[0], all = new Uint32Array(c.HEAPU8.buffer, sp + 4, count * 3), list = new Uint32Array(count);
+    for (let k = 0; k < count; k++) list[k] = all[3 * k];
+    const lp = human._malloc(count * 4); new Uint32Array(human.HEAPU8.buffer, lp, count).set(list);
+    const dp = human._world_node_states(lp, count), words = new Uint32Array(human.HEAPU8.buffer, dp, 1 + 6 * new Uint32Array(human.HEAPU8.buffer, dp, 1)[0]).slice(); human._free(lp);
+    const q = c._malloc(words.length * 4); new Uint32Array(c.HEAPU8.buffer, q, words.length).set(words);
+    try { c._world_node_states_apply(q); } finally { c._free(q); }
+  }
+}
+export async function createAiRacers({ human: humanModule, resources, document: initialDoc, isolate = false, count = Math.min(SLOTS, initialDoc.riders.length + 1) /* 2 in the backcountry rival events (docs/backcountry.md) */, onDraws = null, afterRider = null, sharedVisual = false, contexts = null, contextSetup = null, prepareWorld = null, hostAtStart = false, anchorTick = null }) {
   if (!singleCoreSupported(humanModule)) throw new Error('This core has no rider contexts (web/rider_context.cpp)');
   // The human's own context seen through a view, so its exports run in it even while a computer rider's context is
   // current (rider pairs call back into the human's race world from inside a computer rider's 121750).
@@ -82,7 +104,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   function configureNpc(core, rider) {
     const inputs = [];
     const str = (text) => { const bytes = enc.encode(text + '\0'), p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); inputs.push(p); return p; };
-    try { core._npc_configure(str(JSON.stringify(rider)), str(JSON.stringify({ event_variant: doc.event_variant, relationships: doc.relationships, anchor_tick: doc.anchor_tick }))); }
+    try { core._npc_configure(str(JSON.stringify(rider)), str(JSON.stringify({ event_variant: doc.event_variant, relationships: doc.relationships, anchor_tick: anchorTick ?? doc.anchor_tick }))); }
     catch (e) { throw new Error(`${rider.character} configure: ${core.getExceptionMessage ? core.getExceptionMessage(e) : e}`); }
     finally { for (const p of inputs) core._free(p); }
     // The rider's own stat getters (0x1494C0..: attribute bank 2 for computer riders, tools/export_npc_riders.py): Peak 2
@@ -116,7 +138,9 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   for (const rider of riders) {
     performance.mark(`ai:${rider.character}:create`);
     if (!resources.riderText[rider.package]) throw new Error(`Missing rider package ${rider.package}`);
-    const core = riderContextCore(humanModule, humanModule._rider_context_create());
+    const core = riderContextCore(humanModule, contexts?.length ? contexts.shift() : humanModule._rider_context_create());
+    contextSetup?.(core);
+    if (prepareWorld && !npcs.length) await prepareWorld(core);
     await attachWorld(core); await yieldFrame(); // keep the loading screen drawing
     // pv eventSlices: init_animation's three documents parsed ahead, one a frame (core animation_prepare: the same parses)
     if (resources.yieldFn && core._animation_prepare) for (const text of [resources.packetsJson, resources.riderText[rider.package], JSON.stringify(mergeSettings(initial, rider.settings))]) {
@@ -322,10 +346,17 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     }
   };
   let worldEvents = 0; const worldEventKinds = {};
+  // pv eventReturnInWorld: after a WS15 return the rider manager's tick counts world state 1's frames (resume sets it to 0); its phases
+  // 1 and 2 (the return's ticks 3 and 4) run with C+0x14 = 0, so 0x128AF0's rider array leaves the computer riders out of every stage
+  // (0x128C18 .. 0x128C64, the FX copies too; 12AB20 at 0x12AB40 clears it, phase 3 sets it again at 0x234634). The human's pairs still
+  // see them as they stand. PS2 c0a-ret3: no AI 11B3F8 / motion / own pair checks on those two ticks.
+  let returnTick = -1;
+  const ridersExcluded = () => returnTick === 3 || returnTick === 4;
+  const tickingNpcs = () => (ridersExcluded() ? [] : npcs);
   function stage1() { // riderHost.afterPose: the human's pose is done
     if (stage !== 1) return;
     leaveStage1(human, 0); syncWorld(human);
-    for (const n of npcs) {
+    for (const n of tickingNpcs()) {
       // 121068 reads peers' positions/routes/progress at the tick start and earlier riders' upper-body classes after their controllers
       // (an earlier rider's class read now, in place: rider_world_state is a pure read).
       worldBuffer(n, (r) => r.start, api.worldState, (r) => (r.slot < n.slot ? worldStateNow(r.core)[7] : undefined));
@@ -348,36 +379,90 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     if (stage === 1) stage1();
     if (stage !== 2) return;
     let words = rngView(human).slice(); syncWorld(human);
-    for (const n of npcs) {
+    for (const n of tickingNpcs()) {
       words = onShared(n.core, n.slot, words, () => explain(n.core, `${n.character} post`, () => { n.core._animation_post(); }));
       syncWorld(n.core);
     }
     rngView(human).set(words);
     stage = 3;
   }
-  human._rider_host(pairsEnabled ? 3 : 1);
+  // (hostAtStart, pv eventInWorldAi: the human rides on in the streamed world while its riders are made, so its hooks and rider pairs
+  // join at start())
+  if (!hostAtStart) human._rider_host(pairsEnabled ? 3 : 1);
   // One module: its hooks run in whichever rider context is current. The phase hooks belong to the human's context (a
   // computer rider's race_end reaches js_rider_before_progress too; the hooks run the other riders' stages from inside
   // the human's tick); rider pairs go to the slot of the running context.
   humanModule._rider_parse_cache_clear?.();
   const slotOf = new Map([[humanBlock, 0], ...npcs.map((n) => [n.core.riderContext, n.slot])]);
-  humanModule.riderHost = { afterPose: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage1(); }, beforeProgress: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage2(); }, pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule))) };
+  const riderHost = humanModule.riderHost = { afterPose: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage1(); }, beforeProgress: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage2(); }, pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule))) };
   // | 4: no renderer poses (a computer rider is drawn from its skin palette, not animation_post's bone poses; web/animation_bridge.cpp)
   for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4);
+  let detached = false;
   const api = {
     npcs,
+    // pv eventInWorldAi: the in-world race ends and the human rides on alone in the same core: its hooks and pair host off; returns the
+    // rider-context blocks for the next in-world race (createAiRacers contexts).
+    detach() {
+      if (detached) throw new Error('Computer riders already detached'); detached = true;
+      human._rider_host(0); if (humanModule.riderHost === riderHost) humanModule.riderHost = null; human._free(riderBuffer);
+      return npcs.map((n) => n.core.riderContext);
+    },
     get tick() { return tick; },
     get pairCounts() { return pairCounts.slice(); }, // [checks, separations, impulses, attacks, reactions]
     get worldEvents() { return worldEvents; }, // shared-entity changes replayed across the rider cores
     get worldEventKinds() { return { ...worldEventKinds }; }, // by kind (web/shared_world.inc)
     // Event start for the computer riders (call right after the human's start_event).
-    start() {
-      for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); explain(n.core, `${n.character} start`, () => n.core._npc_start_event()); n.finished = false; }
+    // gridStart (pv eventInWorldAi): the CTM riders' carried words kept through the grid placement (core npc_grid_start).
+    start({ gridStart = false } = {}) {
+      if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
+      for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); explain(n.core, `${n.character} start`, () => (gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event())); n.finished = false; }
       tick = 0; stage = 0; world.reset(); lastControllerDraws.fill(0); knownTriggers.clear();
       for (const c of cores()) if (c._world_events) c._world_events(); // drop entries of the previous run
       worldEvents = 0; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
     },
     setSharedRng(words) { rngView(human).set(words); },
+    // pv eventReturnInWorld: WS15 (236058) after an in-world event: the race's riders are placed where the human is (the same Session
+    // point row: PS2 c0d-ws15 records 0..1, all six at one spot on the same line) and ride on in rider pairs until the WS4 restart removes
+    // them (record 8). place(core) places one rider context (core place_rider_region). Nothing else of start() runs.
+    // pv eventReturnInWorld (b): the orchestrator's own race state for the rider-context snapshot (web/event-snapshot.js; the cores'
+    // state is theirs: core snapshot_save / snapshot_restore). The pair-view cache is invalidated, not kept.
+    saveState() {
+      return { tick, stage, tickStart: tickStart.slice(), cursor: cursor.slice(), motionTotal, lastControllerDraws: lastControllerDraws.slice(), anchorRng: anchorRng ? anchorRng.slice() : null,
+        knownTriggers: [...knownTriggers], worldEvents, worldEventKinds: { ...worldEventKinds }, returnTick, pairCounts: pairCounts.slice(),
+        riders: all().map((r) => ({ start: r.start === undefined ? undefined : structuredClone(r.start) })),
+        npcs: npcs.map((n) => ({ command: n.command === undefined ? undefined : structuredClone(n.command), info: n.info === undefined ? undefined : structuredClone(n.info), finished: n.finished, lastPlacements: n.lastPlacements, finishScore: n.finishScore, score: n.score })) };
+    },
+    restoreState(s) {
+      tick = s.tick; stage = s.stage; tickStart.set(s.tickStart); cursor.set(s.cursor); motionTotal = s.motionTotal; s.lastControllerDraws.forEach((v, k) => { lastControllerDraws[k] = v; });
+      anchorRng = s.anchorRng ? s.anchorRng.slice() : null; knownTriggers.clear(); for (const k of s.knownTriggers) knownTriggers.add(k);
+      worldEvents = s.worldEvents; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k]; Object.assign(worldEventKinds, s.worldEventKinds);
+      returnTick = s.returnTick; s.pairCounts.forEach((v, k) => { pairCounts[k] = v; });
+      all().forEach((r, k) => { r.start = s.riders[k].start === undefined ? undefined : structuredClone(s.riders[k].start); });
+      npcs.forEach((n, k) => { const v = s.npcs[k]; n.command = v.command === undefined ? undefined : structuredClone(v.command); n.info = v.info === undefined ? undefined : structuredClone(v.info); n.finished = v.finished; n.lastPlacements = v.lastPlacements; n.finishScore = v.finishScore; n.score = v.score; });
+      pairViewGeneration++; pairViewSeen.fill(-1);
+    },
+    resume({ place }) {
+      if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
+      for (const n of npcs) explain(n.core, `${n.character} return placement`, () => place(n.core));
+      // 230180's C vt+0xCC+0x28(3) = 129768 -> 1297C8(C, 1) -> 10F398: the pair records made again (core race_world_pair_restart),
+      // and the game tick restarts at 0 (WS15), so 107888's first check (+0x14 < tick) is the second tick (PS2 c0a-ret: no pushes
+      // into record 1, the six apart in record 2). The countdown anchor's RNG is not the return's.
+      human._race_world_pair_restart(); for (const c of [human, ...npcs.map((n) => n.core)]) c._rider_peers_restart(npcs.length + 1); anchorRng = null;
+      // 1297C8 also zeroes the rider manager's tick C+8 (0x1297F0), which every rider's route pass reads: 112338's re-pick (tick % 60)
+      // runs on the return's first tick (PS2 c0a-ret3: the riders leave the start rows' lane paths for free ride's in that tick)
+      for (const c of cores()) c._game_tick_restart(0);
+      tick = 0; stage = 0; returnTick = 0;
+    },
+    // pv eventInWorldAi: WS1's approach NIS carries the riders before the countdown (PS2 c0a-full-ai 3130..3370): each is a fresh rider
+    // (0x129E20 at gate + 2; core fresh_rider_start) placed at its NIS actor and ticked held there (nis_hold, the rider manager's pass
+    // under control 13): its +0x2E4 ramps, +0x380 takes the held contact's normal. place(slot) -> [x, y, z, forward x, forward y] (PS2 cm).
+    holdTick(place, { fresh = false } = {}) {
+      for (const n of npcs) { const p = place(n.slot); if (!p) continue; const c = n.core;
+        if (fresh) (c._npc_fresh_rider ?? c._fresh_rider_start)?.();
+        c._nis_hold(1, p[0], p[1], p[2], p[3], p[4]);
+        { const w = new Float32Array(c.HEAPF32.buffer, c._npc_world_buffer(), 160); w.fill(0); w[0] = -1; w[1] = count; } // no peers under the hold (the tick reads the world block)
+        explain(c, `${n.character} held tick`, () => { c._race_begin(); const st = f32(c, c._step_rider(0, 0, 0, 0), 16); c._animation_tick(st[7], 0, 0, st[9], st[8], 0, 0, 0, 0, 0, st[15], 0); c._race_end(); }); }
+    },
     get document() { return doc; },
     onReact: null,   // (target, other, kind 1 soft / 2 crash, attack): a rider pair reaction (107E70), after onPairAudio
     onPairAudio: null,   // same arguments, before the relationship update (the handlers' 2A0A30 speech precedes 155BF0)
@@ -417,6 +502,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     // Before the human's tick: manager refresh 10F560 on the tick-start state (0x128AF0 runs it
     // before any rider pass), the human's 115D48 peers, and the human's RNG cursors.
     beginTick() {
+      if (returnTick === 3) human._race_world_rank_mode(0); // WS1 phase 1's 128A48(C, 0) (0x234570): rank mode 0, every rank 0
       if (anchorRng && tick === doc.anchor_tick) rngView(human).set(anchorRng);   // the game RNG the original has at the anchor
       snapshot();
       const buf = f32(human, riderBuffer, 36); buf.fill(0);
@@ -440,7 +526,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
       if (stage === 2) stage2();
       let words = rngView(human).slice(); syncWorld(human);
       if (afterRider) advance(words, afterRider(0));
-      for (const n of npcs) {
+      for (const n of tickingNpcs()) {
         worldBuffer(n, liveNow, this.worldState);
         words = onShared(n.core, n.slot, words, () => onVisual(n.core, () => explain(n.core, `${n.character} progress`, () => { const race = f32(n.core, n.core._race_end(), 8); if (race[2]) n.finished = true; })));
         syncWorld(n.core);
@@ -453,11 +539,11 @@ export async function createAiRacers({ human: humanModule, resources, document: 
       if (afterRider) advance(words, afterRider(-1));
       rngView(human).set(words);
       // The rider FX passes over every rider, phase-major, on the shared visual stream (deferred in every core).
-      if (sharedVisual) { const list = cores(); for (let phase = 0; phase <= 4; phase++) for (const c of list) onVisual(c, () => explain(c, fxPassLabels[phase], () => c._fx_pass?.(phase))); }
+      if (sharedVisual) { const list = ridersExcluded() ? [human] : cores(); for (let phase = 0; phase <= 4; phase++) for (const c of list) onVisual(c, () => explain(c, fxPassLabels[phase], () => c._fx_pass?.(phase))); }
       // Section activation 0x101B60 (web/section_gameplay.inc): the end of the rider manager, after every rider; its
       // slot-1 programs' shared-RNG draws are the last draws of the tick.
       if (human._section_pass) human._section_pass();
-      stage = 0; tick++;
+      stage = 0; tick++; if (returnTick >= 0) returnTick++;
     },
     // Standings from the shared ranking (+0xEC) and course progress (+0x4D0, finish +0x478).
     standings() {

@@ -930,7 +930,7 @@ pending OnIdle flags, queued timers and a trace of every director action.
     Free_Ride_Intro on a first visit, artist intro); a busy DJ line retries every 100 ms.
   - Ambience (radio mode 2): 31 / 32 -> PlayMusic with Peak1Amb / Peak2Amb unless playing, 33 nothing, else the event.
 - **DJ timer 28E548** kinds 0 (spoke), 1 / 2 (hub), 3 / 4 / 5 (song change, free-ride start first / later; nothing
-  when SEDVALUE is -1), 7 (backcountry); 146008 (P+0x278 bit 12) is set in every profile read and treated as 1.
+  when SEDVALUE is -1), 7 (backcountry); 146008 (P+0x278 bit 12) is the Peak 2 lock: set until the Peak 2 pass (corrected 2026-09-29, see 9.14; the port treats it as 1 unless pv djVisited).
 - **Speech OnIdle 2A43B8**: Radio_Big_Intro (0x5768), BC_Intro (0x5784, [peak]), First_Spoke (0x576C, [peak]),
   Text_Message (0x577C, [+0x5780], then 1), Free_Ride_Intro (0x5770, [2A1BD8 course bit]), BC_Challenge (0x5788),
   Artist_Intro (0x5774), hub chatter 0x574C / 0x5750 (pool 8) / 0x5754 (pool 5), Event_Intro, Radio_Big_Outro (falls
@@ -1064,8 +1064,10 @@ With `web/pv-flags.js` `musicStream` (on), a song's `.mus` streams bar by bar:
 - **The opening first.** `streamSongStart` (the streaming counterpart of `prefetchSongStart`) dry-runs the start event
   (jumps included) and loads the bars of its first 4 s. The player starts once those of the first 1.5 s are in, and its
   random replays the dry run's draws, so it commits those bars.
-- **Memory.** The last 4 songs keep the bars they loaded (a song played again does not fetch them twice). Before, every
-  song played kept its whole file for the session (`game-audio.js bytes` cache: 44 + 17-29 MB per race song).
+- **Memory.** Only the song playing and the next one (the two asked for last: `prefetchPicked`) keep their bars; a song played
+  before them lets them go and streams again if it is played again (9.15). Until 2026-09-29 the last 4 songs kept theirs (38.7 MB of
+  bars 15 min into a Peak 2 Race). Before streaming, every song played kept its whole file for the session (`game-audio.js bytes`
+  cache: 44 + 17-29 MB per race song).
 - **The live edge:** `deploy/edge-worker.js` passes the `Range` header through to Cloudflare's cache; whether a cache miss
   answers 206 or the whole file (200: then as before) should be checked on the live site.
 - **Unchanged:** loop banks (LOOPDATA, ~0.3 MB) still load whole; a long piece (the peak ambience samples, 85 s and
@@ -1265,3 +1267,174 @@ The port had the branch in `travel()`, but only the transport called it. `gameAu
 - The CTM music at 6 Mbit/s stays behind the world's downloads by design (9.12).
 
 Test: `web/test-audio-glitches.mjs` (in test:all).
+
+### 9.14 Conquer the Mountain: world switches, post-event commentary, first visits, DJ queue rules, mail icon (2026-09-29)
+
+Source: docs/ctm-decomp-freeride.md ranked 2, 9, 10, 11 and 12. PS2 capture: `local/ps2-capture/ctm-decomp/audio/postevent2` (the Transport
+after the Snow Jam final, Snow Jam -> Metro-City). Every change is behind a default-off switch in `web/pv-flags.js`. Test:
+`web/test-ctm-audio.mjs` (in test:all); `web/test-messages.mjs` covers the mail icon.
+
+**pv worldSwitchAudio: a Transport across a page world switch runs code 20 in the world.**
+- The PS2 is one world, so the post-event return and a Transport to another peak are world state 14. At the confirm
+  (postevent2, ticks 15440-15442):
+  - 28F520 stops the song (song 201, the podium's chartune, still playing under the map);
+  - 28E8C0(20, 1) runs PickNextSong and Radio BIG intro (0, 1) with its flush, then 2A4718 queues the pool-5 hub chatter (+0x5754);
+  - the destination song follows 10 ms later (request kind 2 -> Peak1, event 12, for Metro-City);
+  - there is no loading loop and no world load;
+  - 0x2102 at 15614, during WS11 (the ride);
+  - 28E8C0(19) at the cinematic end (15963).
+- The port changed page world instead: `loadingStart`'s LoadingScreen loop, then 2867E8 / 2A4A78 at the world load (a new song, DJ
+  kind 2 / 4). `travel()` returned at once after an event, because `state.free` was null.
+- Now:
+  - `career-ui.js goWorld` calls `gameAudio.travelSwitch(dest)` at the confirm whenever the destination is in another page world
+    (`switchesWorld`): the post-event map, or another peak on the per-peak worlds. It is not called for a reload or for the second,
+    ridden call.
+  - `travelSwitch` restores free ride (kind 4, mode 12: 2018A8, as the poll at the confirm shows), clears the results' replay flag and
+    runs `travel(dest)`. That includes 28EF90 for the same location (WS15).
+  - It then carries the audio (`state.switchCarry`):
+    - `leaveWorld` stops only the world's sounds and banks. The song, the timers, the speech, the pending DJ flags and the `'nis'` voices
+      of the ride (`sfx.stopAll({ keep })`) stay.
+    - `loadingStart` starts no loop.
+    - The next free-ride `worldLoaded` skips riderMusic, 2867E8, 2A4A78 and the 579C read, keeps the MusicTrigger state, and runs world
+      state 10 (`ws10`).
+    - A `freeWorldLoaded` that arrives after the ride start has already taken the carried world in makes no second world load. The
+      unswitched path does load twice when main.js starts the run before its load-screen notification: seen in Chrome and WebKit with
+      `?autostart`.
+  - `career-ui.js transportAfterEvent` calls `eventMap()` before its quit, so the chartune plays on under the map. An event picked
+    from the map is an ordinary event load: `loadingStart` ends the carry.
+  - `crossWorld` carries the audio without code 20: a riding crossing makes no director call (22DF50).
+- `ws10(course)` is world state 10:
+  - the push enter 234FE0..235058: an unvisited Conquer the Mountain backcountry sets +0x578C, +0x5790 = 0 and +0x6254;
+  - the enter 0x2355C0: 2B3A98 resumes the song, and 2A4B68 stops the speech while pktrans (0x191) plays.
+
+  It also runs from `freeRideCourse`. That fixes the in-world Transport (MOUNTAIN, desktop) into an unvisited backcountry: code 20's
+  pktrans had stayed paused, and code 19 took the arrival branch (DJ 4, event 0) instead of the BC intro (request 1 at 2 s, DJ 7 at
+  1.5 s).
+- Checked:
+  - Chrome and WebKit (`?pv=worldSwitchAudio,...`, ARA1 -> the results' map carry -> the heli ride -> Green Base Station in MOUNTAIN):
+    `leave map`, `carry travel`, `stop`, `code 20`, `pick`, `request 2`, `play Peak1 12`, `leave travel`, `carried travel`, `code 19`,
+    with no `loading` and no `worldload`.
+  - With the switch off: `fade 1`, `loading 1`, then `worldload` twice.
+  - Not checked: the `'nis'` voices over the switch. In headless Chrome the byTag count stayed 0 during the held loop, with or
+    without the switch.
+
+**pv postEventDj: the post-event record and commentary (2A45C0 / 2A4660 / 2A4770).**
+- The record is audio +0x57F8 armed, +0x57FC final, +0x5800 place, +0x5804 hits, +0x5808 score, +0x580C last commentary and
+  +0x5810 course.
+- Writing it: 287060 calls 2A45C0 at every CTM finish (0x535C11 == 0), timed out too.
+  - Round 1 resets it (2A4590(audio, 0), which also sets +0x5814 = 23 and keeps +0x580C).
+  - 2A4660 arms it at a medal run (GMM+0x98) or when no round follows (rival challenges, peak runs).
+  - It sets final when the rider finished round 3 (+0x480 clear).
+  - It always adds the KOs, from the score object +0x128 (races only: 2A4078 = course < 5 or kind 0 / 5), and +0x114. The score object
+    port names +0x114 the Uber count (docs/tricks-scoring.md); this agent did not confirm it separately.
+  - The port records in `finish()`. main.js passes `stats` {ko, ubers} from `score_object_dump`, and the freestyle place from
+    `freestyleFinishPlace` (238B70), since a freestyle run has no AI place.
+- Reading it: 2A2E50 runs 2A4770 first unless Char_Stories is due (0x2A2EBC).
+  - Nothing armed: return 0.
+  - Final:
+    - 1st -> Char_Progress 0x2102 [subject, peak of the current course];
+    - hits >= 5 -> Aggression 0x212E [course bit];
+    - score >= 27 -> High_Trick_Score 0x212F [course bit]. The threshold is 27 on race, slope style and half pipe courses and 24
+      elsewhere (2A40E0 / 2A4158 / 2A4238).
+  - With two or more earned, the last one said is dropped, then one is picked at random (2ADF60 & 0x7FFF). There is no flush
+    (0x2A2EC4 branches past 2B1758).
+  - Nothing earned, or not the final, with a travel pending (+0x6254, +0x5814 != 23): a hub -> 2A2E50(pool 0), a backcountry ->
+    Terrain_Info [peak], a course -> Event_Intro [course bit, 3].
+
+**pv djVisited: first visits from the save.**
+- 579C comes from the ridden rider's saved mask P+0xACC (main.js `gameAudio.context().visited` = `careerUI.visitedMask(rider)`),
+  combined with the marks made since the world load. A reload therefore no longer replays Free_Ride_Intro or the pktrans / BC_Intro
+  first-visit routine.
+- 146008(P, 0, 1) at 0x28E730 gates Free_Ride_Intro and its 579C clear on Peak 2 being locked (`context().peak2Locked` =
+  `!peaks[1]`). When it is clear, kinds 3 / 4 / 5 queue only the artist intro.
+
+**pv djQueueRules.**
+- 2A26F0 stops the current line (2B11B0 at 0x2A272C) after its 29F0D8 gate and before it posts (`audio-speech.js radioBigIntro`).
+- 289BB8 stops the speech and clears the pending DJ flags (2A4550) only when +0x5828 is set, and then clears it. 28FAE0 sets it: an
+  in-game song change reached from the menu case at 0x208C28 (0x208CA4). That case's port equivalent is not identified, so
+  `state.songChanged` is never set, and a pause resume leaves the DJ queue alone. Before, it cancelled every queued line.
+
+**pv mailFreeze (web/career-messages.js).**
+- The PS2 posts the event's messages on the finish tick. The port posts them at the results, so the icon now starts at 182 frames
+  (race-f: fin 0.050, res 3.033, f95-after 3.050). The next ride shows the last ~2 s.
+- The Message Center freezes the icon (HUD events 3 / 4) instead of clearing it.
+- Still missing: the ~3 s blink under the finish HUD. That needs the result decided at the finish tick.
+
+
+### 9.15 Audio memory: node lifetime, the streamed songs, speech lines by range (2026-09-29)
+
+Nothing here changes what plays or when: scheduling, gains and automation are untouched. The switch-off timeline tests,
+test-audio-timeline and test-ctm-audio, give the same events in the same order.
+
+**Voices let go of their nodes (no switch).** A Web Audio node that is still connected stays alive: Chrome keeps it, and WebKit's
+audio thread keeps processing its automation (`AudioParamTimeline::valuesForFrameRangeImpl` in WebContent samples). Before this fix:
+- `sfx.js finish()` disconnected only the voice output. The source, patch gain, envelope gain, LFO gain / LFO sources and panner
+  stayed wired together.
+- The 3BB588 pool-failure path never stopped a started layer's looping LFO sources.
+- Game code held ended voices: `audio-world.js contactVoices` / `scriptVoices`, one entry per instance ever touched. Chrome root
+  path: `__perfAudio -> world.contact -> contactVoices -> voice.layers[0].pan`.
+- Speech lines (`audio-speech.js`), music bars (`pathfinder.js startSource`: source -> declick gain -> slice gain), a stopped song's
+  ramp / level chains and the LoadingScreen loop were never disconnected.
+
+Now:
+- A voice disconnects its whole chain 50 ms after its last layer ends or its fade ends. Its handle drops its layers and output, so a
+  stale handle holds nothing.
+- The failure path stops and cuts its layers.
+- A bar or line disconnects at its `ended` event, and at once when it is stopped now (a source cut off the graph may never fire ended).
+- `Stop` cuts the song's chains.
+- `audio-world.js` sweeps entries that no longer play once a map reaches 64 (an entry that is not playing blocks nothing).
+- Tests: test-audio-glitches "node lifetime".
+
+**Streamed songs keep only what the player needs.** `pathfinder.js musStreamFor` keeps the bars of the song playing (loadSong role
+`play`, from `playSong`) and of the next one (role `next`, from `prefetchPicked`). Every other song lets go of its bars. Until now
+the last 4 songs kept theirs. Inside a song:
+- Bars are kept up to `MUS_BUDGET_BYTES` (24 MB). Past that, played bars go first, then the least recently used; bars used in the
+  last 20 s and a 200 whole-file answer are never evicted.
+- 24 MB is a safety net. A song's graph reaches a bounded set: in 15 simulated minutes, Ride reaches 21.7 MB, Emerge 18.6 MB and
+  Clockworks 12 MB.
+- A tighter cap makes the read-ahead fetch evicted bars again. For Emerge over 15 min: a 12 MB cap fetches 84 MB and a 16 MB cap
+  42 MB, against 18.6 MB fetched once uncapped.
+- A song played again streams its opening again, as on its first play (~0.5 MB).
+
+**Speech lines by range (pv `speechRange`, off).**
+- Before, a speech bank's `.dat` was downloaded whole and kept for the session, twice (game-audio `once()` cache and speech `lines`).
+  DJ_Hub_Char_Stories_eng.dat alone is 35 MB, and 15 min into a Peak 2 Race 21.6 MB of speech `.dat` files were held.
+- With the switch, `audio-speech.js lineData` fetches only the line: the bank json's `offset` / `size`, one Range request through
+  game-audio `rangeBytes`, priority high. Lines go into a 2 MB LRU.
+- Lines are fetched when they are resolved (dispatch / flush) and at every post, from a prediction: the scheduler's next dispatch on
+  a copy of its slots, EA random and history. A line queued while another plays is therefore fetched seconds ahead.
+- A server that answers the range with the whole file (200) keeps that bank whole, as before.
+- `web/server/mp-server.mjs` now serves Range requests from the file itself, never from its precompressed .gz / .br copy.
+  precompress.mjs gzips `.dat` files (80-84 %), so before this change every range on the host got the whole gzip body.
+- Not checked: Cloudflare's answer to a Range request on a cache miss (`deploy/edge-worker.js` passes the header through). A 200
+  there falls back to the whole bank.
+- Timing (test-speech-range): the same lines start on the same ticks with the same PCM when a range answers within ~30 ms (the
+  prediction's 2-frame lead for a free voice). Every ~16 ms beyond that delays the line by 1 tick (40 ms: +1 tick, 70 ms: +3 ticks).
+  Before, a bank's first line waited for its whole `.dat` (0.4-35 MB).
+- Tests: test-speech-range (new, in test:all). test-audio-timeline, test-ctm-audio, test-game-audio and test-challenge-audio give the
+  same output with the switch on (a file-backed Range fetch).
+
+**Measured** in headless Chrome at the phone tier: 844x390, `quality=low`, a Peak 2 Race entered from the menus and ridden by the
+whole-mountain pilot. Counts are live objects after a forced GC (`Runtime.queryObjects`). Buffers are the ArrayBuffers retained per
+path in heap snapshots. Scripts: scratchpad `leak/nodes.mjs`, `bigpaths.mjs`, `mapkeys.mjs`.
+
+| | before (0 -> 16 min) | after (final code, speechRange on) |
+| --- | --- | --- |
+| AudioBufferSourceNode | 17 -> 227 | 12 -> 10 (9-20) |
+| StereoPannerNode | 8 -> 218 | 5 -> 5 (2-7) |
+| GainNode | 58 -> 220 | 67 -> 69 (60-86) |
+| whole files in the game-audio cache (speech `.dat`, banks) at 11-15 min | 21.6 MB | 4.0 MB (banks) |
+| speech lines | (in the above) | 1.3 MB (LRU) |
+| song bars | 38.6 MB (3 songs; 4 kept) | 15.9 MB (the song playing) |
+
+Free ride (MOUNTAIN, 12 min, speechRange on): the nodes stay flat (sources 9-32, panners 3-15). Speech lines take 1.7 MB and the song
+playing (Emerge, fspoon.mus) 19.6 MB.
+
+**Still growing / not audio:** the game-audio `once()` cache keeps every sfx bank's bytes after its slot unloads (~0.1 MB per streamed
+location bank). WebKit phone-tier footprint (apr.mjs: `footprint` sampled outside the page, the page polled every 3 s, 10 min):
+- In 4 of 6 runs WebContent ran away from the ~5 min crossing into DRA4: malloc +150-200 MB/min, with WebAssembly Memory
+  (200 -> 740 MB) and JIT growing alongside.
+- It happened with the old audio (1 of 2 runs) and the new audio (3 of 4). The audio code allocates no wasm memory, so the cause
+  is elsewhere.
+- In the flat runs, old vs new audio: WebContent p50 1191 / 1164 MB, max 1496 / 1397 MB, malloc at 9-10 min 869 / 907 MB. That
+  is within the runs' spread.

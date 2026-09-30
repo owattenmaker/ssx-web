@@ -352,7 +352,7 @@ export function createCutscenes(host) {
     for (const s of steps) {
       if (s.fmv) { out.push(s); continue; }
       let number = s.script ?? null;
-      if (number == null) { number = api.qaScripts?.[s.group] ?? chooseScript(filterList(location, s.group), words, playCount); }   // qaScripts: PS2 comparisons
+      if (number == null) { number = api.qaScripts?.[s.group] ?? chooseScript(filterList(s.location ?? location, s.group), words, playCount); }   // qaScripts: PS2 comparisons
       if (number == null) continue;
       playCount[number] = (playCount[number] || 0) + 1;
       out.push({ ...s, script: number });
@@ -438,8 +438,13 @@ export function createCutscenes(host) {
         if (staged && b.livecomp_resource !== undefined) { mesh.userData.liveComp = [b.livecomp_resource, b.livecomp_node]; meshes.push(mesh); }
       }
       if (staged) { group.userData.meta = d; group.userData.stage = createStageSet(d, meshes); }
+      // pv worldWarm (host.compileHidden, main.js compileFor): compiled before it joins the scene, a two-pass transparent material once per
+      // side (BackSide, then FrontSide, as it draws), so its first cut frame builds no pipeline (TRANSP: 5-10 blocking builds at the departure)
+      if (host.compileHidden) { try { await host.compileHidden(group); } catch {} group.visible = false; host.scene.add(group); }
+      else {
       host.scene.add(group);
       if (host.compile) { group.visible = true; try { await host.compile(group); } catch {} group.visible = false; }
+      }
       return group;
     })().catch((e) => { console.warn(`Cutscene set ${code} unavailable (python3 tools/export_cutscene_sets.py)`, e); return null; });
     sets.set(code, job); return job;
@@ -459,6 +464,18 @@ export function createCutscenes(host) {
   const stage = () => stageShown?.userData.stage ?? null;
   // pv planeFx: the plane's engine loop and snow spray (web/cutscene-plane-fx.js)
   const planeFx = createPlaneFx(host), stagedSet = () => (stageShown?.userData.stage ? { meta: stageShown.userData.meta, stage: stageShown.userData.stage } : null);
+  // pv departCalls: a kind-7 channel-0 call (0x2808E8) that no staged set owns runs on the step's hub location, the script's scdat
+  // container (27C070 -> 22E098 -> 309E50: that track's stage globals): gond_dep #126 / heli_dep #147 call the station's functions
+  // (the depart LiveComp, the loops, the heli spray, SetNodeState); the recorded cleanup runs at the step end (0x2807B0). The world
+  // ticks under the Transport (pv nisTick), so the run's entity pass advances what they build. scdat_main (TRANSP: no stage in the
+  // streamed worlds' seeds) has no track: its in-air calls stay unported.
+  const TRANSPORT_KINDS = new Set(['transport-ride', 'transport-depart', 'transport-loop']), hubCleanups = new Map();
+  function hubCall(seq, symbol, cleanup) {
+    const m = /^scdat_(.+)$/.exec(seq.loaded?.container || ''), track = m && m[1] !== 'main' ? host.stageTrack?.(m[1]) ?? -1 : -1, c = host.core;
+    if (!(track >= 0) || !c?._stage_global_call) return;
+    if (c._stage_global_call(track, symbol >>> 0, NaN, NaN, NaN) && cleanup != null && (cleanup >>> 0) !== NOSCRIPT) hubCleanups.set(cleanup >>> 0, track);
+  }
+  function hubStepEnd() { const c = host.core; for (const [k, t] of hubCleanups) { try { c?._stage_global_call?.(t, k, NaN, NaN, NaN); } catch (e) { console.warn('Cutscene hub cleanup', e); } } hubCleanups.clear(); }
   // pv heliHover: after a backcountry arrival the PS2 heli hovers on at the helipad (its cleanup 0x0AE69AB4 started frames 551..677
   // in loop mode, engine sound 201 looping at the heli); the set stays in for the world's frame-0 copy, advanced once per game tick
   // (api.linger from main.js while no cutscene plays), until the next cutscene, a course change or the camera is 3 km away.
@@ -550,7 +567,7 @@ export function createCutscenes(host) {
     if (ctl) {
       // ch0 stage-script calls (0x2808E8; the plane's LiveComp, web/cutscene-stage-sets.js), ch1 music codes (0x28E8C0),
       // ch2 PA/DJ cues (0x2A19D8), ch3 non-positional sounds (CHARACTER bus).
-      for (const it of ctl.ch[0]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('p' + it.t + ':' + it.w[0])) { seq.fired.add('p' + it.t + ':' + it.w[0]); const owned = stage()?.call(it.w[0], it.w[1], it.t); planeFx.call(stagedSet(), it.w[0], it.w[1], owned); }
+      for (const it of ctl.ch[0]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('p' + it.t + ':' + it.w[0])) { seq.fired.add('p' + it.t + ':' + it.w[0]); const owned = stage()?.call(it.w[0], it.w[1], it.t); if (!stagedSet() && pv('departCalls') && TRANSPORT_KINDS.has(active?.kind)) hubCall(seq, it.w[0], it.w[1]); else planeFx.call(stagedSet(), it.w[0], it.w[1], owned); }
       for (const it of ctl.ch[1]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('m' + it.t)) { seq.fired.add('m' + it.t); music(it.w[0]); }
       for (const it of ctl.ch[2]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('c' + it.t)) { seq.fired.add('c' + it.t); cue(it.w[0]); }
       for (const it of ctl.ch[3]?.i || []) {
@@ -573,8 +590,10 @@ export function createCutscenes(host) {
 
   function poseActors(seq, t) {
     const origin = host.origin;
+    const race = host.onRaceActors ? [] : null;   // pv eventInWorldAi: the computer riders' actors (main.js holds their rider contexts there)
     for (const a of seq.actors) {
       const root = a.frame ? actorRootAt(a.object, a.frame, t) : null;
+      if (race && root && a.rider?.slot > 0) race.push({ slot: a.rider.slot, pos: root.pos, yaw: root.yaw + Math.PI / 2 });
       if (root) { if (a.soundPos) { a.soundPos[0] = root.pos[0]; a.soundPos[1] = root.pos[1]; a.soundPos[2] = root.pos[2]; } else a.soundPos = root.pos.slice(); }   // PS2 cm (web/sfx.js)
       const m = a.model; if (!m?.ready || !root) continue;
       if (!a.object.ch[0]?.i?.length) { m.show(false); continue; }   // no clip: parked out of sight (heli_inair's rider sits inside the fuselage)
@@ -609,6 +628,7 @@ export function createCutscenes(host) {
       if (host.core) m.light(T, host.core, seq.view || null);
       m.show(true);
     }
+    if (race?.length) host.onRaceActors(race);
   }
 
   function cameraPose(seq, t) {
@@ -642,15 +662,18 @@ export function createCutscenes(host) {
   const FADE_RESET = Math.fround(0.93), fadePainterReset = (alpha) => { if (alpha >= FADE_RESET) host.core?._weather_fade_reset?.(); };
   function fadeAlpha(state) {
     if (!state.seq) return state.black ? 1 : 0;
-    const seq = state.seq, r = fadeAt({ script: seq.script, t: seq.t, duration: seq.duration, prevFadeOut: state.prevFadeOut, step: state.steps[state.at], held: seq.held || 0, loops: pv('loopFadeOnce') ? seq.loops || 0 : 0 });
+    const seq = state.seq, r = fadeAt({ script: seq.script, t: seq.fadeT ?? seq.t, duration: seq.duration, prevFadeOut: state.prevFadeOut, step: state.steps[state.at], held: seq.held || 0, loops: pv('loopFadeOnce') ? seq.loops || 0 : 0 });
+    if (state.releaseT != null) { const fo = seq.script.fade_out, a = Math.min(1, (state.releaseT + 1) / Math.max(1, fo?.out_ticks || 30)); if (a > r.alpha) { r.alpha = a; r.colour = fo?.colour === 'white' ? '#fff' : '#000'; } }   // 277980 -> 2E4370: the release's fade-out, n / 30 on list tick n
     state.fadeColour = r.colour; fadePainterReset(r.alpha); return r.alpha;
   }
 
   async function startStep(state) {
     const step = state.steps[state.at];
     if (!step) return finish(state);
+    if (step.location) state.location = step.location;   // pv transportFade: the heli drop appended to the Transport list plays at the destination (anchors, sets, cues)
     if (step.fmv) {   // ABC1/DBC2/EBC3 movie (list 29..31): no audio track (the pktrans stream plays over it)
-      state.seq = null; const played = await (host.movie || playMovie)(FMV[step.fmv] || step.fmv, { skippable: !!(step.flags & FLAG.SKIP) });
+      state.seq = null; host.onMovie?.(true);   // pv worldUnderCuts: only a movie step stops the world (main.js pushes its HOLD)
+      let played; try { played = await (host.movie || playMovie)(FMV[step.fmv] || step.fmv, { skippable: !!(step.flags & FLAG.SKIP) }); } finally { host.onMovie?.(false); }
       if (played?.skipped && (step.flags & FLAG.SKIP)) return skip(state);
       state.at++; return startStep(state);
     }
@@ -667,13 +690,15 @@ export function createCutscenes(host) {
     // The human's rider actor (binding 4) of this step at its first tick: 123640 runs at each step's actor start (host.onHumanActor:
     // main.js holds the rider there under a Transport's ride, pv nisTick)
     { const h = seq.actors.find((a) => a.object.ext?.binding === 4 && a.frame); if (h) { const r = actorRootAt(h.object, h.frame, 0); host.onHumanActor?.({ pos: r.pos, quat: r.quat, yaw: r.yaw + Math.PI / 2, kind: state.kind, script: loaded.number }); } }
-    if (step.idle) state.onIdle?.();   // the idle loop runs on under the next screen (objectives card) until stop()
+    try { state.onStep?.(step, state.at); } catch (e) { console.warn('Cutscene onStep', e); }   // pv transportFade: the Transport's held loop start requests the destination (0x2366C4)
+    if (step.idle) state.onIdle?.();   // the idle loop runs on under the next screen (objectives card) until stop(); the card's context 1 holds it still (update)
   }
 
   function nextStep(state, skipped = false) {
     // a skip cuts without the fade (0x276F48); a step that ran to its end hands its fade-out record to the next one
-    state.prevFadeOut = !skipped && state.seq && !(state.steps[state.at]?.flags & FLAG.HOLD && !state.steps[state.at]?.holdTicks) ? state.seq.script.fade_out || null : null;
-    planeFx.stepEnd(stagedSet());
+    const released = state.releaseT != null; state.releaseT = null;   // pv transportFade: 27A9F0's 2766D0(list, 1, fade 1): the held step ended through its fade_out record
+    state.prevFadeOut = !skipped && state.seq && (released || !(state.steps[state.at]?.flags & FLAG.HOLD && !state.steps[state.at]?.holdTicks)) ? state.seq.script.fade_out || null : null;
+    planeFx.stepEnd(stagedSet()); hubStepEnd();
     stage()?.end();   // 0x2807B0: the step's recorded cleanups
     if (state.seq) releaseActors(state.seq);
     state.at++;
@@ -685,30 +710,31 @@ export function createCutscenes(host) {
   function skip(state) { state.skipped = true; nextStep(state, true); }
 
   function finish(state) {
-    planeFx.end();
+    hubStepEnd(); planeFx.end();
     startLinger();
     showSets(null); queueMicrotask(trimPool);
     if (state.seq) releaseActors(state.seq);
     state.seq = null;
+    sectionEnd();
     if (active === state) { active = null; host.onActive?.(false); host.audio?.cutscene?.(false); }
     state.resolve({ played: true, skipped: !!state.skipped, scripts: state.steps.map((s) => s.script ?? s.fmv) });
   }
 
   // Queue and play. steps: [{group|script|fmv, flags, idle?}], cast, location. The promise resolves when the last
   // non-idle step ends (an `idle` step keeps looping under the next screen until stop()).
-  async function play({ steps, cast, location, hub = null, kind = 'script', onIdle = null, place = -1, restore = true, prevFadeOut = null, barsFull = false }) {
+  async function play({ steps, cast, location, hub = null, kind = 'script', onIdle = null, place = -1, restore = true, prevFadeOut = null, barsFull = false, skipLock = 0, onStep = null }) {
     await ensureIndex();
     const resolved = resolve(steps, cast, location);
     if (!resolved.length) { overlay = null; return { played: false, skipped: false, scripts: [] }; }
     endLinger();
-    const loaded = await Promise.all(resolved.map((s) => (s.fmv ? null : loadScript(index, s.script, location, hub))));
+    const loaded = await Promise.all(resolved.map((s) => (s.fmv ? null : loadScript(index, s.script, s.location ?? location, hub))));
     stopNow();
     // the overlay (letterbox, skip, Loading) is drawn on the 'cutscene' screen; callers that did not switch to it get it here
     const ui = host.ui, back = ui?.screen;
     if (ui && back !== 'cutscene') ui.set('cutscene');
     const done = (r) => { if (ui && restore !== false && back && back !== 'cutscene' && ui.screen === 'cutscene') ui.set(back); return r; };
     return new Promise((resolveDone0) => { const resolveDone = (r) => resolveDone0(done(r));
-      const state = { kind, steps: resolved, loaded, cast, location, at: 0, seq: null, skipped: false, resolve: resolveDone, onIdle, place, prevFadeOut, barsFull: barsFull || !!overlay };
+      const state = { kind, steps: resolved, loaded, cast, location, at: 0, seq: null, skipped: false, resolve: resolveDone, onIdle, place, prevFadeOut, barsFull: barsFull || !!overlay, skipLock, onStep, releaseT: null };
       active = state; overlay = null; host.onActive?.(true); host.audio?.cutscene?.(true);
       if (kind === 'heat') host.audio?.heat?.(); // world state 13 -> 27A860 -> 28E8C0(20, 1): heats 2 / 3 get a new song (pv heatSong, web/game-audio.js)
       state.stepping = startStep(state);
@@ -719,11 +745,12 @@ export function createCutscenes(host) {
   // A list held across a course switch (acrossSwitch) ignores the page's stop() (main.js stopRun / startRun) until released.
   function stop() { if (active?.persist) return; stopNow(); }
   function stopNow() {
-    endLinger(); planeFx.end();
+    endLinger(); hubStepEnd(); planeFx.end();
     across = null;
     const s = active; if (!s) return;
     showSets(null);
     if (s.seq) releaseActors(s.seq);
+    sectionEnd();
     s.seq = null; active = null; host.onActive?.(false); host.audio?.cutscene?.(false);
     s.resolve({ played: true, skipped: !!s.skipped, stopped: true, scripts: s.steps.map((x) => x.script ?? x.fmv) });
   }
@@ -764,19 +791,44 @@ export function createCutscenes(host) {
     });
   }
   let lastPose = null, mainAt = 0;
+  // The NIS director's camera point in the section activation (host.sectionPoint -> core section_point): a script's director adds its
+  // +0x100 at its start (0x281370 -> 0x1033B0), sets it to the outer camera's +0x20 (the rendered eye) in its update (0x281100) and
+  // removes it at its end (0x281400 -> 0x1033F8), so the stage pieces around the NIS camera activate (PS2 c0a-snap: the Snow Jam
+  // fly-over lists 42 more; a new step's script re-adds it, A+0xD0 = -1 at 3130). Unconfirmed: which scripts' directors register
+  // (279370's test; seen for the fly-over, the approach / idle and the Transport ride), and the eye's tick alignment (the PS2 copies the
+  // previous tick's camera; this gives the last update's pose).
+  let sectionSeq = null;
+  const sectionEnd = () => { if (sectionSeq) { sectionSeq = null; host.sectionPoint?.(null); } };
+  const sectionFeed = (seq, pose) => { if (!pose || !host.sectionPoint) return pose; if (sectionSeq !== seq) { if (sectionSeq) host.sectionPoint(null); sectionSeq = seq; } host.sectionPoint(pose.eye); return pose; };
   function update(dt, self = false) {
     if (!self) mainAt = performance.now();
     const s = active; if (!s) { lastPose = null; return null; }
+    if (s.skipLock > 0 && !qa.frozen) s.skipLock -= dt * TICK_HZ;   // 278DE8(nis, 30) at 0x236550: nis+0x554 counts down every NIS update, a list or not
     if (!s.seq || !s.seq.ready) return lastPose;   // between steps (the next one is loading): hold the last camera
     if (qa.frozen) dt = 0;
     const seq = s.seq, step = s.steps[s.at];
+    // The NIS tick runs only while no pause context stops it (docs/pause-contexts.md; docs/ctm-decomp-world-states.md 1.3): mask bit 0x08
+    // skips the NIS update (0x230BDC: the script clock, camera and actors hold). The view update 22E840 still draws the held pose, and
+    // the fade (a view effect, 277980 -> 2E4370) runs on its own clock, which no context stops. The round card (WS2 enter 0x236BB0,
+    // context 1, mask 0xFFFFFFDB) is pushed one tick into the idle (PS2 t = 1.0): the update that first sees a stopped NIS runs it to its
+    // next whole tick (the idle's first: t = 1.0 exactly, whatever the frame's dt), then it holds; nothing thaws it before the card's
+    // Cross stops the list (WS2 exit 0x236C88). ARMSX2 card-idle: 330 samples, identical pixels.
+    const nisStopped = !!host.nisStopped?.();
+    if (!nisStopped) s.heldSeq = null;
+    else if (s.heldSeq === seq) { seq.fadeT = (seq.fadeT ?? seq.t) + dt * TICK_HZ; return lastPose; }
+    const stopTick = nisStopped; if (stopTick) s.heldSeq = seq;
+    const adv = stopTick ? Math.floor(seq.t) + 1 - seq.t : dt * TICK_HZ;   // this update's NIS ticks
     // NISSkip (Cross) on skippable steps: a hard cut to the next step without flag 2 (0x276F48).
     const cross = crossDown();
-    if (cross && !skipLatch && (step.flags & FLAG.SKIP) && seq.t > 0) { skipLatch = true; skip(s); return update(0); }
+    if (!stopTick && cross && !skipLatch && (step.flags & FLAG.SKIP) && seq.t > 0 && !(s.skipLock > 0)) { skipLatch = true; skip(s); return update(0); }   // the skip lock: 0x278828 skips the Cross test
     skipLatch = cross;
-    const t0 = seq.t; let t1 = t0 + dt * TICK_HZ;
+    const t0 = seq.t; let t1 = t0 + adv;
+    if (s.releaseT != null) {   // pv transportFade: the released held step plays on under its fade-out; the list stops (or moves on) when +0xB8 reaches 0 (276CC8 @0x276D74, R+29)
+      s.releaseT += adv;
+      if (s.releaseT >= Math.max(1, (seq.script.fade_out?.out_ticks || 30) - 1)) { nextStep(s); return s === active ? update(0) : null; }
+    }
     if (step.holdTicks) {   // a held step with no loader to wait for: released after the PS2's measured load time
-      seq.held = (seq.held || 0) + dt * TICK_HZ;
+      seq.held = (seq.held || 0) + adv;
       if (seq.held >= step.holdTicks) { nextStep(s); return s === active ? update(0) : null; }
     }
     if (t1 >= seq.duration) {
@@ -786,12 +838,13 @@ export function createCutscenes(host) {
       else { stepAudio(seq, t0, seq.duration); nextStep(s); return s === active ? update(0) : null; }
     }
     seq.t = t1;
-    if (planeFx.active) { planeFx.advance(dt * TICK_HZ); planeFx.frame(stagedSet()); }
+    if (seq.fadeT != null) seq.fadeT += t1 >= t0 ? t1 - t0 : t1 + seq.duration - t0;   // the fade's own clock, once a stopped NIS left it ahead
+    if (planeFx.active) { planeFx.advance(adv); planeFx.frame(stagedSet()); }
     stepAudio(seq, t0, t1 < t0 ? t1 + seq.duration : t1);
     const st = stage(); if (st) { st.sync(seq.t); st.apply(); }
     if (t1 < t0) { seq.fired.clear(); for (const a of seq.actors) a.fired.clear(); }
     poseActors(seq, seq.t);
-    return (lastPose = cameraPose(seq, seq.t));
+    return (lastPose = sectionFeed(seq, cameraPose(seq, seq.t)));
   }
 
   // Apply a camera pose to a three.js camera (FOV: half-horizontal angle of 4:3, main.js 376C58 convention).
@@ -842,8 +895,9 @@ export function createCutscenes(host) {
   // ctm/caps sj-return: near-white at the course start, clear after ~58 ticks).
   // hud: the fade covers the world only and the HUD draws over it (pv arrivalFade: a transport arrival fades in from black over
   // 30 ticks under the HUD, PS2 menus/fr-courses/aba1-screen10 arrival: black at the placement, clear ~30 ticks later).
-  function fadeFrom({ ticks = 58, colour = 'white', hud = false } = {}) {
-    const o = overlay = { t: 0, ticks, hold: 0, colour: colour === 'white' ? '#fff' : '#000', loading: false, reverse: true, hud };
+  // bars (pv transportFade): the list stop's letterbox slide-out 2EA780 over the fade's remaining time, 60 lines -> 0 (PS2 to-c-fade 1470..1502).
+  function fadeFrom({ ticks = 58, colour = 'white', hud = false, bars = false } = {}) {
+    const o = overlay = { t: 0, ticks, hold: 0, colour: colour === 'white' ? '#fff' : '#000', loading: false, reverse: true, hud, bars };
     let last = performance.now();
     const step = (now) => { if (overlay !== o) return; if (!qa.frozen) o.t += Math.min(Math.max(0, now - last), 250) * TICK_HZ / 1000; last = now; if (o.t >= o.ticks) { overlay = null; return; } requestAnimationFrame(step); };
     requestAnimationFrame(step);
@@ -851,7 +905,9 @@ export function createCutscenes(host) {
   function drawOverlay(c, ui) {
     const o = overlay; if (!o) return;
     fadePainterReset(o.reverse ? 1 - o.t / o.ticks : Math.min(1, o.t / Math.max(1, o.ticks)));
-    if (o.reverse) { c.save(); c.globalAlpha = Math.max(0, 1 - o.t / o.ticks); c.fillStyle = o.colour; c.fillRect(0, 0, 640, 448); c.restore(); return; }
+    if (o.reverse) { c.save(); c.globalAlpha = Math.max(0, 1 - o.t / o.ticks); c.fillStyle = o.colour; c.fillRect(0, 0, 640, 448); c.globalAlpha = 1;
+      if (o.bars) { const bar = 60 * Math.max(0, 1 - o.t / o.ticks) * 448 / 480; c.fillStyle = '#000'; c.fillRect(0, 0, 640, bar); c.fillRect(0, 448 - bar, 640, bar); }
+      c.restore(); return; }
     c.save(); c.scale(1, 448 / 480);
     const bar = 60 * Math.min(1, o.t / 30);
     c.fillStyle = '#000'; c.fillRect(0, 0, 640, bar); c.fillRect(0, 480 - bar, 640, bar);
@@ -888,7 +944,7 @@ export function createCutscenes(host) {
       const bar = s.barsFull || s.at > 0 || !seq ? 60 : 60 * Math.min(1, seq.t / 30);
       c.fillStyle = '#000'; c.fillRect(0, 0, 640, bar); c.fillRect(0, 480 - bar, 640, bar);
     }
-    if (step && (step.flags & FLAG.SKIP) && (seq || step.fmv)) {
+    if (step && (step.flags & FLAG.SKIP) && (seq || step.fmv) && !(s.skipLock > 0)) {   // 2792E0 returns 0 under the skip lock: no "Press X to skip"
       const loc = ui.careerUI?.loc, press = loc?.text?.('kT_OVRCMNPress', 'Press') || 'Press', to = loc?.text?.('kT_OVRCMNToSkip', 'to skip') || 'to skip';
       c.globalAlpha = 0.45 + 0.4 * (0.5 + 0.5 * Math.cos(performance.now() / 1000 * Math.PI));
       ui.text(c, to, 622, 384, 18, '#3c3c46', 'FEFONT', 'right');
@@ -911,7 +967,7 @@ export function createCutscenes(host) {
     if (a > 0) { c.globalAlpha = Math.min(1, a); c.fillStyle = s.fadeColour || '#000'; c.fillRect(0, 0, 640, 480); c.globalAlpha = 1; }
     // Over the script's fades (PS2 s770: bright over the fly-over's fade-in); it goes when the riders are loaded (PS2
     // t~258-262, 12A180), which in the browser happens after the fly-over, behind the course-switch cover.
-    if (seq && ((step?.flags & FLAG.HOLD) || seq.loop || step?.loading)) loadingCaption(c, ui, seq && !step?.idle ? 396 : 440);
+    if (seq && s.releaseT == null && ((step?.flags & FLAG.HOLD) || seq.loop || step?.loading)) loadingCaption(c, ui, seq && !step?.idle ? 396 : 440);   // released: WS10 enter clears the caption bit (R+1)
     c.restore();
   }
   function measure(ui, text, size) { const g = ui.fonts?.FEFONT; if (!g) return text.length * size * 0.5; let w = 0; for (const ch of text) w += (g[ch]?.advance || 10) * size / 22; return w; }
@@ -1016,6 +1072,14 @@ export function createCutscenes(host) {
     get overlay() { return !!overlay; },
     get overlayUnderHud() { return !!overlay?.hud; },
     clearOverlay() { overlay = null; },
+    // pv transportFade: the release as 0x236AA8 -> 27A9F0 -> 2766D0(list, 1, 1) -> 277980 does it: the held step plays on for its
+    // fade_out record's out ticks (#122: black, 30) and the list moves on at full black. Refused while a step transition fade runs
+    // (279298: list +0xB0, the loop's own fade-in); the caller retries.
+    releaseFade() { const s = active; if (s?.releaseT != null) return true; if (!(s?.seq?.ready && (s.steps[s.at].flags & FLAG.HOLD))) return false; if (fadeAlpha(s) > 0) return false; s.releaseT = 0; return true; },
+    get releasing() { return active?.releaseT != null; },
+    // The HUD inside the letterboxed picture area while the bars slide out (the render block 2EAA28 / 2EA900: top 0.125, height 0.75):
+    // the bar fraction (ui.js squeezes the HUD by it).
+    hudSqueeze() { const o = overlay; return o?.bars && o.hud ? Math.max(0, 1 - o.t / o.ticks) : 0; },
     // The host's "loaded" signal for a flag-8 step (transport in-air loop): the list moves on (0x279070).
     advance() { const s = active; if (s?.seq && (s.steps[s.at].flags & FLAG.HOLD)) { nextStep(s); return true; } return false; },
     // Event intro (world state 10 -> 1 -> 2): onIdle when the start-gate idle loop begins (the objectives card
@@ -1161,6 +1225,14 @@ export async function playCutscene(opts = {}) {
     case 'transport-depart':
       steps = here >= 17 ? [{ group: bc(here) || bc(dest) ? GROUP.HELI_DEP : GROUP.GOND_DEP, flags: 1 }] : [];
       where = code(here); break;
+    case 'transport-ride': {   // pv transportFade: 27A860's one list [departure 12/18 flags 1 (stations only), in-air 13/19, the held loop 14/20 flags 8] + WS10's heli drop (0x235220)
+      const heli = bc(here) || bc(dest);
+      steps = transportSteps({ heli, departure: here >= 17 });
+      if (bc(dest)) steps.push(...arrivalSteps(opts.firstVisit ? code(dest) : dest, !!opts.firstVisit).map((s) => ({ ...s, location: code(dest) })));
+      where = code(here) || where;
+      if (opts.until) Promise.resolve(opts.until).then(() => { const t = setInterval(() => { if (!cs.active || cs.releaseFade() || !cs.active) clearInterval(t); }, 50); });
+      break;
+    }
     case 'transport-loop': {
       const heli = bc(here) || bc(dest);
       steps = transportSteps({ heli }).filter((s) => s.group !== GROUP.HELI_DEP && s.group !== GROUP.GOND_DEP);
@@ -1181,5 +1253,5 @@ export async function playCutscene(opts = {}) {
   }
   if (opts.steps) steps = opts.steps;
   if (!steps.length) return { played: false, skipped: false, scripts: [] };
-  return cs.play({ steps, cast, location: where || cs.location?.() || 'ARA1', hub: opts.hub ?? null, kind, place, onIdle: opts.onIdle ?? null, restore: opts.restore });
+  return cs.play({ steps, cast, location: where || cs.location?.() || 'ARA1', hub: opts.hub ?? null, kind, place, onIdle: opts.onIdle ?? null, restore: opts.restore, skipLock: opts.skipLock ?? 0, onStep: opts.onStep ?? null });
 }

@@ -74,13 +74,50 @@ bytes the exporters read:
 - **Evidence files** (tools/iso_pipeline_steps.py `EVIDENCE`): inputs no pipeline step can make (outputs of the
   recompiled-code oracles or the native engine build); kept whole.
 
-## 4. Verification
+### Evidence files (`EVIDENCE` in tools/iso_pipeline_steps.py)
+
+| File | Made by | Feeds |
+|---|---|---|
+| `local/assets/native/RIDER_{PSYMON,ALLEGRA,MOBY,GRIFF,LUTHER}/animation-start.json` | tools/test_opponent_poses.py (native Metal engine audit) | the opponent packages (test data) |
+| `local/browser-ui/hud/{boost-draws,boost-coil-glow,boost-letters}.json` | tools/probe_boost_hud_*.py (PS2Recomp oracle of the gauge code) | UI/boost-gauge.json |
+| `local/browser-ui/trick-hud/trick-hud-draws.json` | tools/probe_trick_hud.py (PS2Recomp oracle of 0x1E9A30) | UI/trick-hud.json |
+| `build/snow-emission-oracle/original-dynamic-spray-profiles.bin` | tools/test_snow_emission_native.py (oracle) | SNOW_FX spray profiles |
+| savestate-tree JSON (capture manifests, multi-spline construct files, measured reads) | the capture / oracle tools | set pieces, sections, the mountain manifest |
+
+## 4. Sam, Xbox, test data
+
+- **Sam** is optional: web/prepare.py packages RIDER_SAM only when his native package exists, tools/export_roster.py and
+  export_characters.py add him only with `config/characters/sam.json`, the UI atlases no longer go through his C# project,
+  the shared LOC/LUI helpers are tools/loc_file.py and lui_screen.py. The game starts on Zoe (pv `zoeBoot`, web/main.js
+  bootRider) and runs without any Sam file; with them he is the eleventh roster entry as before.
+- **Xbox HD rider textures** (WARDROBE/*/textures-xbox.tex, gear-xbox.tex) are not made here: tools/export_xbox_riders.py
+  with the user's Xbox disc (docs/xbox-textures.md). Without them the game falls back to the PS2 archives (pv
+  `xboxRiders`; turn it off for a PS2-only build to avoid the 404s).
+- **Test data** (PS2 snapshot records, the flag golden, freestyle rosters, far-painter) goes to web/public/test-data, not
+  the served assets (tools/disc_paths.py `test_data`).
+
+## 5. Maintainer notes
+
+- **Making a pack:** in a code-only scratch checkout,
+  `python3 tools/setup_from_iso.py --iso ... --gamecube ... --trace --states-from <tree with local/reference,
+  local/ps2-capture, build/snow-emission-oracle> --make-pack ssx3-statepack.zip`. The state trees are linked read-only and
+  the hook refuses writes into them (so the pipeline runs export_wardrobe with `--no-ground-truth`: that audit writes into the savestate tree).
+  Tracing costs time (a full traced run takes about 5 hours under load; a restore run about 3).
+- **When an exporter changes what it reads**, the pack must be rebuilt: the pack records each step's source fingerprint
+  and the driver prints a note for steps that changed since.
+- **Tracer coverage:** reads through `bytes` slicing/indexing, `struct`, `re`, `find`/`index`/`count`/`startswith`,
+  `hashlib`/`zlib`, `array` and `memoryview` are recorded; slices of 1 KiB or more stay traced views, so a capture
+  record's untouched bytes are not kept. Anything else that reads a whole buffer through the buffer protocol would escape;
+  the restore run's byte comparison catches it.
+- **The pack is not code:** it is derived from the maintainers' savestates and ships as a release download, never in git.
+
+## 6. Verification
 
 `tools/verify_assets.py BUILT REFERENCE` compares two trees file by file and classifies each difference (JSON value
 paths, texture archive entries by texel digest, PNG pixels). The pipeline was proven on a code-only scratch checkout
 (section 5).
 
-## 5. Status
+## 7. Status
 
 See docs/HANDOFF.md (2026-09-28, ISO pipeline) for the verify results and the list of files that differ from the live
 tree and why.

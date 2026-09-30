@@ -33,12 +33,42 @@ const mulRows = (a, b) => a.map((r) => [0, 1, 2, 3].map((k) => r[0] * b[0][k] + 
 const S = [[0.01, 0, 0, 0], [0, 0, -0.01, 0], [0, 0.01, 0, 0], [0, 0, 0, 1]], SI = [[100, 0, 0, 0], [0, 0, 100, 0], [0, -100, 0, 0], [0, 0, 0, 1]];
 // Native (three.js, column-major elements) delta taking the baked rest placement to `world` (source rows).
 export const nativeDelta = (rest, world) => Float32Array.from(mulRows(mulRows(mulRows(SI, invertAffine(rest)), world), S).flat());
+// nativeDelta(rest, parentMatrix(node, offset)) into out (Float32Array 16) without per-call arrays (docs/web-render-performance.md
+// "Per-frame garbage"): pre = mulRows(SI, invertAffine(rest)), fixed per parent; the same operations in the same order.
+const W3 = new Float64Array(4), B = new Float64Array(16);
+function childDeltaInto(pre, node, offset, out) {
+  const n0 = node[0], n1 = node[1], n2 = node[2], n3 = node[3], o0 = offset[0], o1 = offset[1], o2 = offset[2], o3 = offset[3];
+  for (let k = 0; k < 4; k++) W3[k] = vuAdd(n3[k], vuAdd(vuAdd(vuAdd(mul(n0[k], o0), mul(n1[k], o1)), mul(n2[k], o2)), mul(n3[k], o3)));
+  for (let r = 0; r < 4; r++) { const a = pre[r]; for (let k = 0; k < 4; k++) B[4 * r + k] = a[0] * n0[k] + a[1] * n1[k] + a[2] * n2[k] + a[3] * W3[k]; }
+  for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) out[4 * r + k] = B[4 * r] * S[0][k] + B[4 * r + 1] * S[1][k] + B[4 * r + 2] * S[2][k] + B[4 * r + 3] * S[3][k];
+  return out;
+}
 
 export class AttachedSetPieces {
   constructor(data, { core = null } = {}) {
     this.data = data; this.core = core;
     this.jsParents = (data?.parents || []).filter((p) => p.parentKind === 'livecomp').map((p) => ({ ...p, rest: rows(p.childMatrix) }));
     this.resources = new Set([...(data?.parents || []).map((p) => p.child), ...(data?.splineLiveComps || []).map((x) => x.resource)]);
+    this.frameResource = []; this.frameNode = []; this.frameDelta = []; this.frameCount = 0;
+  }
+  // apply()'s deltas of the frame, as deltas() without the Map, its string keys or copies: slot k = (resource, node) and a
+  // Float32Array kept across frames; lookups scan from the last slot, so a later entry of a key wins as a later Map.set did.
+  frameSlot(resource, node) {
+    const k = this.frameCount++; if (k === this.frameDelta.length) this.frameDelta.push(new Float32Array(16));
+    this.frameResource[k] = resource; this.frameNode[k] = node; return this.frameDelta[k];
+  }
+  frameFind(resource, node) { for (let k = this.frameCount - 1; k >= 0; k--) if (this.frameResource[k] === resource && this.frameNode[k] === node) return this.frameDelta[k]; return null; }
+  frameDeltas(live) {
+    this.frameCount = 0;
+    for (let i = 0; i < this.jsParents.length; i++) {
+      const p = this.jsParents[i], nodes = live?.matrices(p.parent); if (!nodes || !nodes[p.node]) continue;
+      childDeltaInto(p.pre ??= mulRows(SI, invertAffine(p.rest)), nodes[p.node], p.offset, this.frameSlot(p.child, -1));
+    }
+    const core = this.core;
+    if (core?._set_piece_attached) {
+      const q = core._set_piece_attached() >> 2, F = core.HEAPF32, n = F[q];
+      for (let k = 0; k < n; k++) { const at = q + 1 + 18 * k, d = this.frameSlot(F[at], F[at + 1]); for (let i = 0; i < 16; i++) d[i] = F[at + 2 + i]; }
+    }
   }
   // Source-space child matrices of the LiveComp-parented children (live: LiveCompAnimation).
   childMatrices(live) {
@@ -70,11 +100,11 @@ export class AttachedSetPieces {
   // Meshes split per node (mesh.userData.liveComp = [resource, node]); returns the number moved.
   apply(liveMeshes, live) {
     if (!this.resources.size) return 0;
-    const deltas = this.deltas(live); let moved = 0;
+    this.frameDeltas(live); let moved = 0;
     for (const mesh of liveMeshes) {
-      const [resource, node] = mesh.userData.liveComp;
+      const lc = mesh.userData.liveComp, resource = lc[0], node = lc[1];   // integers (world.json livecomp_resource / _node)
       if (!this.resources.has(resource)) continue;
-      const delta = deltas.get(`${resource}:${node}`) ?? deltas.get(`${resource}:-1`);
+      const delta = this.frameFind(resource, node) ?? this.frameFind(resource, -1);
       if (!delta) continue;
       mesh.matrixAutoUpdate = false; mesh.userData.lcRest = false;   // a player's matrix (pv liveRest: not the rest draw)
       const e = mesh.matrix.fromArray(delta).elements, o = mesh.userData.restPosition ??= mesh.position.clone();

@@ -283,7 +283,9 @@ EMSCRIPTEN_KEEPALIVE int peak_world_sky(){return peak_stream::skyActive;}
 // screen 11 with the transport-arrival flag +0x1C8); phase 1 = 22D088(streamer, dest, 7) once every wanted row is resident
 // (236960 -> 22D278), which activates them in the same pass. The arrival shows the destination's sky: the dome switch is allowed
 // as after the initial load (+0x1A4 = 1; the skybox trigger volumes are not ridden through on a transport).
-EMSCRIPTEN_KEEPALIVE void peak_world_transport(int course,int phase){peak_stream::request(course,phase!=0);if(phase!=0)peak_stream::skySwitchAllowed=true;}
+// pv transportFade (web/free-ride.js): phase 2 = the Load at the release (0x236AC8: 22D088 without the dome), phase 3 = the dome allowed
+// once the list's head is no longer a Transport step (world state 10 update 0x235808..0x235838: +0x1A4 = 1, R+30).
+EMSCRIPTEN_KEEPALIVE void peak_world_transport(int course,int phase){if(phase==3){peak_stream::skySwitchAllowed=true;return;}peak_stream::request(course,phase!=0);if(phase==1)peak_stream::skySwitchAllowed=true;}
 // 22D278: every wanted row of the request (locations, sky, TRANSP) resident (state 1 or 2).
 EMSCRIPTEN_KEEPALIVE int peak_world_request_resident(){
  using namespace peak_stream;auto it=residency.find(pendingCourse);if(it==residency.end())return 0;
@@ -306,4 +308,15 @@ EMSCRIPTEN_KEEPALIVE void peak_world_paths(int locationId,const char* text){peak
 EMSCRIPTEN_KEEPALIVE void peak_world_reattach(){peak_after_race_reset();}
 EMSCRIPTEN_KEEPALIVE int* peak_world_bank(){RIDER_LOCAL static int v[2];v[0]=peak_stream::bankLocation;v[1]=peak_stream::bankVariant;return v;}
 EMSCRIPTEN_KEEPALIVE void peak_world_stop(){browserEventKind=-1;peak_stream::eventKind=4;peak_stream::tickRestartIn=0;peak_stream::crossingUnload=false;browserRaceAfterReset=nullptr;race_finish_eligible(1);peak_stream::active=false;peak_stream::rows={};ssx::worldTrackResidency().fill(1);browserWorldAppend=false;}
+// pv eventInWorld (docs/ctm-events-in-world.md stages 2 / 3): a Conquer the Mountain event run inside the streamed world takes the event
+// course's start seeds (web/generated/event_start_seed.hpp, keyed by browserEventLocation: the grid ground state, the human participant,
+// the start delay, the progress origin, the start camera, the backcountry rolling start) and keeps the streamed world's own node, skip,
+// scripted-instance and roller lists (the section activation and the streamed lists own those; the event package's are a Single Event
+// countdown's). "" returns to the streamed world's (no event start). Returns 1 when the code is an event course.
+EMSCRIPTEN_KEEPALIVE int event_course_seed(const char* code){
+ const auto dead=browserEventDeadNodes;const auto skip=browserCourseSkipNodes;const auto scripted=browserEventScriptedInstances;const auto rollers=browserRollerTreeMass;const bool seeded=browserEventCourseSeeded;
+ browser_select_event_course(code?std::string_view(code):std::string_view());
+ const bool ok=browserEventCourseSeeded;
+ browserEventDeadNodes=dead;browserCourseSkipNodes=skip;browserEventScriptedInstances=scripted;browserRollerTreeMass=rollers;browserEventCourseSeeded=seeded;
+ return ok?1:0;}
 }

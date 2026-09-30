@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const { startOpensPause, startAccepts } = await import('./start-rules.js');
 const { createPadMenus } = await import('./gamepad-menus.js');
+const { setPv } = await import('./pv-flags.js');
+setPv('ps2MenuInput', false);   // the port's pad model first; the PS2 pad history below
 const ride = { screen: 'game', running: true, paused: false, finished: false, cutscene: false };
 const rows = [
   ['riding / countdown / checkpoint', ride, true],
@@ -42,12 +44,34 @@ for (const s of ['game', 'loading', 'cutscene', 'transition']) assert.equal(star
   m.step(pad, 16); set(9, 0); m.step(pad, 32); assert.equal(m.taken('start'), false, 'released: no longer spent');
   frame(); set(9, 1); m.step(pad, 48); assert.equal(frame(), true, 'a new Start on the ride pauses');
 }
+setPv('ps2MenuInput', true);
+{ // pv ps2MenuInput: the same rules through the PS2 pad history (60 Hz updates, 3-update edge window: web/gamepad-menus.js)
+  const sent = []; let menu = false, accepts = false, t = 0;
+  const m = createPadMenus({ menu: () => menu, running: () => true, send: (ty, c) => sent.push(ty + ' ' + c), startAccepts: () => accepts });
+  const pad = { buttons: Array.from({ length: 17 }, () => ({ value: 0, pressed: false })), axes: [0, 0, 0, 0] };
+  const set = (i, v) => { pad.buttons[i].value = v; pad.buttons[i].pressed = v > 0.5; };
+  const f = (n = 1) => { for (let k = 0; k < n; k++) { t += 1000 / 60; m.step(pad, t); } };
+  f(4); set(9, 1); f(); menu = true; accepts = true; f(4); assert.deepEqual(sent, [], 'held from the ride: nothing');
+  set(9, 0); f(4); set(9, 1); f(); assert.deepEqual(sent.splice(0), ['keydown Enter'], 'a new Start in the menu = Enter');
+  set(9, 0); f(4); sent.length = 0; accepts = false; set(9, 1); f(4); assert.deepEqual(sent, [], 'switch off: the old rule');
+}
+{ // pv ps2MenuInput + startConsume: the card's Start is spent until released
+  const sent = []; let screen = 'ctm-objectives', t = 0;
+  const m = createPadMenus({ menu: () => screen !== 'game', running: () => true, send: (ty, c) => { sent.push(ty + ' ' + c); if (ty === 'keydown' && c === 'Enter') screen = 'game'; }, startAccepts: () => startAccepts(screen) });
+  const pad = { buttons: Array.from({ length: 17 }, () => ({ value: 0, pressed: false })), axes: [0, 0, 0, 0] };
+  const set = (i, v) => { pad.buttons[i].value = v; pad.buttons[i].pressed = v > 0.5; };
+  const f = (n = 1) => { for (let k = 0; k < n; k++) { t += 1000 / 60; m.step(pad, t); } };
+  f(4); set(9, 1); f(); assert.deepEqual(sent.splice(0), ['keydown Enter'], 'the card takes Start (Enter)');
+  assert.equal(m.taken('start'), true, 'spent while held'); f(4); assert.equal(m.taken('start'), true);
+  set(9, 0); f(4); assert.equal(m.taken('start'), false, 'released: no longer spent');
+}
+setPv('ps2MenuInput', null);
 const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
 assert.match(main, /const padMenus=installPadMenus\(/, 'main.js keeps the pad menus');
 assert.match(main, /!\(pv\('startConsume'\)&&padMenus\?\.taken\?\.\('start'\)\)/, 'pad path: a spent Start does not pause');
 assert.match(main, /&&running&&!\(e\.ssxPadMenu&&pv\('startConsume'\)\)\)/, 'keyboard path: the pad menus\' keys do not pause');
 assert.match(main, /frameScreen==='game'&&startOpensPause\(/, 'pad Start pauses from the ride only (the screen of the previous frame)');
-assert.match(main, /window\.addEventListener\('keydown',\(\)=>\{keyScreen=ui\.screen;keyPaused=paused;\},true\);/, 'keyboard: the screen before any menu handled the key');
+assert.match(main, /window\.addEventListener\('keydown',\(\)=>\{keyScreen=ui\.screen;keyPaused=isPaused\(\);\},true\);/, 'keyboard: the screen before any menu handled the key');
 const { PV_DEFAULTS } = await import('./pv-flags.js');
 assert.equal(PV_DEFAULTS.startRules, true, 'startRules on');
 assert.equal(PV_DEFAULTS.startConsume, true, 'startConsume on');

@@ -17,6 +17,7 @@ RIDER_LOCAL void (*browserRouteProgress)(float,int32_t)=nullptr;
 RIDER_LOCAL void (*browserRaceAfterReset)()=nullptr; // streamed world (web/peak_world.inc): the location's path bank and finish rule survive a new session
 extern void browser_camera_finish(int32_t raceRiders);extern void browser_score_finish();extern void browser_race_bonus(int32_t value);extern void browser_camera_race_reset();
 RIDER_LOCAL static int32_t eventRiders=1; // authored roster (game-info +0x78), read by POST_RACE_1
+RIDER_LOCAL extern bool browserEventWorldKept; // web/start_gameplay.inc
 RIDER_LOCAL static OriginalRaceEventAsset asset;RIDER_LOCAL static std::unique_ptr<OriginalRaceSession> race;RIDER_LOCAL static int32_t eventTimeLimit=0;RIDER_LOCAL static float info[8];RIDER_LOCAL static float progressOrigin=0;
 void browser_camera_terrain_json(nlohmann::json& data);
 nlohmann::json animation_document(const char* text); // web/animation_bridge.cpp
@@ -30,7 +31,11 @@ EMSCRIPTEN_KEEPALIVE void init_race(const char* text){auto cfg=animation_documen
  for(auto&p:cfg["paths"]){OriginalRacePath path;path.origin=p["origin"].get<std::array<float,3>>();path.low=p["low"].get<std::array<float,3>>();path.high=p["high"].get<std::array<float,3>>();path.remainingAtOrigin=p["remaining_at_origin"];path.segments=p["segments"].get<std::vector<std::array<float,4>>>();for(auto&e:p["events"])path.events.push_back({e["type"],e["value"],e["start"],e["end"]});asset.paths.push_back(std::move(path));}
  for(auto&p:cfg["participants"]){if(!p["human"].get<bool>())continue;OriginalRaceParticipant human;human.human=true;human.finish={p["finish_elapsed"],p["penalty_ticks"],p["finish_ticks"]};human.progress.pathIndex=p["path_index"];human.progress.remaining=p["remaining"];human.progress.bestRemaining=p["best_remaining"];auto cache=p["path_cache"];human.progress.cache={cache["origin"].get<std::array<float,3>>(),cache["distance"],cache["segment"]};asset.participants.push_back(human);}
  eventRiders=int32_t(cfg["participants"].size());
- auto ch=cfg["checkpoints"];asset.checkpoints.count=ch["count"];for(unsigned i=0;i<ch["human_masks"].size();i++)asset.checkpoints.humanMasks[i]=ch["human_masks"][i];progressOrigin=asset.paths.front().remainingAtOrigin;race=std::make_unique<OriginalRaceSession>(asset);
+ auto ch=cfg["checkpoints"];asset.checkpoints.count=ch["count"];for(unsigned i=0;i<ch["human_masks"].size();i++)asset.checkpoints.humanMasks[i]=ch["human_masks"][i];progressOrigin=asset.paths.front().remainingAtOrigin;
+ // A document loaded over a running session (the CTM gate 22D6C8 in the streamed world, pv eventInWorld; free ride again after it)
+ // keeps the total tick count: it is the rider manager's +8 (1298C8), which runs on through the gate and WS1 and restarts only at
+ // 1297C8 (the Continue, reset_race / game_tick_restart). 112338's path re-pick tests it (tick % 60).
+ const bool running=race!=nullptr;const int32_t total=running?race->state.clock.totalTicks:0;race=std::make_unique<OriginalRaceSession>(asset);if(running)race->state.clock.totalTicks=total;
 }
 // Checkpoint bonus configuration (engine/race_session.hpp): the list 0x4D33B8 (6 x {int32 value, float distance}), the game
 // mode byte 0x535C12, the event handler index and GMM+8, and *0x5308D0. Zero on every browser course; the host (or a
@@ -41,7 +46,7 @@ EMSCRIPTEN_KEEPALIVE void set_race_bonus(const int32_t* words,int mode,int handl
  for(unsigned k=0;k<6;k++){bonusTable.value[k]=words[2*k];bonusTable.distance[k]=std::bit_cast<float>(words[2*k+1]);}
  bonusMode=mode;bonusHandlerIndex=handler;bonusFreestyleKind=freestyleKind;bonusFlags=flags;apply_race_bonus();}
 RIDER_LOCAL static bool rollingRacePending=false; // backcountry rolling start (docs/backcountry.md)
-EMSCRIPTEN_KEEPALIVE void reset_race(){rollingRacePending=false;browser_camera_race_reset();browser_reset_pickups();progressOrigin=asset.paths.front().remainingAtOrigin;race=std::make_unique<OriginalRaceSession>(asset);race->state.timeLimitTicks=eventTimeLimit;apply_race_bonus();if(browserRaceAfterReset)browserRaceAfterReset();}
+EMSCRIPTEN_KEEPALIVE void reset_race(){rollingRacePending=false;browser_camera_race_reset();if(!browserEventWorldKept)browser_reset_pickups(); /*event_grid_start keeps the world (web/start_gameplay.inc)*/progressOrigin=asset.paths.front().remainingAtOrigin;race=std::make_unique<OriginalRaceSession>(asset);race->state.timeLimitTicks=eventTimeLimit;apply_race_bonus();if(browserRaceAfterReset)browserRaceAfterReset();}
 // Freestyle events (web/career-ui.js): the run time limit in ticks (0x440B38 seconds x 60; 0 = untimed race). Kept across
 // race resets; 125228 in OriginalRaceSession::endTick ends the run with a DNF once it passes.
 EMSCRIPTEN_KEEPALIVE void race_time_limit(int32_t ticks){eventTimeLimit=ticks>0?ticks:0;if(race)race->state.timeLimitTicks=eventTimeLimit;}
@@ -54,6 +59,10 @@ EMSCRIPTEN_KEEPALIVE int race_time_limit_now(){return race?race->state.timeLimit
 EMSCRIPTEN_KEEPALIVE void race_give_up(){if(race)race->giveUp();}
 // Streamed world runs (web/peak_world.inc): the race clock runs from 0 without a countdown (free ride: each location entry;
 // the peak runs: the objectives card's Continue, peakrun notes). The finish marker is cleared.
+// The rider manager's +8 (1298C8, the total tick count: the capture's tick field, what 112338 / 1125C0 test with tick % 60 == 0
+// before a path switch at more than 500 cm off the route) is one word on the PS2; the port keeps it twice (motionTick and this
+// clock's totalTicks). A restart (1297C8, web/animation_bridge.cpp browser_game_tick_restart) moves both.
+void browser_race_total_ticks_restart(int32_t value){if(race)race->state.clock.totalTicks=value;}
 EMSCRIPTEN_KEEPALIVE void race_clock_restart(){if(!race)return;auto& c=race->state.clock;c.phase=c.previous=c.previousHandler=RacePhase::Race;c.raceTicks=0;c.countdownTicks=0;c.raceEnabled=1;race->state.finish={};race->state.timedOut=false;}
 // 10E5D8 finish eligibility for the streamed world (web/peak_world.inc sets it from the event kind and the current course).
 EMSCRIPTEN_KEEPALIVE void race_finish_eligible(int eligible){if(race)race->state.finishEligible=eligible!=0;}
@@ -62,7 +71,7 @@ RIDER_LOCAL static std::optional<OriginalRaceParticipant> eventParticipantOverri
 void set_event_participant(const OriginalRaceParticipant& participant,float origin){eventParticipantOverride=participant;eventProgressOriginOverride=origin;}
 void begin_event_clock(){browser_camera_race_reset();auto event=asset;event.participants={eventParticipantOverride?*eventParticipantOverride:browserEventParticipant()};event.clock={RacePhase::PreRace,RacePhase::None,RacePhase::None,0,0,0,1,0};race=std::make_unique<OriginalRaceSession>(event);race->state.timeLimitTicks=eventTimeLimit;apply_race_bonus();progressOrigin=eventParticipantOverride?eventProgressOriginOverride:browserEventProgressOrigin;const float unfinished=-1;originalRaceClockBeginTick(race->state.clock,{&unfinished,1});/*rolling start: the ready state is PreRace; the overlay's Continue selects Race (233AA0) before game tick 0, whose update enters it and counts race tick 1 (PS2 bc-race-idle: phase 3 at record 0, phase 5 / race tick 1 at record 1)*/rollingRacePending=browserEventRolling;if(!browserEventRolling)originalRaceSelect(race->state.clock,RacePhase::Countdown);std::fill(std::begin(info),std::end(info),0.f);}
 int event_phase(){return race?int(race->state.clock.phase):0;}int event_ticks(){return race?race->state.clock.raceTicks:0;}
-EMSCRIPTEN_KEEPALIVE float* race_result_info(){RIDER_LOCAL static float result[6];std::fill(std::begin(result),std::end(result),0.f);if(!race)return result;const auto&s=race->state;result[0]=s.finish.elapsed>=0;result[1]=s.finish.finishTicks;result[2]=s.finish.penaltyTicks;result[3]=s.finish.elapsed;result[4]=s.clock.raceTicks;result[5]=int(s.clock.phase);return result;}
+EMSCRIPTEN_KEEPALIVE float* race_result_info(){RIDER_LOCAL static float result[7];std::fill(std::begin(result),std::end(result),0.f);if(!race)return result;const auto&s=race->state;result[0]=s.finish.elapsed>=0;result[1]=s.finish.finishTicks;result[2]=s.finish.penaltyTicks;result[3]=s.finish.elapsed;result[4]=s.clock.raceTicks;result[5]=int(s.clock.phase);result[6]=float(s.clock.totalTicks);return result;}
 // Standings inputs (rider +0x4D0 current / +0x4D4 best remaining, +0x470 finish marker, +0x478 finish ticks).
 float browser_finish_elapsed(){return race?race->state.finish.elapsed:-1.f;}
 void browser_finish_elapsed_min(float v){if(race&&race->state.finish.elapsed<v)race->state.finish.elapsed=v;} // 12C964 max.s
@@ -80,3 +89,6 @@ EMSCRIPTEN_KEEPALIVE float* race_end(){js_rider_before_progress();browser_stage_
 bool browser_race_replace_paths(std::vector<ssx::OriginalRacePath> paths,int pathIndex){
  if(!race)return false;race->replacePaths(std::move(paths),pathIndex,{float(position.x*100),float(-position.z*100),float(position.y*100)});return true;
 }
+#ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
+#include "generated/snapshot/race_bridge.inc"
+#endif

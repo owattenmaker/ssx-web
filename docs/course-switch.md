@@ -55,6 +55,13 @@ materials, geometries, skeletons and textures (map slots, TSL texture nodes, `us
 texture set / atlas; render-target textures stay with their owners). The disposal yields every ~8 ms so the load
 screen keeps animating. Encoded-pass effects of the old scene are pruned (`pruneEncodedEffects`).
 
+Nothing may keep the old course after unloadCourse (docs/mobile.md "Load spikes"): the held draw's set of the scene before the switch
+(`acrossBefore`, pv switchGate) is pruned to what is still in the scene right after it, `worldRewarm` is dropped, and callbacks that
+outlive a course (`ui.cb.standings` / `lineup`) are module-level functions, not closures made inside loadCourse (JavaScriptCore kept
+the whole loadCourse scope, and the course's core, through them). pv `switchGC` (web/switch-gc.js, JavaScriptCore only) then asks for a
+full collection before the new core is made while an earlier core's memory is alive, and once more under the load screen before the
+ride / event starts.
+
 ## Back / Forward
 
 `onPopState` leaves what runs (online race: DNF + leave; online lobby when the entry is not an online one; a career
@@ -122,6 +129,157 @@ Safari guest: ARA1 -> BRA2 2.6 s, -> BHP1 0.6 s, same client id, no new WebSocke
 Audio failures are contained (`main.js audioSafe`): a song whose stream uses codec 4 (microtalk) made `pathfinder.js`
 throw on every tick, which stopped the frame (the race froze on the give-up / results path). The game now goes on and
 logs it once; the decoder gap itself is the audio module's.
+
+## Warms that outlive their course (pv `compileAbort`, 2026-09-28)
+
+**Cause.** three r186 `Renderer.compileAsync` has two phases:
+- It lists the scene's render items synchronously.
+- It then builds them one at a time with `yieldToMain()` between items. Each item is built against the render context
+  captured at the call.
+
+The world warms queue thousands of items: `free-ride.js warmSliced`, cutscene `host.compile` and the ride's rider, all
+through `fog-renderer.js compileObject`. `unloadCourse` waited for the free-ride warms for at most 1.5 s (pv
+`bootChain` settle). On WebKit they were often still building then, so the remaining items ran after the course was
+disposed:
+- They uploaded the disposed geometry, bindings and textures again, and nothing disposed them a second time.
+- They held pipelines.
+- Their pipelines failed on the old world pass's destroyed depth-stencil texture: "Async render pipeline creation
+  failed ... GPUDepthStencilState.format is required". Traced with hooks on `getCurrentDepthStencilFormat` and
+  `backend.destroyTexture`: PEAK1's world-pass depth, compiled from the item loop after the switch back to the event.
+
+Chrome usually finishes the warms inside the settle, so it showed neither the growth nor the errors.
+
+**Fix.** `web/compile-abort.js`:
+- `trackCompiles(renderer)` is installed by `createFogRenderer`. It wraps `compileAsync` and captures each call's item
+  list: the array three assigns to `renderer._compilationPromises` during the synchronous part.
+- `unloadCourse` calls `abortCompiles(1000)` first, before `freeRide.stop()`. This empties every list still being
+  built, so three's `for...of` ends after the item in flight, and it waits for that item. A call made during that wait
+  (a free-ride slice before its stop) builds nothing.
+- The next course's warms are not touched.
+
+The synchronous part only lists descriptors, so a dropped item leaves no state. An object whose compile was dropped
+builds its pipeline on its first draw, as three always does for an object not compiled: a build hitch at worst, never a
+missing draw. All dropped items belong to the course being disposed.
+
+**Measured.** WebKit (the shared driver, `?cutscenes=1`), 25 loads: EBA3 event, then 6 cycles of PEAK1 free ride
+(`cb.freeRide(17)`) -> EBA3 -> MOUNTAIN peak run (`cb.peakRun(7)`) -> EBA3. Page polled once per 3 s. WebContent
+`phys_footprint` (vmmap) and three's live textures, sampled 6 s after each load (`scratchpad/enc/memwk.mjs`, kept
+under `local/browser-validation/blend-space/hang/`):
+
+| | WebContent footprint at the event, loads 2 / 10 / 18 / 24 | live textures, load 2 -> 24 | depth-format errors |
+| --- | --- | --- | --- |
+| off | 1229 / 1536 / 1843 / 1741 MB | 245 -> 277 | 2-3 per event return (11 of 12 runs) |
+| on | 832 / 1229 / 1126 / 1024 MB | 245 -> 250 | 0 (8 runs) |
+
+- With the old 4-per-second polling, the same pair came out at 1229 -> 2253 MB (off) and 1126 -> 967 MB (on).
+- On, 37 warm calls were dropped over the 25 loads, 5,404 items.
+- Load times are unchanged: 8-15 s per switch in both.
+- Chrome, on: textures flat (243), no errors.
+
+**Left:**
+- One DataTexture per peak-world visit (created by an `updateBindings` in a warm during the free ride) is never
+  destroyed.
+- three's pipeline cache grows about 9 entries per cycle with the switch on or off. The GPU process footprint stays
+  flat (280-470 MB).
+
+## The course being built runs nothing (pv `switchGate`, on since 2026-09-29)
+
+**Owen's freeze** (host diag.log session t93ez0j6, Safari 27, 2026-09-29): BRA2 event, results, post-event Transport,
+MOUNTAIN/18 loaded (`course`, then `screen` -> game at t=1141.9), then nothing: no stall report, no heartbeat, no pagehide.
+The page never ran another task.
+
+**Cause.** During an in-page course switch the page's global `core` is the new course's wasm instance from the start of
+`loadCourse` (`core = await newCore()`), while its init runs in slices across frames (pv eventSlices / sliceLoad). The
+Transport's held loop keeps drawing across the switch (`cutscenes.js acrossSwitch`, every animation frame while the main loop
+is idle), and each of its frames:
+- lit the actors through `host.core`: `fe-preview.js light()` -> `_malloc` x4 (new pointers for the new core),
+  `_rider_lighting_info`, `_reset_rider_lighting`, `_shade_rider_lighting`;
+- ran the fade's painter reset `host.core._weather_fade_reset` (`fadePainterReset`);
+- drew the whole scene with `renderer.render(scene, camera)`, so the new course's objects drew (and ran their render hooks)
+  as `loadCourse` added them: set-piece fog puffs asked `resident()` before `chunkResident` existed (TDZ, every Transport;
+  the coordinator moved that declaration up), and ~25 canvas pipelines per switch were built for objects nobody sees.
+
+All of it on a core whose init had not run yet. Counted with each new core's exports wrapped (`scratchpad fz/corewrap.js`):
+97-247 lighting calls per Transport in WebKit (MOUNTAIN and per-peak PEAK1 alike), 145-1498 in Chrome. In WebKit 3 of about 12
+Transport loads crashed inside the new core: "Out of bounds call_indirect" in `_init_environment` / `_reset_rider`, "Out of
+bounds memory access" in `_init_animation`; the fallback ARA1 load was hit the same way and the page ended on the title.
+A corruption that does not trap at once can leave the core looping forever over corrupted data: no frame, no timer, no
+pagehide, no report, as in Owen's session (his 22:51 PDT bundle has the same code). Every Transport that changes world is
+exposed (post-event returns to a station or peak, "Go to this peak now?" into another peak world); crossWorld and plain
+event loads stop the cutscene (`stopRun`) and are not.
+
+**Fix** (main.js):
+- `coreLoading` is set from `newCore()` to `live = true` at the end of `loadCourse`.
+- The cutscene host's `core` getter returns null while it is set (as it already was during the unload, after `core = null`),
+  and `freeRideCourse()` returns -1. The actors keep their last lighting for the load's seconds; the fade reset waits.
+- The held loop's own draw (`host.render` -> `renderAcross`) leaves out the scene children the switch added
+  (`acrossBefore`, recorded when the switch starts); the list's TRANSP set, actors, skies and alpha fill still draw.
+- QA: `window.__coreLoading` with `?qa`.
+
+**Checked:** switchGate on, 0 calls into a new core during its `loadCourse`: WebKit 3 of 3 Transports (MOUNTAIN), Chrome 6 of
+6 (3 MOUNTAIN, 3 PEAK1 with -mountainRide); every load fine. The few calls left come after `loadCourse` (under rideWarm,
+the core complete). Tests: presentation, cutscenes, ctm-flow, ride-warm, lazy-course, ctm-stream, gpu-recovery.
+
+**Open:** `loadCourse` could keep the new instance in a local until its init completes and assign the global only then (the
+most robust form), but its own helpers (resetPhysics, bootRider, the animation, free-ride, set-piece and AI setup) read the
+global; that refactor is left for a separate, test-gated change. hangWatch cannot report a wasm infinite loop in WebKit (its
+worker's I/O goes through the frozen main thread); a Service Worker could (it has its own thread and network), not built.
+
+## World arrivals warm under the load screen (pv `worldWarm`, off)
+
+**What the first frames built.** A render-object / pipeline creation log (three's `RenderObjects.createRenderObject`,
+`Pipelines._getRenderPipeline` wrapped; `scratchpad fz/buildlog.js`) in WebKit, MOUNTAIN from the menus: after the load screen
+closed, the first frame made 2898 render objects (A, A_ASS1, A_ABA1, A_ARA1) and 28 pipelines synchronously (sky background,
+post quad, terrain sparkle, set-piece particles / halos, rider parts): Owen's "3051 bufs, 7012 binds, 20 pipes" stall. A
+Transport arrival: ~800 render objects, 15 pipelines.
+
+**Why the compile had not done it.**
+- `loadCourse` fires `freeRide.rewarm()` (pv streamWarm) and never waits for it.
+- three r186 `yieldToMain()` is `scheduler.yield()` in Chrome but a whole `requestAnimationFrame` elsewhere, and
+  `compileAsync` yields after every item, the async node build after every shader stage. So in WebKit the rewarm of a
+  start row (thousands of meshes) advanced one mesh per frame: 30-50 s.
+- A compile lists a transparent DoubleSide material in one pass; its draw makes a second, BackSide render object (passId
+  'backSide'), which only a draw creates.
+- Effects of the snow composite's encoded pass (layer 1, 1-sample target) never match a world-pass compile.
+
+**The switch (main.js, free-ride.js, cutscenes.js, web/yield-shim.js):**
+- `web/yield-shim.js` `installYieldShim()` (main.js init): where `scheduler.yield` is missing, a yield continues as the next
+  task (MessageChannel) until `yieldBudget.ms` of wall time since the last frame wait, then waits for an animation frame.
+  4 ms a frame normally, 12 under an opaque load screen, 8 under the Transport's visible held loop. Chrome keeps its own.
+- `free-ride.js rewarm` compiles the start row's locations first (`rewarmLead`, `rewarmLeadCodes`), then the rest; a
+  two-pass material gets a third, DoubleSide pass after its BackSide and FrontSide ones: listed as the draw lists it, it
+  creates the 'backSide' render object (and bindings), and the draw's pipeline lookup finds the BackSide build.
+- `switchCourse` -> `warmWorld(job, rideJob)` for a career world arrival (not a peak run), started alongside rideWarm:
+  - compiles everything else the world pass draws (courseRoots outside the locations and the rider, world layer) in 8 calls
+    that build side by side (`compileFor`: fog-renderer compileObject, unculled; per side only when nothing shows the frame);
+  - waits (at most 30 s) for those, the lead rewarm and the rider;
+  - behind the opaque load screen, then the race warm-up's frames (`warmupRender` with `skip` = the locations, left as they
+    are, and a new-variant cap of 60 a slice) for what only a draw builds: the sky pass, post passes, rider shadows, the
+    encoded effects. Under the Transport's held loop (world mode, the frame visible): no frames.
+- Cutscene sets are compiled before they join the scene (`host.compileHidden`) and actors per side (`host.compile`).
+- Event loads are unchanged (a per-slice async compile was tried: 2.8 -> 5.4-7.5 s of warm-up for BRA2, dropped).
+- The simulation is untouched (nothing ticks); the warm frames draw only behind the opaque load screen.
+
+**Measured** (WebKit through the shared driver, 1600x1000, audio running and silent, load ~34 from other agents; load = load
+screen open -> ride / intro; base 4 runs, on 2 runs of the final code; scratch `fz/owen2.mjs`, `report.py`, `arr2.py`):
+
+| | load, off -> on | after the load screen, off -> on |
+| --- | --- | --- |
+| first MOUNTAIN arrival (menu -> career) | 3.8-5.0 -> 6.2-8.2 s | 400-520 ms hitch every run (2897 render objects, 28 blocking pipelines) -> none (0 render objects, 1 pipeline), worst frame 406-518 -> 69-111 ms |
+| Transport arrival (BRA2 results -> MOUNTAIN/18) | 3.7-4.8 -> 4.1-5.1 s | 800 render objects / 15 pipelines -> 27 / 11, worst frame 96-125 -> 52-70 ms |
+| BRA2 event load | 7.5-8.5 -> 7.6 s | unchanged |
+
+On the first arrival the warm is 3.5-4.5 s of compile (overlapping the rider's 1.4 s) and 0.5 s of frames, with one
+250 ms frame under the load screen (the post passes and the sky). Cutscenes: the lodge-door cut's blocking pipelines 5 -> 1.
+
+**Checked:** `web/test-world-warm.mjs` (headless Chrome, in test:all): a new career off vs on, 300 ticks identical, the frame
+after them 0 pixels different (off vs off differs by up to 41 pixels, 6 levels: the rider's real-time interpolation). The
+test uses the desktop tier: on the auto fps tier the frame gate drops to 30 fps after heavy frames, and with the test's
+frozen animation-frame clock it then never draws again.
+
+**Left:** the Transport's held loop draws straight to the canvas (`acrossSwitch`), a context nothing compiles for (~20
+blocking pipelines for the TRANSP set, actors, sky and alpha fill at the switch); the Transport arrival's last 11 pipelines
+(encoded-pass effects, sky, post quad) are built by its first frame; the character select's FE model builds.
 
 ## Gaps
 

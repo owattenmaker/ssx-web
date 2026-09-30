@@ -199,4 +199,21 @@ assert.deepEqual([data.texts.message_center, data.texts.total.replace('%d', 2), 
   }
   setPv('ctmSmallFixes', null);
 }
+// pv mailFreeze: the event's posts start the icon where the PS2's froze under WS5 (182 frames: race-f res 3.033), and the Message Center
+// freezes it (HUD events 3 / 4) instead of clearing it.
+{
+  const { setPv } = await import('./pv-flags.js');
+  for (const on of [true, false]) {
+    setPv('mailFreeze', on);
+    const storage = new Memory(), career = new Career(careerData, { storage });
+    const ui = { screen: 'game', index: 0, set(x) { this.screen = x; }, sync() {} };
+    const cu = { ui, career, riderId: 'zoe', active: null, get me() { return career.rider('zoe'); } };
+    const m = new CareerMessages(cu); m.data = data; m.hook(career);
+    career.startEvent('zoe', 0, 0, true); career.active.ev.round = 3; career.completeEvent(0, { ticks: 99999, score: 999999 });
+    assert.deepEqual(m.hud, { frames: on ? 182 : 0 }, on ? 'the icon at 182 frames' : 'off: a full 5 s');
+    m.open(() => {});
+    assert.deepEqual(m.hud, on ? { frames: 182 } : null, on ? 'the Message Center freezes the icon' : 'off: cleared');
+  }
+  setPv('mailFreeze', null);
+}
 console.log('test-messages: ok');

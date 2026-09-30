@@ -11,6 +11,7 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec4, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {decodePngTexels} from './png-texels.js';
+import {setUpdateRange} from './heap-views.js';
 
 export const CROWD_FRAME_TICKS = 3, CROWD_FRAMES = 16, FLASH_RING = 40;
 // 0x2DBAC0: frame index for a game tick (the animator steps once every 3 ticks, 16-frame loop).
@@ -69,7 +70,7 @@ export async function createCrowd2d({core, group, root, origin = [0, 0, 0], load
           const p0 = a.centre[0] + a.axis1[0] * c1 + a.axis2[0] * c2, p1 = a.centre[1] + a.axis1[1] * c1 + a.axis2[1] * c2, p2 = a.centre[2] + a.axis1[2] * c1 + a.axis2[2] * c2;
           C[n * 4] = p0 / 100; C[n * 4 + 1] = p2 / 100; C[n * 4 + 2] = -p1 / 100; C[n * 4 + 3] = 1; n++;
         }
-        state.flashes = n; mesh.count = Math.max(n, 1); mesh.visible = n > 0; if (n) { centres.clearUpdateRanges(); centres.addUpdateRange(0, n * 4); centres.needsUpdate = true; }
+        state.flashes = n; mesh.count = Math.max(n, 1); mesh.visible = n > 0; if (n) setUpdateRange(centres, 0, n * 4);
       }
     },
     reset() { setFrame(-1); },

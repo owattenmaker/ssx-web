@@ -49,7 +49,7 @@ export function estimateFinishTicks(raceTicks, origin, remaining, slot) {
 // 0x238BF8: slots ordered by recorded time (unsigned ascending; stable for equal times).
 export function orderByTime(times) { return times.map((t, slot) => ({ t: t >>> 0, slot })).sort((a, b) => a.t - b.t || a.slot - b.slot).map((x) => x.slot); }
 
-export async function createAiRace({ T, scene, human, course, loader, origin, humanName, environmentMeta, environmentBytes, lightAssets, worldKeys = null, isolate = new URL(globalThis.location?.href ?? 'http://x/').searchParams.get('isolate') === '1' }) { // ?isolate=1: no human<->computer rider pairs (QA replays of tools/ps2_capture.py --isolate captures)
+export async function createAiRace({ T, scene, human, course, loader, origin, humanName, environmentMeta, environmentBytes, lightAssets, worldKeys = null, contexts = null, contextSetup = null, prepareWorld = null, hostAtStart = false, anchorTick = null, isolate = new URL(globalThis.location?.href ?? 'http://x/').searchParams.get('isolate') === '1' }) { // ?isolate=1: no human<->computer rider pairs (QA replays of tools/ps2_capture.py --isolate captures)
   const get = async (path, type = 'text') => { const r = await fetch(path); if (!r.ok) throw new Error(`${path}: ${r.status}`); return type === 'buffer' ? new Uint8Array(await r.arrayBuffer()) : r.text(); };
   let documentText;
   try { documentText = await get(course.root + 'npc-riders.json'); } catch { return null; }
@@ -72,7 +72,7 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
   // pv eventSlices (worldKeys): the riders' setup yields a frame between its steps once a frame's work is done (web/load-slices.js framePause)
   const yieldFn = worldKeys ? (await import('./load-slices.js')).framePause('frame') : null;
   const resources = { packetsJson, packetsBin, initialText, terrainText, worldCollisionText, railsText, riderText, terrainHash: worldKeys ? worldKeys.hash : JSON.parse(terrainText).source_sha256, worldKeys, worldTexts, yieldFn };
-  const racers = await createAiRacers({ human, resources, document: doc, isolate, sharedVisual: true }); // the computer riders are rider contexts of the human's core (docs/ai-racers.md) // one visual stream in the original pass order (docs/visual-rng-order.md)
+  const racers = await createAiRacers({ human, resources, document: doc, isolate, sharedVisual: true, contexts, contextSetup, prepareWorld, hostAtStart, anchorTick }); // (pv eventInWorldAi: contexts / contextSetup / prepareWorld / hostAtStart, web/ai-racers.js) // the computer riders are rider contexts of the human's core (docs/ai-racers.md) // one visual stream in the original pass order (docs/visual-rng-order.md)
   // The course-world inputs only set up the rider contexts' worlds: drop them (~20 MB of text otherwise kept for the whole
   // session). A lineup change (setDocument) needs only the animation packets, initial settings and rider packages.
   resources.terrainText = resources.worldCollisionText = resources.railsText = null;
@@ -143,7 +143,7 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
       // 0x234894: game type 0x535C11 != 0 -> 155A50 / 155E58); a race's end ages them in every game type (results below)
       if (!replay) agedAtEnd = false;
       if (!replay && !(pv('relAging') && preparedEvent?.career)) ageAll();
-      racers.start();
+      racers.start({ gridStart: !!opts.gridStart });   // (pv eventInWorldAi: the CTM riders' carried words, core npc_grid_start)
       if (tables) racers.setRelationships(api.doc.relationships.scores);
       // this race's presentation draws, noted at the next load; a replay's ticks draw the presentation stream too (the PS2 replay
       // does not restore 0x4FF018), so they count on
@@ -167,6 +167,14 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
     opponentAtFinish: null,
     // The relationship state a replay of this run starts from (after start()'s aging): web/replay.js keeps it with the run.
     replaySnapshot() { return { tables: clone(tables), scores: clone(api.doc.relationships.scores), kinds: clone(api.doc.relationships.kinds) }; },
+    // pv eventReturnInWorld (b): an in-world event's replay restart (main.js inWorldReplayRestart): the riders come back with the
+    // countdown snapshot (web/event-snapshot.js), so only start()'s replay part runs here: the relationship tables on the run's copy
+    // and the opponents' presentation reset.
+    replayRestore(replay) {
+      if (replay) { replayLive ??= { tables, scores: api.doc.relationships.scores, kinds: api.doc.relationships.kinds }; tables = clone(replay.tables); api.doc.relationships.scores = clone(replay.scores); api.doc.relationships.kinds = clone(replay.kinds); }
+      if (tables) racers.setRelationships(api.doc.relationships.scores);
+      for (const o of opponents) o.reset = true; renderer?.reset(opponents); placeTimer = -1; lastPlace = -1; glowTimer = -1;
+    },
     // The end of a replay: the live tables (as the run left them) again.
     replayEnd() { if (!replayLive) return; tables = replayLive.tables; api.doc.relationships.scores = replayLive.scores; api.doc.relationships.kinds = replayLive.kinds; replayLive = null; },
     get replaying() { return !!replayLive; },
@@ -303,6 +311,10 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
     // In-race place display 0x21E1B0: 0-based place (+0xEC), rider count, and its change animation
     // (0x1EA930: t restarts at 0 on a change; +0.026456889/tick in 1st, +0.14841716 otherwise).
     hud() { return lastPlace < 0 ? null : { place: lastPlace, total: racers.npcs.length + 1, timer: placeTimer, glow: glowTimer }; },
+    // pv eventInWorldAi: the in-world event is over, the human rides on in the same core: the models go, the rider contexts are
+    // handed back for the next in-world event (web/ai-racers.js detach).
+    resume(opts) { racers.resume(opts); for (const o of opponents) o.reset = true; },   // pv eventReturnInWorld (web/ai-racers.js resume)
+    detach() { renderer?.dispose(); renderer = null; if (typeof window !== 'undefined' && window.ssxAiRace === api) window.ssxAiRace = null; return racers.detach(); },
   };
   // A lineup document for this human: the anchor RNG, the human's grid spot, the rider packages, the cores set up again
   // where the record changed, the renderer rebuilt for new models.

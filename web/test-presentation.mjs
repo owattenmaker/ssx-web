@@ -412,7 +412,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     assert.deepEqual([L.bank, L.index, L.scale, L.rows.length], [bank, index, 128, 10], `${k}: the object bank`);
   }
   const main = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-  assert.ok(main.includes('cutscenes?.linger?.(paused?0:Math.min(dt,.25))'), 'main.js advances the heli hover (heliHover) while no cutscene plays');
+  assert.ok(main.includes('cutscenes?.linger?.(isPaused()?0:Math.min(dt,.25))'), 'main.js advances the heli hover (heliHover) while no cutscene plays');
   console.log('bcHeli: the three heli sets (players of the calls, the cleanup hover), DBC2 calls in the core = the set; heliLight VU semantics and banks');
 }
 

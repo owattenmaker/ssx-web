@@ -173,23 +173,34 @@ const ASYNC_AHEAD_MS = 150, SYNC_MARGIN_MS = 80, SHIFT_MAX_S = 0.012;
 // {start, bytes} (a 206; a server that answers 200 hands over the whole file, which then serves every bar). prepareSong asks for
 // a bar when the player commits it (decodeSegment returns null until it is in; the player asks again on its next pump) and
 // reads ahead along the graph's branches (depth 2, 1 while busy(): the game's own downloads come first).
-export function createMusStream(fetchRange, { busy = () => false } = {}) {
+// Memory: the bars of a song are kept up to budgetBytes (a safety net: a song's graph reaches a bounded set, Ride 21.7 MB and Clockworks
+// 12 MB after 15 simulated minutes; a lower cap made the read-ahead fetch evicted bars again, 3-4x the traffic); beyond it the played,
+// then the least recently used bars go, except those used in the last keepMs and a server's whole-file answer (a 200: it serves every
+// bar). A bar asked for again after that loads again, as the first time.
+export function createMusStream(fetchRange, { busy = () => false, budgetBytes = MUS_BUDGET_BYTES, keepMs = MUS_KEEP_MS, clock = () => performance.now() } = {}) {
   const chunks = [], pending = new Map(), failed = new Map();   // failed: range -> time (a failed bar is asked again after 2 s)
-  const find = (a, b) => chunks.find((c) => c.start <= a && b <= c.start + c.bytes.length) || null;
+  let bytes = 0, evicted = 0;
+  const find = (a, b) => { const c = chunks.find((x) => x.start <= a && b <= x.start + x.bytes.length) || null; if (c) c.used = clock(); return c; };
+  function trim() {
+    if (bytes <= budgetBytes) return;
+    const t = clock(), old = chunks.filter((c) => !c.whole && t - c.used > keepMs).sort((a, b) => (b.played - a.played) || a.used - b.used); // played bars first
+    for (const c of old) { if (bytes <= budgetBytes) break; chunks.splice(chunks.indexOf(c), 1); bytes -= c.bytes.length; evicted++; }
+  }
   const s = {
     stream: true, busy,
-    get bytesLoaded() { return chunks.reduce((n, c) => n + c.bytes.length, 0); },
+    get bytesLoaded() { return bytes; },
+    get evicted() { return evicted; }, // QA: bars let go under the budget
     has: (offset, size) => !!find(offset, offset + size),
     // resolves when [offset, offset + size) is in (or the fetch failed: false)
     load(offset, size, priority = 'high') {
       if (s.has(offset, size)) return Promise.resolve(true);
       const key = `${offset}:${size}`; if (pending.has(key)) return pending.get(key);
       if (performance.now() - (failed.get(key) ?? -1e9) < 2000) return Promise.resolve(false);
-      const job = fetchRange(offset, offset + size, priority).then((r) => { if (r?.bytes) chunks.push({ start: r.start ?? 0, bytes: r.bytes }); return s.has(offset, size); }, () => false)
+      const job = fetchRange(offset, offset + size, priority).then((r) => { if (r?.bytes) { chunks.push({ start: r.start ?? 0, bytes: r.bytes, used: clock(), played: 0, whole: r.bytes.length !== size }); bytes += r.bytes.length; trim(); } return s.has(offset, size); }, () => false)
         .then((ok) => { if (ok) failed.delete(key); else failed.set(key, performance.now()); return ok; }).finally(() => pending.delete(key));
       pending.set(key, job); return job;
     },
-    subarray(a, b) { const c = find(a, b); if (!c) throw new Error(`music bytes ${a}..${b} not loaded`); return c.bytes.subarray(a - c.start, b - c.start); },
+    subarray(a, b) { const c = find(a, b); if (!c) throw new Error(`music bytes ${a}..${b} not loaded`); c.played = 1; return c.bytes.subarray(a - c.start, b - c.start); },
   };
   return s;
 }
@@ -209,14 +220,22 @@ function nextAudioNodes(graph, from, depth) {
   }
   return out;
 }
-const musStreams = new Map();   // .mus path -> streamed .mus: a song played again keeps its bars (the last 4 songs)
-function musStreamFor(path, fetchRange, opts) {
+// .mus path -> streamed .mus, for the songs the player needs: the one playing (loadSong role 'play', game-audio.js playSong) and the next
+// one (role 'next', prefetchPicked); any other song lets go of its bars (the last 4 songs kept theirs: 38.7 MB of bars 15 min into a Peak
+// 2 Race). A player still fading one out holds its own. A song played again streams its bars again. Without a role (tools, tests): the
+// two asked for last.
+const musStreams = new Map(), MUS_SONGS = 2, MUS_BUDGET_BYTES = 24 << 20, MUS_KEEP_MS = 20000, musRoles = { play: null, next: null };
+function musStreamFor(path, fetchRange, opts, role = null) {
   let s = musStreams.get(path);
-  if (s) { musStreams.delete(path); musStreams.set(path, s); return s; }
-  s = createMusStream((a, b, priority) => fetchRange(path, a, b, priority), opts); musStreams.set(path, s);
-  while (musStreams.size > 4) musStreams.delete(musStreams.keys().next().value);
+  if (s) musStreams.delete(path); else s = createMusStream((a, b, priority) => fetchRange(path, a, b, priority), opts);
+  musStreams.set(path, s);
+  if (role === 'play') { musRoles.play = path; if (musRoles.next === path) musRoles.next = null; }
+  else if (role === 'next') musRoles.next = path;
+  if (role) { for (const k of [...musStreams.keys()]) if (k !== musRoles.play && k !== musRoles.next) musStreams.delete(k); }
+  else while (musStreams.size > MUS_SONGS) musStreams.delete(musStreams.keys().next().value);
   return s;
 }
+export const musStreamStats = () => [...musStreams].map(([path, s]) => ({ path, mb: +(s.bytesLoaded / 1048576).toFixed(1), evicted: s.evicted })); // QA
 // The opening bars of a streamed song, before its player starts (the PS2 fills its stream buffer before it plays): a dry run of
 // the start event (as prefetchSongStart) names the bars of its first aheadMs (the start event's jumps included); they load (and
 // MicroTalk bars decode) first. The returned random replays
@@ -259,12 +278,13 @@ export function musicDecodeWorker({ fold = false } = {}) {
 // fetchRange(path, start, end, priority) -> {start, bytes} (optional, pv musicStream): the stream track streams bar by bar
 // (createMusStream); busy() -> the game's own downloads are running (the read-ahead holds back).
 // workerDecode (pv musicWorkerDecode): every stream bar decodes in the worker (prepareSong asyncAll), 6-channel bars folded to stereo there.
-export async function loadSong(id, { fetchJson, fetchBytes, fetchRange = null, busy = undefined, workerDecode = false }) {
+// role ('play' | 'next', with fetchRange): which of the songs the streamed .mus cache keeps it as (musStreamFor).
+export async function loadSong(id, { fetchJson, fetchBytes, fetchRange = null, busy = undefined, workerDecode = false, role = null }) {
   const json = await fetchJson(`music/${id}.json`);
   const stream = json.tracks.find((t) => t.kind === 'stream');
   const bankTrack = json.tracks.find((t) => t.kind === 'bank');
   const [mus, loops] = await Promise.all([
-    stream ? (fetchRange ? musStreamFor(`music/${stream.file}`, fetchRange, { busy }) : fetchBytes(`music/${stream.file}`)) : null,
+    stream ? (fetchRange ? musStreamFor(`music/${stream.file}`, fetchRange, { busy }, role) : fetchBytes(`music/${stream.file}`)) : null,
     bankTrack ? fetchBytes(`music/${bankTrack.file}`) : null,
   ]);
   const asU8 = (x) => (x == null ? null : x instanceof Uint8Array || x.stream ? x : new Uint8Array(x));
@@ -702,6 +722,7 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     return { ramp, level, rampsApplied: 0 };
   });
   let lowpass = null, lowpassValue = 0xffff;
+  const letGoChains = () => { for (const ch of chains) for (const n of [ch.ramp, ch.level]) try { n.disconnect(); } catch {} if (lowpass) try { lowpass.disconnect(); } catch {} }; // (a stopped song's gains)
   let base = 0, started = false, paused = false, pausedAt = 0, stopped = false, timer = null, fading = false;
   let lastEvent = -1, pending = null, snap = null, level = 127, loopsPct = 100, requested = false;
   const scheduled = new Map(); // seg id -> { src, seg, stopAt }
@@ -779,11 +800,12 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
       if (resuming) resumed.add(seg.voice);
     } else if (shift && seg.kind === 'bank' && t - when <= SHIFT_MAX_S) { src.start(t); at = t; } // (an overlay entry: a stream bar keeps its offset, the bar after it continues its waveform)
     else {
-      const off = t - when; if (off >= buf.duration) { try { fade?.disconnect(); } catch {} return null; }
+      const off = t - when; if (off >= buf.duration) { letGo({ src, fade, gain }); return null; }
       src.start(t, off); at = t; if (!resuming) noteMusicLate(off * 1000); else resumed.add(seg.voice);
       if (fade) { fade.gain.setValueAtTime(0, t); fade.gain.linearRampToValueAtTime(1, t + DK); } // mid-waveform start: fade in
     }
     const rec = { src, gain, fade, at, seg: { ...seg }, stopAt: null };
+    src.onended = () => letGo(rec); // (a bar that has played, been cut or stopped lets go of its nodes)
     if (seg.kind === 'stream' && seg.end < seg.start + buf.duration * 1000 - 1) { rec.stopAt = seg.end; src.stop(ctxTime(seg.end)); }
     return rec;
   }
@@ -798,7 +820,10 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     try { rec.src.stop(r0 + DK); } catch {}
     return true;
   }
-  const kill = (rec, atMs) => { const faded = halt(rec, ctxTime(atMs)); if (!faded && atMs <= songNow() + 1) { try { rec.src.disconnect(); } catch {} } };
+  const kill = (rec, atMs) => { const faded = halt(rec, ctxTime(atMs)); if (!faded && atMs <= songNow() + 1) letGo(rec); };
+  // A source's whole chain (source, declick gain, slice gain) disconnected: connected nodes stayed alive for the session (and in WebKit
+  // kept being processed). Called when it ends, and at once for one stopped now (a source cut off the graph may never fire ended).
+  function letGo(rec) { for (const n of [rec.src, rec.fade, rec.gain]) if (n) try { n.disconnect(); } catch {} }
 
   // Reconcile Web Audio sources with the segments the core has committed (desired state).
   function reconcile(now) {
@@ -927,15 +952,17 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
       if (DK) { // declick: both outputs ramp to 0 over DK, then everything stops and lets go
         const t = ctx.currentTime;
         for (const g of [out.gain, loopOut?.gain]) { if (!g) continue; if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); } g.linearRampToValueAtTime(0, t + DK); }
-        for (const rec of scheduled.values()) try { rec.src.stop(t + DK); } catch {}
+        const recs = [...scheduled.values()];
+        for (const rec of recs) try { rec.src.stop(t + DK); } catch {}
         scheduled.clear();
-        setTimeout(() => { try { out.disconnect(); } catch {} if (loopOut) try { loopOut.disconnect(); } catch {} }, DK * 1000 + 60);
+        setTimeout(() => { try { out.disconnect(); } catch {} if (loopOut) try { loopOut.disconnect(); } catch {} for (const rec of recs) letGo(rec); letGoChains(); }, DK * 1000 + 60);
         return;
       }
-      for (const rec of scheduled.values()) { try { rec.src.stop(); } catch {} try { rec.src.disconnect(); } catch {} }
+      for (const rec of scheduled.values()) { try { rec.src.stop(); } catch {} letGo(rec); }
       scheduled.clear();
       try { out.disconnect(); } catch {}
       if (loopOut) try { loopOut.disconnect(); } catch {} // (FadeOut 2B2418 fades the stream voice only; Stop ends both)
+      letGoChains();
     },
     setLevel(v) { // 2B3C98: path volume (0..127) -> clamp(v * PathLevel / 100) / 127 on the stream
       level = Math.max(0, Math.min(127, +v || 0));

@@ -125,7 +125,7 @@ def later_steps(S):
     add(S('riders-fe-preview', [PY, 'tools/export_fe_preview.py'], needs=['gamecube', 'states']))
     add(S('ui-atlases', [PY, 'web/prepare-ui.py', '--part', 'ui'], needs=['iso']))
     add(S('riders-character-select', [PY, 'tools/export_character_select.py'], needs=['iso', 'states']))
-    add(S('riders-wardrobe', [PY, 'tools/export_wardrobe.py'], needs=['iso', 'gamecube', 'states']))
+    add(S('riders-wardrobe', [PY, 'tools/export_wardrobe.py', '--no-ground-truth'], needs=['iso', 'gamecube', 'states']))
 
     # ---------------------------------------------------------------------------------------------- UI, career, cutscenes
     for tool in ('export_audio_menus', 'export_ctm_screens', 'export_career_highlights', 'export_fe_menus', 'export_fs_standings',

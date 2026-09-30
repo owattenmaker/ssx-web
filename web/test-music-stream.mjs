@@ -4,11 +4,12 @@
 //  - streamSongStart loads the opening bars only, and its random replays the dry run: the player commits those bars;
 //  - read-ahead along the graph (depth 2, 1 while the game's downloads run);
 //  - a server without ranges (200): the whole file serves every bar;
-//  - a simulated minute of a song loads a fraction of its .mus.
+//  - a simulated minute of a song loads a fraction of its .mus;
+//  - only the song playing and the next one keep their bars.
 //   node test-music-stream.mjs     (skips without the game data)
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { loadSong, createMusStream, streamSongStart, createPathfinderCore } from './pathfinder.js';
+import { loadSong, createMusStream, streamSongStart, createPathfinderCore, musStreamStats } from './pathfinder.js';
 
 const root = new URL('public/assets/AUDIO/', import.meta.url);
 if (!fs.existsSync(new URL('music/Go.json', root))) { console.log('music stream: skipped (no game data)'); process.exit(0); }
@@ -77,4 +78,16 @@ for (const [id, event] of [['Go', 0], ['charsel', 0], ['pktrans', 1]]) {
   const s = song.graph.samples.filter((x) => x.kind === 'stream');
   assert.ok(s.every((x) => song.mus.has(x.offset, x.size)), 'a 200 serves every bar');
 }
-console.log('music stream OK: bars load when asked for and decode as from the whole file; the opening first; read-ahead; 200 fallback');
+// which songs keep their bars: the one playing and the next one (roles from game-audio.js playSong / prefetchPicked)
+{
+  const r = ranges(), load = (id, role) => loadSong(id, { fetchJson, fetchBytes, fetchRange: r.fetchRange, role });
+  const paths = () => musStreamStats().map((x) => x.path).sort();
+  await load('Go', 'play'); await load('Buffet', 'next'); await load('charsel', 'next');
+  const file = (id) => `music/${(JSON.parse(fs.readFileSync(new URL(`music/${id}.json`, root), 'utf8')).tracks.find((t) => t.kind === 'stream').file)}`;
+  assert.deepEqual(paths(), [file('Go'), file('charsel')].sort(), 'playing + the latest next; a next that was replaced lets go');
+  await load('Buffet', 'play');
+  assert.deepEqual(paths(), [file('Buffet'), file('charsel')].sort(), 'a new song playing: the one before lets go, the next stays');
+  await load('charsel', 'play');
+  assert.deepEqual(paths(), [file('charsel')], 'the next one plays: only it');
+}
+console.log('music stream OK: bars load when asked for and decode as from the whole file; the opening first; read-ahead; 200 fallback; playing + next songs only');

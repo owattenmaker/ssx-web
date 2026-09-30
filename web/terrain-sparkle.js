@@ -23,6 +23,7 @@ import {attribute, texture, vec4, float, uniform, positionGeometry, modelViewMat
 import {registerEncodedEffect} from './snow-composite.js';
 import {pv} from './pv-flags.js';
 import {painterRegions} from './painter-regions.js';
+import {setUpdateRange} from './heap-views.js';
 
 export const SPARKLE_FLAG = 0x800000;
 export const PATCH_WORDS = 56;                       // terrain-sparkle.bin record: 48 row floats, lo xyz, hi xyz, resource, 0
@@ -319,7 +320,7 @@ export async function createTerrainSparkle({T, origin, capacity = 4096, fetchByt
           }
         }
       }
-      if (n) { centre.clearUpdateRanges(); centre.addUpdateRange(0, n * 4); centre.needsUpdate = true; }
+      if (n) setUpdateRange(centre, 0, n * 4);
       mesh.count = Math.max(n, 1); mesh.visible = n > 0;
       const ms = performance.now() - t0;
       Object.assign(state, {sets: sets.size, patches, selected, sprites: spr, drawn: n, cached: cache.size, density, ms, frames: state.frames + 1, totalMs: state.totalMs + ms, maxMs: Math.max(state.maxMs, ms)});

@@ -44,26 +44,42 @@ export function riderShadowReceiver(bytes) {
 
 // 374D00 in browser terms. bones: 6 x [x, y, z] PS2 cm (head, hands, feet, hips), up: the rider+0x1C0 column.
 // Returns null when degenerate; else {A, B, C, minx, maxx, miny, maxy}.
-export function fitShadow(bones, up) {
-  let N = normalize(up.map(f)); const L = [0, 0, -1];
-  const C = [0, 1, 2].map((k) => f(f(bones[3][k] + bones[4][k]) * .5));
-  if ((N[0] === 0 && N[1] === 0 && Math.abs(N[2]) === 1)) N = normalize([f(N[0] + .01), N[1], N[2]]);
-  const A = normalize(cross(N, L)), B = normalize(cross(L, A));
+export function fitShadow(bones, up) { return fitShadowInto(bones, up, newFit()); }
+// fitShadow into out (newFit()), without per-call arrays (per-frame garbage, docs/web-render-performance.md): the same
+// float operations in the same order.
+const newFit = () => ({A: [0, 0, 0], B: [0, 0, 0], C: [0, 0, 0], ac: 0, bc: 0, minx: 0, maxx: 0, miny: 0, maxy: 0});
+const L = [0, 0, -1], N = [0, 0, 0], X = [0, 0, 0];
+function fitShadowInto(bones, up, out) {
+  N[0] = f(up[0]); N[1] = f(up[1]); N[2] = f(up[2]); normalizeInto(N);
+  const A = out.A, B = out.B, C = out.C, b3 = bones[3], b4 = bones[4];
+  for (let k = 0; k < 3; k++) C[k] = f(f(b3[k] + b4[k]) * .5);
+  if ((N[0] === 0 && N[1] === 0 && Math.abs(N[2]) === 1)) { N[0] = f(N[0] + .01); normalizeInto(N); }
+  crossInto(N, L, A); normalizeInto(A); crossInto(L, A, X); B[0] = X[0]; B[1] = X[1]; B[2] = X[2]; normalizeInto(B);
   const ac = dot3(A, C), bc = dot3(B, C);
   let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-  for (const p of bones) { const x = f(dot3(A, p) - ac), y = f(dot3(B, p) - bc); minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
-  return {A, B, C, ac, bc, minx: f(minx - MARGIN), maxx: f(maxx + MARGIN), miny: f(miny - MARGIN), maxy: f(maxy + MARGIN)};
+  for (let i = 0; i < bones.length; i++) { const p = bones[i], x = f(dot3(A, p) - ac), y = f(dot3(B, p) - bc); minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
+  out.ac = ac; out.bc = bc; out.minx = f(minx - MARGIN); out.maxx = f(maxx + MARGIN); out.miny = f(miny - MARGIN); out.maxy = f(maxy + MARGIN);
+  return out;
 }
 const dot3 = (a, b) => f(f(f(a[0] * b[0]) + f(a[1] * b[1])) + f(a[2] * b[2]));
-const cross = (a, b) => [f(a[1] * b[2] - a[2] * b[1]), f(a[2] * b[0] - a[0] * b[2]), f(a[0] * b[1] - a[1] * b[0])];
-const normalize = (a) => { const n = Math.hypot(...a); return n > 0 ? a.map((x) => f(x / n)) : a; };
+// o = a x b (o is neither a nor b)
+const crossInto = (a, b, o) => { o[0] = f(a[1] * b[2] - a[2] * b[1]); o[1] = f(a[2] * b[0] - a[0] * b[2]); o[2] = f(a[0] * b[1] - a[1] * b[0]); };
+const normalizeInto = (a) => { const n = Math.hypot(a[0], a[1], a[2]); if (n > 0) { a[0] = f(a[0] / n); a[1] = f(a[1] / n); a[2] = f(a[2] / n); } };
 // Receiver rows over browser world metres b (PS2 p = (100(bx+ox), -100(bz+oz), 100(by+oy))): u = (A.p - A.C - minx)/w,
 // v = (maxy - (B.p - B.C))/h, depth below the feet lz = C.z - p.z.
 export function receiverRows(fit, origin) {
-  const {A, B, C, ac, bc, minx, maxx, miny, maxy} = fit, w = maxx - minx, h = maxy - miny, [ox, oy, oz] = origin;
-  const lin = (v) => [100 * v[0], 100 * v[2], -100 * v[1], 100 * (v[0] * ox - v[1] * oz + v[2] * oy)]; // v.p as a row over (bx, by, bz, 1)
-  const a = lin(A), b = lin(B);
-  return [[a[0] / w, a[1] / w, a[2] / w, (a[3] - ac - minx) / w], [-b[0] / h, -b[1] / h, -b[2] / h, (maxy - b[3] + bc) / h], [0, -100, 0, C[2] - 100 * oy]];
+  const out = [new T.Vector4(), new T.Vector4(), new T.Vector4()]; receiverRowsInto(fit, origin[0], origin[1], origin[2], out, 0);
+  return out.map((r) => [r.x, r.y, r.z, r.w]);
+}
+// receiverRows into the Vector4s out[at..at+2]
+function receiverRowsInto(fit, ox, oy, oz, out, at) {
+  const A = fit.A, B = fit.B, w = fit.maxx - fit.minx, h = fit.maxy - fit.miny;
+  // v.p as a row over (bx, by, bz, 1): [100 v0, 100 v2, -100 v1, 100 (v0 ox - v1 oz + v2 oy)]
+  const a0 = 100 * A[0], a1 = 100 * A[2], a2 = -100 * A[1], a3 = 100 * (A[0] * ox - A[1] * oz + A[2] * oy);
+  const b0 = 100 * B[0], b1 = 100 * B[2], b2 = -100 * B[1], b3 = 100 * (B[0] * ox - B[1] * oz + B[2] * oy);
+  out[at].set(a0 / w, a1 / w, a2 / w, (a3 - fit.ac - fit.minx) / w);
+  out[at + 1].set(-b0 / h, -b1 / h, -b2 / h, (fit.maxy - b3 + fit.bc) / h);
+  out[at + 2].set(0, -100, 0, fit.C[2] - 100 * oy);
 }
 
 // pv shadowAtlasInit: the atlas is a render target that world and rider materials sample (riderShadowReceiver). three creates a render
@@ -121,7 +137,10 @@ export function createRiderShadows({renderer, scene, origin}) {
   }
   // scene.traverse order, without descending into the static world (pv staticWorld cells and location groups, web/static-world.js):
   // no rider lives there, and it is thousands of objects per frame
-  function riders() { const out = []; const walk = (o) => { if (o.userData.shadowRider) out.push(o); if (o.userData.staticWorld) return; const c = o.children; for (let i = 0; i < c.length; i++) walk(c[i]); }; walk(scene); return out; }
+  const riderList = [], walk = (o) => { if (o.userData.shadowRider) riderList.push(o); if (o.userData.staticWorld) return; const c = o.children; for (let i = 0; i < c.length; i++) walk(c[i]); };
+  function riders() { riderList.length = 0; walk(scene); return riderList; }
+  // per-frame scratch (docs/web-render-performance.md "Per-frame garbage"): each entry keeps its bones, fit and candidate record
+  const candidates = [], byDistance = (a, b) => a.d - b.d, up = [0, 0, 0];
   const api = {
     state, atlas,
     get entryCount() { return entries.size; }, // riders with silhouette meshes (main.js warmupRender, pv warmSpread)
@@ -132,8 +151,9 @@ export function createRiderShadows({renderer, scene, origin}) {
     update(view, warming = false, warmLimit = Infinity) {
       if (api.enabled === false) { count.value = 0; return; }
       view.updateMatrixWorld(); frustum.setFromProjectionMatrix(matrix.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
-      const candidates = [];
-      for (const group of riders()) {
+      candidates.length = 0; const groups = riders();
+      for (let g = 0; g < groups.length; g++) {
+        const group = groups[g];
         const e = entryFor(group); if (!e) continue; for (const m of e.meshes) m.visible = warming; // warming: every rider's silhouette pipeline builds, posed or not (computer riders have no pose before the race)
         const core = e.info.core?.(); if (!core?._world_pose_bones) continue;
         let visible = group.visible; for (let p = group.parent; p && visible; p = p.parent) visible = p.visible;
@@ -141,33 +161,35 @@ export function createRiderShadows({renderer, scene, origin}) {
         // The pose the skin draws this frame (interpolated between ticks, web/rider-skinning.js shadowPose); the core's
         // current tick for a skin without it. On the PS2 the box and the silhouette come from the same tick's pose.
         const drawn = e.info.skin.shadowPose?.();
-        const F = drawn ? drawn.bones : new Float32Array(core.HEAPF32.buffer), bp = drawn ? 0 : core._world_pose_bones() >> 2, n = F[bp];
+        const F = drawn ? drawn.bones : core.HEAPF32, bp = drawn ? 0 : core._world_pose_bones() >> 2, n = F[bp];
         if (n < 22) continue;
-        const bones = BONES.map((b) => [F[bp + 1 + 7 * b], F[bp + 2 + 7 * b], F[bp + 3 + 7 * b]]);
-        const P = drawn ? drawn.physical : F, pp = drawn ? 0 : core._pose_physical() >> 2, q = [P[pp + 3], P[pp + 4], P[pp + 5], P[pp + 6]], grounded = P[pp + 8] !== 0;
-        const up = [2 * (q[0] * q[2] + q[3] * q[1]), 2 * (q[1] * q[2] - q[3] * q[0]), 1 - 2 * (q[0] * q[0] + q[1] * q[1])]; // physical frame +Z (rider+0x1C0)
-        if (!bones.flat().every(Number.isFinite) || !up.every(Number.isFinite)) continue;
-        const fit = fitShadow(bones, up), c = [fit.C[0] / 100 - origin.x, fit.C[2] / 100 - origin.y, -fit.C[1] / 100 - origin.z];
-        sphere.center.set(c[0], c[1], c[2]); sphere.radius = 3;
+        const bones = e.bones ??= BONES.map(() => [0, 0, 0]); let finite = true;
+        for (let i = 0; i < BONES.length; i++) { const o = bones[i], at = bp + 1 + 7 * BONES[i]; o[0] = F[at]; o[1] = F[at + 1]; o[2] = F[at + 2]; finite = finite && Number.isFinite(o[0]) && Number.isFinite(o[1]) && Number.isFinite(o[2]); }
+        const P = drawn ? drawn.physical : F, pp = drawn ? 0 : core._pose_physical() >> 2, q0 = P[pp + 3], q1 = P[pp + 4], q2 = P[pp + 5], q3 = P[pp + 6], grounded = P[pp + 8] !== 0;
+        up[0] = 2 * (q0 * q2 + q3 * q1); up[1] = 2 * (q1 * q2 - q3 * q0); up[2] = 1 - 2 * (q0 * q0 + q1 * q1); // physical frame +Z (rider+0x1C0)
+        if (!finite || !Number.isFinite(up[0]) || !Number.isFinite(up[1]) || !Number.isFinite(up[2])) continue;
+        const fit = fitShadowInto(bones, up, e.fit ??= newFit());
+        sphere.center.set(fit.C[0] / 100 - origin.x, fit.C[2] / 100 - origin.y, -fit.C[1] / 100 - origin.z); sphere.radius = 3;
         if (!warming && !frustum.intersectsSphere(sphere)) continue; // stand-in for the rider visibility flag (rider+0xB18)
-        candidates.push({e, fit, grounded, d: view.position.distanceToSquared(sphere.center)});
+        const cand = e.candidate ??= {e, fit, grounded: false, d: 0}; cand.grounded = grounded; cand.d = view.position.distanceToSquared(sphere.center); candidates.push(cand);
       }
-      candidates.sort((a, b) => a.d - b.d); const active = candidates.slice(0, SHADOW_MAX);
-      active.forEach(({e, fit, grounded}, k) => {
+      candidates.sort(byDistance); const slots = Math.min(candidates.length, SHADOW_MAX);
+      for (let k = 0; k < slots; k++) {
+        const {e, fit, grounded} = candidates[k];
         const w = fit.maxx - fit.minx, h = fit.maxy - fit.miny, mx = (fit.maxx + fit.minx) / 2, my = (fit.maxy + fit.miny) / 2;
         e.rowX.value.set(fit.A[0] * 2 / w, fit.A[1] * 2 / w, fit.A[2] * 2 / w, (-fit.ac - mx) * 2 / w);
         e.rowY.value.set(-fit.B[0] * 2 / h, -fit.B[1] * 2 / h, -fit.B[2] * 2 / h, (fit.bc + my) * 2 / h);
         e.slot.value = k; e.board.value = grounded ? 0 : VALUE;
         for (const m of e.meshes) { let v = true; for (let o = m.userData.source; o && o !== e.group && v; o = o.parent) v = o.visible; m.visible = v; } // only the parts the rider draws (hidden gear / variants cast nothing)
-        receiverRows(fit, [origin.x, origin.y, origin.z]).forEach((r, j) => rows.array[3 * k + j].set(...r));
-      });
-      count.value = warming ? SHADOW_MAX : active.length; state.riders = candidates.length; state.slots = active.length;
-      if (!active.length && !warming) return;
+        receiverRowsInto(fit, origin.x, origin.y, origin.z, rows.array, 3 * k);
+      }
+      count.value = warming ? SHADOW_MAX : slots; state.riders = candidates.length; state.slots = slots;
+      if (!slots && !warming) return;
       if (warming && warmLimit < Infinity) { let k = 0; for (const e of entries.values()) if (k++ >= warmLimit) for (const m of e.meshes) m.visible = false; }
       const prior = renderer.getRenderTarget(), autoClear = renderer.autoClear, alpha = renderer.getClearAlpha(); renderer.getClearColor(clear);
       try { renderer.setRenderTarget(atlas); renderer.autoClear = true; renderer.setClearColor(0x000000, 0); renderer.render(shadowScene, camera); }
       finally { renderer.setRenderTarget(prior); renderer.autoClear = autoClear; renderer.setClearColor(clear, alpha); }
-      if (warming) count.value = active.length;
+      if (warming) count.value = slots;
     },
     // Course change (main.js unloadCourse): the silhouette meshes' render objects go with their dispose events.
     dispose() { if (!atlasReady) atlas.dispose(); for (const e of entries.values()) { for (const m of e.meshes) { m.removeFromParent(); m.dispatchEvent({type: 'dispose'}); } e.material.dispose(); } entries.clear(); },

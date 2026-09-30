@@ -3,7 +3,7 @@
 // with tools/ps2_menu_capture.py (local/ps2-capture/menus, see docs/career-events.md); rules live in career.js.
 import { rideIntoEvent } from './ctm-event.js';
 import { heatSteps } from './cutscenes.js';   // pv stationFlow: the freestyle WS13 gate lists
-import { rideAcrossSwitch, rideWanted } from './ctm-transport.js';
+import { rideAcrossSwitch, rideWanted, switchesWorld } from './ctm-transport.js';
 import {Career,exploreNext,mountainPercent,MODE,MEDAL,MEDAL_NAMES,ATTRIBUTES,riderRanking,isTimed,recordSlot,eventKey,RIDER_CHARACTER,originalAttributeBytes,rankEntries,placementMedal,platinumThreshold} from './career.js';
 import {Locale,format,clean} from './locale.js';
 import {raceTime,hudRaceTime} from './race-time.mjs';
@@ -30,7 +30,7 @@ import {runStats} from './monster-tricks.js'; // career run statistics -> monste
 const CAREER='/assets/CAREER/';
 const CURSOR_STATES=new Set(['ctm-lodge','ctm-details','ctm-trophies','ctm-attributes']);   // pv stateCursor: the lodge states whose activation restores the cursor (0x186518)
 const SCREENS=['ctm-mcomm','ctm-peaks','ctm-goals','ctm-events','ctm-confirm','ctm-lodge','ctm-attributes','ctm-saved',
- 'ctm-objectives','ctm-pause','ctm-giveup','ctm-restart','ctm-results','ctm-award','ctm-records','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-session','ctm-sessconfirm','ctm-gopeak','ctm-quitsave'];
+ 'ctm-objectives','ctm-pause','ctm-giveup','ctm-restart','ctm-results','ctm-award','ctm-records','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-session','ctm-sessconfirm','ctm-gopeak','ctm-quitsave','ctm-bcsure'];
 // Session points per course (table 0x440770 +0x18 via 1545F8), Peak 1: the streamed world's MCOMM Session menu (overlay 0x20).
 export const SESSION_POINTS={14:7,17:1,0:7,5:7,8:2,18:1,1:8,11:2,/* Peak 2 (docs/peak2.md) */19:1,2:7,9:2,12:2,20:1,3:7,6:7,15:6,/* Peak 3 (docs/peak3.md: 0x440770 +0x18) */21:1,4:7,7:6,10:2,13:2,16:5};
 // Freeride Transport list per peak, PS2 order (table 0x478D38: 8 rows of 0x6C per peak, +0 course, +0xC station).
@@ -106,7 +106,7 @@ export class CareerScreens {
  // Career.seedRoster; every fresh career event then draws on it).
  enter(){this.career.rider(this.riderId);this.career.seedRoster?.();this.career.persist();if(this.ui.cb.freeRide&&!this.freeRide){/* 1A0720: a new career starts at Happiness (plane drop), later ones at the last lodge (P+0x27C) */const r=this.me;this.goWorld(r.firstRun===false?(r.lastStation??17):14,{reload:true});return;}this.go('ctm-mcomm',1);}
  // The connected Peak 1 world (web/free-ride.js): the page reloads into ?course=PEAK1&peakCourse=N; the career resumes there.
- goWorld(course,opt=null){/* pv heli: another world -> the transport ride plays, then the switch runs under its held loop (web/ctm-transport.js) */if(!opt?.ridden&&rideWanted(this.ui,this,course)){rideAcrossSwitch({ui:this.ui,cu:this,dest:course,go:()=>this.goWorld(course,{...(opt||{}),ridden:true})});return;}const r=this.me;const cover=!opt?.ridden&&this.afterEvent&&this.ui.cutscene?.drawCover;this.afterEvent=false;this.returnFade=!!cover;if(cover)this.ui.loading.world=(c,b)=>this.ui.cutscene.drawCover(c,this.ui);if(course>=17&&!pv('ctmSmallFixes'))r.lastStation=course;/* pv ctmSmallFixes: 146E10 only at WS10 (the station reached: enterWorld / courseChanged) */if(this.freeRide)this.freeRide.booth=false;this.career.save.pending={rider:this.riderId,freeRide:course,...(pv('stationFlow')&&!opt?.reload?{transport:true}:{})};/* the streamer's transport flag (+0x1C8) for WS10 (0x235220) */this.career.persist();const went=this.ui.cb.freeRide(course,opt||undefined);if(went!==false)this.ui.loading.world=null;if(went==='transport'){/* already in the streamed world: transported inside it (main.js transportInWorld) */delete this.career.save.pending;this.career.persist();r.firstRun=false;this.active=null;/* pv ctmSmallFixes: the course stays the one left until the core's 0x535C08 changes (22DF50 -> WS11 -> WS10 at the destination: courseChanged marks it visited, makes a station the last lodge, and the MCOMM follows the peak); setting it here made courseChanged skip them, so an in-world transport never set the last lodge (146E10) nor the visited bit */this.transportTo=course;this.pendingArrival=null;/* pv crossingArrival: this course change is a transport's (WS10 at the arrival) */this.freeRide=pv('ctmSmallFixes')?{...(this.freeRide||{course:this.ui.cb.freeRideCourse?.()??course})}:{...(this.freeRide||{}),course};return;}if(went===false)return;delete this.career.save.pending;this.career.persist();this.enterWorld(course);}
+ goWorld(course,opt=null){/* pv worldSwitchAudio: a Transport into another page world runs code 20 at the confirm and carries the audio over the switch (web/game-audio.js travelSwitch) */if(!opt?.ridden&&!opt?.reload&&(this.freeRide||this.afterEvent)&&switchesWorld(this.ui,course))this.ui.gameAudio?.travelSwitch?.(course);/* pv heli: another world -> the transport ride plays, then the switch runs under its held loop (web/ctm-transport.js) */if(!opt?.ridden&&rideWanted(this.ui,this,course)){rideAcrossSwitch({ui:this.ui,cu:this,dest:course,go:()=>this.goWorld(course,{...(opt||{}),ridden:true})});return;}const r=this.me;const cover=!opt?.ridden&&this.afterEvent&&this.ui.cutscene?.drawCover;this.afterEvent=false;this.returnFade=!!cover;if(cover)this.ui.loading.world=(c,b)=>this.ui.cutscene.drawCover(c,this.ui);if(course>=17&&!pv('ctmSmallFixes'))r.lastStation=course;/* pv ctmSmallFixes: 146E10 only at WS10 (the station reached: enterWorld / courseChanged) */if(this.freeRide)this.freeRide.booth=false;this.career.save.pending={rider:this.riderId,freeRide:course,...(pv('stationFlow')&&!opt?.reload?{transport:true}:{})};/* the streamer's transport flag (+0x1C8) for WS10 (0x235220) */this.career.persist();const went=this.ui.cb.freeRide(course,opt||undefined);if(went!==false)this.ui.loading.world=null;if(went==='transport'){/* already in the streamed world: transported inside it (main.js transportInWorld) */delete this.career.save.pending;this.career.persist();r.firstRun=false;this.active=null;/* pv ctmSmallFixes: the course stays the one left until the core's 0x535C08 changes (22DF50 -> WS11 -> WS10 at the destination: courseChanged marks it visited, makes a station the last lodge, and the MCOMM follows the peak); setting it here made courseChanged skip them, so an in-world transport never set the last lodge (146E10) nor the visited bit */this.transportTo=course;this.pendingArrival=null;/* pv crossingArrival: this course change is a transport's (WS10 at the arrival) */this.freeRide=pv('ctmSmallFixes')?{...(this.freeRide||{course:this.ui.cb.freeRideCourse?.()??course})}:{...(this.freeRide||{}),course};return;}if(went===false)return;delete this.career.save.pending;this.career.persist();this.enterWorld(course);}
  enterWorld(course,{transport=false}={}){this.careerMark(true);if(pv('awardCascade'))this.career?.clearRewardRecord();/* WS10 enter 0x2355C0 -> 158E30 */if(this.ui.cutscene?.held)this.ui.cutscene.release();/* the transport's held loop ends: the new world is in (web/ctm-transport.js) */const r=this.me,bc=course>=14&&course<=16,first=bc&&!(this.visitedMask(r)&(1<<course));this.active=null;this.freeRide={course};this.peak=COURSE_PEAK[course]??this.peak;/* the MCOMM Transport opens on the peak being ridden */
   /* world state 10 (0x234F40 / 0x235080): a backcountry the rider has not visited yet (+0xACC, 145D38) plays its arrival
    list before the ride: Happiness = the ABC1 movie (list 29) + abc1_heli_arr_midway (group 0) + heli_arrb_<char>_midwayabc1
@@ -115,9 +115,14 @@ export class CareerScreens {
    ride (WS1 -> 4) starts when the list ends, and only then is the location marked visited (bit set at WS4). */
   const ride=()=>{if(this.freeRide?.course!==course)return;this.markVisited(course);if(course>=17)r.lastStation=course;this.career.persist();this.ui.set('game');this.ui.cb.start();
    /* back from an event through the map (WS15 / arrival): the free-ride view comes in from white (2E4CE8; PS2 ctm/caps sj-return) */if(this.returnFade){this.returnFade=false;this.ui.cutscene?.fadeFrom?.({ticks:58});}};
-  if(first&&this.ui.cb.cutscene){Promise.resolve(this.ui.cb.cutscene({kind:'arrival',location:['ABC1','DBC2','EBC3'][course-14],firstVisit:true,hold:true,restore:false})).catch(()=>{}).then(ride);return;}
+  /* pv worldUnderCuts: WS10's arrival list plays over the running world (PS2 new-career: 917 ticks under #153 / #163, the rider held by its
+   actor, +0xAC4 1; only the movie stops the tick): the ride starts first with its audio ride start held (28E888 waits for the list),
+   the rider is placed when the list ends (main.js cb.arrivalPlace), then WS10's exit (the visited bit, the last lodge) as ride() */
+  const arrival=o=>{const early=pv('worldUnderCuts')&&!!this.ui.cb.arrivalPlace;if(early){this.ui.gameAudio?.arrivalCinematic?.(true);this.ui.set('game');this.ui.cb.start();}
+   Promise.resolve(this.ui.cb.cutscene({kind:'arrival',location:['ABC1','DBC2','EBC3'][course-14],hold:true,restore:false,...o})).catch(()=>{}).then(()=>{if(!early||!this.ui.cb.arrivalPlace()){ride();return;}if(this.freeRide?.course!==course)return;this.markVisited(course);if(course>=17)r.lastStation=course;this.career.persist();this.ui.set('game');if(this.returnFade){this.returnFade=false;this.ui.cutscene?.fadeFrom?.({ticks:58});}});};
+  if(first&&this.ui.cb.cutscene){arrival({firstVisit:true});return;}
   /* pv stationFlow: a transport (not a world load) into a visited backcountry: 0x235220 with the streamer's +0x1C8 queues [16, 17] (the heli drop) */
-  if(bc&&transport&&pv('stationFlow')&&this.ui.cb.cutscene){Promise.resolve(this.ui.cb.cutscene({kind:'arrival',location:['ABC1','DBC2','EBC3'][course-14],firstVisit:false,hold:true,restore:false})).catch(()=>{}).then(ride);return;}
+  if(bc&&transport&&pv('stationFlow')&&this.ui.cb.cutscene){arrival({firstVisit:false});return;}
   ride();}
  // The per-rider visited mask (profile +0xACC, 145D38): bit = course index, set when a location is entered (WS10 -> WS4).
  // Saves from before it: Happiness counts as visited once the old first-run flag was cleared, Ruthless / The Throne by `arrived`.
@@ -165,16 +170,19 @@ export class CareerScreens {
  }
  // pv crossWorld: riding out of the peak world into the next peak's station (web/free-ride.js): the crossing (WS11 enter clears the
  // new-career flag, 0x236928), then the world switch without a transport ride; WS10 at the station (its entry, the last lodge).
- crossWorld(dest){if(!this.freeRide||!this.ui.cb.freeRide||this.crossing)return;this.crossing=true;this.me.firstRun=false;this.career.persist();this.goWorld(dest,{ridden:true,reload:true});setTimeout(()=>{this.crossing=false;},2000);}
+ crossWorld(dest){if(!this.freeRide||!this.ui.cb.freeRide||this.crossing)return;this.crossing=true;this.ui.gameAudio?.travelSwitch?.(dest,{cross:true});/* pv worldSwitchAudio: a riding crossing makes no director call (22DF50): the audio carries over the world load */this.me.firstRun=false;this.career.persist();this.goWorld(dest,{ridden:true,reload:true});setTimeout(()=>{this.crossing=false;},2000);}
  // pv stationFlow: the transport booth (builtin 68 action 3 -> WS14 arg 2, overlay 0x21 in map mode 3) opens Select Peak on the ridden peak.
  openBooth(station){if(!this.freeRide)return;this.freeRide.station=station;this.freeRide.booth=true;this.peak=COURSE_PEAK[station]??this.peak;this.ui.set('ctm-peaks');this.ui.index=3-this.peak;this.ui.sync();}
  // Free ride: riding into a course's RaceRideState gate (builtin 67) starts its event in the world, with no load screen
  // (web/ctm-event.js, docs/ctm-flow.md): fade under the bars and "Loading...", the venue fly-over, then the approach.
  rideIn(mode,course,opts={}){return rideIntoEvent({ui:this.ui,cu:this,mode,course,pause:opts.pause});}
- begin(mode,course,career=true,{rideIn=false}={}){
-  const ev=this.career.startEvent(this.riderId,mode,course,career);this.active={mode,course,career,rideIn};if(career)this.careerMark(true);else this.careerMark(false);
+ begin(mode,course,career=true,{rideIn=false,inWorld=false}={}){
+  const ev=this.career.startEvent(this.riderId,mode,course,career);this.active={mode,course,career,rideIn,inWorld};if(career)this.careerMark(true);else this.careerMark(false);
   // Event load: the original load screen (loading-screen.js, GL.LUI 110ctrl_load) runs first, then the objectives.
-  /* a rival challenge (rolling start, modes 4 / 5): the card over the ready state (pv rivalCard, main.js readyView) */const card=()=>{this.ui.set('ctm-objectives');if(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS)this.ui.cb.readyView?.();};
+  /* a rival challenge (rolling start, modes 4 / 5): the card over the ready state (pv rivalCard, main.js readyView) */const card=()=>{this.ui.set('ctm-objectives');if(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS||(pv('ws13Rebuild')&&isPeakRun(mode)))this.ui.cb.readyView?.();};/* pv ws13Rebuild: a peak run's 68rival_pre card is over the ready state too (PS2 p2r-restart-yes sample 580) */
+  /* pv eventInWorld (docs/ctm-events-in-world.md stage 3): the event runs in the streamed world already loaded: no event load, WS1's
+     [approach, idle] play there (main.js cb.introInWorld), then the card */
+  if(inWorld&&this.ui.cb.introInWorld){this.ui.cb.introInWorld(card);return ev;}
   if(this.ui.loadEvent)this.ui.loadEvent(card);else card();return ev;
  }
  // Single Event (Quick Play): one final round (0x23A174 forces round 3) through the same objectives/results.
@@ -224,7 +232,7 @@ export class CareerScreens {
    case 'ctm-goals':return ['Race','Freestyle','Freeride','Earnings'];
    // PS2 transport lists: the race list names the rival run by its course, the freestyle list as '<course> Jam'.
    case 'ctm-events':return this.list().map(e=>pv('transportLists')&&e.mode===MODE.RIVAL_POINTS?TRANSPORT_ROW_NAMES[e.course]:e.mode===MODE.RIVAL_TIME?this.data.courses[e.course].name:e.mode>=6?this.t(['kT_EventPk1Race','kT_EventPk2Race','kT_EventAllPeakRace','kT_EventPk1Jam','kT_EventPk2Jam','kT_EventAllPeakJam'][e.mode-6],e.name):e.name);
-   case 'ctm-confirm':case 'ctm-giveup':case 'ctm-restart':case 'ctm-quit':case 'ctm-saveprompt':case 'ctm-enterlodge':case 'ctm-sessconfirm':case 'ctm-gopeak':case 'ctm-quitsave':return [this.t('kT_CMNYes','Yes'),this.t('kT_CMNNo','No')];
+   case 'ctm-confirm':case 'ctm-giveup':case 'ctm-restart':case 'ctm-quit':case 'ctm-saveprompt':case 'ctm-enterlodge':case 'ctm-sessconfirm':case 'ctm-gopeak':case 'ctm-quitsave':case 'ctm-bcsure':return [this.t('kT_CMNYes','Yes'),this.t('kT_CMNNo','No')];
    case 'ctm-session':return this.sessionItems();
    case 'ctm-lodge':return [this.t(0x05848cb5,'Return to Game'),this.t('kT_CMNEquipGear','Equip Gear'),this.t('kT_CMNBuyGear','Buy Gear'),this.t(0x09ef3a83,'Buy Attributes').replace('attributes','Attributes'),'Rider Details',this.t(0x055addb3,'Music'),this.t(0x0d799ba5,'Save Game'),'Quit'];
    case 'ctm-attributes':return pv('buyAttribs')&&this.buyAttribs.session?this.buyAttribs.items([...ATTRIBUTES]):[...ATTRIBUTES];
@@ -255,7 +263,7 @@ export class CareerScreens {
   if(this.lodge.owns(screen))return this.lodge.layout(screen,i);if(this.messages.owns(screen))return this.messages.layout(i);if(this.ui.bigChallenges?.owns(screen))return this.ui.bigChallenges.layout(screen,i);
   if(screen==='ctm-mcomm'||screen==='ctm-pause')return this.pda?.ready?[195,Y(106)+i*Y(40),240,Y(34)]:[195,Y(94)+i*Y(40),240,Y(34)];   // 31paus_freeride rows: Menu (200, 110) + 40 i
   if(['ctm-peaks','ctm-goals','ctm-events'].includes(screen))return [0,Y(170)+this.rowY(screen,i),240,Y(24)];
-  if(['ctm-confirm','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-sessconfirm','ctm-gopeak','ctm-quitsave'].includes(screen))return this.pda?.ready?[280,Y(234)+i*Y(25),120,Y(24)]:[260,Y(245)+i*Y(24),120,Y(24)];   // 87yndialog: Menu0000 (270, 240), rows 25 apart
+  if(['ctm-confirm','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-sessconfirm','ctm-gopeak','ctm-quitsave','ctm-bcsure'].includes(screen))return this.pda?.ready?[280,Y(234)+i*Y(25),120,Y(24)]:[260,Y(245)+i*Y(24),120,Y(24)];   // 87yndialog: Menu0000 (270, 240), rows 25 apart
   if(screen==='ctm-session')return [0,Y(170)+Y(25)*i,240,Y(24)];
   if(screen==='ctm-lodge')return [205,Y(128)+i*Y(20),315,Y(20)];
   if(screen==='ctm-attributes')return pv('buyAttribs')&&this.buyAttribs.session?this.buyAttribs.layout(i):[40,Y(146)+i*Y(20),420,Y(20)];
@@ -331,7 +339,7 @@ export class CareerScreens {
   if(this.lodgeFlashing(s))return;
   if(this.disabled(s,i))return;
   if(this.lodge.owns(s))return this.lodge.choose(i);if(this.messages.owns(s))return this.messages.choose(i);if(this.ui.bigChallenges?.owns(s))return this.ui.bigChallenges.choose(i);
-  switch(s){
+  const act=()=>{switch(s){
    case 'ctm-mcomm':if(i===0&&this.freeRide){ui.set('game');ui.cb.resume();return;}if(i===2&&this.freeRide){ui.set('ctm-session');ui.index=pv('sessionMap')?this.sessionFocus():0;ui.sync();return;}if(i===0&&ui.cb.freeRide){this.goWorld(this.me.lastStation??17);return;}if(i===1){ui.set('ctm-peaks');ui.index=3-this.peak;ui.sync();}else if(i===5){ui.optionsReturn='ctm-mcomm';ui.set('options');}else if(i===6){this.quitFrom='ctm-mcomm';ui.set('ctm-quit');ui.index=1;ui.sync();}/* 'Quit Game' opens on No (PS2 ctm/caps quit-ctm) */else if(i===3&&this.messages.ready)this.messages.open(()=>{ui.set('ctm-mcomm');ui.index=3;ui.sync();});else if(i===4&&ui.audioMenus?.ready)ui.audioMenus.open('audio',{back:()=>{ui.set('ctm-mcomm');ui.index=4;ui.sync();}});/* Audio: web/audio-menu.js (142audio_pda) */return;
    case 'ctm-peaks':if(i<3){const peak=3-i;/* Select Peak on another peak than the one ridden (PS2 peak3/nav out-ctm-to-e: "Go to this peak now?", OVAMER 0x079ACB07; Yes = world state 10 at the peak's backcountry, the first arrival with its cinematic) */if(this.freeRide&&ui.cb.freeRide&&STREAMED_PEAKS.includes(peak)&&COURSE_PEAK[this.freeRide.course??17]!==peak){this.goPeak=peak;ui.set('ctm-gopeak');ui.index=0;ui.sync();return;}this.peak=peak;this.info=false;ui.set('ctm-goals');}return;
    case 'ctm-gopeak':if(i===0){this.peak=this.goPeak;this.goWorld([14,15,16][this.goPeak-1]);return;}ui.set('ctm-peaks');ui.index=3-this.goPeak;ui.sync();return;
@@ -348,13 +356,13 @@ export class CareerScreens {
    // MCOMM Quit (overlay 3) -> 'Quit Game' (No focused) -> Yes -> 'Save progress before quitting?' (Yes focused) -> the save
    // (121Profilesave_pda) -> the Hints load -> the TITLE screen (PS2 ctm/caps quit-ctm, quit-save, quit-save-tri). The lodge's
    // Quit ('Quit to Title screen?', Yes focused) asks the same save question over the lodge (PS2 ctm/caps lodge-quit).
-   case 'ctm-quit':if(i===0&&this.quitFrom==='ctm-pause'){this.quitToTitle();return;}if(i===0){ui.set('ctm-quitsave');ui.index=0;ui.sync();}else{ui.set(this.quitFrom||ui.previousScreen||'ctm-mcomm');if(ui.screen==='ctm-mcomm'){ui.index=6;ui.sync();}else if(ui.screen==='ctm-pause'){ui.index=4;ui.sync();}}return;
+   case 'ctm-quit':if(i===0&&this.quitFrom==='ctm-pause'){this.quitToTitle();return;}if(i===0){ui.set('ctm-quitsave');ui.index=0;ui.sync();}else{ui.set(this.quitFrom||ui.previousScreen||'ctm-mcomm');if(ui.screen==='ctm-mcomm'){ui.index=6;ui.sync();}else if(ui.screen==='ctm-pause'){ui.index=4;ui.sync();}else if(ui.screen==='ctm-results'&&pv('ps2MenuInput')){ui.index=this.resultsFocus(0);ui.sync();}}return;
    // the browser card saves as it goes (web/career-save.js), so Yes writes it once more and No leaves it as it stands
    case 'ctm-quitsave':if(i===0)this.saved=c.persist();this.quitToTitle();return;
    // Session (overlay 0x20): 'Session this area?' Yes -> P[0xA]+0x10 = point, world state 15 (236058): placement 11DE60(rider, point, 2).
    case 'ctm-session':this.sessionPoint=i;ui.set('ctm-sessconfirm');ui.index=0;ui.sync();return;
    case 'ctm-sessconfirm':if(i===0){ui.set('game');ui.cb.resume();ui.cb.freeRideSession?.(this.sessionPoint+1);/* the item's value +0x18 = k + 1 (208840) -> overlay +0xD8 -> P[0xA]+0x10 */}else{ui.set('ctm-session');ui.index=this.sessionPoint??0;ui.sync();}return;
-   case 'ctm-objectives':if(this.cardOpenAt&&(performance.now()-this.cardOpenAt)*60/1000<30)return;this.play();return;
+   case 'ctm-objectives':if(ui.phases&&!ui.phases.accepts())return;/* the card takes Continue from its phase 5 (web/screen-phases.js: activate 30, menu-rules.js), from every input path */this.play();return;
    case 'ctm-pause':
     // Single Event (r3-pause-*): Restart 'Are you sure?' -> the round's card; Quit 'Quit Game' (No focused) -> Yes -> the title, no save prompt
     if(this.singlePause()){if(i===0){ui.set('game');ui.cb.resume();}else if(i===1)this.go('ctm-restart',1);
@@ -367,12 +375,17 @@ export class CareerScreens {
     else if(i===3&&ui.audioMenus?.ready)ui.audioMenus.open('audio',{back:()=>{ui.set('ctm-pause');ui.index=3;ui.sync();}});   // Audio: web/audio-menu.js (142audio_pda)
     else if(i===5)this.go('ctm-giveup',1);   // PS2 'Are you sure?' defaults to No
     return;
-   case 'ctm-giveup':if(i===0)this.giveUp();else ui.set('ctm-pause');return;
-   case 'ctm-restart':{const from=this.restartFrom;this.restartFrom=null;if(i===0)this.restartToCard(from==='results');else if(from==='results'){ui.set('ctm-results');ui.index=1;ui.sync();}else{ui.set('ctm-pause');ui.index=1;ui.sync();}return;}
+   case 'ctm-bcsure':{const b=this.bcSure;this.bcSure=null;if(!b)return;if(i===0)b.yes();else b.no();return;}
+   case 'ctm-giveup':if(i===0)this.giveUp();else{ui.set('ctm-pause');if(pv('ps2MenuInput')){ui.index=5;ui.sync();}}return;   // pv ps2MenuInput: No lands on Give Up (the PS2's last-used item 0x4A2468)
+   case 'ctm-restart':{const from=this.restartFrom;this.restartFrom=null;if(i===0)this.restartToCard(from==='results');else if(from==='results'){ui.set('ctm-results');ui.index=pv('ps2MenuInput')?this.resultsFocus(1):1;ui.sync();}/* pv ps2MenuInput: a return rebuilds the results with the default focus (0x39EA90(8)) */else{ui.set('ctm-pause');ui.index=1;ui.sync();}return;}
    case 'ctm-results':return this.resultAction(i);
    case 'ctm-award':if(pv('awardCascade'))this.career.clearRewardRecord();/* 1FF700 -> 158E30: the list's Continue clears the record */ui.set('ctm-results');ui.index=this.resultsFocus(0);ui.sync();return;
    case 'ctm-records':if(this.topTime){if(i!==0)return;this.topTime=false;const to=this.active?.career&&this.rewardLines().length?'ctm-award':'ctm-results';ui.set(to);ui.index=to==='ctm-results'?this.resultsFocus(0):0;ui.sync();return;}ui.set('ctm-results');ui.index=this.resultsFocus(3);ui.sync();return;
-  }
+  }};
+  // A choice on a screen with an exit (pv ps2MenuInput: the Yes / No popups, 98enterlodge) plays its TransitionOut (phase 6, frozen, no
+  // input) first; the phase machine runs the action at its Stop, then the next screen builds a pass later (web/screen-phases.js, E9)
+  if(ui.phases?.leave(s,act))return;
+  return act();
  }
  back(){
   const ui=this.ui,s=ui.screen;if(this.lodgeFlashing(s))return;if(this.lodge.owns(s))return this.lodge.back();if(this.messages.owns(s))return this.messages.goBack();if(ui.bigChallenges?.owns(s))return ui.bigChallenges.back();
@@ -382,11 +395,13 @@ export class CareerScreens {
    if(s==='ctm-peaks'&&this.freeRide?.booth){this.freeRide.booth=false;ui.set('game');ui.cb.resume();ui.cb.freeRideSession?.(1);return;}   // booth mode 3: WS15 at the station (0x20220C..54, 0x2365D8)
   }
   if(s==='ctm-attributes'&&pv('buyAttribs')&&this.buyAttribs.session){if(!this.buyAttribs.popup)this.buyAttribs.leave();return;}   // Triangle: the lodge, Buy Attributes focused, pending dropped
+  if(pv('ps2MenuInput')&&(s==='ctm-restart'||s==='ctm-giveup'||s==='ctm-bcsure')){this.choose(1);return;}   // Triangle on the 87yndialog = No: back on Restart / Give Up (or the results' Restart)
   const to={'ctm-restart':'ctm-pause','ctm-saveprompt':'ctm-lodge','ctm-peaks':'ctm-mcomm-1','ctm-goals':'ctm-peaks','ctm-events':'ctm-goals','ctm-confirm':'ctm-events','ctm-attributes':'ctm-lodge','ctm-saved':'ctm-lodge','ctm-giveup':'ctm-pause','ctm-records':'ctm-results','ctm-objectives':this.active?.career?'ctm-events':'event'}[s];
   if(s==='ctm-records'&&!this.topTime&&pv('resultsMenu')){ui.set('ctm-results');ui.index=this.resultsFocus(0);ui.sync();return;}   // the results open again (19-back-results)
   if(s==='ctm-pause'){ui.set('game');ui.cb.resume();return;}
   if(s==='ctm-mcomm'&&this.freeRide&&pv('startRules')){ui.set('game');ui.cb.resume();return;}   // Triangle 'Previous' closes the free-ride MCOMM (PS2 startprobe/mcomm-tri); main.js's Escape toggle did it before
-  if(s==='ctm-quit'||s==='ctm-quitsave'){const to=this.quitFrom||'ctm-mcomm';ui.set(to);ui.index=to==='ctm-mcomm'?6:to==='ctm-lodge'?7:to==='ctm-results'?(this.peakResults()?2:4):to==='ctm-pause'?4:0;ui.sync();return;}
+  if(s==='ctm-quitsave'&&pv('ps2MenuInput')){ui.audioMenus?.sfx?.('accept','ctm-quitsave');return;}   // 'Save progress before quitting?': Triangle only plays ev 9 on the PS2 (0x20DB64, kind 6)
+  if(s==='ctm-quit'||s==='ctm-quitsave'){const to=this.quitFrom||'ctm-mcomm';ui.set(to);ui.index=to==='ctm-mcomm'?6:to==='ctm-lodge'?7:to==='ctm-results'?(pv('ps2MenuInput')?this.resultsFocus(0):this.peakResults()?2:4):to==='ctm-pause'?4:0;ui.sync();return;}
   if(s==='ctm-session'){this.go('ctm-mcomm',2);return;}
   if(s==='ctm-sessconfirm'){ui.set('ctm-session');ui.index=this.sessionPoint??0;ui.sync();return;}
   if(s==='ctm-gopeak'){ui.set('ctm-peaks');ui.index=3-(this.goPeak??this.peak);ui.sync();return;}
@@ -403,11 +418,20 @@ export class CareerScreens {
   // pv pauseRestart: the pause's Restart goes straight to the start-gate idle under the card (PS2 menus/race/r3-restart: the gate at
   // +30 samples, the card at +170; R&B r3-pause-restartyes the same); the results' Restart rides the gondola first (r3-results-restart)
   const kind=fromResults||!pv('pauseRestart')?'heat':'restart',mode=this.career.active?.ev?.mode,final=this.career.active?.ev?.round===3;
+  // pv ws13Rebuild: the pause's Restart of a rival challenge or a peak run (cGame_restart 0x2302A8 -> WS1 arg 2 -> WS2 at the start):
+  // no gate idle list (a backcountry has none), the card over the ready state
+  if(kind==='restart'&&pv('ws13Rebuild')&&(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS||isPeakRun(mode))){card();ui.cb.readyView?.();return;}
   // pv stationFlow: the results' Restart is world state 13 (0x235AA0): the gondola (27A860) only for races (event type 0); a freestyle
   // event queues its gate lists alone (27AAF8: [4 hut, 5] in a final, else [5]); a rival event (types 5 / 6) queues nothing
-  if(kind==='heat'&&pv('stationFlow')&&mode!==MODE.RACE){if(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS||(pv('ws13Rival')&&isPeakRun(mode))){card();return;}/* pv ws13Rival: WS13's rival branch is event type 5 / 6 (0x535C10: the rival challenges AND the peak runs, 0x235B38..0x235B60): no gondola, no gate lists, then WS1 arg 3 -> WS2 -> the 68rival_pre card */ui.cb.cutscene({kind:'restart',steps:heatSteps(final).slice(2),onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);return;}
-  ui.cb.cutscene({kind,final,onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);
+  if(kind==='heat'&&pv('stationFlow')&&mode!==MODE.RACE){if(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS||(pv('ws13Rival')&&isPeakRun(mode))){card();if(pv('ws13Rebuild'))ui.cb.readyView?.();/* pv ws13Rebuild: the 68rival_pre card over the ready state, as begin()'s card (WS13 rival branch -> WS1 arg 3 -> WS2 rebuilds the riders at the start) */return;}/* pv ws13Rival: WS13's rival branch is event type 5 / 6 (0x535C10: the rival challenges AND the peak runs, 0x235B38..0x235B60): no gondola, no gate lists, then WS1 arg 3 -> WS2 -> the 68rival_pre card */ui.cb.cutscene({kind:'restart',steps:heatSteps(final).slice(2),onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);return;}
+  if(kind==='heat')ui.cb.heatReset?.();/* WS13 enter 0x235AA0 -> 230180 (pv eventReturnInWorld: the in-world event's world reset, main.js) */
+  const heat=()=>ui.cb.cutscene({kind,final,onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);
+  if(fromResults&&mode===MODE.RACE)this.ws13Riders(heat);else heat();
  }
+ // pv ws13Rebuild: world state 13 enter (0x235AA0) sets the computer riders from GMM+0x40 (the round's roster) and rebuilds and places
+ // them (128958 / 1296F8 / 1289F0) before the gondola: the semi = the qualifier's top 3 + entries 5..7, the final = the rival + the
+ // semi's top 3 + 8..9 (web/lineup.js). The port built the lineup only in the event load's warm-up, so every heat kept the qualifier's.
+ ws13Riders(go){const p=pv('ws13Rebuild')?this.ui.cb.heatLineup?.():null;if(!p){go();return;}Promise.resolve(p).catch(()=>{}).then(go);}
  // Results 'Transport' (0x20CF80 -> WS14 arg 2, 0x236250): list 1 group 11 (endevent_trans_arr #152; Snow Jam's list is
  // empty) over the event world, then the map (overlay 0x21). A free-ride destination restores free ride (2018A8: event
  // type 4, mode 12, handler 2): the same course at session point 1 (WS15), else a transport (web/free-ride.js).
@@ -416,14 +440,14 @@ export class CareerScreens {
   if(ui.cb.cutscene&&this.active?.career){try{await ui.cb.cutscene({kind:'transport-arrive',restore:false});}catch{}}
   // a peak run ends on its finish course's peak (Metro-City: Peak 1, "You are here" on the PS2's Select Peak)
   if(isPeakRun(this.active?.mode)&&COURSE_PEAK[PEAK_RUNS[this.active.mode].finish])this.peak=COURSE_PEAK[PEAK_RUNS[this.active.mode].finish];
-  ui.cb.quit?.();this.afterEvent=true;ui.set('ctm-peaks');ui.index=3-this.peak;ui.sync();
+  ui.gameAudio?.eventMap?.();/* pv worldSwitchAudio: the song plays on under the map until the confirm (web/game-audio.js eventMap) */ui.cb.quit?.();this.afterEvent=true;ui.set('ctm-peaks');ui.index=3-this.peak;ui.sync();
  }
  resultAction(i){
   if(this.peakResults()&&i===2)i=4;   // Transport / Restart / Quit
   const ui=this.ui,c=this.career,items=this.resultItems();
   if(i===0){
    if(!this.active.career){ui.cb.quit?.();this.active=null;ui.set('event');return;}
-   if(this.result.outcome.advance){/* next heat (world state 13): the gondola ride back up, then the card over the gate idle loop (web/cutscenes.js heatSteps) */if(this.ui.cb.cutscene&&this.result.mode===MODE.RACE){let open=false;const card=()=>{if(open)return;open=true;ui.set('ctm-objectives');};this.ui.cb.cutscene({kind:'heat',final:this.career.active?.ev?.round===3,onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);return;}/* pv stationFlow: a freestyle next heat (WS13) queues [5] (or [4, 5] before the final) behind the card, no gondola */if(this.ui.cb.cutscene&&pv('stationFlow')&&this.result.mode>=MODE.SLOPESTYLE&&this.result.mode<=MODE.BIGAIR){let open=false;const card=()=>{if(open)return;open=true;ui.set('ctm-objectives');};this.ui.cb.cutscene({kind:'restart',steps:heatSteps(this.career.active?.ev?.round===3).slice(2),onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);return;}ui.set('ctm-objectives');return;}
+   if(this.result.outcome.advance){/* next heat (world state 13): the gondola ride back up, then the card over the gate idle loop (web/cutscenes.js heatSteps) */if(this.ui.cb.cutscene&&this.result.mode===MODE.RACE){this.ui.cb.heatReset?.();/* WS13 enter 0x235AA0 -> 230180 (pv eventReturnInWorld) */let open=false;const card=()=>{if(open)return;open=true;ui.set('ctm-objectives');};this.ws13Riders(()=>this.ui.cb.cutscene({kind:'heat',final:this.career.active?.ev?.round===3,onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card));return;}/* pv stationFlow: a freestyle next heat (WS13) queues [5] (or [4, 5] before the final) behind the card, no gondola */if(this.ui.cb.cutscene&&pv('stationFlow')&&this.result.mode>=MODE.SLOPESTYLE&&this.result.mode<=MODE.BIGAIR){let open=false;const card=()=>{if(open)return;open=true;ui.set('ctm-objectives');};this.ui.cb.cutscene({kind:'restart',steps:heatSteps(this.career.active?.ev?.round===3).slice(2),onIdle:card,restore:false}).then(r=>{if(!r?.played)card();},card);return;}ui.set('ctm-objectives');return;}
    this.transportAfterEvent();return;   // results 'Transport' (WS14 arg 2): endevent_trans_arr where the course has one, then the map
   }
   if(i===1){this.restartFrom='results';this.go('ctm-restart',1);return;}   // 0x20CF9C: overlay 0x17 'Are you sure?' first
@@ -435,6 +459,9 @@ export class CareerScreens {
  // Pause "Give Up" (0x20DA58 -> 1253D0): the menu closes and the run goes on for one tick; +0x480 = 1 makes 125228 finish it
  // (125368), so the TIME'S UP banner shows, then the results (288 ticks after the finish, main.js) with the player DNF
  // (race 360000 ticks, freestyle 0 points shown as DNF: 0x5366D0[slot]). PS2: local/ps2-capture/menus/pipegu, race/15-*.
+ // pv ps2MenuInput: the Big Challenge pause's Restart Challenge / Quit Challenge ask first (0x1F8B84 / 0x1F8B94: 87yndialog kinds 2 / 3,
+ // No focused; Yes: the offer overlay 0x1D / 0x30B758; No or Triangle: the pause again on the item used)
+ bcConfirm(label,yes,no){this.bcSure={label,yes,no};this.ui.set('ctm-bcsure');this.ui.index=1;this.ui.sync();}
  quitToTitle(){this.careerMark(false);const ui=this.ui;ui.cb.quit?.();this.active=null;this.freeRide=null;this.afterEvent=false;this.quitFrom=null;ui.set('title');}
  giveUp(){this.gaveUp=true;if(this.ui.cb.giveUp){this.ui.cb.giveUp();return;}this.ui.cb.quit?.();this.finish({dnf:true});}
 
@@ -653,7 +680,7 @@ export class CareerScreens {
   if(this.messages.owns(s))return this.messages.draw(c,b);
   if(this.ui.bigChallenges?.owns(s))return this.ui.bigChallenges.draw(c,b);
   if(s==='ctm-session'||s==='ctm-sessconfirm')return this.drawSession(c,b,s);
-  if(['ctm-mcomm','ctm-peaks','ctm-goals','ctm-events','ctm-confirm','ctm-pause','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-gopeak','ctm-quitsave'].includes(s))return this.drawMcomm(c,b,s);
+  if(['ctm-mcomm','ctm-peaks','ctm-goals','ctm-events','ctm-confirm','ctm-pause','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-gopeak','ctm-quitsave','ctm-bcsure'].includes(s))return this.drawMcomm(c,b,s);
   if(['ctm-lodge','ctm-attributes','ctm-saved'].includes(s)){if(pv('equipLoading'))this.lodge.preloadGear?.();/* Equip Gear's own data before its state switch (web/lodge-ui.js) */this.memoCursor();this.drawLodge(c,b,s);if(pv('buyAttribs'))this.buyAttribs.drawFlash(c);this.lodgeFlash.draw(c);return;}   // pv buyAttribs: the TransitionOut flash between the lodge and Buy Attributes; pv lodgeFlash: the other lodge screens'
   if(this.lodge.owns(s)){this.memoCursor();const r=this.lodge.draw(c,b);this.lodgeFlash.draw(c);return r;}
   if(s==='ctm-objectives')return this.drawObjectivesOpen(c);
@@ -736,12 +763,12 @@ export class CareerScreens {
    ui.items().forEach((t,i)=>ui.text(c,t,200,Y(98)+i*Y(40),21,ui.index===i?'#f4f6f2':this.disabled(s,i)?'#51708a':'#0f2533'));
    this.help(c,(help||'')+note);return;
   }
-  if(['ctm-confirm','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-gopeak','ctm-quitsave'].includes(s)){
+  if(['ctm-confirm','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-gopeak','ctm-quitsave','ctm-bcsure'].includes(s)){
    // the screen under the popup keeps its cursor (the list row or menu item that opened it) and hides its rows (PS2 32-transport-confirm-no:
    // title, map and help stay; the lodge menu stays under its Quit prompt, 64-lodge-quit-confirm)
    const under=(fn,index)=>{const at=ui.index,items=ui.items;ui.index=index;this.hideRows=true;try{fn();}finally{ui.index=at;this.hideRows=false;}};
    const listAt=this.selected?Math.max(0,this.list().findIndex(e=>e.course===this.selected.course&&e.mode===this.selected.mode&&e.name===this.selected.name)):0;
-   if(s==='ctm-gopeak')under(()=>this.drawMcomm(c,b,'ctm-peaks'),3-(this.goPeak??this.peak));else if(s==='ctm-enterlodge'){/* over the paused world, MCOMM frame */}else if(s==='ctm-saveprompt'||(s==='ctm-quit'&&this.quitFrom==='ctm-lodge'))this.drawLodge(c,b,'ctm-lodge',s==='ctm-saveprompt'?0:7);else if(s==='ctm-quitsave'){if(this.quitFrom==='ctm-results')this.drawResults(c,true);else if(this.quitFrom==='ctm-lodge')this.drawLodge(c,b,'ctm-lodge',7);else this.mcommFrame(c,b);}else if(s==='ctm-confirm')under(()=>this.drawMcomm(c,b,'ctm-events'),listAt);else under(()=>this.drawMcomm(c,b,['ctm-giveup','ctm-restart'].includes(s)||this.quitFrom==='ctm-pause'?'ctm-pause':'ctm-mcomm'),0);
+   if(s==='ctm-gopeak')under(()=>this.drawMcomm(c,b,'ctm-peaks'),3-(this.goPeak??this.peak));else if(s==='ctm-enterlodge'){/* over the paused world, MCOMM frame */}else if(s==='ctm-saveprompt'||(s==='ctm-quit'&&this.quitFrom==='ctm-lodge'))this.drawLodge(c,b,'ctm-lodge',s==='ctm-saveprompt'?0:7);else if(s==='ctm-bcsure')this.mcommFrame(c,b);else if(s==='ctm-quitsave'){if(this.quitFrom==='ctm-results')this.drawResults(c,true);else if(this.quitFrom==='ctm-lodge')this.drawLodge(c,b,'ctm-lodge',7);else this.mcommFrame(c,b);}else if(s==='ctm-confirm')under(()=>this.drawMcomm(c,b,'ctm-events'),listAt);else under(()=>this.drawMcomm(c,b,['ctm-giveup','ctm-restart'].includes(s)||this.quitFrom==='ctm-pause'?'ctm-pause':'ctm-mcomm'),0);
    // over the PDA (MCOMM, Transport, pause): the Yes / No popup 87yndialog; over the lodge / results the port's box
    const overPda=!(s==='ctm-saveprompt'||(this.quitFrom==='ctm-lodge'&&(s==='ctm-quit'||s==='ctm-quitsave'))||(s==='ctm-quitsave'&&this.quitFrom==='ctm-results'));
    if(overPda&&s==='ctm-enterlodge')this.mcommFrame(c,b);   // 98enterlodge sits in the MCOMM frame (PS2 start-lodge s1400)
@@ -814,7 +841,7 @@ export class CareerScreens {
    showTab:!(s==='ctm-peaks'&&index===3)&&!(s==='ctm-goals'&&index===3),tabText:info?this.t('kT_BTNShowMap','Show MAP'):this.t('kT_BTNShowInfo','Show INFO')};
  }
  // The question of a Yes/No popup (87yndialog / the MCOMM popup) by screen.
- promptLines(s){return s==='ctm-quitsave'?[this.t(0x0ff92d84,'Save progress before quitting?')]:s==='ctm-giveup'?[this.t('kT_CMNGiveUp','Give Up'),this.t(0x0ebe93e5,'Are you sure?')]:s==='ctm-restart'?[this.t('kT_BTNRestart','Restart'),this.t(0x0ebe93e5,'Are you sure?')]:s==='ctm-gopeak'?[this.t(0x079acb07,'Go to this peak now?')]:s==='ctm-enterlodge'?[this.t(0x0ea7ffb5,'Would you like to enter\\the lodge?').replace(/ *\\+/g,'\n')]:s==='ctm-saveprompt'?[this.t('kT_CMNSaveProgress','Save progress?')]:s==='ctm-quit'?[this.quitFrom==='ctm-lodge'?this.t('kT_OVRCMNQuitTitlePrompt'):this.t('kT_OVRCMNQuitGame','Quit Game')]:this.selected?.station&&!pv('stationFlow')?[this.t(0x0ea7ffb5,'Would you like to enter the lodge?')]:[this.t('kT_MAPTransArea','Transport to this area now?')];}/* pv stationFlow: a station row asks the Transport question too (PS2 peak3/nav out-fr-to-black-station prompt) */
+ promptLines(s){if(s==='ctm-bcsure')return [this.bcSure?.label||'',this.t(0x0ebe93e5,'Are you sure?')];/* the Big Challenge pause's 87yndialog kind 2 / 3 (first line: the item, as the port's Restart / Give Up prompts; unconfirmed) */return s==='ctm-quitsave'?[this.t(0x0ff92d84,'Save progress before quitting?')]:s==='ctm-giveup'?[this.t('kT_CMNGiveUp','Give Up'),this.t(0x0ebe93e5,'Are you sure?')]:s==='ctm-restart'?[this.t('kT_BTNRestart','Restart'),this.t(0x0ebe93e5,'Are you sure?')]:s==='ctm-gopeak'?[this.t(0x079acb07,'Go to this peak now?')]:s==='ctm-enterlodge'?[this.t(0x0ea7ffb5,'Would you like to enter\\the lodge?').replace(/ *\\+/g,'\n')]:s==='ctm-saveprompt'?[this.t('kT_CMNSaveProgress','Save progress?')]:s==='ctm-quit'?[this.quitFrom==='ctm-lodge'?this.t('kT_OVRCMNQuitTitlePrompt'):this.t('kT_OVRCMNQuitGame','Quit Game')]:this.selected?.station&&!pv('stationFlow')?[this.t(0x0ea7ffb5,'Would you like to enter the lodge?')]:[this.t('kT_MAPTransArea','Transport to this area now?')];}/* pv stationFlow: a station row asks the Transport question too (PS2 peak3/nav out-fr-to-black-station prompt) */
  helpText(s,i){
   if(s==='ctm-peaks')return i===3?'':i<3&&!this.me.peaks[2-i]?this.t(i===0?'kT_MAPHELPLockedPeak3':'kT_MAPHELPLockedPeak2'):this.t('kT_MAPHELPOnPeak');
   if(s==='ctm-goals')return [this.t('kT_CMNHELPGetMdlRaceRival'),this.t('kT_CMNHELPGetMdlFSRival'),this.t('kT_CMNHELPGetMdlChallColl'),this.t('kT_CMNHELPEarnCashEvChalColl')][i];
