@@ -617,3 +617,18 @@ and the RNG. peak-set-pieces.js now survives a missing attached.json: the dev se
 - the resident loops (blimps);
 - the ESS3 tram (no seed);
 - CRA3 ospreyfocus, the ABC1 tumbler owner 80902, and DSS2's five mission-start targets.
+
+## Streamed worlds: the trigger RestoreNode and the riders' guards (2026-09-30, CTM events-in-world agent; c0a-ws13)
+
+- **The EZrocketCore launch is on the PS2's tick.** The PS2 record is written at the human's provider exit, so the entity-pass draws
+  of tick T+1 fall in the capture's window labelled T. Probes on 0x30A688 (slot-5 dispatch) and 0x34EBE0 (builtin 55's crossing) and a
+  savestate read of the timer (rate 0x3BB60B61, time / previous / unclamped after 9 steps 0x3D4CCCCC / 0x3D360B60) match the port.
+- **342E98's restore 3 makes a RestoreNode** (0x350F60, type 19 at instance+0xC), which is section-listed; its leave (0x34FD90 -> the
+  0x34FBF0 destructor) puts the authored flags back. Program 136 (dragontrig_1000) is `Debounce; if builtin52(0x85308) == 1 return;
+  b19 x2`, so the trigger fires again once the dragons' entities are gone (Griff at 11944, probe_contact.py on 0x12186C: rider
+  0x1a6c060, resource 326408). The port's Debounce completion now sets node state 19 and tells the section model
+  (web/stage_script_gameplay.inc); before, the trigger stayed un-contactable after its first firing (every world).
+- **Shared world event 10** (pv peakSplines): the streamed world's section programs run in the human's context only, so a piece its
+  section leave destroys is released in the other contexts too (`browser_spline_piece_released`: the piece and its owner's launch
+  guard), and web/ai-racers.js forgets the owner key so the next launch replicates again.
+- **Suite with PEAK_SPLINES=1** (core-suite4): all 266 scenarios pass; ctm-events/c0a-ws13-splines is exact to the live stop.

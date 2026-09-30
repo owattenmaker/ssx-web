@@ -95,3 +95,16 @@ collision history (+0x3E0 normal, +0x3F0 direction changes), the peak impact and
 alone. `BrowserCrashRuntime::contacts` (web/crash_runtime.hpp) used to dispatch an impact on every sliding bounce. PS2 Gravitude
 Mac 977: the velocity bounces the same way, but +0x3E0 only decays. The airborne crash contact (137860) keeps its landing and
 impact handling.
+
+## The board detach at control 8's enter reads rider+0x9D0 (2026-09-30, c0a-ws13)
+
+- **PS2 rule.** 12CA30 (control 8's enter) copies the cached world bones [+0x89C] (primary) and [+0x8A4] (board) and adds rider+0x9D0 to
+  both (0x12CAC4..0x12CAE0); if channel 2's class is 22 (311AE8 at 0x12CAEC) it detaches the board there (jal 136D40 at 0x12CB18).
+  +0x9D0 sums every 106538 translation (0x106560..0x10656C: +0x110 and +0x9D0 += d) since the rider's 120F20 cleared it (0x121020);
+  121750 commits it to the cached bones (310530) and does not clear it.
+- **Evidence.** local/ctm-events/probe_9d0.py on the jal at 0x12CB18 (an open-loop replay of c0a-ws13): Allegra's +0x9D0 at race tick
+  5939 = (8.2325, 7.7229, 30.7344), an instance push from 105398 before 105D98 dispatched the crash. The port's board was off by exactly
+  that from 5941 on, so it bounced a tick early (137138's three draws in 6080 instead of 6081).
+- **Port.** web/animation_bridge.cpp `pending_pose_translation()` = the tick's contacts translation (`tickBodyTranslation`, the post's
+  former local), the in-flight instance pushes (`instancePendingTranslation`, web/instance_contact_gameplay.inc) + `pairCompanion` +
+  `browserLandingTranslation`, passed to `beginControl` whether or not the post is running.

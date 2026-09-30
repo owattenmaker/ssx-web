@@ -794,6 +794,27 @@ ticks beside free ride's own widgets (0x80 / 0x100 / 0x200), and not after the r
 until 128A48(C, 0) at the return's tick 3, 0 (1ST) from there; the total is C+0x78 (6). The page shows it the same way (web/ai-race.js
 hud() while the riders ride; the ranks are gated by ctm-events/c0a-ret3). The white fade covers it either way.
 
+**The player's qualifier and Next heat (c0a-ws13, 2026-09-30).**
+- Capture `local/ctm-events/caps/c0a-ws13` (local/ctm-events/ws13_capture.py): c0a-full-ai's arrival and free-ride pads, the gate,
+  WS1, the card (command 2 as every c0a capture), the race ridden closed-loop by ps2_autopilot's Pilot (tuck + pure pursuit on the
+  rider's route lookahead +0x4A0) from the race's index + 190, the human's own 3rd place at race tick 11975, a neutral pad from the
+  finish, the results' Cross on Next heat (menu_pad.py's device pad, the pad switch off), WS13, the semi card's Cross, 1,500 semi
+  records. The live ring hook (128 slots below menu_pad's arena) reads menu_pad's pad switch; pads.jsonl holds every entry written
+  (0 misses), so REPLAY_PADS=RUN.pads.jsonl replays the same ride open-loop for probes (PROBE_FROM / STOP_AT / SNAP_AT; WS13_PROBE =
+  9d0 | contact | entry:FUNC). Record timeline: race tick 0 at 1333, finish 13309 (tick 11975), live stop 13715 (finish + 407),
+  the auto replay 13716..14016, WS13 14017 (tick 0, control 13), the semi's riders re-allocated at new addresses (re-listed at 14036),
+  1289F0's tick restart 14318, WS1 arg 3 14511, WS2 14542, the semi countdown 14543. The 0x128CDC probe never fired.
+- Scored with compare-ai-capture --ctm-full it exposed four live-game parity bugs (all fixed in the core, full suite clean): the
+  crash board detach's +0x9D0 (crash-motion.md), 115D48 before 114CC0 (ai-racers.md), the trigger RestoreNode (set-pieces.md) and
+  control 10's controller-phase draw (the celebration variant). With pv peakSplines (the EZrocketCore Spline draw at 11865 and the
+  dragons at 11944, shared world event 10) the whole qualifier is exact to the live stop: gates ctm-events/c0a-ws13 (to 11864,
+  splines off) and ctm-events/c0a-ws13-splines.
+- Next: WS13's own path: the results' auto replay (records 13716..), Next heat's 2706F0 (0x20CCF8: 2706F0 then 231250(S, 13, 0, 1)),
+  WS13's enter 235AA0 (14DE68(0), 30B7F8, 2382D8, 230180, the round's roster 144D98 / 147338 / 1473D0, 12AB20 (+12AC48 with >= 2 AIs),
+  the gondola 27A860 / 2790A0 / 27AAF8 / 278F38, Loading bit 3) and update 235CC8 (phase 0: 12ABD0 -> 12B030 (+12B000), 128958; phase 1:
+  12A180 else 1296F8, then 1289F0 and the streaming box 122C28 / 3A9658; phase 2: 3A9770 >= 20000, >= 120 ticks, 2791D8, 230698, 279298,
+  the NIS idle -> 27A9F0; phase 3: 233AA0 -> WS1 arg 3), then the card and the semi.
+
 ### Turning it on
 
 1. Stage 1 as soon as its gates pass (it needs pv `pauseContexts`).

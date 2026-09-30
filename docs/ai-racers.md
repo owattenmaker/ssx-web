@@ -529,3 +529,16 @@ through the end without it).
   original's work. The world entities (set pieces, rollers) still update once per rider, as in the
   multi-core layout; sharing them would remove the replay but changes the per-rider timing of
   entity updates, so it is left for a later step.
+
+## Controller-phase order in 131620 and 12C678 (2026-09-30, c0a-ws13)
+
+- **131620 (control 0's update)** calls 115B58 at 0x131868 and 115D48 at 0x131870, then 312AA0 and the 114CC0 reverse turn at
+  0x1318EC. So 115D48 sees the channel-1 class and the stance of before the turn. The port ran its non-held reverse-turn check
+  (core.cpp) first, so the turn's clip reset the idle clock +0x35C a tick early (c0a-ws13 Allegra 9368, her reaction draws a tick early
+  at 9485). Now core.cpp calls `browser_ground_upper_reactions` ahead of that check and `browser_ground_controller_animation` runs them
+  only when that call did not (web/animation_bridge.cpp `ground_upper_reactions`). The held path (12E9B8) is unchanged.
+- **12C678 (control 10's update)** runs in the controller pass (121068): its phase-2 115B58 play of 315 / 314 (3128E8 -> 311710's
+  variant draw at 0x3117B0, word % sum, the first choice whose running remainder is <= 0) is a controller-phase draw. finish_step
+  (web/finish_gameplay.inc) now opens `ControllerDraws`; before, its draw took the motion cursor, which starts after the other riders'
+  predicted controller draws, and the human's celebration picked leaf 322 (clip 6400) for the PS2's 321 (clip 6144) (c0a-ws13 12046,
+  word 0xD3DB07).
