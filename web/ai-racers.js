@@ -174,7 +174,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
       const w = f32(human, human._race_world_state(), 360);
       return (a, b) => [w[(a * 6 + b) * 10 + 2], w[(a * 6 + b) * 10 + 3]];
     },
-    reset() {
+    reset(ranks = null) { // ranks: the riders' +0xEC to start from (default the document's)
       const near = this.proximity();
       const init = [count, doc.world.tail, doc.world.rank_mode];
       for (let a = 0; a < 6; a++) {
@@ -185,7 +185,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
           const [distance, bearing] = r && a !== b ? near(a, b) : [r ? r.distance : 1e10, r ? r.bearing : 0];
           init.push(enabled, r ? r.human : 0, distance, bearing, r ? r.t10 : 0, r ? r.t14 : 0, r ? r.t18 : 0, r ? r.t1c : 0, r ? r.t20 : 0);
         }
-        init.push(doc.world.ranks[a] ?? a);
+        init.push(ranks?.[a] ?? doc.world.ranks[a] ?? a);
       }
       for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) init.push(doc.relationships.scores[a]?.[b] ?? 0);
       const p = human._malloc(init.length * 4); human.HEAPF32.set(init, p >> 2); human._race_world_reset(p); human._free(p);
@@ -415,12 +415,13 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     // Event start for the computer riders (call right after the human's start_event).
     // gridStart (pv eventInWorldAi): the CTM riders' carried words kept through the grid placement (core npc_grid_start).
     // hold (pv eventReturnInWorld, WS13's 1289F0): the riders' event clocks stay in PreRace (core event_clock_hold) until the next start.
-    start({ gridStart = false, hold = false } = {}) {
+    // ranks (pv eventReturnInWorld, WS13's 1289F0): the +0xEC each rider keeps into the grid wait (the round's fresh riders 0, the human its own)
+    start({ gridStart = false, hold = false, ranks = null } = {}) {
       if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
       for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); if (hold) n.core._event_clock_hold(1);
         try { explain(n.core, `${n.character} start`, () => (gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event())); } finally { if (hold) n.core._event_clock_hold(0); }
         n.finished = false; }
-      tick = 0; stage = 0; world.reset(); lastControllerDraws.fill(0); knownTriggers.clear();
+      tick = 0; stage = 0; world.reset(ranks); lastControllerDraws.fill(0); knownTriggers.clear();
       for (const c of cores()) if (c._world_events) c._world_events(); // drop entries of the previous run
       worldEvents = 0; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
     },

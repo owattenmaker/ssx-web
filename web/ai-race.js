@@ -29,6 +29,11 @@ function loadRelationships(fresh) {
 // pv newGameReset: Options > Save/Load > New game resets profile 0's relationship records (+0xBC1, 0x1519E0; web/fe-saveload.js
 // clears bank 0's storage); an instance already loaded reloads its tables at its next start instead of saving its old ones back.
 let relGeneration = 0;
+// pv heatRoles: a career race heat (event.career with event.mode 0) takes its round's computer-rider route roles (web/lineup.js
+// npcRoundRole, 0x10C450); every other event keeps lineups.json's slot tables as before. The PS2's overrides that are not ported stay
+// out by construction: the game mode 0x535C12 4 / 5 (the backcountry rival events: event.mode 4 / 5, never `career` here) and the game
+// options word 0x5308D0's bit 2 (a race heat's set_race_bonus passes flags 0: web/freestyle-event.js applyFreestyleEvent(core, null)).
+function heatRound(career, round) { return pv('heatRoles') && career ? round : null; }
 export function relationshipsReset() { relGeneration++; }
 function saveRelationships(tables) {
   try { store('local')?.setItem(REL_KEY, JSON.stringify(tables[0])); } catch {}
@@ -268,7 +273,7 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
       const seed = built ? null : reuse ? lastBuild.seed : nextRosterSeed();
       const lineup = lineupFor({ seed, entries: built ?? (reuse ? lastBuild.entries : null), human: humanChar, peak: lineupData.peak, round, career, previous: round > 1 ? lastFinish : [] });
       lastBuild = { seed, human: humanChar.base, entries: lineup.entries };
-      const next = assembleLineup(lineupData, humanChar.base, lineup.values, { relationships: tables });
+      const next = assembleLineup(lineupData, humanChar.base, lineup.values, { relationships: tables, round: heatRound(career, round) }); // pv heatRoles: the round's route roles (lineup.js npcRoundRole)
       return install(next, lineup, rider);
     },
     // Freestyle (docs/slopestyle-bigair.md "Opponent and posted riders"): web/career.js startEvent drew the roster and the
@@ -326,7 +331,7 @@ export async function createAiRace({ T, scene, human, course, loader, origin, hu
     const seed = built ? null : reuse ? lastBuild.seed : nextRosterSeed();
     const lineup = lineupFor({ seed, entries: built ?? (reuse ? lastBuild.entries : null), human: who, peak: lineupData.peak, round, career, previous: round > 1 ? lastFinish : [] });
     lastBuild = { seed, human: who.base, entries: lineup.entries };
-    return { lineup, next: assembleLineup(lineupData, who.base, lineup.values, { relationships: tables }) };
+    return { lineup, next: assembleLineup(lineupData, who.base, lineup.values, { relationships: tables, round: heatRound(career, round) }) };
   }
   function humanGrid(rider) {   // the human's own grid spot on this course (Snow Jam's comes with the rider's settings)
     if (course.code === 'ARA1') return;

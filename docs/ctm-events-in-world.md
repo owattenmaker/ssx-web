@@ -828,12 +828,20 @@ grid placement on the first record without it (14538, WS1's last tick), the card
   out 8 2 13 9 6 instead of the race copy 0x535B20's 2 8 7 9 6: the 8.096 cm "grid offset" was Psymon on Allegra's row.)
 - **The semi lineup** is 23A108's: the qualifier's places 0x536708 (238BF8: ascending 0x536640 = each rider's finish time +0x478,
   written by 23A760), human skipped, then entries 5..7. PS2 c0a-ws13: Allegra 11708 before Psymon 11716.
+- **The rows at WS13's enter.** 235AA0 -> 12AB20 -> 129768 -> 1297C8(C, 1): C+8 = 0 and 11D390's event branch for every listed rider
+  (ARMSX2 entry probe local/ctm-events/caps/c0a-ws13p460: 1297C8 from 0x1297B0 at tick 12383, then 11D390 six times from 0x129860, each
+  with 112180's 11D660 from 0x112250), before the gondola's NIS takes the human: its +0x460 is its start row's point (the painters
+  step there under the gondola), +0x454 0, the route reattached (+0x490, +0x4C0..+0x4C8; record 14017). web/event-heat.js heatEnter
+  ends with it (core event_row_enter = transport_map_enter without WS14's boost meter clear); compare-ai-capture --ws13 passes the
+  location's start rows. +0x460 / +0x454 exact through the gondola since.
+- **The semi's route roles** are round 2's (ai-racers.md "Route roles by round": 1 1 1 0 0, not lineups.json's final 2 2 1 1 0):
+  Elise's path pick at 479 (path 117) and the riders' later picks.
 - **The human's start in the semi** is the normal 12BF68 (phase 1 crouch 1 at GO, the push-off at pose 0.62, tick 202); a hold
   carried past C2 (nis_hold's start clear) had stopped it.
-- Score (on the 1242B0 / padCarry core): the qualifier exact to the live stop as before; the grid wait: riders exact; the semi:
-  human exact to 1442, riders to 481 / 656 / 671 / 958 / 1245, RNG to 490. Open: the grid-wait rank (the PS2 has the human 5th in
-  the gondola), Elise's path pick at 479 (path 5 ends; the web picks path 120 at lateral 325 cm, the PS2 a path at lateral 842 cm),
-  the human's +0x460 after Next heat (PS2: the qualifier's grid point; web: the live stop's contact), the +0x470 start after a Give Up.
+- Score (core-row: core-pad + event_row_enter; the semi's roles): the qualifier exact to the live stop; the grid wait: riders exact;
+  the semi to the capture's end (1500 ticks): the human and riders 1 / 2 / 4 / 5 exact, Nate to 1221, the RNG to 867. Open: the
+  grid-wait rank (the PS2 has the human 5th in the gondola), Nate at 1222, the RNG at 868, the +0x470 start after a Give Up, the
+  human's +0xAFC holds (the gondola: +0x430 / +0xB00 / +0x370 keep the placement's, the PS2 probes and misses).
 
 **Carried presses (pv padCarry, 2026-09-30).** Two rules from the code:
 - **One pad history.** cSSXApp_preUpdate (0x227E98; the jal at 0x227F20) runs 0x321298 on each port's history once per app update

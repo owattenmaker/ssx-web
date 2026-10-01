@@ -357,7 +357,7 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
         eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_RESULTS, heat.results, { human, racers }); // 0x2706F0 (0x20CCF8's Next heat)
         tick(neutral, null); // the stop frame: one live tick of the restored results time before WS13 (as the Transport's, c0a-ret3; PS2 c0a-ws13: riders 3 and 4's 115D48 draws)
         heat.enter = (await import('./event-heat.js')).heatEnter({ human, racers, doc, finishOrder: heat.finishOrder, lineupData: JSON.parse(text(`${courseCode}/lineups.json`)),
-          riderText: (pkg) => (resources.riderText[pkg] ??= text(`${pkg}/rider.json`)), cstr: (t) => str(human, t), bank: process.env.WS13_NO_ROW ? null : heatBank() });
+          riderText: (pkg) => (resources.riderText[pkg] ??= text(`${pkg}/rider.json`)), cstr: (t) => str(human, t), bank: heatBank() });
         console.error('ws13: enter at record', i + 1, 'semi lineup', heat.enter.values.join(' '), 'changed slots', heat.enter.changed.join(' '));
         // (the stop frame is this record's interval: WS13's first frame writes record W, its section scan after the record is the next one's)
         { const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true); human._nis_hold(1, q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)); }
@@ -382,8 +382,11 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
         const w = r3, ps2w = records[i + 1].rng;
         if (!heat.rngFirst && w.some((x, k) => x !== ps2w[k])) { heat.rngFirst = { record: i + 1, tick: records[i + 1].tick, webBehind: drawsBetween(w, ps2w), webAhead: drawsBetween(ps2w, w) }; console.error('ws13: RNG first differs at record', i + 1, JSON.stringify(heat.rngFirst)); }
         continue; }
-      if (i === heat.G) { for (const n of racers.npcs) (n.core._npc_fresh_rider ?? n.core._fresh_rider_start)?.(); // 128958 -> 129E20: the round's riders made fresh (WS13 phase 0)
-        racers.start({ gridStart: true, hold: true }); console.error('ws13: grid start at record', i); } // 1289F0: the semi's riders on the grid (PreRace), the tick restarts
+      if (i === heat.G) { for (const n of racers.npcs) n.core._npc_fresh_rider(); // 128958 -> 129E20: the round's riders made fresh (WS13 phase 0)
+        // 1289F0's riders are the round's fresh ones (+0xEC 0, constructor 0x125EB8) and the human keeps its place (PS2 c0a-ws13 14036: 2,0,0,0,0,0);
+        // 10F998's first ranking over the equal grid distances then gives 5,1,2,3,0,4 (keys -(remaining + 20 x rank), shell sort 0x3E6328)
+        { const humanRank = racers.worldState ? racers.worldState[360] : 0; racers.start({ gridStart: true, hold: true, ranks: [humanRank, 0, 0, 0, 0, 0] }); }
+        console.error('ws13: grid start at record', i); } // 1289F0: the semi's riders on the grid (PreRace), the tick restarts
       if (i === heat.C2 - 1) { heat.pendingHold = null; continue; } // the card (WS2): the world holds; its Continue is the next record's tick 0
     }
     if (heat && i === heat.C2) { // the card's Continue: WS1's exit (128958, 1289F0, 128A10: 1297C8(C, 0) + 128A48), WS3's countdown (as the first heat's C)

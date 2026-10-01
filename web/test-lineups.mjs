@@ -27,6 +27,15 @@ const data = Object.fromEntries(courses.map((c) => [c, readJson(`${c}/lineups.js
 // ---- 1. the algorithm ----------------------------------------------------------------------------------------------
 assert.deepEqual(buildRoster(REFERENCE_ROSTER_SEED, 4, 0), [8, 2, 0, 5, 13, 7, 9, 6, 1, 14], 'Snow Jam anchor roster');
 assert.equal(peakRival(0, 3), 5); assert.equal(peakRival(1, 7), 4); assert.equal(peakRival(2, 2), 8);
+// Route roles by round (0x10C758 -> 0x10C450; web/lineup.js npcRoundRole): the derived career countdowns' owner +0xE00 / +0xE04
+{ const career = new URL('../local/assets/native/ARA1/lineups-career/', import.meta.url);
+  for (const [file, round] of [['ARA1-qual-zoe.json', 1], ['ARA1-semi-zoe.json', 2], ['ARA1-final-zoe.json', 3]]) {
+    if (!fs.existsSync(new URL(file, career))) continue;
+    const doc = JSON.parse(fs.readFileSync(new URL(file, career))), built = assembleLineup(data.ARA1, 4, [8, 2, 0, 5, 6], { round });
+    for (const r of doc.riders) { const b = built.riders.find((x) => x.slot === r.slot);
+      assert.equal(b.npc.score_state.role_e00, r.npc.score_state.role_e00, `${file} slot ${r.slot} role +0xE00`);
+      assert.equal(b.npc.score_state.allow_flag0_e04, r.npc.score_state.allow_flag0_e04, `${file} slot ${r.slot} +0xE04`); }
+    console.log(`lineups: round ${round} route roles = ${file}'s`); } }
 let states = 0;
 for (const course of courses) {
   for (const o of data[course].observed) {

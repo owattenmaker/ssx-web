@@ -542,3 +542,19 @@ through the end without it).
   (web/finish_gameplay.inc) now opens `ControllerDraws`; before, its draw took the motion cursor, which starts after the other riders'
   predicted controller draws, and the human's celebration picked leaf 322 (clip 6400) for the PS2's 321 (clip 6144) (c0a-ws13 12046,
   word 0xD3DB07).
+
+## Route roles by round (2026-09-30, CTM events-in-world agent)
+
+cComputer_updateRiderDifficulty (0x10C758) sets each computer rider's owner +0xE00, the route affinity 10D410's path score reads
+(originalNpcRouteAffinity), from 0x10C450(C, slot, GMM+0) through the jump table 0x456A70. GMM+0 is the round: 1 qualifier,
+2 semi, 3 final, and 3 in a Single Event (0x23A174 sets it). Slots 1 and 2: 1, 1, 2; slot 3: 0, 1, 1; slot 4: 0, 0, 1; slot 5: 0.
++0xE04 is 1 only for slot 1 in round 3; +0xE08 = 1 for event kinds 0x535C10 = 1 / 5 / 6. Overrides not ported: game mode 0x535C12
+4 -> +0xE00 0 and 5 -> 2 (the backcountry rival events), the 0x5308D0 bit 2 branch. lineups.json's slot tables hold round 3's
+(their anchor is a Single Event), so a career qualifier or semi rode the final's roles; web/lineup.js npcRoundRole /
+assembleLineup({ round }) give each round's (the derived ARA1 qualifier / semi / final countdowns: test-lineups.mjs). Live career
+heats take them under pv heatRoles; web/event-heat.js (WS13) always. PS2 c0a-ws13: with the semi's roles Elise takes path 117 at 479
+as the PS2 does (the final's role 2 for slots 1 / 2 and 1 for slot 4 changed the riders' path picks and so the traffic term).
+Open coverage item: no gated capture runs a career heat through the event-load page path (web/ai-race.js prepare / rosterBuild); every
+CTM career capture loads a PS2-derived countdown with --document. The evidence for pv heatRoles is test-lineups.mjs's derived-countdown
+check and c0a-ws13's semi through web/event-heat.js. To add: one derived PS2 career qualifier capture scored through the event-load path
+(compare-page-capture / test-rival-page style), when an ARMSX2 slot is free.

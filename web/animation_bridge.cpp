@@ -376,6 +376,8 @@ RIDER_LOCAL extern int browserGroundPatch; // web/core.cpp: rider+0x430 (the con
 static void weather_splash_impact(const SnowVector& position,float strength); // web/weather.inc 0x2F4260
 static void weather_rider_fx_reset(); // web/weather.inc: 0x111890's 0x2C03E8 (every painter) and the splash reset of the rider's camera
 RIDER_LOCAL static std::array<float,3> painterPoint{},painterTrailSeen{},painterPlacement{},painterPlacementTrail{};RIDER_LOCAL static bool painterPointSet=false,painterPlacementPending=false; // rider+0x460 (update_trail)
+// QA: rider+0x460 as the painters read it (the last contact, or a placement's point once its tick's painter step ran; update_trail)
+extern "C" EMSCRIPTEN_KEEPALIVE float* painter_point_info(){RIDER_LOCAL static float v[4];for(unsigned k=0;k<3;k++)v[k]=painterPlacementPending?painterPlacement[k]:painterPoint[k];v[3]=painterPlacementPending;return v;}
 static void update_trail(){
  if(!physicsAttached||cachedCrashWorld.empty())return;
  const auto board=originalRiderCollisionFrame(cachedCrashWorld.at(trailBones[0]));

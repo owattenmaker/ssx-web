@@ -237,7 +237,20 @@ export function f32key(value) { const v = new DataView(new ArrayBuffer(4)); v.se
 export function skinName(data, value) { return value < 10 ? data.names.base[value] : data.names.cheat[String(value)]; }
 // values: the five roster values (0x23A668 input). moment/state: per-slot overrides (verification against a savestate).
 // relationships: the tables before this event's load (default: the fresh profile); the load ages them (0x155E58).
-export function assembleLineup(data, humanBase, values, { moment = data.moment, state = data.state, extra = null, relationships = data.relationships_fresh } = {}) {
+// The computer riders' route roles of a race round (cComputer_updateRiderDifficulty 0x10C758 -> 0x10C450(C, slot, GMM+0), the jump table
+// 0x456A70; GMM+0 = the round: 1 qualifier, 2 semi, 3 final, and 3 in a Single Event, 0x23A174): owner +0xE00 (route affinity in
+// 10D410) = slots 1 / 2: 1, 1, 2; slot 3: 0, 1, 1; slot 4: 0, 0, 1; slot 5: 0; +0xE04 = 1 only for slot 1 in round 3. PS2 countdowns
+// ARA1-qual / -semi / -final (local/assets/native/ARA1/lineups-career): 1 1 0 0 0, 1 1 1 0 0, 2 2 1 1 0 (+0xE04 slot 1 of the final).
+// lineups.json's slot tables hold round 3's (its anchor is a Single Event). Not covered: the game mode 0x535C12 4 / 5 overrides
+// (E00 0 / 2: the backcountry rival events) and the 0x5308D0 bit 2 branch.
+export function npcRoundRole(slot, round) {
+  if (slot === 1 || slot === 2) return round === 1 || round === 2 ? 1 : 2;
+  if (slot === 3) return round === 1 ? 0 : 1;
+  if (slot === 4) return round === 1 || round === 2 ? 0 : 1;
+  return 0;
+}
+// round (optional): the race round whose roles the riders get (npcRoundRole); omitted, the slot tables' (round 3).
+export function assembleLineup(data, humanBase, values, { moment = data.moment, state = data.state, extra = null, relationships = data.relationships_fresh, round = null } = {}) {
   const template = data.template;
   const riders = values.map((v, k) => {
     const slot = String(k + 1), base = v < 10 ? v : humanBase, skin = skinName(data, v);
@@ -246,6 +259,7 @@ export function assembleLineup(data, humanBase, values, { moment = data.moment, 
     const grid = data.grid[slot] ? data.grid[slot][data.skin_scale[skin]] : {};
     if (!grid || !data.skin[skin] || (Object.keys(data.base).length && !data.base[String(base)])) throw new Error(`No computer-rider data for ${skin} (base ${base}) in slot ${slot}`);
     for (const part of [data.slot[slot] ?? {}, grid, data.skin[skin], data.base[String(base)] ?? {}, moment[slot] ?? {}, state[slot] ?? {}]) for (const [path, value] of Object.entries(part)) put(record, path, value);
+    if (round != null && record.npc?.score_state) { record.npc.score_state.role_e00 = npcRoundRole(k + 1, round); record.npc.score_state.allow_flag0_e04 = k === 0 && round === 3; }
     return record;
   });
   const doc = {};
