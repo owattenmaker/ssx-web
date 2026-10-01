@@ -1,3 +1,27 @@
+> **"Replay cameras unavailable Exception": a CTM free ride's request, not the race replays (2026-10-01, replay-cameras agent):** see [replay.md](replay.md) section 2 (the triggers' load) and section 3.
+> - **Cause:**
+>   - core getExceptionMessage: nlohmann parse_error 101, "invalid literal; last read: '<'".
+>   - main.js createRaceReplay prepare (replay.liveStart) also ran for a CTM free-ride run, with course.code MOUNTAIN / PEAKn. Those streamed worlds have no camera-triggers.json; only the 17 locations have one, and each parses in the core (node, all 17).
+>   - The Vite dev server answers the missing file with index.html and 200, so the core was handed HTML. The production mp-server returns 404, which the page drops without a warning.
+>   - The event-load path showed it only because its free ride came first. The races were not affected: ARA1 Single Event and CTM event-load both load 48 triggers, and the auto replay fires them.
+> - **PS2:** a streamed world never replays (free ride has no results; 0x20A8F8 skips modes 6-11), so it needs no triggers.
+> - **Fix (main.js prepare, no switch):** no fetch for course.freeRide outside an in-world event replay; a response with an HTML content type counts as no triggers. No core change, no assets.
+> - **Parity:**
+>   - test-replay BHP1-PS2: a neutral The Junction run finishes at 4402 (the PS2's bhp1-neutral length is 4403).
+>   - Its auto replay's Web-cam makes the PS2's 23 camera changes on the PS2's ticks: DEFAULT_3 / Bounded, and which trigger's camera (the PS2's Bounded eye is the trigger's bound point, and its fov). Two of the changes fall in the capture's poll gaps.
+> - **Watch Replay:** test-online-records now checks the Web-cam: ARA1's 48 triggers load and fire, also after the course switch from BRA2.
+> - **Tests:**
+>   - test-replay passes: the 3 cases plus the new BHP1-PS2 and MOUNTAIN (the free ride asks for no triggers and logs no warning).
+>   - test-online-records passes; test-line-length passes.
+> - **Browsers:**
+>   - Chrome (headless, muted): checked.
+>   - WebKit not checked: the screen was locked (webkit-driver page `visibilityState hidden`, no frames). Re-run: `cd web && node ../local/replay-cameras/wk.mjs` (BHP1 cuts vs the PS2 + the free ride).
+
+> **In-world WS13 on the page and the station-cut preload (2026-10-01, CTM events-in-world agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) "The page's in-world WS13" and [ctm-parity.md](ctm-parity.md) "Bone 22 from the NIS keys".
+> - **pv eventReturnInWorld (off):** the results' Restart and Next heat of an in-world race run WS13 in the streamed world (main.js ui.cb.heatInWorld / heatTick, career-ui.js intercepts). Fixes: the heat cut's location (it did not play and the card opened at once); the release at W+492 (27A9F0) instead of WS1's W+494; the list stop counted on the game tick at R+29. Chrome, both branches: grid 301, release 492, list end 521, rank mode 523, card 525 = PS2 c0a-ws13 14318 / 14509 / 14538 / 14540 / 14542, then the heat runs. QA: local/ctm-events/qa/heatqa.mjs (NEXT=1 FORCE_WIN=1 scores the Give Up as a win). WebKit is owed (screen locked).
+> - **pv nisPreload (new, off):** on entering a station course, cutscenes.js preloadStation loads the door / booth step (#148 / #166 with clips), the human's cast model and the NIS bank. The booth cut now starts in the firing tick, so the hold tick has the t 0 pose (before: 18 ticks late). Open, so nisBoneProbe stays off: the core's 1242B0 hits from the hold tick, where the PS2 misses twice and then hits with the impact. It does so even fed the PS2's bone 22, so the cause is in the probe's other inputs (scope list / segment), not the bone. Needs a booth comparer run.
+> - Edited: web/main.js, web/cutscenes.js, web/pv-flags.js (nisPreload), local/ctm-events/qa/heatqa.mjs. node --check and the line-length guard pass. No core change.
+
 > **Deployed 2026-10-01 (coordinator):** the rider-shadow leak fix (web/rider-shadow.js prunes entries whose group left the scene; live on event-load career heats with changed lineups and multiplayer sessions), pv semiFresh ON (career semi riders start with +0x434 = 0x31; gate careerrival/ara1-semi), the career race card's round tab (Qualifier / Semi Final / Final Round), and the cleanup follow-ups (ps2MenuInput's old pad-menu model removed, 25 unused exports, 10 tests added to test:all). The WebKit menu smoke is still owed (screen locked during the run); live menus already ran the PS2 model since 09-29.
 
 > **Career follow-ups: the race card's round tab, its record, the semi's fresh riders; pv semiFresh (off, proposed on) (2026-10-01, career-rival agent):** see [career-events.md](career-events.md) "The race card's round and record", [ai-racers.md](ai-racers.md) "The semi's fresh riders".

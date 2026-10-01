@@ -28,7 +28,8 @@ import {
   initWorldStepped,
   framePause
 } from './load-slices.js';
-import { createCutscenes, playCutscene, COURSE_CODES } from './cutscenes.js';
+import { createCutscenes, playCutscene, COURSE_CODES, heatSteps } from './cutscenes.js';
+import { heatResetWorld, heatRows, requireHeatCore } from './event-heat.js';
 import { releasePreviewCores } from './fe-preview.js';
 const cutscene = (o) => (ui.cb.cutscene ? ui.cb.cutscene(o) : Promise.resolve({ played: false }));
 // the original in-engine cutscenes (NIS): event intros, podium, transport, lodge (docs/cutscenes.md)
@@ -578,6 +579,22 @@ function nisResume() {
     resetPhysics(true);
     freeRide.afterReset();
   } else nisRelease();
+}
+// pv nisPreload: a station course's door / booth cut (lodge_arr3 #148, hub_trans_arr #166) loaded on entering it, outside any list
+// (cutscenes.js preloadStation), so the cut's first step starts on the hold tick
+let nisPreloaded = -1;
+function nisPreloadWatch() {
+  if (!freeRide || !cutscenes?.preloadStation || cutscenes.active || !pv('nisPreload')) return;
+  const here = freeRide.course();
+  if (here === nisPreloaded) return;
+  nisPreloaded = here;
+  if (here < 17 || here > 21) return;
+  cutscenes
+    .preloadStation([148, 166], COURSE_CODES[here])
+    .then((ok) => {
+      if (!ok && nisPreloaded === here) nisPreloaded = -1;
+    })
+    .catch((e) => console.warn('Station cut preload failed', e));
 }
 let nisStrayFrames = 0;
 function nisWatch() {
@@ -1751,7 +1768,9 @@ function setupCutscenes() {
 
   // after the finish (career-ui.js): podium / rival challenge (0x27AC60), with the winner's chartune (28CDF8)
   ui.cb.cutscene = async (o) => {
-    if (!cutscenes || (course?.freeRide && !['lodge', 'transport', 'transport-arrive', 'arrival', 'script'].includes(o.kind)))
+    // pv eventReturnInWorld: the in-world heat's gondola (ui.cb.heatInWorld) plays in the streamed world
+    const inWorldHeat = o.kind === 'heat' && !!o.inWorldHeat;
+    if (!cutscenes || (course?.freeRide && !inWorldHeat && !['lodge', 'transport', 'transport-arrive', 'arrival', 'script'].includes(o.kind)))
       return { played: false };
     const back = ui.screen;
     ui.set('cutscene');
@@ -2035,6 +2054,62 @@ function setupCutscenes() {
   ui.cb.heatReset = () => {
     if (pv('eventReturnInWorld') && worldEvent && core?._ctm_world_reset) core._ctm_world_reset();
   };
+  // pv eventReturnInWorld (docs/ctm-events-in-world.md "WS13 in the world on the page"): Next heat / the results' Restart of an in-world race,
+  // in the PS2's order, with web/event-heat.js's steps (the comparer's --ws13 runs the same ones):
+  // - 0x20CCF8: 0x2706F0 puts back the results time, then the stop frame's tick (as the Transport's, inWorldResultsRestore);
+  // - WS13's enter 0x235AA0: 230180 (heatResetWorld: every context's reset, the node states into the riders' contexts), the round's
+  //   roster (aiRace.prepare: setNumberAI / setRiderCharID / 1473D0), 1297C8(C, 1) (heatRows: the tick restart, the human's start row);
+  // - the gondola list (27A860: gond_inair, gond_inair_<char> held) over the ticking world, the human held by its actor;
+  // - WS13's update (heatTick): 128958 + 1289F0, the round's riders fresh on the grid (G), then the held step's release 27A9F0 (WS1 arg
+  //   3); the list's end (the actor's release 123B48, 11D390: the human on its grid row), 128A48(C, 1) two frames later, then WS2's card.
+  // card: the career's card opener. Returns false where the event-load path's heat applies.
+  ui.cb.heatInWorld = ({ final, card }) => {
+    if (!pv('eventReturnInWorld') || !worldEvent) return false;
+    if (!worldEvent.ai || worldEvent.ai !== aiRace || !core || !cutscenes || !freeRide) {
+      console.warn('In-world heat unavailable:', !worldEvent.ai ? 'no in-world riders' : worldEvent.ai !== aiRace ? 'another race' : 'no core / cutscenes');
+      return false;
+    }
+    const race = worldEvent.ai;
+    (async () => {
+      requireHeatCore(core, race.racers);
+      inWorldResultsRestore();
+      gameTick.simulate(inputs());
+      heatResetWorld({ human: core, racers: race.racers });
+      await race.prepare({ rider: selectedRider, event: eventOf() });
+      const here = freeRide.course(),
+        bank = freeRide.bankFor(here);
+      if (!bank) throw new Error('In-world heat: no path bank for course ' + here);
+      heatRows({ human: core, racers: race.racers, bank, cstr: coreString });
+      heatWorld = { ticks: 0, grid: null, release: null, held: false, listEnd: null, ranked: false, card, race };
+      heatRunStart();
+      const steps = heatSteps(!!final).map((x) => ({ ...x, holdTicks: undefined }));
+      const r = await ui.cb.cutscene({
+        kind: 'heat',
+        final,
+        steps,
+        location: worldEvent.code,
+        inWorldHeat: true,
+        hold: true,
+        restore: false,
+        onStep: (step, at) => {
+          if (!heatWorld) return;
+          if (step.flags & 8) heatWorld.held = true;
+          // the held step's end without a release (a skip): the list's last actor stops (123B48 -> 11D390); a released list stops at R+29
+          // (heatTick)
+          else if (heatWorld.held && heatWorld.release == null && heatWorld.listEnd == null) heatListEnd();
+        },
+        onIdle: () => {
+          if (heatWorld && heatWorld.release == null && heatWorld.listEnd == null) heatListEnd();
+        }
+      });
+      if (!r?.played) heatCard();
+    })().catch((e) => {
+      console.warn('In-world heat', e);
+      heatWorld = null;
+      card();
+    });
+    return true;
+  };
   ui.cb.inWorldEvent = () => (worldEvent ? { code: worldEvent.code, mode: worldEvent.mode } : null);
   ui.cb.introInWorld = (next) => {
     if (!worldEvent) {
@@ -2165,6 +2240,94 @@ function returnRun() {
   ui.trickHud?.resetUberHint?.(visualRandPeek(core) & 1);
   replay?.liveStart();
   cutscenes?.fadeFrom?.({ ticks: 60, colour: 'white', hud: true });
+}
+// pv eventReturnInWorld: the in-world heat's WS13 (ui.cb.heatInWorld). heatWorld: the ticks since the enter, 1289F0's tick (grid), the
+// release's (release), the held step reached (held), the list's end (listEnd), 128A48(C, 1) done (ranked), the card opener, the race.
+// WS13's update conditions the port does not model are the PS2's frames: 1289F0 waits for 12A180 (the round's riders loaded; PS2 c0a-ws13
+// record 14318, 301 ticks after the enter 14017) and the release for 3A9770 >= 20000 (the streaming box; WS1 arg 3 at 14511, the enter +
+// 494); the code's own conditions are kept on top (the release no earlier than 120 ticks after 1289F0, and only on the held step).
+// PS2 c0a-ws13 from WS13's enter W (record 14017): 1289F0's grid at W+301; the release R = 27A9F0 at W+492 (phase 2 sets +0x10 = 3 and
+// returns at 0x235EF4, phase 3's 233AA0 at R+1, WS1 in the record at R+2 = 14511); the list's stop R+29 (276CC8 -> 276868: 123B48 ->
+// 11D390, the human's grid row at 14538, as the Transport's to-c-fade release 1441 / placement 1470). R is the measured one: the page
+// models phase 2's 120 ticks, the NIS idle and the view fade, not 3A9770's page wait (>= 20000)
+const HEAT_GRID_TICKS = 301,
+  HEAT_RELEASE_TICKS = 492,
+  HEAT_LIST_STOP = 29;
+let heatWorld = null;
+// the run ticks on under the gondola (no startRun: WS13 resets no rider), the human held by its actor, the riders idle until 1289F0
+function heatRunStart() {
+  readyShown = readyAi = false;
+  overlay.drop();
+  aiActive = false;
+  worldAiHold = null;
+  finished = false;
+  resultsPending = false;
+  raceInfo = null;
+  clearInput();
+  state = new Float32Array(core.HEAPF32.buffer, core._rider_state(), 16).slice();
+  lastRescues = state[13];
+  cameraPose = previousCameraPose = null;
+  currentRiderFrame = previousRiderFrame = null;
+  acc = 0;
+  last = performance.now();
+  simulation.reset();
+  running = true;
+}
+// once per game tick, before its passes (gameHost.worldAiBefore)
+function heatTick() {
+  const h = heatWorld;
+  if (!h || !running) return;
+  h.ticks++;
+  // 128958 -> 129E20 (phase 0) and 1289F0 (phase 1): the round's riders made fresh, on the grid in PreRace (C+0x14 = 1), the tick restart;
+  // 1289F0's riders have +0xEC 0 and the human keeps its place (web/compare-ai-capture.mjs --ws13, PS2 c0a-ws13 14036)
+  if (h.grid == null && h.ticks >= HEAT_GRID_TICKS) {
+    const racers = h.race.racers;
+    for (const n of racers.npcs) n.core._npc_fresh_rider();
+    const humanRank = racers.worldState ? racers.worldState[360] : 0;
+    h.race.start({ gridStart: true, hold: true, ranks: [humanRank, 0, 0, 0, 0, 0] });
+    aiActive = true;
+    // startRun's countdown then keeps what the grid carried (npc_grid_start)
+    worldAiHold = { pos: {}, started: true };
+    h.grid = h.ticks;
+    console.info('In-world heat: 1289F0 grid at tick', h.ticks);
+  }
+  // phase 2 -> 3: the NIS idle released (27A9F0, cutscenes.js releaseFade: the held step plays on under its fade-out), WS1 arg 3
+  if (h.grid != null && h.release == null && h.held && h.ticks - h.grid > 120 && h.ticks >= HEAT_RELEASE_TICKS && cutscenes?.releaseFade())
+    console.info('In-world heat: release at tick', (h.release = h.ticks));
+  // the list's stop at R+29, on the game tick (the page's cut clock runs per frame)
+  if (h.release != null && h.listEnd == null && h.ticks >= h.release + HEAT_LIST_STOP) heatListEnd();
+  // WS1 arg 3's update after its NIS list ended (279298 == 0): 128A48(C, 0), then in a race 128A48(C, 1) (rank mode 1), two frames
+  // after the actor's release (PS2 call-site probe c0a-ws13prank: 0x234570 / 0x234594 at tick 222, 123B48 at 220), then WS2's card
+  if (h.listEnd != null && !h.ranked && h.ticks >= h.listEnd + 2) {
+    core._race_world_rank_mode?.(1);
+    h.ranked = true;
+    console.info('In-world heat: 128A48(C, 1) at tick', h.ticks);
+  }
+  if (h.ranked && h.ticks >= h.listEnd + 4) heatCard();
+}
+// the gondola list's end: the actor's release 123B48, then 11D390's event branch (1297C8(C, 0)): the human on its grid row
+function heatListEnd() {
+  const h = heatWorld;
+  if (!h || h.listEnd != null) return;
+  h.listEnd = h.ticks;
+  console.info('In-world heat: list end at tick', h.ticks);
+  nisCutEnd();
+  const b = new TextEncoder().encode(worldEvent.plan.initialText + '\0'),
+    p = core._malloc(b.length);
+  core.HEAPU8.set(b, p);
+  try {
+    core._event_route_seed?.(p);
+  } finally {
+    core._free(p);
+  }
+  core._event_grid_start(...spawn.position, spawn.heading);
+}
+// WS2: the card over the gate idle loop; its Continue is startRun (the countdown, 1297C8(C, 1))
+function heatCard() {
+  const h = heatWorld;
+  if (!h) return;
+  heatWorld = null;
+  h.card();
 }
 function startRun(R = null) {
   if (!live) return;
@@ -2484,6 +2647,8 @@ const gameHost = {
   },
   // the 8 ticks WS15 -> WS1 arg 0 -> WS2 -> WS3 -> WS4 (tick restart)
   worldAiBefore() {
+    // pv eventReturnInWorld: the in-world heat's WS13 update
+    heatTick();
     const r = worldAiReturn;
     if (!r?.placed) return;
     if (r.ticks >= 8) {
@@ -2807,14 +2972,17 @@ function createRaceReplay() {
     },
     // the replay view (web/replay_camera.inc): the course's replay camera triggers (tools/export_camera_triggers.py), loaded with the run
     prepare: () => {
-      // pv eventReturnInWorld: an in-world event's course triggers, not the streamed world's
+      // pv eventReturnInWorld: an in-world event's course triggers, not the streamed world's.
+      // A streamed world (free ride, MOUNTAIN / PEAKn) has none: the PS2 never replays there (no results in free ride; 0x20A8F8
+      // skips modes 6-11), and only the 17 locations export a camera-triggers.json.
       const c = core,
-        code = inWorldReplay() ? worldEvent.code : course?.code;
+        code = inWorldReplay() ? worldEvent.code : course?.freeRide ? null : course?.code;
       if (!c?._replay_camera_triggers || !code || (replayTriggersCore === c && replayTriggersCode === code)) return;
       replayTriggersCore = c;
       replayTriggersCode = code;
       fetch('/assets/' + code + '/camera-triggers.json')
-        .then((r) => (r.ok ? r.text() : null))
+        // a missing file is no triggers (a dev server answers it with its index.html)
+        .then((r) => (r.ok && !/html/.test(r.headers.get('content-type') || '') ? r.text() : null))
         .then((t) => {
           if (!t || core !== c) return;
           const b = new TextEncoder().encode(t + '\0'),
@@ -3426,6 +3594,7 @@ function frame(ms) {
       overlay.open();
     frameScreen = ui.screen;
     nisWatch();
+    nisPreloadWatch();
     // no Start pause during a cutscene (0x231AB8: no shipped NIS sets flag 4)
     startButtonHeld = startDown;
     // online races keep running behind the pause menu (neutral pad) and follow the server race clock (web/net/mp-game.js)

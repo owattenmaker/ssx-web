@@ -386,6 +386,17 @@ export function createCutscenes(host) {
     try { const model = await fp.fetch(T, root); fp.root = root; fp.swap(model); return fp; }
     catch (error) { console.warn('Cutscene actor unavailable', root, error); fp.busy = false; return null; }
   }
+  // pv nisPreload: a rider's cast model built into an idle pool entry ahead of its cut (actorModel then takes that entry from its cache)
+  async function preloadActor(rider) {
+    const root = previewRoot(rider?.entry);
+    if (!root || pool.some((p) => p.root === root)) return;
+    let fp = pool.find((p) => !p.busy && !p.root);
+    if (!fp) { fp = new FrontEndPreview(); fp.compile = host.compile || null; pool.push(fp); }
+    try {
+      const model = await fp.fetch(T, root);
+      if (!fp.busy && !fp.root) { fp.root = root; fp.swap(model); }
+    } catch (e) { console.warn('Cutscene actor preload failed', root, e); }
+  }
   // Keep at most 8 idle actor models (the next event usually reuses the same riders); dispose the rest.
   function trimPool() {
     const idle = pool.filter((p) => !p.busy);
@@ -1417,6 +1428,19 @@ export function createCutscenes(host) {
           if (s) actorScripts.set(key, s);
         })
         .catch(() => actorScripts.delete(key));
+    },
+    // pv nisPreload: a station's door / booth cut loaded before its hold (main.js on entering the station course): the scripts with
+    // their container's clips (loadScript), the human's cast model (binding 4 = humans[0]) and the container's bank on the NIS slot, so
+    // play() starts the step with no load between the hold and the NIS's first tick (PS2 fr-booth2: the NIS on the hold's tick, record
+    // 2644). Not while a list plays: the slot and the pool are its.
+    async preloadStation(numbers, location) {
+      if (active) return false;
+      await ensureIndex();
+      const loaded = await Promise.all(numbers.map((n) => loadScript(index, n, location, null)));
+      await preloadActor(api.defaultCast?.({})?.humans?.[0] ?? null);
+      if (active) return false;
+      for (const l of loaded) await loadBank(l);
+      return true;
     },
     actorStart(number, location) {
       const s = actorScripts.get(`${number}@${location}`);

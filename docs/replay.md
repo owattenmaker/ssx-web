@@ -126,6 +126,11 @@ time / points replaying from tick 1, a rolling start). Online results show item 
   DEFAULT_3 601 ticks later: the timer adds 1/60 with the EE's chopped add.s), the Bounded eyes / look-ats / fovs equal to
   0.03 cm (the metre conversion), DEFAULT_3 median 1.7 cm (p90 16 cm right after a cut). `web/replay_camera.inc` carries the
   view's outer camera (its terrain lift) on from the run's last frame, as the PS2 view does.
+- the triggers load with each run (`main.js createRaceReplay prepare`, from liveStart and replay.load): the event's location (an
+  in-world event replay: worldEvent.code), never a streamed world (course.freeRide: MOUNTAIN / PEAKn have no camera-triggers.json and
+  never replay on the PS2). A missing file is no triggers (the Vite dev server answers it with index.html and 200: before 2026-10-01
+  every CTM free ride handed that HTML to the core, "Replay cameras unavailable" = nlohmann parse_error 101 '<'; the race replays
+  were not affected).
 - the full replay's overlay is the original '64replay' (`tools/export_replay_screens.py` -> /assets/UI/replay-screens.json)
   through web/lui-player.js; its keys are the menu keys (Space Cross, Backspace Circle, Escape Triangle, Shift Square, Q / E
   L1 / R1, Enter Start, arrows the D-pad; J L / I K / U O the Manual camera on a keyboard).
@@ -246,6 +251,11 @@ live run's `?simtrace` on every tick, also after a course switch and with anothe
   start) / The Junction runs with a scripted pad and a Give Up: every replayed tick's `?simtrace` equals the live run's, a
   second loop too, the career save / relationships / results unchanged, the Replay item (paused first frame, Play, camera
   cycle, timeline, Replay Menu -> Exit replay back to the results and their replay), the Web-cam's triggers firing.
+- `web/test-replay.mjs` BHP1-PS2 (2026-10-01): the neutral The Junction run finishes at 4402 (the PS2's length 4403) and its auto
+  replay's Web-cam makes the PS2's 23 changes (DEFAULT_3 / Bounded and which trigger's camera, matched by the PS2's Bounded eye =
+  the trigger's bound point and its fov) on the PS2's ticks (page tick = PS2 replay frame + 1); two fall in the capture's poll gaps
+  (frames 397..429, 3597..3629). MOUNTAIN: a CTM free ride asks for no triggers. `web/test-online-records.mjs`: Watch Replay's
+  Web-cam has ARA1's 48 triggers and fires them, also after a course switch from BRA2.
 - PS2 frames: `local/ps2-capture/menus/replay/` (gu-loop, rmenu1, rmenu2, af1, gu-audio, bhp1-neutral with the camera log
   `bhp1-neutral.log.jsonl`: race clock, replay manager, view director and outer camera per poll).
 - 2026-09-26 (live core 23:13, switch on): full suite 161/162 (the known test-slopestyle-bigair baseline); test-replay in Chrome

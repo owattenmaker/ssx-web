@@ -861,7 +861,27 @@ grid placement on the first record without it (14538, WS1's last tick), the card
   3. Both come from the NIS's own bank: 432 has no variant record. The page already poses the cast rider with those clips
   (cutscenes.js), and its board_rootg at the model size is the PS2's bone 22 (fr-booth2: 0.09 cm), so no clip export is needed. pv
   nisBoneProbe (off) feeds it to core nis_hold_probe(2). Open: the cut's start lags the hold on the page (ctm-parity.md "Bone 22 from
-  the NIS keys"). The gondola hold in-world needs the page's WS13 path first.
+  the NIS keys"). The page's WS13 path now plays the gondola in-world (below); its hold does not probe yet (nisBoneProbe off).
+
+**The page's in-world WS13 (pv eventReturnInWorld, 2026-10-01).** The results' Restart of an in-world race and its Next heat
+(career-ui.js restartToCard / resultAction(0) -> main.js ui.cb.heatInWorld) run WS13 in the streamed world, not an event load:
+- The enter: requireHeatCore, inWorldResultsRestore, web/event-heat.js heatResetWorld (230180: ctm_world_reset in every context, then
+  syncWorldNodes), the round's lineup (aiRace.prepare), then heatRows (the anchor RNG off, game_tick_restart(0) in every core, 1297C8(C,
+  1)'s event_row_enter at the location's start rows). heatEnter is the same split; the c0a-ws13-semi gate stays exact.
+- The gondola: cutscenes.js 'heat' at the event's location (worldEvent.code; without it the list did not play over the streamed world
+  and the card opened at once), the held step without holdTicks. The run ticks on under it (heatRunStart: no startRun, the riders idle).
+- main.js heatTick, once per game tick before its passes (gameHost.worldAiBefore), from WS13's enter W (PS2 c0a-ws13 record 14017):
+  - W+301: 1289F0's grid (PS2 14318): npc_fresh_rider for each rider, racers.start({gridStart, hold, ranks: [human, 0, 0, 0, 0, 0]}).
+  - R = W+492: 27A9F0, cutscenes.js releaseFade (the held step plays on under its 30-tick fade-out). WS13's phase 2 sets +0x10 = 3
+    and returns (0x235EF4: the branch skips 233AA0), phase 3's 233AA0 runs at R+1, and the record shows WS1 at R+2 (14511). R is the
+    capture's: the page models phase 2's 120 ticks after the grid, the NIS idle and the view fade, not 3A9770's page wait (>= 20000).
+  - R+29 = W+521: the list's stop (276CC8 -> 276868: 123B48 -> 11D390), as the Transport's release (to-c-fade 1441 -> 1470): the human
+    on its grid row (event_route_seed, event_grid_start; PS2 14538). It is counted on the game tick (the cut's clock runs per frame:
+    the next step's onStep came 1 to 2 ticks late). A list that ends without a release (a skip) ends it at its step change.
+  - W+523: 128A48(C, 1), rank mode 1 (PS2 14540); W+525: WS2's card (14542).
+- Checked in Chrome (local/ctm-events/qa/heatqa.mjs, both branches; Next heat with FORCE_WIN=1, a QA hook that scores the qualifier's
+  Give Up as a first place): the gondola plays over the ticking world, then grid 301, release 492, list end 521, rank mode 523, card
+  525; the heat's Continue runs the countdown and the riders leave the grid. WebKit is owed (the screen was locked).
 
 **The race clock's GO: WS3 selects Race (2026-09-30).** Every human finish on the web came out one race tick short of the
 PS2's +0x478: the c0a-ws13 qualifier 11794 vs 11795, the c0a-ret2 Give Up 1519 vs 1520, and the rider contexts 11707 / 11715 vs

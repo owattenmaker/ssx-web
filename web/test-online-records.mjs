@@ -16,6 +16,7 @@ import { rankAmong } from './online-records.js';
 import { startBrowser, startServer, sleep } from './headless-chrome.mjs';
 
 const web = path.dirname(fileURLToPath(import.meta.url));
+const CAM_INFO = '(()=>{const c=window.ssxEffects?.core;return c?._replay_camera_info?Array.from(new Float32Array(c.HEAPF32.buffer,c._replay_camera_info(),10)):null})()';
 // ---- client rules ----
 {
   const rows = [{ name: 'A', value: 100 }, { name: 'B', value: 200, default: true }, { name: 'C', value: 300 }, { name: 'D', value: 400 }, { name: 'E', value: 500 }];
@@ -101,6 +102,9 @@ try {
     const N = fin.finish + 1;
     const w = await E(`(()=>{const r=ssxQA.replay();const a={tick:r.tick,paused:r.paused,finish:r.finishTick};r.playPause();let n=0;while(r.tick<${N}&&n<${N}+50){r.frame(1/60);n++;}return {...a,tick2:r.tick}})()`);
     log(`watch: ${JSON.stringify(w)}`);
+    // the replay view (web/replay_camera.inc) follows Snow Jam's camera triggers: [type, mode, ..., triggers 4, ..., fired 8, last id 9]
+    const cam = await E(CAM_INFO);
+    check(cam?.[4] === 48 && cam?.[8] > 0, `Watch Replay's Web-cam: ARA1's 48 camera triggers loaded and firing ${JSON.stringify(cam)}`);
     await shot('5-replay');
     check(w.finish === fin.finish, `the downloaded run's finish tick ${w.finish} (live ${fin.finish})`);
     const live = await E(`window.__simTrace.ticks.slice(${base},${base + N})`), rep = await E(`window.__simTrace.ticks.slice(${repStart},${repStart + N})`);
@@ -161,6 +165,8 @@ try {
   const live2 = await E(`window.__simTrace.ticks.slice(${base},${base + M})`), rep2 = await E(`(()=>{const t=window.__simTrace.ticks;return t.slice(t.length-${M})})()`);
   let miss2 = -1; for (let i = 0; i < M; i++) if (live2[i] !== rep2[i]) { miss2 = i; break; }
   check(miss2 === -1 && rep2.length === M, `Watch Replay after a course switch leaves the live run at tick ${miss2} (trace from ${rs2})`);
+  const cam2 = await E(CAM_INFO);
+  check(cam2?.[4] === 48 && cam2?.[8] > 0, `Watch Replay after a course switch: ARA1's camera triggers (not BRA2's) ${JSON.stringify(cam2)}`);
   await E(`(()=>{const ui=ssxQA.ui();ui.replayUi.key({code:'Enter'});ui.replayUi.key({code:'ArrowDown'});ui.replayUi.key({code:'Space'});return 1})()`); await sleep(500);
   const back2 = await E(`(()=>{const ui=ssxQA.ui();return {screen:ui.screen,fe:ui.careerUI.online.board?.fe}})()`);
   check(back2.screen === 'ctm-board' && back2.fe, `Exit replay back to the Leaderboards board ${JSON.stringify(back2)}`);

@@ -40,6 +40,10 @@
 // (+0xAFC = the NIS record's byte 7, root_motion_velocity: the lodge door, the booth, the gondola), each game tick's 1242B0 probes the
 // ground from the actor's posed board root (rider+0x8A0, bone 22): cutscenes.js humanBoard (the cast rider posed by the NIS clip, at
 // its model size; PS2 fr-booth2: within 0.09 cm of the record's bone 22 over 235 ticks) into core nis_hold_probe(2) at the tick's
+// nisPreload (CTM agent, docs/ctm-parity.md "Bone 22 from the NIS keys"): on entering a station course, its door / booth cut's step
+// (lodge_arr3 #148 / hub_trans_arr #166 with the container's clips), the container's bank on the NIS slot and the human's cast model
+// are loaded ahead (cutscenes.js preloadStation), so the cut's first step starts on the hold tick as the PS2's (fr-booth2 record 2644)
+// and its posed board root is there for the hold's first probe. Off: the step loads at the hold (about 18 ticks on a first visit).
 // gameTickKeep (CTM agent, docs/ctm-parity.md "The game tick at placements"): in a streamed world the core's game tick (1298C8: the scope
 // refresh phase, the ground stamps, the boost ring parity) is 0 at a run's start (the world load / WS2; PS2 peak1-green-start record 0 =
 // tick 0) and runs on through the in-world placements (11D390 leaves it: door No 636, fr-dra4a-full's crossing). Off: every placement
@@ -153,6 +157,7 @@ export const PV_DEFAULTS = Object.freeze({
   nisTick: true,
   nisAfterScan: true,
   nisBoneProbe: false,
+  nisPreload: false,
   gameTickKeep: true,
   hangWatch: true,
   encodedBlend: true,

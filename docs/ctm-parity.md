@@ -644,11 +644,18 @@ rider held by the cut's rider actor.
     - PS2 fr-booth2 (records 2644 + t against the page's NIS time t, Chrome): equal within 0.09 cm over 235 ticks once the model size
       (zoe 0.85) is applied. The cast scale comes from model_size / 100; a page started on the bare boot rider draws the cast at 1.0.
     - main.js nisStart, at each game tick's start: nis_hold_probe(2, the board root) while an afc hold is posed.
-    - Open: the page's cut starts when its actors and bank are loaded, about 18 ticks after the hold on a first booth visit. The PS2's
-      NIS starts on the hold tick, and its first probe (t 0, the riding normal) misses (+0xB00 0, fr-booth2 record 2644). The second
-      hits with 111AA0's snow impact (record 2646). On the page, the hold's +0xB00 = 1 stays with no probe until the pose exists, so
-      no impact is drawn. Either the human cast model and the step's bank are loaded before the hold, or the probe needs a stand-in
-      until the pose exists. Not settled.
+    - The start (pv `nisPreload`, off, 2026-10-01). Before: the page's cut started when its actors and bank were loaded, 18 ticks
+      after the hold on a first booth visit. Now main.js nisPreloadWatch, on entering a station course (17..21, no list playing),
+      calls cutscenes.js preloadStation([148, 166], letter): the script copies with the container's clips, the human's cast model in
+      an idle actor-pool entry, and the container's bank on the NIS slot. Chrome, Green booth (scratchpad nisbone.mjs, a stepping
+      frame clock): the cut is active with the pose at t 0 in the firing tick, and the hold tick probes the t 0 board root. That is
+      the PS2's order: the NIS starts on the hold tick, and record 2644 + t holds the page's pose at t.
+    - Open: the hits. PS2 fr-booth2: the hold tick (4114) and the next tick miss (+0xB00 0, +0x370 (0, 0, 1), +0x430 -1), and 4116
+      hits with the 111AA0 impact. The page's core probe hits from the hold tick and draws no impact, even when it is fed the PS2's own
+      bone 22 (each record's, or the one before it). The rider before the hold is where the PS2's is (page (-71924, 39377), PS2
+      record 2642 (-71921, 39378)), and the patch is 61185 at both points. So the bone source is not the cause. The miss comes from
+      1242B0's other inputs (the 13D818 segment from +0x370 and +0x3B0, the scope list +0x860); 4116 is the human's scope-refresh tick
+      (tick mod 3 = 0). Not settled: it needs a booth comparer run seeded from fr-booth2. nisBoneProbe stays off.
   - the hold's pose, and with it bone 22 for +0xAFC holds (2026-09-30). PS2 c0a-ws13, the gondola (records 14017..): channel 2
     plays semantic 432 (0x1B0; sequence clip 0x5A8E00, not semantic 5). 432 has no record in the variant table (*(gp+0xD0C) count
     0), so its clip comes from the NIS's own bank. In the second NIS record, channel 3 plays 411. Bone 22 stays at (-308703.3,

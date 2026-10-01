@@ -1616,6 +1616,18 @@ export class CareerScreens {
     }
     // a restart keeps the world's audio (web/game-audio.js restartRun)
     ui.gameAudio?.restartRun?.({ fromResults });
+    // pv eventReturnInWorld: the results' Restart of an in-world race is WS13 in the streamed world (main.js heatInWorld)
+    if (
+      fromResults &&
+      this.career.active?.ev?.mode === MODE.RACE &&
+      ui.cb.heatInWorld?.({
+        final: this.career.active?.ev?.round === 3,
+        card: () => {
+          ui.set('ctm-objectives');
+        }
+      })
+    )
+      return;
     ui.cb.quit?.();
     let open = false;
     const card = () => {
@@ -1711,6 +1723,16 @@ export class CareerScreens {
       if (this.result.outcome.advance) {
         // next heat (world state 13): the gondola ride back up, then the card over the gate idle loop (web/cutscenes.js heatSteps)
         if (this.ui.cb.cutscene && this.result.mode === MODE.RACE) {
+          // pv eventReturnInWorld: an in-world race's heat runs WS13 in the streamed world (main.js heatInWorld)
+          if (
+            this.ui.cb.heatInWorld?.({
+              final: this.career.active?.ev?.round === 3,
+              card: () => {
+                ui.set('ctm-objectives');
+              }
+            })
+          )
+            return;
           this.ui.cb.heatReset?.();
           // WS13 enter 0x235AA0 -> 230180 (pv eventReturnInWorld)
           let open = false;

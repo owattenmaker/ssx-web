@@ -5,7 +5,9 @@
 //   a second loop too; the post-race state (the career save, the relationships, the results) is what the run left; the
 //   Replay item opens the full replay (paused on its first frame, Play / camera cycle / timeline / Replay Menu -> Exit
 //   replay back to the results and their replay); the Web-cam follows the course's camera triggers. Then a backcountry rival
-//   run (rolling start) and a super pipe run, replayed exactly.
+//   run (rolling start) and a super pipe run, replayed exactly. BHP1-PS2: a neutral The Junction run to its finish, the auto
+//   replay's Web-cam cuts and trigger cameras on the PS2's ticks (menus/replay/bhp1-neutral). MOUNTAIN: a CTM free ride (a
+//   streamed world, no replay on the PS2) asks for no camera triggers ("Replay cameras unavailable" came from it, 2026-10-01).
 //   node test-replay.mjs [--only ARA1,ABC1,...]
 //   CORE_DIR=dir (a CORE_OUT=dir sh web/build-core.sh core) / ASSETS_DIR=dir (staged assets: <CODE>/camera-triggers.json,
 //   UI/replay-screens.json; files there win over web/public/assets): check a scratch build before it goes live.
@@ -141,8 +143,57 @@ try {
     rows.push(`${c.key} (${entry}): run ${F + 1} ticks, pad ${R.runs} runs / ${R.bytes} bytes, ${R.events} call(s); replay exact ${m1 === -1}, loop 2 exact ${m2 === -1}; camera [type ${cam?.[0]}, triggers ${cam?.[4]}, fired ${cam?.[8]}]; ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     if (c.full && assetExists(`${c.course}/camera-triggers.json`) && !(cam?.[4] > 0 && cam?.[8] > 0)) failures.push(`${c.key}: the Web-cam fired no camera trigger (${cam})`);
   }
+  // The Web-cam against the PS2 (menus/replay/bhp1-neutral: The Junction, a neutral pad to the finish, then the auto replay).
+  // PS2 director log: the view's algorithm and its Bounded eye (= the trigger's bound point) per replay frame; page tick = frame + 1.
+  // [tick, type, trigger]: DEFAULT_3 0x3D, Bounded 0x5B on that trigger's enter camera (its point and fov). Two switches fall in a poll
+  // gap of the capture (frames 397..429: trigger 1, 3597..3629: trigger 7); their ticks here are the page's, inside the gap.
+  if (!only || only.has('BHP1-PS2')) {
+    const PS2_CUTS = [[1, 0x3d, -1], [244, 0x5b, 0], [403, 0x5b, 1], [844, 0x3d, 1], [870, 0x5b, 2], [949, 0x5b, 3], [1250, 0x5b, 2],
+      [1470, 0x3d, 2], [1536, 0x5b, 3], [1845, 0x5b, 5], [2127, 0x5b, 4], [2136, 0x3d, 4], [2362, 0x5b, 4], [2437, 0x5b, 5],
+      [2718, 0x5b, 4], [2958, 0x5b, 6], [2962, 0x3d, 6], [3237, 0x5b, 6], [3541, 0x5b, 8], [3616, 0x5b, 7], [3837, 0x3d, 7],
+      [3901, 0x5b, 8], [4185, 0x5b, 9]];
+    const GAPS = [[397, 431], [3597, 3631]];
+    await browser.goto(`${server.origin}/?qa=1&course=BHP1&rider=zoe&cutscenes=0&quality=low&mute=1&pv=replay`);
+    await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
+    await browser.evaluate(`(()=>{const ui=ssxQA.ui(),e=ui.courses.find(x=>x.code==='BHP1'&&!x.rivalMode);ui.startSingleEvent(e);return 1})()`);
+    await browser.waitFor(`document.getElementById('stage')?.dataset.screen === 'ctm-objectives'`, 300000);
+    await browser.waitFor('!!window.ssxEffects?.core', 60000);
+    await browser.evaluate(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));
+      ssxQA.ui().careerUI.play();return 1})()`);
+    await sleep(300);
+    let screen = '';
+    for (let n = 0; n < 6000 && !/results|award|records/.test(screen); n += 100) {
+      await browser.evaluate('(()=>{for(let i=0;i<100;i++)ssxQA.advance(1,new Array(24).fill(0));return 1})()');
+      screen = await browser.evaluate('ssxQA.ui().screen');
+    }
+    const finish = await browser.evaluate('ssxQA.replay().finishTick');
+    await sleep(400);
+    const cuts = await browser.evaluate(`(()=>{const r=ssxQA.replay(),c=window.ssxEffects.core,s=[];let last='';
+      for(let k=0;k<${finish}+60&&r.loops<1;k++){r.frame(1/60);const v=new Float32Array(c.HEAPF32.buffer,c._replay_camera_info(),10);
+        const key=v[0]+'/'+v[9];if(key!==last){s.push([r.tick,v[0],v[9]]);last=key;}}return s})()`);
+    const inGap = (t) => GAPS.some(([a, b]) => t >= a && t < b);
+    const same = cuts.length === PS2_CUTS.length && cuts.every((x, k) => x[1] === PS2_CUTS[k][1] && x[2] === PS2_CUTS[k][2] && (x[0] === PS2_CUTS[k][0] || inGap(x[0])));
+    if (finish !== 4402) failures.push(`BHP1-PS2: the neutral run finishes at tick ${finish}, the PS2's at 4402`);
+    if (!same) failures.push(`BHP1-PS2: the Web-cam's cuts differ from the PS2's: ${JSON.stringify(cuts)}`);
+    rows.push(`BHP1-PS2 (neutral pad): finish ${finish}; the Web-cam's ${cuts.length} cuts / trigger cameras on the PS2's ticks: ${same}`);
+  }
+  // A Conquer the Mountain free ride (a streamed world: no replay there on the PS2, no camera-triggers.json) asks for no triggers
+  if (!only || only.has('MOUNTAIN')) {
+    await browser.goto(`${server.origin}/manifest.webmanifest`);
+    await browser.evaluate('(()=>{localStorage.clear();sessionStorage.clear();return 1})()');
+    await browser.goto(`${server.origin}/?qa=1&mute=1&cutscenes=0&quality=low&presentationSeed=0x182200&rider=zoe&pv=replay`);
+    await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
+    await browser.evaluate(`(()=>{const ui=ssxQA.ui();ui.careerMode=true;ui.onlineMode=false;ui.careerUI.enter();return 1})()`);
+    await browser.waitFor(`(document.getElementById('stage').dataset.screen==='game'&&window.demoState?.running)||!!document.body.dataset.loadError`, 300000);
+    await sleep(1500);
+    const free = await browser.evaluate(`JSON.stringify({course:ssxQA.ui().course?.code,
+      asked:performance.getEntriesByType('resource').filter(e=>/camera-triggers/.test(e.name)).map(e=>e.name.replace(location.origin,''))})`);
+    const warned = browser.logs.filter((l) => /Replay cameras unavailable/.test(l));
+    if (JSON.parse(free).asked.length || warned.length) failures.push(`MOUNTAIN: the free ride asked for camera triggers ${free} ${warned.join(' | ')}`);
+    rows.push(`MOUNTAIN free ride: ${free}, no replay camera warning ${!warned.length}`);
+  }
 } finally { await browser.close(); await server.close(); }
 for (const r of rows) console.log(r);
 if (failures.length) { console.error('Replay check FAILED:\n' + failures.join('\n')); process.exit(1); }
-console.log(`Replay check OK: ${rows.length} event(s) replayed tick-exact behind the results, post-race state untouched, the Replay item works`);
+console.log(`Replay check OK: ${rows.length} check(s): replays tick-exact behind the results, post-race state untouched, the Replay item works, the Web-cam on the PS2's cuts`);
 process.exit(0);
