@@ -1,7 +1,8 @@
 // A portable run replay (docs/online-records.md "The replay file"): what web/replay.js keeps for a run (the recorded pad stream and
 // the start state main.js snapshot() takes) plus what another machine needs to set the same run up: the event, the human rider
 // (character, skin base, outfit, attribute bytes, uber rows), the computer riders' lineup and the build identity. Shared by the
-// page (upload, Watch Replay) and web/server/records.mjs (tier-0 checks). Uploaded deflate-raw compressed.
+// page (upload, Watch Replay) and web/server/records.mjs (tier-0 checks); it lives in web/server/ because the server is deployed
+// on its own and imports only from web/server/ and node:. Uploaded deflate-raw compressed.
 //
 //   bytes: 'SSXR', u8 version (1), u32 meta length, meta (UTF-8 JSON), u32 pad length, pad stream (web/replay.js createRecording)
 //   meta:  {v, event "<mode>:<COURSE>", mode, course, round, name, character, rider {id, base, outfit, attributes, uber}, claim

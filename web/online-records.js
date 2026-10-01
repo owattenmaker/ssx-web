@@ -1,7 +1,7 @@
 // Online course records, the page's side (pv onlineRecords, docs/online-records.md): the server's boards (web/server/records.mjs),
 // a last-good copy for offline use, the rank a finished run would take, and the uploads / downloads of run replays
-// (web/net/replay-file.js). No UI here: web/online-records-ui.js draws the game's screens.
-import { encodeReplayFile, decodeReplayFile } from './net/replay-file.js';
+// (web/server/replay-file.mjs). No UI here: web/online-records-ui.js draws the game's screens.
+import { encodeReplayFile, decodeReplayFile } from './server/replay-file.mjs';
 
 const CACHE_KEY = 'ssx3.onlineRecords.v1', TIMEOUT_MS = 5000;
 export const eventKeyOf = (mode, code) => `${mode}:${code}`;
@@ -58,7 +58,7 @@ export class OnlineRecords {
     if (!r.ok) throw new Error(`board ${r.status}`);
     return r.json();
   }
-  // meta + pad (web/net/replay-file.js) -> {ok, kept, id, rank, top} or {error}
+  // meta + pad (web/server/replay-file.mjs) -> {ok, kept, id, rank, top} or {error}
   async submit(meta, pad) {
     let r;
     try { r = await timed(this.fetch, this.base + '/mp/records/submit', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: await deflate(encodeReplayFile({ meta, pad })) }); }

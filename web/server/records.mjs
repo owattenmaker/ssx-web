@@ -4,7 +4,7 @@
 //
 //   GET  /mp/records                      -> {version, events: {"<mode>:<COURSE>": {timed, top: [row x 5]}}}
 //   GET  /mp/records/board?event=K&offset=O&limit=N -> {event, timed, total, rows: [row]} (rank order, at most MAX_LIMIT a call)
-//   GET  /mp/records/replay?id=ID         -> the stored replay (deflate-raw of web/net/replay-file.js), immutable
+//   GET  /mp/records/replay?id=ID         -> the stored replay (deflate-raw of web/server/replay-file.mjs), immutable
 //   POST /mp/records/submit               -> body: deflate-raw of a replay file; {ok, id, rank, kept, top}
 //   row = {id, rank, name, character, rider, value, default?, replay, verified, core, at}
 //
@@ -26,7 +26,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { MAX_AVERAGE } from './plausibility.mjs';
-import { decodeReplayFile, padStreamInfo } from '../net/replay-file.js';
+import { decodeReplayFile, padStreamInfo } from './replay-file.mjs';
 
 export const MAX_ENTRIES = 100;          // real runs kept per event (defaults on top of these)
 export const MAX_LIMIT = 100;            // rows per board request

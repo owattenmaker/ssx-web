@@ -42,6 +42,13 @@ fi
 npm run online:build >/dev/null
 [ "$(shasum -a 256 dist-online/assets/core-*.wasm | cut -d' ' -f1)" = "$(cat "$stamp")" ] || { echo "the built core is not the capture-verified one (rebuilt mid-deploy?); run again"; exit 1; }
 echo "core $(cut -c1-8 "$stamp") capture-verified"
+# The host runs web/server/ on its own (server.next), so the server must start from that layout alone: copy it to a temp
+# dir and start it on a free loopback port. A module it imports from outside server/ took the site down on 2026-09-30.
+smoke=$(mktemp -d); mkdir -p "$smoke/web"; cp -R server "$smoke/web/server"
+MP_HOST=127.0.0.1 MP_PORT=0 PORT=0 MP_GATE_INSECURE=1 node "$smoke/web/server/mp-server.mjs" > "$smoke/log" 2>&1 & spid=$!
+i=0; while [ $i -lt 20 ] && ! grep -q 'multiplayer server on' "$smoke/log" && kill -0 $spid 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
+if grep -q 'multiplayer server on' "$smoke/log"; then kill $spid 2>/dev/null; wait $spid 2>/dev/null || true; rm -rf "$smoke"; echo "server starts from web/server alone"
+else kill $spid 2>/dev/null || true; echo "the server does not start from web/server alone; nothing deployed:"; tail -15 "$smoke/log"; rm -rf "$smoke"; exit 1; fi
 ssh "$HOST" "cd ~/$APP && rm -rf dist-online.next server.next public/assets.next && mkdir dist-online.next server.next"
 rsync -a --delete dist-online/ "${HOST}:${APP}/dist-online.next/"
 rsync -a --delete server/ "${HOST}:${APP}/server.next/"

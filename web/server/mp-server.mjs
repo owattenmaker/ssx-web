@@ -39,7 +39,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRunCheck, AHEAD_TICKS } from './plausibility.mjs';
 import { createGate } from './gate.mjs';
-import { createRecords } from './records.mjs';
 
 export const PROTOCOL = 2;
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => (v.startsWith('--') ? [...a, [v.slice(2), all[i + 1]]] : a), []));
@@ -62,9 +61,14 @@ const GATE = createGate({ password: process.env.MP_GATE_PASSWORD || null, passwo
   secure: process.env.MP_GATE_INSECURE !== '1', clientAddress });
 // Online course records (web/server/records.mjs, docs/online-records.md): MP_RECORDS_DIR = their state directory (the host's
 // ~/ssx-host/state/records); off without it. The disc tables (CAREER/career.json) come from MP_RECORDS_ASSETS or the static roots.
-const RECORDS_ASSETS = process.env.MP_RECORDS_ASSETS ? path.resolve(process.env.MP_RECORDS_ASSETS)
-  : [...STATIC.map((r) => path.join(r, 'assets')), path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'assets')].find((p) => fs.existsSync(path.join(p, 'CAREER', 'career.json'))) ?? null;
-const RECORDS = process.env.MP_RECORDS_DIR ? createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress }) : null;
+const RECORDS_ASSETS = (() => { try { return process.env.MP_RECORDS_ASSETS ? path.resolve(process.env.MP_RECORDS_ASSETS)
+  : [...STATIC.map((r) => path.join(r, 'assets')), path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'assets')].find((p) => fs.existsSync(path.join(p, 'CAREER', 'career.json'))) ?? null; } catch { return null; } })();
+// Loaded only when configured, and never fatal: a missing module, directory or table leaves the records off (503) and the rest running.
+let RECORDS = null;
+if (process.env.MP_RECORDS_DIR) {
+  try { const { createRecords } = await import('./records.mjs'); RECORDS = createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress }); }
+  catch (e) { console.warn('records: off (failed to start)', e?.message); RECORDS = null; }
+}
 const MAX_PLAYERS = 6, RESUME_GRACE_MS = +(process.env.MP_RESUME_MS ?? 30000), SILENT_DROP_MS = 10000, LOAD_TIMEOUT_MS = 45000, GO_DELAY_MS = 2500;
 const FINISH_GRACE_MS = +(process.env.MP_FINISH_GRACE_MS ?? 90000), RACE_LIMIT_MS = +(process.env.MP_RACE_LIMIT_MS ?? 15 * 60000);
 // Default 'flag' (Owen, 2026-09-28: log only, never reject, for this friends-only build: honest finishes were rejected

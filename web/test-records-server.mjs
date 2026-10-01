@@ -10,7 +10,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createRecords, cleanName, MAX_ENTRIES } from './server/records.mjs';
-import { encodeReplayFile, decodeReplayFile, padStreamInfo } from './net/replay-file.js';
+import { encodeReplayFile, decodeReplayFile, padStreamInfo } from './server/replay-file.mjs';
 import { createRecording } from './replay.js';
 
 const web = path.dirname(fileURLToPath(import.meta.url));
@@ -124,6 +124,27 @@ async function serve(env) {
   const s = await serve({ MP_RECORDS_DIR: path.join(tmp, 'gated'), MP_GATE_PASSWORD_FILE: path.join(tmp, 'pw'), MP_GATE_SECRET_FILE: path.join(tmp, 'gs'), MP_GATE_INSECURE: '1' });
   try { for (const u of ['/mp/records', '/mp/records/board?event=0:TST1', '/mp/records/replay?id=0123456789abcdef']) assert.equal((await fetch(s.url + u)).status, 401, u);
     assert.equal((await fetch(s.url + '/mp/records/submit', { method: 'POST', body: upload() })).status, 401); } finally { s.stop(); }
+}
+// The deploy ships web/server/ on its own (deploy/deploy-staged.sh): its modules import only node: and web/server/, and the server
+// starts from a copy of that folder alone, with the records on (and their tables missing) or off. (2026-09-30: a records import
+// from ../net took the live server down.)
+for (const f of fs.readdirSync(path.join(web, 'server')).filter((f) => /\.(mjs|js)$/.test(f))) {
+  const src = fs.readFileSync(path.join(web, 'server', f), 'utf8');
+  for (const m of src.matchAll(/(?:^|\n)\s*import\s[^'"]*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]/g)) {
+    const spec = m[1] ?? m[2]; if (f === 'vite.online.config.js' || f === 'online.mjs') continue;   // build / dev helpers, not deployed to run
+    assert.ok(spec.startsWith('node:') || (spec.startsWith('./') && !spec.includes('/..')), `web/server/${f} imports ${spec}`);
+  }
+}
+{
+  const alone = path.join(tmp, 'alone', 'web'); fs.cpSync(path.join(web, 'server'), path.join(alone, 'server'), { recursive: true });
+  for (const env of [{}, { MP_RECORDS_DIR: path.join(tmp, 'alone', 'state', 'records'), MP_RECORDS_ASSETS: path.join(tmp, 'nothing') }, { MP_RECORDS_DIR: path.join(tmp, 'alone', 'state', 'records2') }]) {
+    const port = 19000 + Math.floor(Math.random() * 900);
+    const p = spawn(process.execPath, ['server/mp-server.mjs', '--port', String(port), '--host', '127.0.0.1'], { cwd: alone, env: { PATH: process.env.PATH, MP_RECORDS_ASSETS: assets, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = ''; p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { out += d; });
+    await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('web/server alone did not start: ' + out)), 8000); p.stdout.on('data', () => { if (out.includes('multiplayer server on')) { clearTimeout(t); res(); } }); p.on('exit', (c) => { clearTimeout(t); rej(new Error(`exit ${c}: ${out}`)); }); });
+    const r = await fetch(`http://127.0.0.1:${port}/mp/records`); assert.equal(r.status, env.MP_RECORDS_DIR && !env.MP_RECORDS_ASSETS?.endsWith('nothing') ? 200 : 503, JSON.stringify(env));
+    p.kill();
+  }
 }
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('test-records-server: ok');

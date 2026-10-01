@@ -11,6 +11,7 @@ import {pv} from './pv-flags.js';
 import {SESSION_MAP,mapMarker,nearestSessionPoint,DOT,PLAYER} from './session-map.js';   // pv sessionMap
 const SY_LUI=448/480;   // a LUI screen's 640 x 480 frame on the 448-line UI canvas
 import {ResultsLui} from './results-lui.js';
+import {OnlineRecordsUI} from './online-records-ui.js';   // pv onlineRecords: the records screen's online top 5, Save Records, the boards (docs/online-records.md)
 import {FsStandings,standingsModel,cardModel} from './fs-standings.js';   // pv fsStandings: the CTM freestyle heats in OV.LUI 42freestyle_standings   // pv luiResults: the OV.LUI panel and results (docs/visual-parity.md section 9)
 import {money} from './trick-hud.js';   // 0x198AF0 (English): cash as "$ n" with thousands separators (pv cashGap)
 import {LodgeScreens,LODGE_SCREENS} from './lodge-ui.js';
@@ -30,7 +31,7 @@ import {runStats} from './monster-tricks.js'; // career run statistics -> monste
 const CAREER='/assets/CAREER/';
 const CURSOR_STATES=new Set(['ctm-lodge','ctm-details','ctm-trophies','ctm-attributes']);   // pv stateCursor: the lodge states whose activation restores the cursor (0x186518)
 const SCREENS=['ctm-mcomm','ctm-peaks','ctm-goals','ctm-events','ctm-confirm','ctm-lodge','ctm-attributes','ctm-saved',
- 'ctm-objectives','ctm-pause','ctm-giveup','ctm-restart','ctm-results','ctm-award','ctm-records','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-session','ctm-sessconfirm','ctm-gopeak','ctm-quitsave','ctm-bcsure'];
+ 'ctm-objectives','ctm-pause','ctm-giveup','ctm-restart','ctm-results','ctm-award','ctm-records','ctm-board','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-session','ctm-sessconfirm','ctm-gopeak','ctm-quitsave','ctm-bcsure'];
 // Session points per course (table 0x440770 +0x18 via 1545F8), Peak 1: the streamed world's MCOMM Session menu (overlay 0x20).
 export const SESSION_POINTS={14:7,17:1,0:7,5:7,8:2,18:1,1:8,11:2,/* Peak 2 (docs/peak2.md) */19:1,2:7,9:2,12:2,20:1,3:7,6:7,15:6,/* Peak 3 (docs/peak3.md: 0x440770 +0x18) */21:1,4:7,7:6,10:2,13:2,16:5};
 // Freeride Transport list per peak, PS2 order (table 0x478D38: 8 rows of 0x6C per peak, +0 course, +0xC station).
@@ -64,7 +65,7 @@ const REWARD_ITEM={trophy:[0,'kT_REWTrophy'],medal:[1,'kT_REWMedal'],poster:[3,'
 const Y=y=>Math.round(y*448/480);
 
 export class CareerScreens {
- constructor(ui){this.ui=ui;this.lodge=new LodgeScreens(this);this.messages=new CareerMessages(this);this.pda=new CtmPda(ui);this.ctmMap=new CtmMap(ui);this.resultsLui=new ResultsLui(ui);this.fsStandings=new FsStandings(ui);this.career=null;this.loc=new Locale();this.pictures={};this.info=false;this.peak=1;this.goal='race';this.active=null;this.pendingAttr=ATTRIBUTES.map(()=>0);this.buyAttribs=new BuyAttribs(this);this.lodgeFlash=new LuiFlash();this.cursorMemo=new Map();
+ constructor(ui){this.ui=ui;this.lodge=new LodgeScreens(this);this.messages=new CareerMessages(this);this.pda=new CtmPda(ui);this.ctmMap=new CtmMap(ui);this.resultsLui=new ResultsLui(ui);this.online=new OnlineRecordsUI(this);this.fsStandings=new FsStandings(ui);this.career=null;this.loc=new Locale();this.pictures={};this.info=false;this.peak=1;this.goal='race';this.active=null;this.pendingAttr=ATTRIBUTES.map(()=>0);this.buyAttribs=new BuyAttribs(this);this.lodgeFlash=new LuiFlash();this.cursorMemo=new Map();
   if(new URL(location.href).searchParams.has('qa'))globalThis.ssxCareer=this;}   // QA/test handle (?qa=1)
  // pv lodgeFlash (web/lui-flash.js, docs/visual-parity.md 42): a lodge screen change is an FE state change: TransitionOut's white
  // flash rises over the old screen, the switch at full white, the new screen's intro under the fall; no input meanwhile.
@@ -226,6 +227,7 @@ export class CareerScreens {
  // ---- per-screen items ------------------------------------------------------------------------------
  items(screen){
   const c=this.career;if(this.lodge.owns(screen))return this.lodge.items(screen);if(this.messages.owns(screen))return this.messages.items();if(this.ui.bigChallenges?.owns(screen))return this.ui.bigChallenges.items(screen);
+  if(screen==='ctm-board')return this.online.boardItems();if(screen==='ctm-records'&&this.recOnline())return this.online.recordsItems(this.topTime);   // pv onlineRecords
   switch(screen){
    case 'ctm-mcomm':return ['Return','Transport','Session','Messages','Audio','Options','Quit'];
    case 'ctm-peaks':return [this.t('kT_Peak3name','Peak 3'),this.t('kT_Peak2name','Peak 2'),this.t('kT_Peak1name','Peak 1'),this.t(0x03574b7e,'All Mountain')];
@@ -247,6 +249,7 @@ export class CareerScreens {
  }
  disabled(screen,i){
   if(this.lodge.owns(screen))return this.lodge.disabled(screen,i);if(this.messages.owns(screen))return false;if(this.ui.bigChallenges?.owns(screen))return this.ui.bigChallenges.disabled(screen,i);
+  if(screen==='ctm-board')return this.online.boardDisabled(i);if(screen==='ctm-records'&&this.recOnline())return this.online.recordsDisabled(this.topTime,i);   // pv onlineRecords
   if(screen==='ctm-mcomm'&&(i===1||i===2)&&this.freeRide&&this.ui.cb.freeRideCrossing?.())return true; // crossing: overlay 4, no Transport / Session
   if(screen==='ctm-mcomm'&&i===2)return !(this.freeRide&&this.sessionItems().length);
   if(screen==='ctm-mcomm')return !(i===0&&this.ui.cb.freeRide)&&![1,5,6].includes(i)&&!(i===4&&this.ui.audioMenus?.ready)&&!(i===3&&this.messages.ready);
@@ -261,6 +264,7 @@ export class CareerScreens {
  }
  layout(screen,i){
   if(this.lodge.owns(screen))return this.lodge.layout(screen,i);if(this.messages.owns(screen))return this.messages.layout(i);if(this.ui.bigChallenges?.owns(screen))return this.ui.bigChallenges.layout(screen,i);
+  if(screen==='ctm-board'||(screen==='ctm-records'&&this.recOnline()))return [430,Y(366)+i*Y(16),150,Y(16)];   // pv onlineRecords: 61toptimes' menu (and its added third item)
   if(screen==='ctm-mcomm'||screen==='ctm-pause')return this.pda?.ready?[195,Y(106)+i*Y(40),240,Y(34)]:[195,Y(94)+i*Y(40),240,Y(34)];   // 31paus_freeride rows: Menu (200, 110) + 40 i
   if(['ctm-peaks','ctm-goals','ctm-events'].includes(screen))return [0,Y(170)+this.rowY(screen,i),240,Y(24)];
   if(['ctm-confirm','ctm-giveup','ctm-restart','ctm-quit','ctm-saveprompt','ctm-enterlodge','ctm-sessconfirm','ctm-gopeak','ctm-quitsave','ctm-bcsure'].includes(screen))return this.pda?.ready?[280,Y(234)+i*Y(25),120,Y(24)]:[260,Y(245)+i*Y(24),120,Y(24)];   // 87yndialog: Menu0000 (270, 240), rows 25 apart
@@ -311,7 +315,8 @@ export class CareerScreens {
 
  // ---- navigation -------------------------------------------------------------------------------------
  key(e){
-  const s=this.ui.screen;if(pv('buyAttribs')&&this.buyAttribs.flash&&(s==='ctm-lodge'||s==='ctm-attributes')){e.preventDefault();return true;}if(this.lodgeFlashing(s)){e.preventDefault();return true;}   // no input during the lodge <-> Buy Attributes flash
+  const s=this.ui.screen;if((s==='ctm-records'||s==='ctm-board')&&this.online.key(e))return true;   // pv onlineRecords: the name keyboard, the board's row cursor and pages
+ if(pv('buyAttribs')&&this.buyAttribs.flash&&(s==='ctm-lodge'||s==='ctm-attributes')){e.preventDefault();return true;}if(this.lodgeFlashing(s)){e.preventDefault();return true;}   // no input during the lodge <-> Buy Attributes flash
   if(this.lodge.owns(s))return this.lodge.key(e);if(this.messages.owns(s))return this.messages.key(e);if(this.ui.bigChallenges?.owns(s))return this.ui.bigChallenges.key(e);
   if(['ctm-peaks','ctm-goals','ctm-events'].includes(s)&&(e.code==='ShiftLeft'||e.code==='ShiftRight'||e.code==='KeyI')){this.info=!this.info;this.ui.draw(this.ui.lastState);return true;}
   if(s==='ctm-attributes'&&pv('buyAttribs')&&this.buyAttribs.session)return this.buyAttribs.key(e);   // Left / Right points, Up / Down wrap, the buy popup, Triangle
@@ -337,6 +342,7 @@ export class CareerScreens {
   const ui=this.ui,s=ui.screen,c=this.career;
   if(pv('buyAttribs')&&this.buyAttribs.flash&&(s==='ctm-lodge'||s==='ctm-attributes'))return;
   if(this.lodgeFlashing(s))return;
+  if(s==='ctm-board'){this.online.chooseBoard(i);return;}if(s==='ctm-records'&&this.recOnline()&&this.online.chooseRecords(this.topTime,i,this.career.active.ev))return;   // pv onlineRecords
   if(this.disabled(s,i))return;
   if(this.lodge.owns(s))return this.lodge.choose(i);if(this.messages.owns(s))return this.messages.choose(i);if(this.ui.bigChallenges?.owns(s))return this.ui.bigChallenges.choose(i);
   const act=()=>{switch(s){
@@ -388,7 +394,7 @@ export class CareerScreens {
   return act();
  }
  back(){
-  const ui=this.ui,s=ui.screen;if(this.lodgeFlashing(s))return;if(this.lodge.owns(s))return this.lodge.back();if(this.messages.owns(s))return this.messages.goBack();if(ui.bigChallenges?.owns(s))return ui.bigChallenges.back();
+  const ui=this.ui,s=ui.screen;if(this.lodgeFlashing(s))return;if(this.online.keyboardOpen()){ui.feScreens.back();return;}if(s==='ctm-board'){this.online.backBoard();return;}   // pv onlineRecordsif(this.lodge.owns(s))return this.lodge.back();if(this.messages.owns(s))return this.messages.goBack();if(ui.bigChallenges?.owns(s))return ui.bigChallenges.back();
   if(pv('stationFlow')){
    if(s==='ctm-enterlodge'){this.choose(1);return;}   // 1F72E0: event 6 (Triangle) sets the same done flag as No
    if(s==='ctm-peaks'&&this.afterEvent)return;        // map mode 4 (the results' Transport): Back is ignored (0x2022A4)
@@ -518,7 +524,7 @@ export class CareerScreens {
   // WS7 enter 236DA0 -> 20A8F8(7): when the result granted anything (158F30 > 0: cash, awards) the reward list overlay 0x10
   // (OV.LUI 62reward_list) comes first and its Continue opens the results (0x20CF1C); else the results at once.
   // PS2 ctm/caps race-f: Rewards (Cash / Gold medal earned / Accessory ...), then "Final Results".
-  this.rewardTop=0;this.topTime=outcome.record>=0;/* 20A8F8(7): the result's record rank (+0x18 time / +0x1C score) >= 0 opens overlay 0xF (Top 5 Record Times) first in every event, standard ones too (PS2 ctm-left/runs final-top, qual-top) */const go=()=>{const to=this.topTime?'ctm-records':this.active.career&&this.rewardLines().length?'ctm-award':'ctm-results';this.ui.set(to);if(to==='ctm-results'&&this.resultsFocus(0)){this.ui.index=this.resultsFocus(0);this.ui.sync();}};
+  this.rewardTop=0;{const o=this.online.finish(result,ev);this.topTime=o==null?outcome.record>=0:o;}/* pv onlineRecords: the online top 5 decides for the events with a board (docs/online-records.md); the local table is entered as on the PS2 either way *//* 20A8F8(7): the result's record rank (+0x18 time / +0x1C score) >= 0 opens overlay 0xF (Top 5 Record Times) first in every event, standard ones too (PS2 ctm-left/runs final-top, qual-top) */const go=()=>{const to=this.topTime?'ctm-records':this.active.career&&this.rewardLines().length?'ctm-award':'ctm-results';this.ui.set(to);if(to==='ctm-results'&&this.resultsFocus(0)){this.ui.index=this.resultsFocus(0);this.ui.sync();}};
   this.finishCutscenes(ev,outcome).then(go,go);
  }
  // World state 5 -> 12 (0x233CD8 -> 0x27AC60, docs/cutscenes.md): in Conquer the Mountain, when the event is complete
@@ -687,6 +693,7 @@ export class CareerScreens {
   if(s==='ctm-results')return this.drawResults(c);
   if(s==='ctm-award')return this.drawAward(c);
   if(s==='ctm-records')return this.drawRecords(c);
+  if(s==='ctm-board')return this.online.drawBoard(c,b);   // pv onlineRecords
  }
  help(c,text,buttons=[['cross','Select'],['triangle','Previous']]){
   c.fillStyle='#2c6590';c.fillRect(0,Y(378),640,Y(62));
@@ -1185,7 +1192,9 @@ export class CareerScreens {
   if(lines.length>top+REWARD_ROWS){c.fillStyle='#e7f0f1';c.beginPath();c.moveTo(74,Y(387));c.lineTo(94,Y(387));c.lineTo(84,Y(397));c.closePath();c.fill();}
   ui.sprite('OV_1-2',55,122,24,24,452,Y(392),16,16);ui.text(c,this.t(0x0f3ab955,'Continue'),472,Y(392),15,'#d1e1e2');
  }
+ recOnline(){return pv('onlineRecords')&&!!this.career?.active?.ev&&this.online.online(this.career.active.ev);}   // the records screen shows the event's online board
  drawRecords(c){
+  if(this.recOnline()&&this.online.drawRecords(c,this.career.active.ev,this.topTime))return;   // pv onlineRecords
   const ui=this.ui,ev=this.career.active.ev,timed=isTimed(ev.mode),slot=recordSlot(this.career.rules,ev.mode,ev.course);
   if(this.luiPanels()&&this.resultsLui.records(c,{title:isPeakRun(ev.mode)?this.peakRunName(ev.mode):this.eventTitle(ev),timed,   // 61toptimes (web/results-lui.js)
    rows:slot<26?this.career.records(slot,timed).map(r=>({name:r.name,rider:this.data.characters[r.character]?.first||'',value:timed?raceTime(r.ticks,false):String(r.value),player:!!r.player})):[],
