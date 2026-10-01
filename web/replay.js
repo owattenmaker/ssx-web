@@ -12,6 +12,7 @@
 //          tick, plays to the finish and pauses there; Cross play / pause, Circle step / slow, R1 / L1 skip (paused only),
 //          Triangle camera, Square timeline, D-pad the help panel, Start the Replay Menu (web/replay-ui.js).
 import { FixedStepClock } from './fixed-step-clock.js';
+import { padStreamInfo } from './net/replay-file.js';
 
 // Replay camera cycle 0x445438[R+0x630] with the names 0x20E6B0 writes (ASCII in the ELF, 0x471C40..): Web-cam is the
 // trigger-driven auto camera (director mode 0x5D).
@@ -73,6 +74,14 @@ export function createRecording() {
       cursor.at = t; out.set(P); return out;
     },
     eventsAt(t) { return events.filter((e) => e.tick === t); },
+    // pv onlineRecords (docs/online-records.md): the stream as bytes (web/net/replay-file.js), and a recording made from such bytes
+    // (a downloaded run: its ticks and out-of-band calls come with it). An imported recording only plays back.
+    exportBytes() { return buf.slice(0, len); },
+    importBytes(bytes, tickCount, calls = []) {
+      const info = padStreamInfo(bytes); if (!info) throw new Error('bad pad stream');
+      buf = Uint8Array.from(bytes); len = buf.length; ticks = tickCount; records = info.records; lastTick = Math.max(0, info.lastTick);
+      events.length = 0; for (const e of calls) events.push({ tick: e.tick | 0, kind: String(e.kind), value: e.value });
+    },
   };
 }
 

@@ -455,8 +455,12 @@ export class Career {
  addRecord(slot,value,character,timed){
   // the entry's name is the player's (0x534FE0, "PLAYER %d" 0x45A228 with player 1: "PLAYER 1" on the PS2 records screen): 0x154DDC
   // copies 0x147170, the Player Name once one was entered (pv playerName: set by web/fe-screens.js; PS2 lodge/runs/name-records: OWEN)
-  const list=this.records(slot,timed),entry={value:timed?Math.floor(value/60):value,ticks:timed?value:undefined,character,name:this.playerName||PLAYER_NAME,player:true};
-  const at=list.findIndex(r=>timed?value<r.ticks:value>r.value);
+  // 0x154CD8..0x154D0C: a time is entered in whole seconds, cvt.w.s(f32(ticks) x f32 1/60 (gp-0x6DEC = 0x3C888889)); 0x154D58: the run
+  // goes in at the first entry it is not strictly worse than (time: skip while entry < run; score: skip while run < entry), so a tie
+  // ranks the new run above the old one (docs/online-records.md). Before 2026-09-30 the port compared ticks with a strict test.
+  const secs=timed?Math.trunc(f32(f32(value)*f32(0.016666668))):value;
+  const list=this.records(slot,timed),entry={value:secs,ticks:timed?value:undefined,character,name:this.playerName||PLAYER_NAME,player:true};
+  const at=list.findIndex(r=>timed?!(r.value<secs):!(value<r.value));
   if(at<0)return -1;
   list.splice(at,0,entry);list.length=5;this.save.records[slot]=list;return at;
  }

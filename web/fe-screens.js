@@ -75,6 +75,7 @@ const SHIFTED = { '1': '!', '2': '@', '3': '#', '4': '$', '5': '%', '6': '^', '7
 // Disabled keys: Tab always (0x1CE3C8 key 0x4B), Up/Down (single line); Player Name also the punctuation keys
 // (0x1837C4..0x1838A0: ten more ids), as dimmed on the PS2 frame.
 const KEYS_OFF = { cheat: ['Tab', 'Up', 'Down'], name: ['Tab', 'Up', 'Down', '~', '-', '=', '[', ']', '|', ':', '"', '<', '>', '?'] };
+KEYS_OFF.record = KEYS_OFF.name;   // pv onlineRecords: an online record's name (web/online-records-ui.js), the Player Name's rules
 
 function storage() { try { return localStorage; } catch { return null; } }
 function stored(key, fallback) { try { return storage()?.getItem(key) ?? fallback; } catch { return fallback; } }
@@ -581,10 +582,11 @@ export class FeScreens {
   }
 
   // ---- keyboard ----
-  openKeyboard(kind) {
-    const text = kind === 'name' ? this.playerName : '';
-    const ps2Name = kind === 'name' && pv('playerName');
-    this.keyboard = { kind, text, caret: ps2Name ? Math.min(text.length, PLAYER_NAME_MAX - 1) : text.length, caps: false, shift: false, max: kind === 'name' ? (ps2Name ? PLAYER_NAME_MAX : 15) : 24, overwriteFull: ps2Name, row: kind === 'name' ? 2 : 1, col: kind === 'name' ? 12 : 1, at: this.now() };
+  // kind 'record' (pv onlineRecords): the name of an online record, with Player Name's PS2 rules; opts {text, done(text), cancel()}
+  openKeyboard(kind, opts = null) {
+    const text = opts?.text ?? (kind === 'name' ? this.playerName : '');
+    const ps2Name = kind === 'record' || (kind === 'name' && pv('playerName'));
+    this.keyboard = { kind, text, onDone: opts?.done ?? null, onCancel: opts?.cancel ?? null, caret: ps2Name ? Math.min(text.length, PLAYER_NAME_MAX - 1) : text.length, caps: false, shift: false, max: kind === 'name' || kind === 'record' ? (ps2Name ? PLAYER_NAME_MAX : 15) : 24, overwriteFull: ps2Name, row: kind === 'name' || kind === 'record' ? 2 : 1, col: kind === 'name' || kind === 'record' ? 12 : 1, at: this.now() };
     this.ui.sync();
   }
   keyLabel() { const k = this.keyboard; return KEY_ROWS[k.row]?.[k.col]; }
@@ -597,6 +599,7 @@ export class FeScreens {
   }
   keyboardDone() {
     const k = this.keyboard; this.keyboard = null;
+    if (k.kind === 'record') { k.onDone?.(k.text); return; }
     if (k.kind === 'name') { if (k.text.trim()) { this.playerName = pv('playerName') ? k.text : k.text.trim(); store(NAME_KEY, this.playerName); this.ui.playerName = this.playerName; if (pv('playerName') && this.career) this.career.playerName = this.playerName; } }
     else {
       const hit = this.ui.characterSelect?.enterCheat?.(k.text);    // 0x187D38: a character code unlocks it for every rider

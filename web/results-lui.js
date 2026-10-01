@@ -157,28 +157,55 @@ export class ResultsLui {
   // 61toptimes: title, timed (Top 5 Record Times / Scores), rows [{name, rider, value, player}] (5), message (a new top time /
   // score, or null), items (Continue / Save Records, or Return), index. The player's row is 250,135,18 (PS2 out-apr-results
   // 'PLAYER 1' / 'Zoe' / '22:10' at 200,108,14 = 0.8 x).
-  records(c, { title, timed, rows, message, items, index, disabled = () => false }) {
+  // pv onlineRecords (web/online-records-ui.js): a third menu item (61toptimes has two: Continue / Save Records; the copy adds one
+  // below at the same 15-line pitch with its own focus frame 50, the cross glyph 14 lower again), the rank column's text (row.rank),
+  // a focused row in the focus white (row.focus), and the subtitle's text (subtitle).
+  records(c, { title, timed, rows, message, items, index, disabled = () => false, subtitle = null }) {
     if (!this.lui['61toptimes']) return false;
     this.panelFrame(c, this.clock());
+    const three = items.length > 2 && this.topTimesThree(), key = three ? '61toptimes+' : '61toptimes', itemNames = three ? [...TOP.items, TOP_THIRD] : TOP.items;
     const R = TOP.rows, pick = (list, n) => list.indexOf(n);
-    return this.screen(c, '61toptimes', index === 1 ? 45 : 40, (e) => {
+    return this.screen(c, key, index === 2 && three ? 50 : index === 1 ? 45 : 40, (e) => {
       const n = e.name;
       if (n === TOP.track) return { text: title };
-      if (n === TOP.times) return timed ? null : { hidden: true };
-      if (n === TOP.scores) return timed ? { hidden: true } : null;
+      if (n === TOP.times) return timed ? (subtitle != null ? { text: subtitle } : null) : { hidden: true };
+      if (n === TOP.scores) return timed ? { hidden: true } : (subtitle != null ? { text: subtitle } : null);
       if (n === TOP.time) return timed ? null : { hidden: true };
       if (n === TOP.points) return timed ? { hidden: true } : null;
       if (n === TOP.help1) return message && timed ? { text: message } : { hidden: true };
       if (n === TOP.help2) return message && !timed ? { text: message } : { hidden: true };
       if (n === TOP.xgroup) return items.length ? { alpha: 255 } : { hidden: true };   // 0x1FE1D8 shows ps2x beside the menu
-      let k = pick(TOP.items, n); if (k >= 0) return k < items.length ? { text: items[k], props: colour(k === index ? [255, 255, 255] : [101, 184, 201]), ...(disabled(k) && k !== index ? { alpha: 128 } : {}) } : { hidden: true };
-      for (const [col, key] of [[R.rank, null], [R.name, 'name'], [R.rider, 'rider'], [R.value, 'value']]) {
+      let k = pick(itemNames, n); if (k >= 0) return k < items.length ? { text: items[k], props: colour(k === index ? [255, 255, 255] : [101, 184, 201]), ...(disabled(k) && k !== index ? { alpha: 128 } : {}) } : { hidden: true };
+      for (const [col, field] of [[R.rank, 'rank'], [R.name, 'name'], [R.rider, 'rider'], [R.value, 'value']]) {
         k = pick(col, n); if (k < 0) continue; const row = rows[k];
         if (!row) return { hidden: true };
-        return { ...(key ? { text: row[key] } : {}), ...(row.player ? { props: colour(RECORD_ROW) } : {}) };
+        const text = field === 'rank' ? (row.rank != null ? { text: String(row.rank) } : {}) : { text: row[field] };
+        return { ...text, ...(row.focus ? { props: colour([255, 255, 255]) } : row.player ? { props: colour(RECORD_ROW) } : {}) };
       }
       return null;
     });
+  }
+  // 61toptimes with a third menu item (pv onlineRecords): built once from the screen's own Save Records element and its events.
+  topTimesThree() {
+    if (this.lui['61toptimes+']) return true;
+    const base = this.lui['61toptimes']; if (!base) return false;
+    const screen = JSON.parse(JSON.stringify(base.screen)), [first, second] = TOP.items, PITCH = 15, GLYPH = 14;
+    const src = screen.elements.find((e) => e.name === second), menu = screen.elements.find((e) => (e.children || []).includes(second));
+    if (!src || !menu) return false;
+    screen.elements.push({ ...JSON.parse(JSON.stringify(src)), name: TOP_THIRD, index: Math.max(...screen.elements.map((e) => e.index ?? 0)) + 1, label: 'onlinerecords',
+      props: { ...src.props, 1: src.props[1] + PITCH, 7: 15 } });
+    menu.children.push(TOP_THIRD);
+    const blue = { 14: 101, 15: 184, 16: 201 }, white = { 14: 255, 15: 255, 16: 255 }, added = [];
+    for (const ev of screen.events) if (ev.element === second && (ev.frame === 30 || ev.frame === 40 || ev.frame === 45)) added.push({ ...ev, element: TOP_THIRD, props: { ...ev.props, 1: ev.props[1] + PITCH, 7: 15, ...blue } });
+    for (const ev of screen.events) if (ev.frame === 40 && [first, second, TOP.xgroup].includes(ev.element)) {
+      const p = { ...ev.props, ...(ev.element === TOP.xgroup ? { 1: ev.props[1] + 2 * GLYPH } : blue) };
+      added.push({ ...ev, frame: 50, props: p });
+    }
+    const third = added.find((ev) => ev.element === TOP_THIRD && ev.frame === 40); if (third) added.push({ ...third, frame: 50, props: { ...third.props, ...white } });
+    screen.events.push(...added); screen.labels = [...(screen.labels || []), { frame: 50, name: TOP_THIRD, control: ['10000400'] }];
+    const lui = new LuiScreen(screen, this.ui.images, this.ui); lui.shapeScale = true; lui.unionFlat = true; lui.keepLead = true;
+    Object.defineProperty(lui, 'flagWrap', { get: () => pv('resultsMenu') }); Object.defineProperty(lui, 'ps2Wrap', { get: () => pv('luiWrap') });
+    this.lui['61toptimes+'] = lui; return true;
   }
   // 70peakchal_results: title1 / title2, 'Event Results', the target and the player's value (labels right-aligned), the
   // message, items (Transport / Restart / Quit), index, noItems.
@@ -268,6 +295,7 @@ const REWARD = { title: '0ebd1347', sub: '09edbde4', intro: '0038acf4', cont: '0
 export const RECORD_ROW = Object.freeze([250, 135, 18]), CARD_HUMAN = Object.freeze([252, 177, 101]);
 const CARD = { track: '01abc714', title: '007b0b25', tabs: ['085c309c', '04df1f42', '070c569c'], objective: '01233101', bullet: '069c32c4',
   recordLabel: '0d0ecebc', record: '0b65b0d5', item: '0263fe50', rows: ['078fac51', '078fac52', '078fac53', '078fac54', '078fac55', '078fac56'] };
+const TOP_THIRD = '084d7134';   // pv onlineRecords: 61toptimes' added third item (topTimesThree)
 const TOP = { track: '07a198f8', times: '0c850ae4', scores: '0c9904a3', time: '0007b035', points: '077605b3', help1: '07a12f51', help2: '07a12f52',
   xgroup: '0f55f740', items: ['065b08f5', '084d7133'],
   rows: { rank: ['00000331', '00000332', '00000333', '00000334', '00000335'], name: ['07483831', '07483832', '07483833', '07483834', '07483835'],

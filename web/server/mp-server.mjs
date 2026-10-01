@@ -39,6 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRunCheck, AHEAD_TICKS } from './plausibility.mjs';
 import { createGate } from './gate.mjs';
+import { createRecords } from './records.mjs';
 
 export const PROTOCOL = 2;
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => (v.startsWith('--') ? [...a, [v.slice(2), all[i + 1]]] : a), []));
@@ -59,6 +60,11 @@ const fromEdge = (req) => { if (!EDGE_SECRET) return false; const a = Buffer.fro
 const clientAddress = (req) => (TRUST_PROXY && typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : req.socket.remoteAddress) || '?';
 const GATE = createGate({ password: process.env.MP_GATE_PASSWORD || null, passwordFile: process.env.MP_GATE_PASSWORD_FILE || null, secretFile: process.env.MP_GATE_SECRET_FILE || null,
   secure: process.env.MP_GATE_INSECURE !== '1', clientAddress });
+// Online course records (web/server/records.mjs, docs/online-records.md): MP_RECORDS_DIR = their state directory (the host's
+// ~/ssx-host/state/records); off without it. The disc tables (CAREER/career.json) come from MP_RECORDS_ASSETS or the static roots.
+const RECORDS_ASSETS = process.env.MP_RECORDS_ASSETS ? path.resolve(process.env.MP_RECORDS_ASSETS)
+  : [...STATIC.map((r) => path.join(r, 'assets')), path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'assets')].find((p) => fs.existsSync(path.join(p, 'CAREER', 'career.json'))) ?? null;
+const RECORDS = process.env.MP_RECORDS_DIR ? createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress }) : null;
 const MAX_PLAYERS = 6, RESUME_GRACE_MS = +(process.env.MP_RESUME_MS ?? 30000), SILENT_DROP_MS = 10000, LOAD_TIMEOUT_MS = 45000, GO_DELAY_MS = 2500;
 const FINISH_GRACE_MS = +(process.env.MP_FINISH_GRACE_MS ?? 90000), RACE_LIMIT_MS = +(process.env.MP_RACE_LIMIT_MS ?? 15 * 60000);
 // Default 'flag' (Owen, 2026-09-28: log only, never reject, for this friends-only build: honest finishes were rejected
@@ -381,6 +387,7 @@ const server = http.createServer((req, res) => {
   if (GATE) res.setHeader('cdn-cache-control', 'no-store'); // Cloudflare honours CDN-Cache-Control: never keep a gated response at the edge
   if (GATE && GATE.handle(req, res)) return;
   if (req.url === '/mp/diag' && req.method === 'POST') { diagPost(req, res); return; } // web/diagnostics.js (gated like everything else)
+  if (req.url.startsWith('/mp/records')) { if (RECORDS?.enabled) { if (RECORDS.handle(req, res)) return; } else { req.resume(); res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"off"}'); return; } } // online records (gated)
   if (req.url === '/mp/status') {
     res.writeHead(200, { 'content-type': 'application/json', ...(GATE ? {} : { 'access-control-allow-origin': '*' }), 'cache-control': 'no-store' });
     res.end(JSON.stringify({ ok: true, protocol: PROTOCOL, binary: binaryStats, clients: clients.size, lobbies: [...lobbies.values()].map((l) => ({ ...summary(l),

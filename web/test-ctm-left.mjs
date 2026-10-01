@@ -63,6 +63,16 @@ const pokeSlow = (c, slot) => { c.save.records[slot].forEach((e, k) => { e.value
   assert.equal(c.raceResult(d, { raceTicks: 0, origin: 0 }).record, -1);
   console.log('records: every heat under PLAYER 1, once, not for a DNF');
 }
+{ // 0x154D58 on whole seconds (0x154CD8): 02:57.50 ties BOMBER's 177 s and goes above it; 02:58 goes below; a tie with the 5th enters
+  const c = new Career(data, { storage: new Memory() }), slot = recordSlot(data.rules, MODE.RACE, 0);
+  c.startEvent('zoe', MODE.RACE, 0, true);
+  assert.equal(c.heatRecord(177 * 60 + 30), 0, 'a tie in seconds ranks the new run first');
+  assert.equal(c.records(slot, true)[1].name, 'BOMBER');
+  assert.equal(c.heatRecord(178 * 60), 2);
+  assert.equal(c.heatRecord(191 * 60 + 59), 4, '03:11.98 = 191 s ties SIMON (now 5th) and goes above him');
+  assert.equal(c.heatRecord(192 * 60), -1, 'slower than the 5th');
+  console.log('records: whole seconds, a tie goes above (0x154D58)');
+}
 // the results flow: a new record opens Top 5 Record Times first, then the rewards / results (20A8F8 overlay 0xF)
 async function flow(round, ticks) {
   const log = [], ui = {
