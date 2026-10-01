@@ -37,7 +37,6 @@ export function trackCompiles(renderer) {
 }
 
 // The compiles still building: [calls, items left].
-export const compilesInFlight = () => [lists.size, [...lists.keys()].reduce((n, l) => n + l.length, 0)];
 
 // Empties every list in flight and waits (at most `ms`) for the items being built to finish. Resolves the items dropped.
 export async function abortCompiles(ms = 1000) {

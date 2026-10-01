@@ -672,6 +672,13 @@ const aiCases = [
   // port's enter_crash (web/animation_bridge.cpp originalHardCrashEnter(..., false, ...)) always counts +0x124 (open, not career-specific).
   { name: 'careerrival/dra4-final', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/DRA4/lineups-career/DRA4-final-zoe.json', '--in-world-ai', '--node-seed', '../local/career-rival/caps/dra4-final.nodes.json'],
     humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true, scoreThrough: 228, why: 'Intimidator career final, Nate in slot 1: human physics, five riders, RNG, ranks, pair records exact to the end; human score to 228' },
+  // pv semiFresh (docs/ai-racers.md "The semi's fresh riders"): the Snow Jam career semi (c0c-race, linked) on the EVENT-LOAD path (no
+  // --in-world-ai: the page's live career heat) with the semi countdown's own document, whose riders hold +0x434 = 0x31 (WS13's new riders,
+  // 11B718), which web/lineup.js assembleLineup gives under semiFresh (web/test-career-rival.mjs: leaf for leaf). With the Single Event value 0
+  // the riders leave at the push-off (182..204), RNG 296, human 310. 461: the CTM collectibles' slot-1 programs (the event package path
+  // runs the Single Event collect state; ctm-events/c0c-race-riders gates them with --in-world-ai).
+  { name: 'careerrival/ara1-semi', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-semi-zoe.json'],
+    humanThrough: 1398, ai: [862, 530, 862, 530, 793], rngThrough: 460, why: 'Snow Jam career semi on the event-load path: the fresh riders\' push-off with +0x434 = 0x31' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;

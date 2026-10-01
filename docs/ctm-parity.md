@@ -249,8 +249,7 @@ are pretty bricked, but do get tracked and give money".
 - [x] **Collected snowflakes coming back** after a location streamed out and in: the core's copy of the career row now takes
   the bit at the award (the pickups agent's change in `stage_script_gameplay.inc`, `web/test-collect-restream.mjs`). The career
   save keeps every bit from the pickup on (`career.js markCollected`, saved at once). `collectStart` hands the saved rows to the
-  core at every run start, page reload and peak change. `stage-collect.js collectedIndexes()` gives the saved list indexes to
-  anything outside the core.
+  core at every run start, page reload and peak change.
 - [x] **Trick and called-trick challenges could not complete.** The WScript trick event (118FF8 -> 309918, kind 3), builtin
   78 (30AF08: a field of the trick record) and builtin 83 (3045B8: the called trick into C+0x34..+0x3F) were not ported. Nine
   Peak 1 challenges need them: Pop the Kitty 3, Dizzy Spells, Indy Whip, Camel Backs, Seek and Slide I-III, Tight Rope

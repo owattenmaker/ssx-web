@@ -106,19 +106,7 @@ export class AudioPainterQuery {
 }
 
 // One rider's three audio queries (2867E8 creates MusicTrigger/Ambience/Mix per player side).
-export function createAudioPainterState() {
-  return { musicTrigger: new AudioPainterQuery(0), mix: new AudioPainterQuery(1), ambience: new AudioPainterQuery(2) };
-}
 // Per game tick (2898A8). The original queries MusicTrigger only in radio modes 0/1/3 (28D960) and Ambience only
 // in mode 2 (2899E8); an unqueried object keeps its old value. Pass modes accordingly (defaults: all).
-export function stepAudioPainters(state, data, position, location, { musicTrigger = true, ambience = true } = {}) {
-  const x = Array.isArray(position) ? position[0] : position.x, y = Array.isArray(position) ? position[1] : position.y;
-  const entry = regionEntry(data, location);
-  if (musicTrigger) state.musicTrigger.step(entry, x, y);
-  state.mix.step(entry, x, y);
-  if (ambience) state.ambience.step(entry, x, y);
-  return { mix: state.mix.cur[0], musicTrigger: { a: state.musicTrigger.cur[0], b: state.musicTrigger.cur[1] }, ambience: state.ambience.cur[0] };
-}
 
 // Browser helper: three.js world metres (Y-up) -> painter source cm.
-export const sourceXY = (world) => ({ x: Math.fround(world.x * 100), y: Math.fround(-world.z * 100) });

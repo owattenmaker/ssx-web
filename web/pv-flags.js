@@ -54,9 +54,6 @@
 // no output conversion. Opaque pixels are unchanged; world additives stay in the world pass (byteBlend is moot). Off: linear light.
 // threeLean (web/three-patches.js, set as globalThis.__ssxThreeLean by main.js before the renderer exists): three r186's per-draw
 // dynamic cache key, bind group key, updateTexture options and sampler key without per-call garbage (the same results).
-// ps2MenuInput (web/gamepad-menus.js; docs/ctm-decomp-screens.md): menu directions repeat at the PS2's 24 / 12 frames (0x321298;
-// the port's pad repeated every 110 ms, 1.8x too fast), held arrow keys repeat the same way (the port ignored them), and the stick
-// counts as held from about 0.38 deflection (raw < 79 / > 176), not 0.5.
 // ws13Rebuild (web/career-ui.js ws13Riders; main.js ui.cb.heatLineup; docs/ctm-decomp-world-states.md): a race's Next heat / Final
 // Round and the results' Restart rebuild the round's computer riders before the gondola, as world state 13 enter (0x235AA0) does; a
 // rival challenge's Restart shows its card over the ready state (it was over black).
@@ -138,6 +135,10 @@
 // versionedAssets (web/asset-versions.js, web/downloads.js; docs/hosting.md "Versioned asset URLs"): game files asked for as
 // /assets/<dir>/<name>?v=<hash> from the build's asset manifest, answered immutable by the origin. Pending.
 // careerRival (career-rival agent, docs/career-events.md "The peak rival in career events"): a career race FINAL's slot 1 rides the peak
+// semiFresh (career-rival agent, docs/ai-racers.md "The semi's fresh riders"): a career race SEMI's computer riders start with +0x434 = 0x31
+// (ground.state.rider_type / identity.rider_type434): WS13 makes new riders (constructor 11B718: 0x31) and 1289F0 places them without a
+// hold, so 1218D0 never writes the track id before the push-off, and 13C948 halves their auto boost (PS2 ARA1-semi-zoe; the qualifier's
+// and the final's riders are NIS-held and hold the track id). Off: the Single Event tables' track id in every round.
 // careerLevel (career-rival agent, docs/ai-racers.md "Difficulty by race level"): a career race's computer riders take +0xDF8 / +0xDFC from
 // the human's race level (0x10C4F8 by slot and level 0 / 1 / 2, then 0x10C758's course factor; web/lineup.js npcDifficulty). Off: every
 // career race rides lineups.json's slot tables, which hold level 1 (a Single Event's, and a fresh career's).
@@ -156,7 +157,6 @@ export const PV_DEFAULTS = Object.freeze({
   hangWatch: true,
   encodedBlend: true,
   threeLean: true,
-  ps2MenuInput: true,
   ws13Rebuild: true,
   bcDecline: false,
   finishSkip: false,
@@ -181,7 +181,8 @@ export const PV_DEFAULTS = Object.freeze({
   onlineRecords: true,
   versionedAssets: false,
   careerRival: true,
-  careerLevel: true
+  careerLevel: true,
+  semiFresh: true
 });
 const overrides = new Map();
 function fromQuery() {

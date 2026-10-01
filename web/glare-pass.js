@@ -27,7 +27,6 @@ import {followRegion,followWorldLoad} from './painter-regions.js';
 //    Cd*FIX>>7 + Cs with FIX = trunc(FrameBlend*127.5), MODULATE by A[i] (RGBA A,A,A,A).
 //   All GS math on bytes: MODULATE (T*C)>>7, blends clamp to 0..255, level buffers PSMCT24.
 const FIELDS=['cutoff','post_cutoff_scale','copy_intensity','frame_source_intensity','frame_blend_intensity','blend_texture2','blend_texture3'];
-export const GLARE_FIELDS=FIELDS;
 export const GLARE_DEFAULTS=[1,1,1,1,1,0,0];
 export const GLARE_RENDERER={bufferBlock:0xe0<<5,frameBlock:0,frameFbw:8,viewport:[0,0,512,448]};
 const f=Math.fround,trunc=Math.trunc;

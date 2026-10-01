@@ -297,6 +297,8 @@ export function assembleLineup(data, humanBase, values, { moment = data.moment, 
     for (const part of [data.slot[slot] ?? {}, grid, data.skin[skin], data.base[String(base)] ?? {}, moment[slot] ?? {}, state[slot] ?? {}])
       for (const [path, value] of Object.entries(part)) put(record, path, value);
     if (round != null && record.npc?.score_state) { record.npc.score_state.role_e00 = npcRoundRole(k + 1, round); record.npc.score_state.allow_flag0_e04 = k === 0 && round === 3; }
+    // pv semiFresh: a semi's riders are WS13's new ones, +0x434 = 0x31 until the push-off (11B718; tools/export_lineups.py apply_round_level)
+    if (round === 2 && pv('semiFresh') && record.ground?.state && record.identity) { record.ground.state.rider_type = 0x31; record.identity.rider_type434 = 0x31; }
     if (level != null && record.npc?.driving_state && COURSE_INDEX[data.course] != null) {
       const d = npcDifficulty(k + 1, level, COURSE_INDEX[data.course]);
       record.npc.crouch_parameter_df8 = d.df8;

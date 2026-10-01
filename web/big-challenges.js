@@ -240,11 +240,11 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
         // 20D944 -> 30B758
         if (i === 0) resume();
         else if (i === 1) { const go = () => { prompt = { id: lastHud?.active ?? id, from: 'pause' }; ui.set('ctm-bcstart'); ui.index = 0; ui.sync(); }; // 20D8F4: overlay 0x1D
-          if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[1], go, back(1)); else go(); }   // pv ps2MenuInput: "Are you sure?" first
+          if (careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[1], go, back(1)); else go(); }   // "Are you sure?" first
         else if (i === 2) careerUI()?.messages?.open?.(back(2));
         else if (i === 3) ui.audioMenus?.open?.('audio', { back: back(3) });
         else if (i === 4) { ui.optionsReturn = 'ctm-bcpause'; ui.set('options'); }
-        else { const go = () => { core._mission_prompt(3, 0); resume(); }; if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[5], go, back(5)); else go(); }
+        else { const go = () => { core._mission_prompt(3, 0); resume(); }; if (careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[5], go, back(5)); else go(); }
       }
     },
     back() {

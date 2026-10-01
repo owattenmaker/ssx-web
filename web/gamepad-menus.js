@@ -6,7 +6,6 @@
 // still held from the race when the pause menu opens does nothing), directions repeat while held like a PS2 menu.
 import { MENU_KEYS } from './touch-controls.js';
 import { pollPads } from './gamepad.js';
-import { pv } from './pv-flags.js';
 import { startAccepts as startMenu } from './start-rules.js';
 
 const KEY_NAMES = {
@@ -27,18 +26,16 @@ const KEY_NAMES = {
 // standard button index -> menu control
 const BUTTON_CONTROLS = [[0, 'cross'], [1, 'circle'], [2, 'square'], [3, 'triangle'], [4, 'l1'], [5, 'r1'], [6, 'l2'], [7, 'r2'], [9, 'start'], [12, 'up'], [13, 'down'], [14, 'left'], [15, 'right']];
 const DIRECTIONS = new Set(['up', 'down', 'left', 'right']);
-export const MENU_REPEAT = Object.freeze({ first: 400, next: 110, stick: 0.5 });
-// pv ps2MenuInput (docs/ctm-decomp-screens.md): the PS2 pad history 0x321298 (INPUT.MAP UIUp / UIDown = DPad*.repeat ||
+// The PS2 pad history (docs/ctm-decomp-screens.md): 0x321298 0x321298 (INPUT.MAP UIUp / UIDown = DPad*.repeat ||
 // LStick*.repeat) moves on the press, then after 24 frames, then every 12 (0 / 400 / 200 ms; ARMSX2 MCOMM capture: samples 31,
 // 55, 67, 79, 91); the stick counts as held past raw < 79 / > 176 of 0..255 (about 0.38 of full deflection).
 export const MENU_REPEAT_PS2 = Object.freeze({ first: 400, next: 200, stick: 0.38 });
-const repeatRule = () => (pv('ps2MenuInput') ? MENU_REPEAT_PS2 : MENU_REPEAT);
 
 // The menu controls held on a standard-layout pad.
 export function menuControls(pad) {
   const out = new Set(); if (!pad) return out;
   for (const [i, c] of BUTTON_CONTROLS) { const b = pad.buttons?.[i]; if (b && (b.pressed || b.value > 0.5)) out.add(c); }
-  const x = +pad.axes?.[0] || 0, y = +pad.axes?.[1] || 0, t = repeatRule().stick;
+  const x = +pad.axes?.[0] || 0, y = +pad.axes?.[1] || 0, t = MENU_REPEAT_PS2.stick;
   if (y < -t) out.add('up'); if (y > t) out.add('down'); if (x < -t) out.add('left'); if (x > t) out.add('right');
   return out;
 }
@@ -47,19 +44,18 @@ export function menuControls(pad) {
 // startAccepts(): startRules (web/start-rules.js): Start is the menu's accept (UINext = Cross or Start) on every menu screen, also
 // while a run is going (the pause, MCOMM, results, the lodge); only the ride itself leaves it to main.js.
 export function createPadMenus(options = {}) {
-  const port = createPortPadMenus(options), ps2 = createPs2PadMenus(options), pick = () => (pv('ps2MenuInput') ? ps2 : port);
+  const ps2 = createPs2PadMenus(options);
   return {
-    get held() { return pick().held; },
-    // onFrame(): the UI frame counter's pass (web/screen-phases.js step), run before each 60 Hz pad update of the PS2 model so a key meets
-    // the phase of its own frame; the port's model has no updates (installPadMenus advances the counter by time instead)
-    step(pad, now, onFrame = null) { const other = pick() === ps2 ? port : ps2; if (other.held.size) other.releaseAll(); pick().step(pad, now, onFrame); },
-    get frames() { return pick() === ps2; },
-    releaseAll() { port.releaseAll(); ps2.releaseAll(); },
-    taken(c) { return pick().taken(c); },
+    get held() { return ps2.held; },
+    // onFrame(): the UI frame counter's pass (web/screen-phases.js step), run before each 60 Hz pad update so a key meets the phase of
+    // its own frame
+    step(pad, now, onFrame = null) { ps2.step(pad, now, onFrame); },
+    releaseAll() { ps2.releaseAll(); },
+    taken(c) { return ps2.taken(c); },
   };
 }
 
-// pv ps2MenuInput: the PS2 pad history 0x321298 (engine/original_input.cpp originalUpdatePad, bit-exact there), one update per
+// The PS2 pad history 0x321298 (engine/original_input.cpp originalUpdatePad, bit-exact there), one update per
 // 60 Hz frame on 24 channels (buttons, d-pad and left-stick directions each their own): after any edge (press or release) the next
 // three updates ignore the input (edgeAge < 3: pressed = released = 0, held kept), so a tap inside that window is seen only if the
 // button is still down when the channel looks again; a held channel repeats on the press, 24 updates later, then every 12. The menus'
@@ -121,35 +117,9 @@ function createPs2PadMenus({ menu = () => true, running = () => false, send = ()
   };
 }
 
-function createPortPadMenus({ menu = () => true, running = () => false, send = () => {}, startAccepts = () => false } = {}) {
-  const held = new Map();         // control -> { code, next }
-  const spent = new Set();        // controls whose press a menu took, until released (main.js pause: taken('start'))
-  let prev = new Set();
-  function release(c) { const h = held.get(c); if (!h) return; held.delete(c); send('keyup', h.code); }
-  return {
-    held,
-    step(pad, now) {
-      const controls = menuControls(pad), inMenu = !!menu();
-      for (const c of [...spent]) if (!controls.has(c)) spent.delete(c);
-      for (const c of [...held.keys()]) if (!controls.has(c) || !inMenu) release(c);
-      if (inMenu) for (const c of controls) {
-        if (prev.has(c) || held.has(c)) continue;
-        if (c === 'start' && running() && !startAccepts()) continue;   // Start pauses / resumes a run (main.js frame)
-        const code = MENU_KEYS[c]; if (!code) continue;
-        send('keydown', code); held.set(c, { code, next: DIRECTIONS.has(c) ? now + repeatRule().first : Infinity }); spent.add(c);
-      }
-      for (const [c, h] of held) if (now >= h.next) { send('keyup', h.code); send('keydown', h.code); h.next = now + repeatRule().next; }   // menus ignore key repeats: fresh presses
-      prev = controls;
-    },
-    releaseAll() { for (const c of [...held.keys()]) release(c); },
-    // this control's current press was a menu key (a card / prompt accept): the game must not also act on it
-    taken(c) { return spent.has(c); },
-  };
-}
-
 // Browser: a frame loop of its own, so the menus answer the pad before the game data has loaded.
 // phases: the UI frame counter (web/screen-phases.js): one pass per PS2 pad update, before its keys, so each key meets its own frame's
-// phase; with the port's pad model it advances by time before the pad's keys.
+// phase.
 export function installPadMenus({ screen = () => 'title', isRunning = () => false, phases = null } = {}) {
   if (typeof window === 'undefined' || typeof requestAnimationFrame !== 'function') return null;
   // ssxPadMenu: a menu key made from the pad (main.js: never the keyboard's pause)
@@ -161,7 +131,7 @@ export function installPadMenus({ screen = () => 'title', isRunning = () => fals
     } catch {}
   };
   const menus = createPadMenus({ menu: () => screen() !== 'game', running: isRunning, send, startAccepts: () => startMenu(screen()) });
-  // pv ps2MenuInput: a held arrow key repeats like the pad's directions (the PS2 keyboard-less menus repeat UIUp / UIDown at 24 / 12
+  // A held arrow key repeats like the pad's directions (the PS2 keyboard-less menus repeat UIUp / UIDown at 24 / 12
   // frames); the browser's own auto-repeat keydowns (e.repeat) stay ignored by the screens, these arrive as fresh presses.
   const ARROWS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']), keys = new Map(); // code -> next repeat (ms)
   const keySend = (type, code) => {
@@ -172,7 +142,7 @@ export function installPadMenus({ screen = () => 'title', isRunning = () => fals
     } catch {}
   };
   addEventListener('keydown', (e) => {
-    if (!pv('ps2MenuInput') || e.ssxKeyRepeat || e.ssxPadMenu || e.repeat || !ARROWS.has(e.code) || screen() === 'game') return;
+    if (e.ssxKeyRepeat || e.ssxPadMenu || e.repeat || !ARROWS.has(e.code) || screen() === 'game') return;
     keys.set(e.code, performance.now() + MENU_REPEAT_PS2.first);
   });
   addEventListener('keyup', (e) => { if (!e.ssxKeyRepeat) keys.delete(e.code); });
@@ -181,7 +151,7 @@ export function installPadMenus({ screen = () => 'title', isRunning = () => fals
     for (const [code, next] of keys) if (t >= next) { keys.set(code, t + MENU_REPEAT_PS2.next); keySend('keyup', code); keySend('keydown', code); }
   };
   const pass = phases ? () => phases.step() : null;
-  const loop = (t) => { try { if (!menus.frames) phases?.advance(t); menus.step(pollPads(), t, pass); stepKeys(t); } catch (e) { console.warn('pad menus', e); } requestAnimationFrame(loop); };
+  const loop = (t) => { try { menus.step(pollPads(), t, pass); stepKeys(t); } catch (e) { console.warn('pad menus', e); } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
   addEventListener('blur', () => { menus.releaseAll(); keys.clear(); });
   return menus;

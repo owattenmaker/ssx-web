@@ -115,4 +115,3 @@ export function uberChoiceRows(shop,points,character,selection){
 
 // ---- songs ------------------------------------------------------------------------------------------------
 export const SONG_FREE_CREDITS=6,SONG_PRICE=5000;
-export const songCount=mask=>{let n=0;for(let i=0;i<64;i++)if(mask[i])n++;return n;};

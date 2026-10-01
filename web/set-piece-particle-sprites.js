@@ -256,4 +256,3 @@ export function trailSprites(emitter, options = {}) {
 
 // Flipbook frame for the emitter: base TextureId + trunc(phase) (3708C0 at 370A3C / 371380
 // at 3713A8). The phase belongs to the simulation (system+0x184 / emitter+0x10).
-export const spriteTexture = (textureId, phase = 0) => textureId + Math.trunc(phase);

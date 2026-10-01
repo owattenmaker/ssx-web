@@ -78,6 +78,27 @@ for (const code of ['CRA3', 'DRA4']) {
   console.log(`${code} career final: the page's five riders (Nate in slot 1, round 3, race level ${ls.race_level}) equal the PS2 countdown's`); checks++;
 }
 
+// ---- the Snow Jam career heats (qualifier / semi / final): the page's assembly equals each PS2 countdown; the semi's fresh riders
+// (+0x434 = 0x31, pv semiFresh) ---------------------------------------------------------------------------------------------------
+{
+  const data = json(here('public/assets/ARA1/lineups.json'));
+  const leaves = (r, out = {}, pre = '') => { for (const [k, v] of Object.entries(r)) { if (v && typeof v === 'object' && !Array.isArray(v)) leaves(v, out, pre + k + '.'); else out[pre + k] = v; } return out; };
+  let n = 0;
+  for (const name of ['ARA1-qual-zoe', 'ARA1-semi-zoe', 'ARA1-final-zoe']) {
+    const f = local(`assets/native/ARA1/lineups-career/${name}.json`); if (!fs.existsSync(f)) continue;
+    const doc = json(f), ls = doc.lineup_state, values = ls.characters.slice(1, 6).map((c, k) => (ls.cheats[k + 1] || c));
+    const pick = (paths) => Object.fromEntries(doc.riders.map((r) => { const x = leaves(r); return [String(r.slot), Object.fromEntries(paths.filter((p) => p in x).map((p) => [p, x[p]]))]; }));
+    const opts = { round: ls.round, level: ls.race_level, moment: pick(data.paths.moment), state: pick(data.paths.state) };
+    const diffs = () => assembleLineup(data, ls.human_base, values, opts).riders.map((r, k) => { const a = leaves(r), b = leaves(doc.riders[k]); return Object.keys({ ...a, ...b }).filter((p) => JSON.stringify(a[p]) !== JSON.stringify(b[p])); });
+    setPv('semiFresh', true);
+    assert.deepEqual(diffs(), [[], [], [], [], []], `${name}: the page's riders equal the PS2 countdown's (pv semiFresh)`);
+    setPv('semiFresh', false);
+    assert.deepEqual(diffs().map((d) => d.sort()), ls.round === 2 ? Array(5).fill(['ground.state.rider_type', 'identity.rider_type434']) : [[], [], [], [], []], `${name}: pv semiFresh off differs in +0x434 only, and only in the semi`);
+    setPv('semiFresh', null); n++;
+  }
+  if (n) { console.log(`Snow Jam career heats: ${n} countdowns assembled exactly (the semi's +0x434 = 0x31 with pv semiFresh)`); checks++; }
+}
+
 // ---- career slope style: Nate posted, nobody rides (the derived PS2 career Style Mile heat 1) --------------------------------
 const heatFile = local('career-rival/dss2-career-heat1.json');
 if (fs.existsSync(heatFile)) {

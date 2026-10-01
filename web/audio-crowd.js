@@ -4,7 +4,6 @@
 // 2A67F0 / 2A6808 / 290FD0, stop 2A6848, loop bend 2A68B0, emitters 2A7678 / 2A7340 / 2A72D8, MIDI 3B9A00.
 
 // ---- .eam (MIDx): [wait][status][d1]([d2]); wait = ticks after the record; 1 tick = 10 ms (3B96B8 at 100 Hz) ----
-export const MIDX_TICK_SECONDS = 0.01;
 export function parseMidx(buf) {
   const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   if (b[0] !== 0x4d || b[1] !== 0x49 || b[2] !== 0x44 || b[3] !== 0x78) throw new Error('not a MIDx file');

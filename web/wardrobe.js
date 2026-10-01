@@ -33,7 +33,6 @@ const OUTFIT_KEY='ssx3.outfit.v1',FREE_KEY='ssx3.outfit.free.v1';
 const BUILD_ORDER=['suit','boot','head','bord','alph'];   // tools/export_characters.py build_package texture order
 const cache=new Map(),virtual=new Map(),worn=new Map();
 // true while `riderId` wears a non-default outfit (web/character-select.js then shows the race rider, not the FE package)
-export function outfitWorn(riderId){return !!riderId&&worn.has(riderId);}
 
 const storage=()=>{try{return globalThis.localStorage??null;}catch{return null;}};
 // wardrobe.json (items, rules, parts, textures) and, when a package is built, parts.bin (geometry and skin).

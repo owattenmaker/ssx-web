@@ -29,15 +29,29 @@ export function requireHeatCore(human, racers) {
 // bank: the event location's paths.json variant (its start rows), cstr(text) -> a core string. 12AB20 -> 129768 -> 1297C8(C, 1) ends
 // the enter: the rider manager's tick C+8 = 0 and 11D390's event branch on the human (core event_row_enter: 112180 on its start row,
 // 11D660 there, the grid hold) before the gondola's NIS takes it (PS2 c0a-ws13p460 entry probe; c0a-ws13 record 14017's +0x460).
-export function heatEnter({ human, racers, doc, finishOrder, lineupData, riderText, bank, cstr, round = 2 }) {
+// 230180, the world reset part of WS13's enter (also the page's, main.js heatInWorld): every context's reset, then the human context's
+// node states into the riders' contexts.
+export function heatResetWorld({ human, racers }) {
   requireHeatCore(human, racers);
-  if (!bank || !cstr) throw new Error('heatEnter: the location\'s start rows (bank) and cstr are required');
   for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._ctm_world_reset(); // 230180 resets the one world every rider context mirrors (web/shared_world.inc)
   // ... and every context then holds the human context's node states (web/ai-racers.js syncWorldNodes): a rider context's copy of an
   // instance the qualifier changed by a shared-world replay (no stage script of its own to reset) is the load state again (PS2 c0a-ws13:
   // the semi's rider 1 re-fires trigger 266760's Spline pieces at 868; without it the riders' copy kept the fired 0x200004). The human's
   // reset includes 308C60's 308DB8 (the Big Challenge markers hidden again, core ctm_world_reset), so the riders take those Hides too.
   syncWorldNodes(human, racers.npcs.map((n) => n.core));
+}
+// 12AB20 -> 129768 -> 1297C8(C, 1), the end of WS13's enter after the round's roster (also the page's): the game RNG runs on, every
+// context's tick C+8 = 0, and 11D390's event branch on the human (core event_row_enter: the start row, 11D660, the grid hold).
+export function heatRows({ human, racers, bank, cstr }) {
+  if (!bank || !cstr) throw new Error('heatRows: the location\'s start rows (bank) and cstr are required');
+  racers.setAnchorRng(null); // the game RNG runs on (no event load: an anchor's words are a load's)
+  for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._game_tick_restart(0); // 1297C8: C+8 = 0
+  const p = cstr(JSON.stringify(bank));
+  try { if (!human._event_row_enter(p)) throw new Error('event_row_enter: no start row'); } finally { human._free(p); }
+}
+export function heatEnter({ human, racers, doc, finishOrder, lineupData, riderText, bank, cstr, round = 2 }) {
+  if (!bank || !cstr) throw new Error('heatEnter: the location\'s start rows (bank) and cstr are required');
+  heatResetWorld({ human, racers });
   const base = doc.relationships.persistent_human_character, rival = peakRival(lineupData.peak, base);
   const entries = buildRoster(doc.lineup_state.roster_seed, base, lineupData.peak);
   const current = roundEntries(entries, { round: round - 1, career: true, rival, previous: [] });
@@ -47,8 +61,6 @@ export function heatEnter({ human, racers, doc, finishOrder, lineupData, riderTe
   for (const r of next.riders) riderText(r.package);
   next.world.pair_inputs[0] = { ...racers.document.world.pair_inputs[0] }; // the human's own (web/ai-race.js install)
   const changed = racers.setDocument(next);
-  racers.setAnchorRng(null); // the game RNG runs on (no event load: an anchor's words are a load's)
-  for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._game_tick_restart(0); // 1297C8: C+8 = 0
-  const p = cstr(JSON.stringify(bank)); try { if (!human._event_row_enter(p)) throw new Error('event_row_enter: no start row'); } finally { human._free(p); }
+  heatRows({ human, racers, bank, cstr });
   return { values: lineup.values, changed, doc: next };
 }

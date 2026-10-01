@@ -151,6 +151,21 @@ export function createRiderShadows({renderer, scene, origin}) {
   function riders() { riderList.length = 0; walk(scene); return riderList; }
   // per-frame scratch (docs/web-render-performance.md "Per-frame garbage"): each entry keeps its bones, fit and candidate record
   const candidates = [], byDistance = (a, b) => a.d - b.d, up = [0, 0, 0];
+  // A rider group that left the scene (an in-world event's computer riders after its end, a rebuilt heat lineup: the world stays, so
+  // no course change disposes this): its silhouette meshes and material go, and the entry with them (it held the whole rider model:
+  // its geometry, textures, skin and core, about 35 MB per in-world event cycle, docs/ctm-events-in-world.md "Rollout checks").
+  function drop(e) {
+    for (const m of e.meshes) {
+      m.removeFromParent();
+      m.dispatchEvent({ type: 'dispose' });
+    }
+    e.material.dispose();
+    entries.delete(e.group);
+  }
+  function prune(groups) {
+    const live = new Set(groups);
+    for (const e of [...entries.values()]) if (!live.has(e.group)) drop(e);
+  }
   const api = {
     state,
     atlas,
@@ -170,6 +185,7 @@ export function createRiderShadows({renderer, scene, origin}) {
       frustum.setFromProjectionMatrix(matrix.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
       candidates.length = 0;
       const groups = riders();
+      if (entries.size > groups.length) prune(groups);
       for (let g = 0; g < groups.length; g++) {
         const group = groups[g];
         const e = entryFor(group);

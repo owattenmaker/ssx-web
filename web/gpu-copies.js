@@ -8,7 +8,6 @@
 const entries = new Map(); // owner (Object3D) -> [async restore()]
 export function registerGpuRestore(owner, restore) { if (!entries.has(owner)) entries.set(owner, []); entries.get(owner).push(restore); }
 export function forgetGpuRestore(owner) { entries.delete(owner); }
-export const gpuRestoreCount = () => [...entries.values()].reduce((n, l) => n + l.length, 0);
 const attached = (o) => { for (let p = o; p; p = p.parent) if (p.isScene) return true; return false; };
 export async function restoreGpuCopies() {
   const jobs = [];

@@ -23,7 +23,6 @@ import {attribute, texture, vec4, float, uniform, positionGeometry, modelViewMat
 import {painterRegions} from './painter-regions.js';
 import {setUpdateRange} from './heap-views.js';
 
-export const SPARKLE_FLAG = 0x800000;
 export const PATCH_WORDS = 56;                       // terrain-sparkle.bin record: 48 row floats, lo xyz, hi xyz, resource, 0
 const R0 = 3000, R1 = 15000;                         // renderer +0x33C / +0x340 (every PS2 state checked)
 const COUNT_SCALE = fromBits(0x34b2f4fc), COUNT_GAIN = 8;   // gp-0x26B4, gp+0x1258 (x renderer+0xC4: the Surface painter's density)

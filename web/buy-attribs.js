@@ -13,7 +13,7 @@ import { money } from './trick-hud.js';
 import { originalAttributeBytes } from './career.js';
 import { LuiFlash, FLASH_IN, FLASH_OUT, flashAlpha } from './lui-flash.js';   // the lodge's shared TransitionOut flash
 
-export const RAW_MAX = 55, LEVEL_MAX = 11;
+export const LEVEL_MAX = 11;
 export const BAR_UNIT = Math.fround(37 / 11);            // gp-0x554C (3.3636): bar pixels per raw point, 185 px at raw 55
 export const BAR_HEIGHT = 12;
 export const levelOf = (raw) => Math.trunc(raw / 5);

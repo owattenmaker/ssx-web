@@ -64,7 +64,6 @@ export function diagRide(state, jump) {
   const d = Math.hypot(x - lastRidePos[0], y - lastRidePos[1], z - lastRidePos[2]); lastRidePos[0] = x; lastRidePos[1] = y; lastRidePos[2] = z;
   if (d > 0 && d < 30) rideM += d;
 }
-export const diagRideStats = () => ({ rideM: rideTotalM + rideM, course: courseKey() }); // QA
 function push(kind, data = {}) {
   if (!enabled) return;
   if (kind === 'course' && data.key) { liveCourse = String(data.key); lastRidePos = null; }

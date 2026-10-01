@@ -159,6 +159,15 @@ replays the same riders; a won round leaves them 0 for the next round's build.
   careerrival/dra4-final (the same; human score to 228: the attacked bail, docs/ai-racers.md); web/test-career-rival.mjs (the page's
   assembly equals the PS2 countdowns' riders leaf for leaf).
 
+**The race card's round and record (2026-10-01, career-rival agent).** 40race_pre's setup (0x1FB874..0x1FB928) hides tab_qualifier,
+tab_semifinal and tab_final (39E8B8), then in Conquer the Mountain (0x535C11 == 0) shows the round's own tab (39E948; rounds 0 / 1
+'Qualifier' 0x0902AC42, 2 'Semi Final' 0x0F1A5A73, 3 'Final Round' 0x009E6504) and hides 'title'. A Single Event sets 'title' instead
+(kT_CMNStateQuickPlay). The port drew its own sub text ("Final"); web/results-lui.js raceCard({ round }) now shows the tab (career-ui.js
+passes the career race's round). The record line is 155130(slot, 0) -> 20A1A8: entry 0 of the event's record table (14AB20 by course and
+mode 0x535C12), so Ruthless Ridge shows the table default DAVE 02:59 (slot 14) until a run beats it. The port's local path is the same
+(career.js topRecord). The 02:13 seen in the QA was the QA's own injected 8000-tick heats (heatRecord enters every heat), not a port
+rule. With pv onlineRecords the card prefers the online board's first entry when online (docs/online-records.md); the PS2 has no online board.
+
 **Rival challenges** (modes 4/5) are one round of player vs. peak rival and must be won. **Peak challenges**
 (modes 6–11) are solo runs against table `0x440D18`.
 

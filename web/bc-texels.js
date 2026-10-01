@@ -31,12 +31,6 @@ export function parseBCEntry(buffer) {
 }
 
 /** The entry bytes for a level-0 block set (tools/export_xbox_riders.py writes the same). */
-export function bcEntry(codec, domain, width, height, blocks) {
-  const out = new Uint8Array(BC_HEADER + blocks.length);
-  out.set([0x53, 0x58, 0x42, 0x43, codec, BC_DOMAINS.indexOf(domain), width & 255, width >> 8, height & 255, height >> 8]);
-  out.set(blocks, BC_HEADER);
-  return out;
-}
 
 const expand = (c, pal, o) => {
   const r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;

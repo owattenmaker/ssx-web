@@ -69,11 +69,6 @@ export function collectPoll(core, {careerMode, career, riderId, courseCode}) {
 }
 // The career's collected list indexes of a course (profile row C+4+12*course: bit = the stage list index of builtin 38), for
 // anything that shows or hides a location's collectibles outside the core.
-export function collectedIndexes(career, riderId, course) {
-  const [lo, hi] = career && riderId ? career.collectMask(riderId, course) : [0, 0], out = [];
-  for (let i = 0; i < 64; i++) if (((i < 32 ? lo : hi) >>> (i & 31)) & 1) out.push(i);
-  return out;
-}
 // Conquer the Mountain free ride (0x535C10 == 4, 0x535C11 == 0): tricks, point pickups and combos pay min(points / 500, 20)
 // through 119EF8 kinds 0 / 1 / 2 (11A228 / 119608 / 117718; PS2 runs/peak2/fr-d-glide 2371: a 690-point trick pays $1).
 // The core queues each award (score_career_events: [count, (kind, amount)...]); the career adds it like any award's cash

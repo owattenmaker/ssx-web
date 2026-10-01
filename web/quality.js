@@ -12,7 +12,6 @@
 //   css       = one buffer pixel per CSS pixel;
 //   full      = devicePixelRatio, capped at 1.5 (the desktop default before this module).
 export const RENDER_SCALES = Object.freeze(['native', 'native512', 'css', 'full']);
-export const RENDER_SCALE_LABELS = Object.freeze({ native: 'PS2 640x448', native512: 'PS2 512x448', css: '1x', full: 'Full' });
 export const UPSCALES = Object.freeze(['smooth', 'pixelated']);
 export const TIERS = Object.freeze(['low', 'medium', 'high']);
 const KEY = 'ssx3.quality';
@@ -193,7 +192,6 @@ export function setQuality(patch) {
   applyUpscale();
   for (const f of listeners) try { f(quality); } catch (e) { console.warn(e); }
 }
-export function resetQuality() { saved = {}; saveSaved({}); }
 function applyUpscale() { if (hasWindow) document.documentElement.dataset.upscale = quality.upscale; }
 if (hasWindow) { applyUpscale(); window.__quality = quality; }
 // Size the 3D canvas (main.js layoutStage): the renderer's buffer for this render scale.

@@ -193,4 +193,3 @@ export async function packageTextureBlob(root, t) {
 }
 
 /** QA / tests: archives fetched so far. */
-export function loadedTextureArchives() { return [...archives.keys()]; }

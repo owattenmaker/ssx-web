@@ -40,7 +40,6 @@ const SCREENS = {
   audio: { key: '142audio_pda', pack: 'OV', ingame: true }, 'audio-playlist': { key: '143radio_pda', pack: 'OV', ingame: true },
   'pda-options': { key: '37beoptions', pack: 'OV', ingame: true, pda: true }, 'pda-more': { key: '37beoptions', pack: 'OV', ingame: true, pda: true },
 };
-export const AUDIO_SCREENS = Object.keys(SCREENS);
 const BOXES = ['00036968', '00037968', '00038968', '00039968', '0003a968', '0003b968', '0003c968', '0003d968'];   // 0box..7box
 const SONG_ROWS = ['07a64e60', '07a64e61', '07a64e62', '07a64e63', '07a64e64', '07a64e65', '07a64e66', '07a64e67'];   // songs0..7
 const FREE = ['0036d8b5', '0037d8b5', '0038d8b5', '0039d8b5', '003ad8b5', '003bd8b5'];   // 0free..5free
@@ -507,11 +506,11 @@ this.soundMode = 0; try { localStorage.setItem('ssx3.soundMode', '0'); } catch {
       setTimeout(() => {
         const after = snap(), changed = after.screen !== before.screen || after.flash !== before.flash;
         const play = (name) => { try { this.audio?.ui?.(uiEvent(name, ingame)); } catch {} };
-        // pv ps2MenuInput: Triangle on 63bc_start / 90bc_fail is silent (0x1F7590 / 0x1F77F0)
+        // Triangle on 63bc_start / 90bc_fail is silent (0x1F7590 / 0x1F77F0)
         if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
           if (after.index !== before.index && !changed) play('move');
-          else if (!changed && !e.repeat && pv('ps2MenuInput') && PS2_END_ERROR_SCREENS.has(before.screen)) play('error');
-        } // pv ps2MenuInput: a non-wrapping CTM list's blocked end (web/menu-rules.js)
+          else if (!changed && !e.repeat && PS2_END_ERROR_SCREENS.has(before.screen)) play('error');
+        } // a non-wrapping CTM list's blocked end (web/menu-rules.js)
         else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
           if (changed || after.index !== before.index || keyboard || after.sig !== before.sig) play('move');
         } else if (e.code === 'Enter' || e.code === 'Space') {
@@ -522,7 +521,7 @@ this.soundMode = 0; try { localStorage.setItem('ssx3.soundMode', '0'); } catch {
           if (
             changed &&
             !PANELS.has(before.screen) &&
-            !(pv('ps2MenuInput') && (before.screen === 'ctm-bcstart' || before.screen === 'ctm-bcfail'))
+            !(before.screen === 'ctm-bcstart' || before.screen === 'ctm-bcfail')
           )
             play('accept');
         }

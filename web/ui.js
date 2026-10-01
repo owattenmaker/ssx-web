@@ -97,7 +97,7 @@ export function drawStreamingNote(ui) {
 export class OriginalUI {
   constructor(callbacks) {
     // the pause context stack (web/pause-contexts.js, 0x5366E8) and the screens' phase machine (web/screen-phases.js, 0x39ECB0); its PS2
-    // frame rules with pv ps2MenuInput. Dev (?qa) warns about a context left open past its owner screen
+    // frame rules with ps2MenuInput. Dev (?qa) warns about a context left open past its owner screen
     this.cb = callbacks;
     {
       const dev = !!import.meta.env?.DEV || /[?&]qa\b/.test(globalThis.location?.search ?? '');
@@ -106,7 +106,7 @@ export class OriginalUI {
           if (dev) console.warn(m);
         }
       });
-      this.phases = createScreenPhases({ rules: () => pv('ps2MenuInput'), contexts: () => this.contexts });
+      this.phases = createScreenPhases({ contexts: () => this.contexts });
     }
     this.screen = 'title';
     this.index = 0;
@@ -142,7 +142,7 @@ export class OriginalUI {
     // web/audio-menu.js: Music, Edit Playlist, Sound Options, in-game Audio
     this.attract = new FeAttract(this);
 
-    // Only a screen's phase 5 takes input (web/screen-phases.js; pv ps2MenuInput: the intro locks and outros of web/menu-rules.js): until
+    // Only a screen's phase 5 takes input (web/screen-phases.js; ps2MenuInput: the intro locks and outros of web/menu-rules.js): until
     // then no key reaches the menus, their sounds or main.js (registered first, capture phase)
     // preKey: the menu sounds' before-state (web/audio-menu.js watchSounds), taken before any other listener
     addEventListener(
@@ -219,12 +219,11 @@ export class OriginalUI {
         }
         // wraps and skips the greyed items (FE menus)
       } else if (
-        pv('ps2MenuInput') &&
         (e.code === 'ArrowUp' || e.code === 'ArrowDown') &&
         ps2MenuStep(this.screen, this.index, this.items().length, e.code === 'ArrowUp' ? -1 : 1) != null
       ) {
         this.index = ps2MenuStep(this.screen, this.index, this.items().length, e.code === 'ArrowUp' ? -1 : 1);
-        // pv ps2MenuInput: the PS2's wrapping CTM menus (web/menu-rules.js)
+        // the PS2's wrapping CTM menus (web/menu-rules.js)
       } else {
         if (e.code === 'ArrowUp') this.index = Math.max(0, this.index - 1);
         if (e.code === 'ArrowDown') this.index = Math.min(this.items().length - 1, this.index + 1);
@@ -403,7 +402,7 @@ export class OriginalUI {
     this.screen = screen;
     // the new screen's phase 2, from the UI frame counter (web/screen-phases.js)
     if (screen !== this.previousScreen) this.phases.enter(screen, this.previousScreen);
-    // pv ps2MenuInput: the screen intro's input lockout (web/menu-rules.js)
+    // the screen intro's input lockout (web/menu-rules.js)
     if (screen === 'character') this.characterSelect?.onEnter();
     this.feScreens?.enter(screen, this.previousScreen);
     this.eventSelect?.enter(screen, this.previousScreen);

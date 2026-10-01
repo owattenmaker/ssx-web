@@ -109,7 +109,10 @@ def peak_rival(peak, human):
 # by 1.1 (gp-0x7D1C) and caps it at 1.0. The PS2 FPU rounds mul.s / add.s toward zero. Not modelled: the game mode 0x535C12
 # 4 / 5 role overrides and the options word 0x5308D0 bit 2 (DF8 100, DFC 1.0). Leaves: npc.score_state.role_e00 /
 # allow_flag0_e04 (round), npc.crouch_parameter_df8 / npc.driving_state.parameter_df8 / parameter_dfc (level).
-ROUND_LEAVES = ('npc.score_state.role_e00', 'npc.score_state.allow_flag0_e04')
+# ground.state.rider_type = +0x434: the constructor 11B718 sets 0x31 and 1218D0 writes the location's track id only while +0x430 != -1; a
+# WS13 semi's riders are new and placed by 1289F0 without a hold, so they keep 0x31 to the push-off (ARA1-semi-zoe), while the first heat's
+# (the approach NIS's 1242B0 re-probe) and the final's (the start hut NIS) hold the track id, the Single Event tables' value.
+ROUND_LEAVES = ('npc.score_state.role_e00', 'npc.score_state.allow_flag0_e04', 'ground.state.rider_type', 'identity.rider_type434')
 LEVEL_LEAVES = ('npc.crouch_parameter_df8', 'npc.driving_state.parameter_df8', 'npc.driving_state.parameter_dfc')
 COURSE_INDEX = {'ARA1': 0, 'BRA2': 1, 'CRA3': 2, 'DRA4': 3, 'ERA5': 4}
 SLOT_DIFFICULTY = {   # level -> slot 1..5 (DF8, DFC before the 0.01)
@@ -145,6 +148,7 @@ def npc_difficulty(slot, level, course):
 
 def apply_round_level(record, slot, rnd=None, level=None, course=None):
     if rnd is not None: record['npc']['score_state']['role_e00'], record['npc']['score_state']['allow_flag0_e04'] = npc_round_role(slot, rnd)
+    if rnd == 2: record['ground']['state']['rider_type'] = record['identity']['rider_type434'] = 0x31
     if level is not None:
         df8, dfc = npc_difficulty(slot, level, course)
         record['npc']['crouch_parameter_df8'] = df8; record['npc']['driving_state']['parameter_df8'] = df8; record['npc']['driving_state']['parameter_dfc'] = dfc

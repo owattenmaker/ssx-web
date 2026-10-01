@@ -18,7 +18,6 @@
 
 export const STD_BUTTONS = Object.freeze(['Cross', 'Circle', 'Square', 'Triangle', 'L1', 'R1', 'L2', 'R2',
   'Select', 'Start', 'L3', 'R3', 'DPadUp', 'DPadDown', 'DPadLeft', 'DPadRight', 'Home']);
-export const STD_AXES = Object.freeze(['LStickX', 'LStickY', 'RStickX', 'RStickY']);
 export const STD_BUTTON_COUNT = 17, STD_AXIS_COUNT = 4;
 const PRESSED = 0.5;
 
@@ -50,7 +49,6 @@ export function hatBits(v) {
   const n = Math.round((v + 1) * 3.5);
   return n >= 0 && n <= 7 && Math.abs(v - (-1 + n * 2 / 7)) < 0.1 ? HAT_POSITIONS[n] : 0;
 }
-export function hatValue(bits) { const n = HAT_POSITIONS.indexOf(bits); return n < 0 ? 9 / 7 : -1 + n * 2 / 7; }
 
 // ---- layouts ----------------------------------------------------------------------------------------------------------
 const hat = (i) => [`h${i}:up`, `h${i}:down`, `h${i}:left`, `h${i}:right`];

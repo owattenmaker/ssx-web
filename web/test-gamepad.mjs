@@ -10,7 +10,6 @@ globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null)
 const G = await import('./gamepad.js');
 const M = await import('./gamepad-map.js');
 const { createPadMenus, menuControls } = await import('./gamepad-menus.js');
-const { setPv } = await import('./pv-flags.js');
 const { buildPad, GAMEPAD_BUTTONS, PAD_BUTTONS } = await import('./pad-input.js');
 const { Rumble } = await import('./rumble.js');
 const glyphs = await import('./input-glyphs.js');
@@ -181,29 +180,8 @@ const channel = (pad, name) => buildPad(() => false, pad)[PAD_BUTTONS.indexOf(na
   G.resetPads(); std = poll(); assert.ok(channel(std, 'Cross') > 0.99, 'loaded back from storage');
   G.clearRemap(G.activeEntry()); std = poll(); assert.ok(channel(std, 'Square') > 0.99, 'cleared');
 }
-{ // menus: the touch deck's keys, new presses only, Start left to the race while running, repeats (the port's pad model)
-  setPv('ps2MenuInput', false);
-  const sent = []; let menu = true, running = false;
-  const m = createPadMenus({ menu: () => menu, running: () => running, send: (t, c) => sent.push(t + ' ' + c) });
-  const pad = M.newStandardPad(); const set = (i, v) => { pad.buttons[i].value = v; pad.buttons[i].pressed = v > 0.5; };
-  set(0, 1); m.step(pad, 0); assert.deepEqual(sent, ['keydown Space']);
-  set(0, 0); m.step(pad, 16); assert.deepEqual(sent.splice(0), ['keydown Space', 'keyup Space']);
-  set(12, 1); m.step(pad, 32); m.step(pad, 300); assert.deepEqual(sent.splice(0), ['keydown ArrowUp'], 'no repeat before 400 ms');
-  m.step(pad, 440); assert.deepEqual(sent.splice(0), ['keyup ArrowUp', 'keydown ArrowUp'], 'repeat'); set(12, 0); m.step(pad, 460); sent.length = 0;
-  pad.axes[0] = 0.8; m.step(pad, 500); assert.deepEqual(sent.splice(0), ['keydown ArrowRight'], 'left stick = arrows'); pad.axes[0] = 0; m.step(pad, 516); sent.length = 0;
-  for (const [i, code] of [[1, 'Backspace'], [2, 'ShiftLeft'], [3, 'Escape'], [4, 'KeyQ'], [5, 'KeyE'], [6, 'KeyZ'], [7, 'KeyX'], [9, 'Enter']]) { set(i, 1); m.step(pad, 600); set(i, 0); m.step(pad, 616); assert.equal(sent.splice(0)[0], 'keydown ' + code); }
-  // in a race Start is the pad's Start (main.js frame pauses); opening the pause menu with it held does not press Enter
-  menu = false; running = true; set(9, 1); m.step(pad, 700); assert.deepEqual(sent, []);
-  menu = true; m.step(pad, 716); assert.deepEqual(sent, [], 'held into the pause menu: nothing');
-  set(9, 0); m.step(pad, 732); set(9, 1); m.step(pad, 748); assert.deepEqual(sent, [], 'Start while running is not Enter');
-  set(9, 0); set(0, 1); m.step(pad, 764); assert.deepEqual(sent.splice(0), ['keydown Space']);
-  menu = false; m.step(pad, 780); assert.deepEqual(sent.splice(0), ['keyup Space'], 'keys are released when the race resumes');
-  assert.deepEqual([...menuControls(null)], []);
-  setPv('ps2MenuInput', null);
-}
-{ // pv ps2MenuInput: the same through the PS2 pad history 0x321298, stepped in 60 Hz updates (an edge is seen once the channel's last
+{ // menus: the touch deck's keys through the PS2 pad history 0x321298, stepped in 60 Hz updates (an edge is seen once the channel's last
   // edge is 3 updates old; directions repeat on the press, 24 updates later, then every 12)
-  setPv('ps2MenuInput', true);
   const sent = []; let menu = true, running = false, t = 0;
   const m = createPadMenus({ menu: () => menu, running: () => running, send: (ty, c) => sent.push(ty + ' ' + c) });
   const pad = M.newStandardPad(); const set = (i, v) => { pad.buttons[i].value = v; pad.buttons[i].pressed = v > 0.5; };
@@ -222,7 +200,7 @@ const channel = (pad, name) => buildPad(() => false, pad)[PAD_BUTTONS.indexOf(na
   set(9, 0); f(4); set(9, 1); f(4); assert.deepEqual(sent, [], 'Start while running is not Enter');
   set(9, 0); f(4); set(0, 1); f(); assert.deepEqual(sent.splice(0), ['keydown Space']);
   menu = false; f(); assert.deepEqual(sent.splice(0), ['keyup Space'], 'keys are released when the race resumes');
-  setPv('ps2MenuInput', null);
+  assert.deepEqual([...menuControls(null)], []);
 }
 { // rumble drives the active pad, not slot 0
   const calls = [], act = { playEffect: (t, p) => { calls.push(p); return Promise.resolve(); }, reset: () => Promise.resolve() };

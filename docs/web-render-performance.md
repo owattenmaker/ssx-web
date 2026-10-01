@@ -60,7 +60,7 @@ allocates matters there. This pass removes garbage at the source. The simulation
 - Do not measure with `ssxQA.start()` alone: it pauses the game, so the race only renders (the earlier 16 MB/s figure).
 
 **Changes** (each checked bit-exact or pixel-exact, see Validation):
-- `web/heap-views.js` (new): `heapU32(core)` / `heapI32(core)`, whole-heap views reused until the buffer changes; and
+- `web/heap-views.js` (new): `heapU32(core)`, a whole-heap view reused until the buffer changes; and
   `setUpdateRange(attribute, start, count)`, clear + one range record kept per attribute. three's backends read each range's
   start / count once and then clear the list; InstanceNode copies the records into its interleaved buffer in the same frame.
 - `web/set-pieces-renderer.js` update: the core logs (triggers / contacts, LiveComp starts, sections) are read in place

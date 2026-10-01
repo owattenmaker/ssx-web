@@ -4,13 +4,11 @@
 // Yes / No +23 / +31, Map +23 / +31, Rider Details +32 / +40), and Yes / No No -> the pause's input at +83 (+81 dead, caps/yno81..87).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { setPv } from './pv-flags.js';
 import { createPauseContexts, CTX, BIT } from './pause-contexts.js';
 import { createScreenPhases, PHASE } from './screen-phases.js';
 import { createBigChallenges, setBigChallengeTable } from './big-challenges.js';
 import { sourceOf } from './test-source.mjs';
 
-setPv('ps2MenuInput', true);
 
 // A page in the order of web/main.js: the UI pass (the pad menus' rAF loop: phases.step, then the keys) comes before the game frame
 // (Start's pause gate 0x230A74, then the tick if the stack lets the simulation run).
@@ -74,7 +72,6 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   const ph = createScreenPhases(); ph.enter('ctm-mcomm', 'game');
   const phases = []; for (let d = 0; d <= 61; d++) { if (d) ph.step(); phases[d] = ph.phase; }
   assert.deepEqual([phases[0], phases[1], phases[59], phases[60], phases[61]], [PHASE.BUILD, PHASE.WAIT, PHASE.WAIT, PHASE.SHOW, PHASE.ACTIVE], 'phases 2 -> 4 -> 3 -> 5');
-  setPv('ps2MenuInput', false); const off = createScreenPhases({ rules: () => false }); off.enter('ctm-mcomm', 'game'); assert.equal(off.accepts(), true, 'pv ps2MenuInput off: no lock'); setPv('ps2MenuInput', true);
 }
 
 // ---- E9: Yes / No No -> the pause: 20 frames of TransitionOut, the pop, the restart a pass later, then the pause's own intro -------
@@ -91,8 +88,6 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   assert.equal(p.contexts.top, CTX.MENU, 'the popup pushed nothing: the pause\'s context 2 stayed underneath');
   // an exit is cut when something else changes the screen meanwhile (the action does not run)
   p.ui.set('ctm-giveup'); run(p, 40); let ran = false; p.phases.leave('ctm-giveup', () => { ran = true; }); p.ui.set('game'); run(p, 30); assert.equal(ran, false);
-  // pv ps2MenuInput off: no outro, the choice acts on the press
-  const q = createScreenPhases({ rules: () => false }); q.enter('ctm-restart', 'ctm-pause'); assert.equal(q.leave('ctm-restart', () => {}), false);
 }
 
 // ---- the card: context 1 for its lifetime stops the NIS tick (and the simulation), not the world-state tick; the fade keeps its clock ----
@@ -169,5 +164,4 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   f(3); pad.buttons[13].pressed = false; pad.buttons[13].value = 0; f(4); pad.buttons[13].pressed = true; pad.buttons[13].value = 1; f(1);
   assert.deepEqual(seen.at(-1), ['ArrowDown', 68, true], 'a later press after the lock (+61) is taken');
 }
-setPv('ps2MenuInput', null);
 console.log('pause contexts ok');

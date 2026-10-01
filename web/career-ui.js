@@ -1340,7 +1340,7 @@ export class CareerScreens {
             } else if (ui.screen === 'ctm-pause') {
               ui.index = 4;
               ui.sync();
-            } else if (ui.screen === 'ctm-results' && pv('ps2MenuInput')) {
+            } else if (ui.screen === 'ctm-results') {
               ui.index = this.resultsFocus(0);
               ui.sync();
             }
@@ -1435,15 +1435,13 @@ export class CareerScreens {
           else b.no();
           return;
         }
-        // pv ps2MenuInput: No lands on Give Up (the PS2's last-used item 0x4A2468)
+        // No lands on Give Up (the PS2's last-used item 0x4A2468)
         case 'ctm-giveup':
           if (i === 0) this.giveUp();
           else {
             ui.set('ctm-pause');
-            if (pv('ps2MenuInput')) {
-              ui.index = 5;
-              ui.sync();
-            }
+            ui.index = 5;
+            ui.sync();
           }
           return;
         case 'ctm-restart': {
@@ -1452,9 +1450,9 @@ export class CareerScreens {
           if (i === 0) this.restartToCard(from === 'results');
           else if (from === 'results') {
             ui.set('ctm-results');
-            ui.index = pv('ps2MenuInput') ? this.resultsFocus(1) : 1;
+            ui.index = this.resultsFocus(1);
             ui.sync();
-            // pv ps2MenuInput: a return rebuilds the results with the default focus (0x39EA90(8))
+            // a return rebuilds the results with the default focus (0x39EA90(8))
           } else {
             ui.set('ctm-pause');
             ui.index = 1;
@@ -1487,7 +1485,7 @@ export class CareerScreens {
           return;
       }
     };
-    // A choice on a screen with an exit (pv ps2MenuInput: the Yes / No popups, 98enterlodge) plays its TransitionOut (phase 6, frozen, no
+    // A choice on a screen with an exit (ps2MenuInput: the Yes / No popups, 98enterlodge) plays its TransitionOut (phase 6, frozen, no
     // input) first; the phase machine runs the action at its Stop, then the next screen builds a pass later (web/screen-phases.js, E9)
     if (ui.phases?.leave(s, act)) return;
     return act();
@@ -1527,7 +1525,7 @@ export class CareerScreens {
       return;
     }
     // Triangle on the 87yndialog = No: back on Restart / Give Up (or the results' Restart)
-    if (pv('ps2MenuInput') && (s === 'ctm-restart' || s === 'ctm-giveup' || s === 'ctm-bcsure')) {
+    if (s === 'ctm-restart' || s === 'ctm-giveup' || s === 'ctm-bcsure') {
       this.choose(1);
       return;
     }
@@ -1563,27 +1561,14 @@ export class CareerScreens {
       return;
     }
     // 'Save progress before quitting?': Triangle only plays ev 9 on the PS2 (0x20DB64, kind 6)
-    if (s === 'ctm-quitsave' && pv('ps2MenuInput')) {
+    if (s === 'ctm-quitsave') {
       ui.audioMenus?.sfx?.('accept', 'ctm-quitsave');
       return;
     }
     if (s === 'ctm-quit' || s === 'ctm-quitsave') {
       const to = this.quitFrom || 'ctm-mcomm';
       ui.set(to);
-      ui.index =
-        to === 'ctm-mcomm'
-          ? 6
-          : to === 'ctm-lodge'
-            ? 7
-            : to === 'ctm-results'
-              ? pv('ps2MenuInput')
-                ? this.resultsFocus(0)
-                : this.peakResults()
-                  ? 2
-                  : 4
-              : to === 'ctm-pause'
-                ? 4
-                : 0;
+      ui.index = to === 'ctm-mcomm' ? 6 : to === 'ctm-lodge' ? 7 : to === 'ctm-results' ? this.resultsFocus(0) : to === 'ctm-pause' ? 4 : 0;
       ui.sync();
       return;
     }
@@ -1794,7 +1779,7 @@ export class CareerScreens {
   }
   // Pause "Give Up" (0x20DA58 -> 1253D0): the menu closes and the run goes on for one tick; +0x480 = 1 makes 125228 finish it (125368), so
   // the TIME'S UP banner shows, then the results (288 ticks after the finish, main.js) with the player DNF (race 360000 ticks, freestyle 0
-  // points shown as DNF: 0x5366D0[slot]). PS2: local/ps2-capture/menus/pipegu, race/15-*. pv ps2MenuInput: the Big Challenge pause's
+  // points shown as DNF: 0x5366D0[slot]). PS2: local/ps2-capture/menus/pipegu, race/15-*. ps2MenuInput: the Big Challenge pause's
   // Restart Challenge / Quit Challenge ask first (0x1F8B84 / 0x1F8B94: 87yndialog kinds 2 / 3, No focused; Yes: the offer overlay 0x1D /
   // 0x30B758; No or Triangle: the pause again on the item used)
   bcConfirm(label, yes, no) {
@@ -3313,6 +3298,7 @@ export class CareerScreens {
         this.resultsLui.raceCard(c, {
           title: this.eventTitle(ev),
           sub: ev.career ? this.career.roundName(ev).replace(' Round', '') : this.t('kT_CMNStateQuickPlay', 'Single Event'),
+          round: ev.career && ev.mode === MODE.RACE ? ev.round : null, // 0x1FB8B0: the round's tab ('Qualifier' / 'Semi Final' / 'Final Round')
           objective: this.career
             .objectives(ev)
             .map((o) => (typeof o === 'string' ? this.t(o) : format(this.t(o.key), o.arg)))

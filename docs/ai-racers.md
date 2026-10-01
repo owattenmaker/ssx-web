@@ -578,3 +578,18 @@ a career race at level 0 or 2 rides level 1's pacing.
 Open (found on careerrival/dra4-final, not career-specific): the human's hard crash at 229 (control 8, physics exact) is an attacked bail on
 the PS2 (119B08 with a1 != 0: score +0x12C and HUD popup 0x2D); the port's enter_crash (web/animation_bridge.cpp) always passes
 attacked = false, so the score object counts +0x124. Which call passes the attacker (10E468's crash attack -> 10EB30) is not traced here.
+
+## The semi's fresh riders (2026-10-01, career-rival agent)
+
++0x434 (document leaves ground.state.rider_type and identity.rider_type434) is the rider's location track id: the constructor 11B718
+sets +0x430 = -1 and +0x434 = 0x31, and 1218D0 writes 22E0E0(+0x430's track) only while +0x430 != -1 (docs/ctm-events-in-world.md "The
+semi's push-off"). A career semi's riders are WS13's new ones, placed by 1289F0 without a hold, so they keep 0x31 to the push-off, where
+13C948 halves the auto boost (>= 17). The qualifier's riders (the approach NIS's 1242B0 re-probe) and the final's (the start-hut NIS) hold
+the track id, the value of every Single Event table (ARA1 0, CRA3 2, DRA4 3).
+- tools/export_lineups.py checks the leaf by this rule for career countdowns (apply_round_level). It used to raise "ground.state.rider_type
+  is not determined by all (ARA1-semi-zoe)"; the ARA1 / CRA3 / DRA4 builds now pass and give the live files byte for byte.
+- **pv semiFresh** (off): web/lineup.js assembleLineup gives a round-2 rider 0x31. Then the page's assembly of all three Snow Jam career
+  countdowns (qual / semi / final) equals the PS2's leaf for leaf (web/test-career-rival.mjs).
+- Gate careerrival/ara1-semi (the c0c-race capture on the event-load path, the page's live career heat): with 0x31 the human is exact to the
+  end, the RNG to 460 (461: the CTM collectibles, ctm-events/c0c-race-riders), the riders to 530..862; with 0 (today's page) the riders
+  leave at the push-off (182..204), the RNG at 296, the human at 310.

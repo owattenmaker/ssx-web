@@ -51,7 +51,6 @@ export const CODEC_NAMES = { 4: 'microtalk', 5: 'ps-adpcm', 7: 'pcm16be', 8: 'pc
 export const STREAM_DEFAULTS = Object.freeze({ sampleRate: 22050, channels: 1, codec: 5 });
 export const BANK_DEFAULTS = Object.freeze({ sampleRate: 22050, channels: 1, codec: 5 });
 
-const td = typeof TextDecoder !== 'undefined' ? new TextDecoder('latin1') : null;
 function fourcc(u8, p) {
   return String.fromCharCode(u8[p], u8[p + 1], u8[p + 2], u8[p + 3]);
 }
@@ -239,7 +238,6 @@ const UTK_CB = (() => {
 const UTK_CMD_NEXT = [1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 const UTK_CMD_SIZE = [8, 7, 8, 7, 2, 2, 2, 3, 3, 4, 4, 3, 3, 5, 5, 4, 4, 6, 6, 5, 5, 7, 7, 6, 6, 8, 8, 7, 7];
 const UTK_CMD_PULSE = [0, 0, 0, 0, 0, -1, 1, -1, 1, -2, 2, -2, 2, -3, 3, -3, 3, -4, 4, -4, 4, -5, 5, -5, 5, -6, 6, -6, 6];
-export const UTK_TABLES = { rc: UTK_RC, codebooks: UTK_CB, next: UTK_CMD_NEXT, size: UTK_CMD_SIZE, pulse: UTK_CMD_PULSE };
 
 // EE constants (0x3CD6F0 0x3A83126F / 0x3F851EB8, 0x3CD878 0x3D888889, 0x3CD518 0x3F18EE49 / 0xBDEAAEFB / 0x3C93B945).
 const f32bits = (b) => new Float32Array(new Uint32Array([b]).buffer)[0];
@@ -695,4 +693,3 @@ export function encodeWav(decoded) {
   return new Uint8Array(buf);
 }
 
-export const _internal = { u32le, fourcc, sampleInfo, UtkDecoder, td };

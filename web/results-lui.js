@@ -229,14 +229,18 @@ export class ResultsLui {
   // 40race_pre (the race round card): title, sub (the round), objective (objTextLine1, wrapped to 480, with its bullet),
   // riders [{name, human, note}] (six rows at 23 px; the human's 252,177,101: PS2 menus/race/state-round-objectives.png 'Zoe'
   // 202,142,81 = 0.8 x), record (the 'Record time:' value, or null: both hidden), continueLabel.
-  raceCard(c, { title, sub, objective, riders, recordLabel, record, continueLabel }) {
+  // round (a career race, 1..3): 0x1FB874..0x1FB928 hide the three tabs, then in Conquer the Mountain (0x535C11 == 0) show the round's
+  // own (rounds 0 / 1 tab_qualifier 'Qualifier', 2 tab_semifinal 'Semi Final', 3 tab_final 'Final Round') and hide 'title'; a Single
+  // Event sets 'title' instead (kT_CMNStateQuickPlay).
+  raceCard(c, { title, sub, round = null, objective, riders, recordLabel, record, continueLabel }) {
     if (!this.lui['40race_pre']) return false;
     this.panelFrame(c, this.clock());
+    const tab = round == null ? null : round === 3 ? CARD.tabs[0] : round === 2 ? CARD.tabs[2] : CARD.tabs[1];
     return this.screen(c, '40race_pre', 30, (e) => {
       const n = e.name, R = CARD;
       if (n === R.track) return { text: title };
-      if (n === R.title) return { text: sub };
-      if (R.tabs.includes(n)) return { hidden: true };
+      if (n === R.title) return tab ? { hidden: true } : { text: sub };
+      if (R.tabs.includes(n)) return n === tab ? null : { hidden: true };
       if (n === R.objective) return objective ? { text: objective } : { hidden: true };
       if (n === R.bullet) return objective ? null : { hidden: true };
       if (n === R.recordLabel) return record != null ? { text: recordLabel } : { hidden: true };

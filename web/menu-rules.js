@@ -1,4 +1,4 @@
-// pv ps2MenuInput: which CTM menus wrap and which stop with the error sound, by the port's screen ids (docs/ctm-decomp-screens.md).
+// which CTM menus wrap and which stop with the error sound, by the port's screen ids (docs/ctm-decomp-screens.md).
 // Wrap is the runtime UIMenu +0x14 bit 7 (read from the live menu object in PS2 savestates where noted "live", else the LUI element
 // flag 0x80). A menu that does not wrap plays the focused item's error kind at a blocked end: kind[0], default 4 (snd 0xD, 0x39B5E4).
 export const PS2_WRAP_SCREENS = new Set([
@@ -11,7 +11,7 @@ export const PS2_END_ERROR_SCREENS = new Set(['ctm-goals', 'ctm-events', 'ctm-co
 // Up / Down on a generic list of n items: the new index (wrapping on the PS2's wrap menus), or null for "use the port's rule".
 export function ps2MenuStep(screen, index, n, d) { return PS2_WRAP_SCREENS.has(screen) && n > 0 ? ((index + d) % n + n) % n : null; }
 
-// pv ps2MenuInput: the screen intro's input lockout, in frames (web/screen-phases.js runs it). A screen's LUI timeline (cUIScreen_playFrame 0x39C870, one LUI frame per game frame)
+// the screen intro's input lockout, in frames (web/screen-phases.js runs it). A screen's LUI timeline (cUIScreen_playFrame 0x39C870, one LUI frame per game frame)
 // activates its menu at the frame of its 0x42 label record (0x39CE20: state +0x1C status 3); until then UIMenu 0x39B000 returns at once
 // (menu +0x14 bit 4 clear, no focused item +0xA0), so every menu input (Up / Down, Cross / Start, Triangle, Square, Circle) is dead.
 // Accepted from the activate frame + 1 (ARMSX2: MCOMM activate 60, a press at +60 dead, +62 taken; 87yndialog activate 30, +31 taken).
@@ -36,7 +36,7 @@ export function introLockFrames(screen, previous) {
   const a = INTRO_ACTIVATE.get(screen); return a === undefined ? 0 : a + 1;
 }
 
-// pv ps2MenuInput: the Yes / No outro, in frames (web/screen-phases.js leave). After the choice the popup plays its TransitionOut (0x43, menu bit 4 off, phase 6: no input) to its
+// the Yes / No outro, in frames (web/screen-phases.js leave). After the choice the popup plays its TransitionOut (0x43, menu bit 4 off, phase 6: no input) to its
 // Stop (0x41) before the choice acts: 87yndialog 50 -> 70 = 20 frames, 98enterlodge 105 -> 130 = 25; then the next screen runs its own
 // intro (the MCOMM / pause: 61) a pass after the pop, so No -> pause input comes at +83 (docs/ctm-decomp-screens.md E9).
 export const PS2_CHOICE_OUTRO = new Map([['ctm-quit', 20], ['ctm-quitsave', 20], ['ctm-giveup', 20], ['ctm-restart', 20], ['ctm-bcsure', 20], ['ctm-enterlodge', 25]]);

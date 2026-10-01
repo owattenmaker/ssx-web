@@ -1,10 +1,8 @@
-// pv ps2MenuInput (web/gamepad-menus.js): the PS2 pad history 0x321298 against the ARMSX2 MCOMM captures
+// The menu pad (web/gamepad-menus.js): the PS2 pad history 0x321298 against the ARMSX2 MCOMM captures
 // (docs/ctm-decomp-screens.md; local/ctm-decomp/screens/caps/mcomm-repeat.json): a held Down moves at samples 31, 55, 67, 79, 91
 // (press, +24, then every 12); 1-2 frame taps 3-5 frames apart move once per pair (200/203, 230-231/234-235, 260-261/265-266).
 import assert from 'node:assert/strict';
-const { setPv } = await import('./pv-flags.js');
 const { createPadMenus } = await import('./gamepad-menus.js');
-setPv('ps2MenuInput', true);
 const FRAME = 1000 / 60;
 const padWith = (down) => ({ buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 13 && down, value: i === 13 && down ? 1 : 0 })), axes: [0, 0, 0, 0] });
 function run(downAt, frames) {
@@ -40,5 +38,4 @@ assert.deepEqual(run((f) => taps.has(f), 300), [200, 230, 260], 'double taps ins
   for (let f = 10; f < 20; f++) m.step(stick(0.45), (f + 1) * FRAME + 0.01);
   assert.deepEqual(moves, ['ArrowDown'], '0.45 deflection moves once (the PS2 moved, the port at 0.5 did not)');
 }
-setPv('ps2MenuInput', null);
 console.log('ps2 menu input: repeat 24/12, edge window, held-over buttons and the stick threshold match the PS2 captures');

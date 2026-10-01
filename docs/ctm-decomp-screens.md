@@ -17,7 +17,7 @@ Status words: **match**, **differs**, **missing**, **unconfirmed** (the code doe
 as of 2026-09-29 around 11:00. The coordinator was landing fixes in ui.js, career-ui.js, gamepad-menus.js, audio-menu.js and
 the new web/menu-rules.js during this work, so some numbers will have moved.
 
-**Already fixed while this was written**, all behind **pv `ps2MenuInput`** (off; web/gamepad-menus.js, web/menu-rules.js,
+**Already fixed while this was written**, all once behind **pv `ps2MenuInput`** (on 2026-09-29; retired 2026-10-01, the port's old pad-menu model removed; web/gamepad-menus.js, web/menu-rules.js,
 ui.js, career-ui.js, audio-menu.js, big-challenges.js). They were checked against the PS2 numbers with the probes below
 (section 8):
 - the 24 / 12 repeat and the edge debounce;
