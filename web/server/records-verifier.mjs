@@ -23,6 +23,8 @@ const PAGE = opt('page', 'http://127.0.0.1:8787').replace(/\/$/, ''), API = opt(
 const TOKEN = (() => { const f = opt('token-file', process.env.MP_RECORDS_VERIFIER_TOKEN_FILE); try { return f ? fs.readFileSync(f, 'utf8').trim() : ''; } catch { return ''; } })();
 const PROFILE = path.resolve(opt('profile', 'verifier-profile')), ONCE = flag('once');
 const INTERVAL = +opt('interval', 60) * 1000, MAX_LOAD = +opt('max-load', 0.6), PER_CYCLE = +opt('per-cycle', 10), TIMEOUT = +opt('timeout', 900) * 1000;
+// a fresh page every 5 runs: several runs on one page are exact since the page's verify keeps its replay active (2026-10-01:
+// before, main.js replayFrame stopped it and the rest of the run used this browser's stored relationship tables)
 const RELOAD = +opt('reload', 5);
 const CHROME = opt('chrome', process.env.CHROME) || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
   '/usr/bin/google-chrome', '/usr/bin/chromium'].find((p) => fs.existsSync(p));
@@ -114,27 +116,55 @@ async function verifyOne(item, core) {
   return { ...body, stats, action: out.action };
 }
 
-async function cycle() {
-  const why = await busy(); if (why) { log(`skipped: ${why}`); return { done: 0, skipped: why }; }
-  // the current build's core: from the page itself (the queue is per core: D7 (3) re-verifies runs verified on another one)
-  let started = false, done = 0, results = [];
+// The build the page serves (/build.json, web/vite-build-id.js), and the core id its page reported for it: the queue is per core
+// (D7 (3)), so Chrome starts only when there is work, or when a new build needs its core id read.
+let known = { build: undefined, core: null }, gpuOk = null, cycles = 0;
+async function pageBuild() { try { const r = await fetch(PAGE + '/build.json', { cache: 'no-store' }); return r.ok ? (await r.json()).id ?? null : null; } catch { return null; } }
+async function readCore(build) {
+  if (!chrome) await startChrome();
+  await openPage();
+  known = { build, core: await chrome.evaluate('window.ssxVerifyCore ? window.ssxVerifyCore() : null', 60000) };
+  log(`core ${known.core} (build ${build ?? 'unknown'})`);
+}
+// Start check (logged loudly when it fails): Chrome's version, headless WebGPU (the page cannot run without it), the core id.
+async function startCheck() {
+  log(`start: page ${PAGE}, api ${API}, chrome ${CHROME}, profile ${PROFILE}, max load ${MAX_LOAD}, interval ${INTERVAL / 1000} s`);
   try {
-    const peek = await api('/mp/records/verifier/queue?limit=1'); if (!peek.items?.length && ONCE && !chrome) return { done: 0, results };
-    if (!chrome) { await startChrome(); started = true; await openPage(); }
-    const core = await chrome.evaluate('window.ssxVerifyCore ? window.ssxVerifyCore() : null', 60000);
-    const { items = [] } = await api(`/mp/records/verifier/queue?core=${encodeURIComponent(core ?? '')}&limit=${PER_CYCLE}`);
-    if (!items.length) { log('queue empty'); stopChrome(); return { done: 0, results }; }
+    await startChrome();
+    const v = await chrome.send('Browser.getVersion').catch(() => ({}));
+    await chrome.send('Page.navigate', { url: PAGE + '/manifest.webmanifest' }); await sleep(1000);
+    gpuOk = await chrome.evaluate('(async () => !!navigator.gpu && !!(await navigator.gpu.requestAdapter()))()', 30000).catch(() => false);
+    log(`chrome ${v.product ?? 'unknown version'}; WebGPU ${gpuOk ? 'available' : 'UNAVAILABLE'}`);
+    if (!gpuOk) log('!!! WEBGPU UNAVAILABLE IN HEADLESS CHROME: no run can be verified until this is fixed (GPU, flags, or another Chrome) !!!');
+    else await readCore(await pageBuild());
+  } catch (e) { log('!!! START CHECK FAILED:', e.message); }
+  stopChrome();
+}
+
+async function cycle() {
+  cycles++;
+  const why = await busy(); if (why) { log(`cycle ${cycles}: skipped (${why})`); return { done: 0, skipped: why }; }
+  if (gpuOk === false) { log(`cycle ${cycles}: !!! WEBGPU UNAVAILABLE: nothing can be verified`); return { done: 0 }; }
+  let done = 0; const results = [];
+  try {
+    const build = await pageBuild();
+    if (known.core == null || build !== known.build) await readCore(build);   // a deploy: the new build's core id
+    const { items = [] } = await api(`/mp/records/verifier/queue?core=${encodeURIComponent(known.core ?? '')}&limit=${PER_CYCLE}`);
+    log(`cycle ${cycles}: ${items.length} queued (core ${known.core})`);
+    if (!items.length) { stopChrome(); return { done: 0, results }; }
+    if (!chrome) { await startChrome(); await openPage(); }
     for (const item of items) {
-      if (await busy()) break;
-      results.push(await verifyOne(item, core)); done++;
+      const b = await busy(); if (b) { log(`cycle ${cycles}: paused (${b})`); break; }
+      results.push(await verifyOne(item, known.core)); done++;
     }
-  } catch (e) { log('cycle failed:', e.message); stopChrome(); }
-  if (started && ONCE) stopChrome();
+  } catch (e) { log(`cycle ${cycles} failed:`, e.message); stopChrome(); known.core = null; }
+  if (ONCE || !done) stopChrome();
   return { done, results };
 }
 
 process.on('SIGTERM', () => { stopChrome(); process.exit(0); });
 process.on('SIGINT', () => { stopChrome(); process.exit(0); });
+await startCheck();
 if (ONCE) {
   let total = [];
   for (let k = 0; k < 20; k++) { const r = await cycle(); total = total.concat(r.results || []); if (!r.done) break; }

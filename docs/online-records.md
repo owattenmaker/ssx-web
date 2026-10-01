@@ -172,11 +172,22 @@ forger can still claim just above it (0.9 x the world record beats every human) 
 - **Service** (web/server/records-verifier.mjs, a LaunchAgent on the host, docs/hosting.md): asks `/mp/records/verifier/queue?core=`
   (the page's core id), runs each item in the page, posts `/mp/records/verifier/result`. A page timeout counts as not reproduced;
   any other page failure as 'could not run' (three tries per core).
+  Logs a start check (Chrome version, headless WebGPU, loudly when missing; the core id) and one line per cycle; starts Chrome only when
+  the queue has work, reading the core id once per build (`/build.json`). `records-admin.mjs requeue <id>` puts a run at the head of
+  the queue (a live check).
+- **Several runs on one page** (`--reload 5`). Found and fixed 2026-10-01: the verify path never switched to the `replay` screen, so
+  main.js `replayFrame` stopped the replay on the first frame (any other screen stops it), `replay.stop` -> `aiRace.replayEnd` gave the
+  page's live relationship tables back, and the verify loop kept stepping: the rest of the run used this browser's stored tables
+  (localStorage `ssx3.relationships.v1`, written back by every rider-pair reaction since `replayLive` was null). After one run every
+  later one in the same Chrome profile diverged identically (tick 1571, finishing at 13441); clearing the storage made it exact again.
+  Now the verify sets the replay screen as Watch Replay does, and stops with 'could not run' if the replay is ever stopped under it.
+  Watch Replay was never affected: three watches in a row on one course and a watch after a course switch are exact to the finish
+  (15,171 ticks each) in Chrome (web/test-online-records.mjs) and WebKit; six verifications of one run, same page or fresh, all exact.
 - **Rules** (records.mjs `verifyEntry`): reproduced -> verified (a flagged run is listed, one entry per name); not reproduced on the
   core it was recorded on -> pulled (a flagged run stays flagged); not reproduced on another core -> `stale` ("Recorded on an earlier
   version", kept listed), one try per core; after a core deploy every verified run is re-verified on the new core (D7 (3)).
 - **Measured** (this Mac, Apple silicon, Chrome for Testing headless, Snow Jam ~16,000-tick runs; see the HANDOFF entry for the run):
-  about 20 s wall per run once the page is up (12-13 s of simulation), 18-24 s of Chrome CPU, the Chrome process tree's resident
+  about 17-20 s wall per run once the page is up (10-15 s of simulation; a big air run 8 s), 15-29 s of Chrome CPU, the Chrome process tree's resident
   memory about 2.8 GB summed over its processes (shared pages counted in each, so an upper bound); the page load before the first
   run of a batch about 30-60 s.
 

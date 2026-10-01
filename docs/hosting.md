@@ -187,7 +187,18 @@ Install on the host (once):
    runs (D7 (3)). To stop it: `launchctl bootout gui/$(id -u)/<SSX_LABEL>.verifier`.
 
 Admin by hand: `cd ~/ssx-host/app/web && node server/records-admin.mjs --dir ~/ssx-host/state/records flagged | list <event> |
-show <id> | approve <id> | delete <id>` (the running server reads the changed board on its next request).
+show <id> | approve <id> | delete <id> | requeue <id>` (the running server reads the changed board on its next request).
+
+The log (`~/ssx-host/logs/verifier.log`):
+- **at start:** `start: page ..., chrome ...`, then `chrome <version>; WebGPU available` (or a `!!! WEBGPU UNAVAILABLE ...` line, repeated every
+  cycle: nothing can be verified), then `core <id> (build <id>)`;
+- **every cycle (60 s):** `cycle N: K queued (core ...)`, or `cycle N: skipped (load | online race)`;
+- **per run:** `run <id> <event> claim ...: reproduced / NOT reproduced (reason) -> verified | pulled | stale | listed ...` with its timings.
+Chrome starts only when there is work: the core id is read once per build (`/build.json` changes at a deploy).
+
+A live check: `node server/records-admin.mjs --dir ~/ssx-host/state/records list 0:ARA1` for an id, then `requeue <id>`; within a minute the
+log shows `cycle N: 1 queued` and the run's verdict (a requeued run that was pulled stays hidden until it verifies).
+
 
 ## Game data
 

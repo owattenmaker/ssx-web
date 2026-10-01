@@ -7,14 +7,18 @@
 //   node server/records-admin.mjs [--dir DIR] show <id>           one run as stored
 //   node server/records-admin.mjs [--dir DIR] approve <id>        a flagged run onto its board (one entry per name, the best kept)
 //   node server/records-admin.mjs [--dir DIR] delete <id>         a run and its replay, listed or flagged
+//   node server/records-admin.mjs [--dir DIR] requeue <id>        verify a run again on the verifier's next cycle (a live check)
 // DIR: --dir, else MP_RECORDS_DIR (the host: ~/ssx-host/state/records). Exit 0 on success, 1 on a bad id, 2 on bad usage.
 import path from 'node:path';
-import { approveEntry, deleteEntry, findEntry, loadBoard, saveBoard, timedEvent } from './records.mjs';
+import { approveEntry, deleteEntry, findEntry, loadBoard, requeueEntry, saveBoard, timedEvent } from './records.mjs';
 
 const args = process.argv.slice(2), at = args.indexOf('--dir');
 const dir = at >= 0 ? args.splice(at, 2)[1] : process.env.MP_RECORDS_DIR;
 const [command, arg] = args;
-const usage = () => { console.error('usage: records-admin.mjs [--dir DIR] flagged | list <event> | show <id> | approve <id> | delete <id>'); process.exit(2); };
+const usage = () => {
+  console.error('usage: records-admin.mjs [--dir DIR] flagged | list <event> | show <id> | approve <id> | delete <id> | requeue <id>');
+  process.exit(2);
+};
 if (!dir || !command) usage();
 const file = path.join(dir, 'board.json'), replays = path.join(dir, 'replays');
 const board = loadBoard(file);
@@ -52,6 +56,12 @@ switch (command) {
     if (!arg || !deleteEntry(board, arg, replays)) { console.error('no such run'); process.exit(1); }
     saveBoard(file, board);
     console.log('deleted');
+    break;
+  }
+  case 'requeue': {
+    if (!arg || !requeueEntry(board, arg)) { console.error('no such run'); process.exit(1); }
+    saveBoard(file, board);
+    console.log('requeued: the verifier takes it on its next cycle (see logs/verifier.log)');
     break;
   }
   default: usage();

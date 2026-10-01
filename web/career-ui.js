@@ -1706,6 +1706,8 @@ export class CareerScreens {
     ui.set('ctm-peaks');
     ui.index = 3 - this.peak;
     ui.sync();
+    // pv returnGC (main.js): the in-world event's collection while the map holds the world
+    ui.cb.eventMapShown?.();
   }
   resultAction(i) {
     // Transport / Restart / Quit

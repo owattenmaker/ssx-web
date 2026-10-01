@@ -123,6 +123,11 @@ export function approveEntry(board, id, replayDir) {
   const r = listEntry(board, event, { ...entry, approved: flagged?.reason ?? true }, replayDir);
   return { ok: true, kept: r.kept };
 }
+// Admin: verify this run again on the next verifier cycle (its tries forgotten); a pulled run stays hidden until it verifies.
+export function requeueEntry(board, id) {
+  const f = findEntry(board, id); if (!f) return false;
+  Object.assign(f.entry, { requeued: true, tried: [], attempts: 0 }); return true;
+}
 export function deleteEntry(board, id, replayDir) {
   const f = findEntry(board, id); if (!f) return false;
   f.list.splice(f.i, 1); dropReplay(replayDir, id); return true;
@@ -131,6 +136,7 @@ export function deleteEntry(board, id, replayDir) {
 export function verifyEntry(board, id, { ok, reason = '', core = null, value = null } = {}, replayDir = null) {
   const f = findEntry(board, id); if (!f) return { found: false };
   const e = f.entry, own = !!core && e.core === core;
+  if (ok !== null) delete e.requeued;
   e.verifyNote = String(reason).slice(0, 200); e.verifiedValue = Number.isFinite(value) ? value : null;
   if (ok === null) { e.attempts = (e.attempts ?? 0) + 1; if (e.attempts >= 3 && core) (e.tried ??= []).push(core); return { found: true, action: 'retry' }; }
   if (ok) {
@@ -147,10 +153,13 @@ export function verifyEntry(board, id, { ok, reason = '', core = null, value = n
 export function verifyQueue(board, core, limit = 20) {
   const out = [], seen = (e) => (e.tried ?? []).includes(core);
   const item = (e, key, flagged) => ({ id: e.id, event: key, claim: e.value, core: e.core, flagged });
-  for (const e of board.flagged) if (e.verified == null && !seen(e)) out.push(item(e, e.event, true));
-  for (const [key, list] of Object.entries(board.events)) for (const e of list) if (e.replay && e.verified == null && !seen(e)) out.push(item(e, key, false));
+  // records-admin.mjs requeue: first, whatever their state
+  for (const e of board.flagged) if (e.requeued) out.push(item(e, e.event, true));
+  for (const [key, list] of Object.entries(board.events)) for (const e of list) if (e.requeued && e.replay) out.push(item(e, key, false));
+  for (const e of board.flagged) if (e.verified == null && !seen(e) && !e.requeued) out.push(item(e, e.event, true));
+  for (const [key, list] of Object.entries(board.events)) for (const e of list) if (e.replay && e.verified == null && !seen(e) && !e.requeued) out.push(item(e, key, false));
   for (const [key, list] of Object.entries(board.events)) {
-    for (const e of list) if (e.verified === true && core && e.verifiedCore !== core && !seen(e)) out.push(item(e, key, false));
+    for (const e of list) if (e.verified === true && core && e.verifiedCore !== core && !seen(e) && !e.requeued) out.push(item(e, key, false));
   }
   return out.slice(0, limit);
 }

@@ -5,7 +5,7 @@
 // lists it first; Online Records shows the full board; Watch Replay plays the downloaded run in the full replay, every replayed
 // tick's ?simtrace equal to the live run's, and Exit replay goes back to the board; the main menu's Leaderboards opens a board
 // through the Select Event maps. Also the client rules (rankAmong) without a browser.
-//   node test-online-records.mjs [--ticks N]   (N: the live run's tick budget, default 16000)
+//   node test-online-records.mjs [--ticks N]   (N: the live run's tick budget, default 22000)
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -32,7 +32,7 @@ const CAM_INFO = '(()=>{const c=window.ssxEffects?.core;return c?._replay_camera
   console.log('online records: client rank rules OK');
 }
 
-const TICKS = process.argv.includes('--ticks') ? +process.argv[process.argv.indexOf('--ticks') + 1] : 16000;
+const TICKS = process.argv.includes('--ticks') ? +process.argv[process.argv.indexOf('--ticks') + 1] : 22000;
 const assets = path.join(web, 'public', 'assets');
 if (!fs.existsSync(path.join(assets, 'CAREER', 'career.json'))) { console.log('online records page check SKIPPED: no game data'); process.exit(0); }
 const browser = await startBrowser({ width: 640, height: 480 });
@@ -67,6 +67,19 @@ try {
     window.__run=(from,n)=>{for(let t=from;t<from+n;t++){ssxQA.advance(1,window.__pad(t));if(/results|records|award/.test(ssxQA.ui().screen))return t+1;}return -1};return 1})()`);
   await sleep(300);
   const base = await E('window.__simTrace.ticks.length');
+  // Watch Replay from the board on screen, to the finish (N ticks); the watched ticks are the trace's last N (the replay pauses at its end);
+  // each compared with the live run's. Exit replay back to the board. -> the first differing tick, -1 when exact
+  const watchExact = async (N, { course = null, cam = null } = {}) => {
+    await E(`(()=>{const ui=ssxQA.ui();ui.careerUI.online.board.cursor=0;ui.choose(0);return 1})()`);
+    await browser.waitFor(`ssxQA.ui().screen==='replay' && ssxQA.replay().mode==='full'${course ? ` && ssxQA.ui().course?.code==='${course}'` : ''}`, 300000);
+    await E(`(()=>{const r=ssxQA.replay();r.playPause();let n=0;while(r.tick<${N}&&n<${N}+50){r.frame(1/60);n++;}return r.tick})()`);
+    if (cam) cam(await E(CAM_INFO));   // the replay view's camera state while the replay is up
+    const live = await E(`window.__simTrace.ticks.slice(${base},${base + N})`), rep = await E(`(()=>{const t=window.__simTrace.ticks;return t.slice(t.length-${N})})()`);
+    let miss = rep.length === N ? -1 : -2; for (let i = 0; i < N && miss === -1; i++) if (live[i] !== rep[i]) miss = i;
+    await E(`(()=>{const ui=ssxQA.ui();ui.replayUi.key({code:'Enter'});ui.replayUi.key({code:'ArrowDown'});ui.replayUi.key({code:'Space'});return 1})()`);
+    await browser.waitFor(`ssxQA.ui().screen==='ctm-board'`, 20000);
+    return miss;
+  };
   let done = -1, t0 = Date.now();
   for (let i = 0; i < TICKS && done < 0; i += 500) done = await E(`window.__run(${i},500)`);
   for (let k = 0; k < 60 && !/records|results|award/.test(await E('ssxQA.ui().screen')); k++) await E('(()=>{for(let i=0;i<20;i++)ssxQA.advance(1,new Array(24).fill(0));return 1})()');
@@ -115,6 +128,9 @@ try {
     await sleep(500);
     check((await E('ssxQA.ui().screen')) === 'ctm-board', `Exit replay back to the board (${JSON.stringify(back)})`);
     check(!(await E('ssxQA.replay().available()')), 'after a watched run, the page run\'s own Replay is unavailable');
+    // Watch Replay twice more on the same course and page, each to the finish (three in a row)
+    for (const k of [2, 3]) { const m = await watchExact(N); check(m === -1, `Watch Replay #${k} on the same course leaves the live run at tick ${m} of ${N}`); log(`watch #${k}: ${N} ticks, first difference ${m}`); }
+    globalThis.__N = N;
   }
   // ---- the main menu's Leaderboards: the sixth row -> Select Peak / Mode / Event -> the event's board ----
   await E(`(()=>{const ui=ssxQA.ui();ui.careerUI.online.board=null;ui.set('main');ui.index=5;ui.sync();return 1})()`);
@@ -157,32 +173,19 @@ try {
   await pick('fe-peak', `(()=>{ssxQA.ui().eventSelect.choose(2);return 1})()`); await pick('fe-mode', `(()=>{ssxQA.ui().eventSelect.choose(0);return 1})()`);
   await pick('fe-event', `(()=>{ssxQA.ui().eventSelect.choose(${row.k});return 1})()`);
   await browser.waitFor(`ssxQA.ui().screen==='ctm-board' && ssxQA.ui().careerUI.online.board?.status==='ready'`, 20000);
-  const rs2 = await E('window.__simTrace.ticks.length');
-  await E(`(()=>{ssxQA.ui().choose(0);return 1})()`);
-  await browser.waitFor(`ssxQA.ui().screen==='replay' && ssxQA.replay().mode==='full' && ssxQA.ui().course?.code==='ARA1'`, 300000);
-  const M = 1200;
-  await E(`(()=>{const r=ssxQA.replay();r.playPause();let n=0;while(r.tick<${M}&&n<${M}+50){r.frame(1/60);n++;}return r.tick})()`);
-  const live2 = await E(`window.__simTrace.ticks.slice(${base},${base + M})`), rep2 = await E(`(()=>{const t=window.__simTrace.ticks;return t.slice(t.length-${M})})()`);
-  let miss2 = -1; for (let i = 0; i < M; i++) if (live2[i] !== rep2[i]) { miss2 = i; break; }
-  check(miss2 === -1 && rep2.length === M, `Watch Replay after a course switch leaves the live run at tick ${miss2} (trace from ${rs2})`);
-  const cam2 = await E(CAM_INFO);
-  check(cam2?.[4] === 48 && cam2?.[8] > 0, `Watch Replay after a course switch: ARA1's camera triggers (not BRA2's) ${JSON.stringify(cam2)}`);
-  await E(`(()=>{const ui=ssxQA.ui();ui.replayUi.key({code:'Enter'});ui.replayUi.key({code:'ArrowDown'});ui.replayUi.key({code:'Space'});return 1})()`); await sleep(500);
+  const M = globalThis.__N ?? 1200;
+  const miss2 = await watchExact(M, { course: 'ARA1', cam: (cam2) => check(cam2?.[4] === 48 && cam2?.[8] > 0, `Watch Replay after a course switch: ARA1's camera triggers (not BRA2's) ${JSON.stringify(cam2)}`) });
+  check(miss2 === -1, `Watch Replay after a course switch leaves the live run at tick ${miss2} of ${M}`);
   const back2 = await E(`(()=>{const ui=ssxQA.ui();return {screen:ui.screen,fe:ui.careerUI.online.board?.fe}})()`);
   check(back2.screen === 'ctm-board' && back2.fe, `Exit replay back to the Leaderboards board ${JSON.stringify(back2)}`);
   log(`cross-course watch: ${M} ticks, first difference ${miss2}, back ${JSON.stringify(back2)}`);
   // ---- a viewer riding another rider (Psymon) watches Zoe's run: Zoe loads for the replay, Psymon is back after it ----
   await E(`(async()=>{const ui=ssxQA.ui();await ui.cb.rider(ui.riders.find(r=>r.id==='psymon'));return 1})()`);
-  await E(`(()=>{ssxQA.ui().careerUI.online.board.cursor=0;ssxQA.ui().choose(0);return 1})()`);
-  await browser.waitFor(`ssxQA.ui().screen==='replay' && ssxQA.replay().mode==='full'`, 300000);
-  await E(`(()=>{const r=ssxQA.replay();r.playPause();let n=0;while(r.tick<600&&n<650){r.frame(1/60);n++;}return r.tick})()`);
-  const live3 = await E(`window.__simTrace.ticks.slice(${base},${base + 600})`), rep3 = await E(`(()=>{const t=window.__simTrace.ticks;return t.slice(t.length-600)})()`);
-  let miss3 = -1; for (let i = 0; i < 600; i++) if (live3[i] !== rep3[i]) { miss3 = i; break; }
-  check(miss3 === -1, `Watch Replay with another rider selected leaves the live run at tick ${miss3}`);
-  await E(`(()=>{const ui=ssxQA.ui();ui.replayUi.key({code:'Enter'});ui.replayUi.key({code:'ArrowDown'});ui.replayUi.key({code:'Space'});return 1})()`); await sleep(500);
+  const miss3 = await watchExact(M);
+  check(miss3 === -1, `Watch Replay with another rider selected leaves the live run at tick ${miss3} of ${M}`);
   const who = await E(`(()=>{const ui=ssxQA.ui();return {screen:ui.screen,rider:ui.careerUI.online.ui.cb.onlineRun?.()?.character}})()`);
   check(who.screen === 'ctm-board' && who.rider === 8, `back to the board with Psymon (character 8) ${JSON.stringify(who)}`);
-  log(`other rider watch: 600 ticks, first difference ${miss3}, after ${JSON.stringify(who)}`);
+  log(`other rider watch: ${M} ticks, first difference ${miss3}, after ${JSON.stringify(who)}`);
   // ---- the server gone: the last good boards ('cached'); none ever loaded: 'offline' (the PS2 table on the records screen) ----
   mp.kill(); await sleep(400);
   const off = await E(`(async()=>{const o=ssxQA.ui().careerUI.online;await o.records.load(true);const a=o.records.status,top=o.records.top('0:ARA1')?.[0]?.name;localStorage.removeItem('ssx3.onlineRecords.v1');const {OnlineRecords}=await import('/online-records.js');const r=new OnlineRecords();await r.load(true);return {a,top,b:r.status}})()`);

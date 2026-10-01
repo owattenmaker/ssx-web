@@ -1,3 +1,20 @@
+> **Replays solid: the verifier's replay was stopped under it; Watch Replay x3 and across courses exact (2026-10-01, online records agent):** see [online-records.md](online-records.md) "The verifier".
+> - **Cause:**
+>   - The ?verify path never set the `replay` screen, so main.js `replayFrame` stopped its replay on the first frame, and `aiRace.replayEnd` handed the live relationship tables back.
+>   - The verify loop stepped on regardless, on this browser's stored tables (localStorage `ssx3.relationships.v1`, re-saved by every rider-pair reaction).
+>   - The first run in a fresh profile was exact; every later one diverged.
+>   - Watch Replay sets the screen, so it was never affected.
+> - **Fix (web/online-replay.js):**
+>   - verify sets the replay screen;
+>   - the loop gives up ('could not run') if the replay stops under it;
+>   - the verifier is back to a fresh page every 5 runs (`--reload 5`).
+> - **Tests:**
+>   - web/test-online-records.mjs now watches three times in a row on Snow Jam, then after a course switch from Metro-City, then with Psymon selected, each to the finish (15,171 ticks), all exact; also WebKit (scratch web/.online-records-webkit.mjs: x3 and cross-course, 14,363 ticks each).
+>   - web/test-records-verifier.mjs verifies all five runs on one page (`--reload 5`): genuine Snow Jam and big air verified, the faster claim, the forged replay and the inflated score pulled.
+>   - The live-run tick budget in both tests is 22,000: tuck runs vary 13,000-17,100 ticks with the computer riders.
+
+> **Records verifier installed on the host (2026-10-01, coordinator):** Chrome for Testing 154.0.8037.92 in ~/ssx-host/chrome (npx @puppeteer/browsers, user-approved; not in /Applications, no auto-update), token ~/ssx-host/state/verifier-token (0600), MP_RECORDS_VERIFIER_TOKEN_FILE added to the server plist (backup state/server.plist.bak-20261001-verifier), LaunchAgent <SSX_LABEL>.verifier bootstrapped (running; --chrome points at the Chrome for Testing binary; log ~/ssx-host/logs/verifier.log). The queue answers with the token on loopback ({"items":[]}) and 404s without it and through the tunnel. Not yet seen: a live submission verified end to end on the host.
+
 > **Online records anti-cheat: the world-record floors, flagged runs, the admin CLI, and the replay verifier (D5) (2026-10-01, online records agent):** see [online-records.md](online-records.md) "Anti-cheat floors" / "The verifier" and [hosting.md](hosting.md) "The records verifier". Server and page; pv onlineRecords (on).
 > - **Floors:** web/server/record-floors.json (tools/fetch-record-floors.mjs, speedrun.com API, 2026-10-01). All eight timed boards have a level there.
 >   - The floor is 0.9 x the fastest verified racing run of any category (No Restrictions included) on any platform: the port is bit-exact, so the runners' glitches work in it.

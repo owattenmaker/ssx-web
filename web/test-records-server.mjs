@@ -141,6 +141,12 @@ assert.ok(R.verify(top.id, false)); assert.notEqual(R.summary().events['0:TST1']
   assert.ok(!F.queue(C).some((x) => x.id === at.id));
   for (let k = 0; k < 3; k++) F.verify(above.id, { ok: null, reason: 'no chrome', core: C });
   assert.ok(!F.queue(C).some((x) => x.id === above.id), 'three failed attempts: not again on this core');
+  // records-admin requeue: a verified run and a pulled one go to the head of the queue; the pulled one stays hidden meanwhile
+  assert.equal(admin('requeue', at.id).status, 0); assert.equal(admin('requeue', own.id).status, 0); assert.equal(admin('requeue', 'ffffffffffffffff').status, 1);
+  q = F.queue(C).map((x) => x.id); assert.deepEqual(q.slice(0, 2).sort(), [at.id, own.id].sort(), 'requeued first');
+  assert.ok(!names().includes('OWN'), 'a requeued pulled run stays hidden');
+  assert.equal(F.verify(own.id, { ok: true, reason: 'ok', core: C }).action, 'verified'); assert.ok(names().includes('OWN'), 'it verified: listed again');
+  assert.ok(!F.queue(C).some((x) => x.id === own.id), 'verified: off the queue');
 }
 // off: no directory given / the tables missing
 assert.equal(createRecords({ dir: null, assets }).enabled, false);

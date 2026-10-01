@@ -122,6 +122,12 @@ import { detectDevice, loadSaved, resolveQuality } from './quality.js';
 // loadCopies (memory, docs/mobile.md "Load spikes"): web/downloads.js reads a body of known size straight into one buffer (no chunk list
 // and join) and hands each caller its bytes without the Response body copy (arrayBuffer: one copy of the shared bytes; json / text:
 // decoded from them). Before: 3-4 copies of every asset body while a load read it.
+// returnGC (memory, WebKit only; CTM agent, docs/ctm-events-in-world.md "Rollout checks"): one full collection (web/switch-gc.js
+// collectNow, the coreTracker's markers) after an in-world event, while the results' Transport map holds the world (WS14; no ride
+// frame). The in-world path has no course
+// switch, so nothing brought JSC's heap back down: WebKit Malloc stepped +300 MB once and stayed (phone policy, 8 cycles: medians
+// ~1330 MB against the event-load path's ~820-970). With a collection at each return: 941-983 MB, flat, WebKit Malloc 570-615. A core
+// instantiation waits for a running one (its kick memories dropped first: iOS has 3 fast-memory slots). Off: no collection there.
 // switchGC (memory, WebKit only; docs/mobile.md "Load spikes"): web/switch-gc.js. Before a course's new core is made, while an earlier
 // course's core is still alive (JavaScriptCore frees a wasm memory only in a full collection), the gc-watchdog kick asks for one.
 // padCarry (CTM agent, docs/ctm-events-in-world.md "Carried presses"): one pad history for the menus and the ride, as the PS2's
@@ -180,6 +186,7 @@ export const PV_DEFAULTS = Object.freeze({
   eventReturnInWorld: false,
   loadCopies: false,
   switchGC: false,
+  returnGC: false,
   padCarry: true,
   heatRoles: true,
   onlineRecords: true,

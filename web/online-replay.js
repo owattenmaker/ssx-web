@@ -117,7 +117,9 @@ export function installOnlineReplay(ctx) {
     replay.load({ recording: rec, snapshot: m.snapshot, finishTick: m.finishTick, highlights: m.highlights || [] });
     w.playing = true; ctx.stopLive();
     if (!replay.start('full')) { console.warn('Replay: start failed'); finish({ ok: null, reason: 'replay start failed' }); return; }
-    if (w.verify) { verifyRun(w); return; }
+    // the replay screen, as Watch Replay: main.js replayFrame stops a replay on any other screen, and a stopped replay hands the
+    // relationship tables back to the page's live ones (aiRace.replayEnd), so the rest would run on this browser's stored tables
+    if (w.verify) { ui.set('replay'); verifyRun(w); return; }
     ui.replayUi?.open(); ui.set('replay'); ui.sync();
     // D7: played on this core either way
     onlineRecords()
@@ -136,6 +138,7 @@ export function installOnlineReplay(ctx) {
     let fin = null, at = -1, t0 = performance.now();
     try {
       while (watch === w && replay.tick <= end) {
+        if (!replay.active) { finish({ ok: null, reason: 'the replay was stopped under the verification' }); return; }
         for (let k = 0; k < 600 && replay.tick <= end && !fin; k++) { const t = replay.tick, r = replay.step(); if (r?.finish) { fin = r.finish; at = t; } }
         if (fin) break;   // the first finish decides: a run that finishes before its last recorded tick is not the run claimed
         await new Promise((r) => setTimeout(r, 0));

@@ -2114,6 +2114,9 @@ function setupCutscenes() {
     });
     return true;
   };
+  ui.cb.eventMapShown = () => {
+    if (worldEvent && pv('eventReturnInWorld')) returnCollect();
+  };
   ui.cb.inWorldEvent = () => (worldEvent ? { code: worldEvent.code, mode: worldEvent.mode } : null);
   ui.cb.introInWorld = (next) => {
     if (!worldEvent) {
@@ -4415,8 +4418,24 @@ function compileCore() {
     }
   })();
 }
+// pv returnGC (web/switch-gc.js collectNow): one full collection after an in-world event, while the results' Transport map holds the world
+// (career-ui.js transportAfterEvent -> ui.cb.eventMapShown: WS14, no ride frame to drop); no course switch collects the event's garbage
+// on this path. A core instantiation waits for it, so its kick memories are dropped first
+let returnGcJob = null;
+function returnCollect() {
+  if (!pv('returnGC') || !isJavaScriptCore() || returnGcJob) return;
+  returnGcJob = collectNow()
+    .then((r) => {
+      window.__returnGC = [...(window.__returnGC || []).slice(-19), r];
+    })
+    .catch(() => {})
+    .finally(() => {
+      returnGcJob = null;
+    });
+}
 /* A fresh core instance per course from the one compiled module (instantiation only; no second download or compile). */
 async function newCore() {
+  if (returnGcJob) await returnGcJob;
   const module = await (coreModule ??= compileCore());
   // pv gcWatchdog: its kick memories never held across a core instantiation (iOS has 3 fast-memory slots; web/gc-watchdog.js release)
   window.__gcWatchdog?.release?.();
@@ -4435,7 +4454,8 @@ async function newCore() {
       WebAssembly.instantiate(module, imports).then(
         (inst) => {
           // its memory: what a full collection frees
-          if (pv('switchGC')) for (const v of Object.values(inst.exports)) if (v instanceof WebAssembly.Memory) coreTracker.track(v);
+          // (pv returnGC: the tracker's markers tell its collection when a full one ran)
+          if (pv('switchGC') || pv('returnGC')) for (const v of Object.values(inst.exports)) if (v instanceof WebAssembly.Memory) coreTracker.track(v);
           receive(inst);
         },
         (e) => console.error('Core instantiate failed', e)
