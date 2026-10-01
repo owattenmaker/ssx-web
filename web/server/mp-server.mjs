@@ -81,7 +81,13 @@ const RECORDS_ASSETS = (() => {
 // Loaded only when configured, and never fatal: a missing module, directory or table leaves the records off (503) and the rest running.
 let RECORDS = null;
 if (process.env.MP_RECORDS_DIR) {
-  try { const { createRecords } = await import('./records.mjs'); RECORDS = createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress }); }
+  // MP_RECORDS_VERIFIER_TOKEN_FILE: the host verifier's shared secret (web/server/records-verifier.mjs); without it the verifier endpoints 404
+  const tokenFile = process.env.MP_RECORDS_VERIFIER_TOKEN_FILE;
+  const token = (() => { try { return tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : null; } catch { return null; } })();
+  try {
+    const { createRecords } = await import('./records.mjs');
+    RECORDS = createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress, verifierToken: token });
+  }
   catch (e) { console.warn('records: off (failed to start)', e?.message); RECORDS = null; }
 }
 const MAX_PLAYERS = 6, RESUME_GRACE_MS = +(process.env.MP_RESUME_MS ?? 30000), SILENT_DROP_MS = 10000, LOAD_TIMEOUT_MS = 45000, GO_DELAY_MS = 2500;

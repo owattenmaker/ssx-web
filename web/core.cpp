@@ -102,7 +102,8 @@ RIDER_LOCAL bool nisProbeContact=false;RIDER_LOCAL float nisProbeSpeed=0;RIDER_L
 RIDER_LOCAL bool browserResetActive=false;RIDER_LOCAL bool browserResetFromController=false;RIDER_LOCAL void (*browserResetBegin)(int)=nullptr;RIDER_LOCAL void (*browserResetDecline)()=nullptr;RIDER_LOCAL void (*browserResetRerequest)(int)=nullptr;RIDER_LOCAL bool (*browserResetControl)()=nullptr;RIDER_LOCAL void (*browserResetClear)()=nullptr;
 RIDER_LOCAL bool browserPosedLandingEnabled=false,browserCrashActive=false,browserCrashExitFrame=false;RIDER_LOCAL int browserCrashResetReason=0;
 RIDER_LOCAL void (*browserCrashReset)()=nullptr;RIDER_LOCAL bool (*browserCrashControl)(bool)=nullptr;RIDER_LOCAL void (*browserCrashMotion)()=nullptr;
-RIDER_LOCAL void (*browserHardCrash)(int,const OriginalCollisionEvent&)=nullptr;
+// 10EB30(rider, semantic, attacked, impact type, event): `attacked` is 107E70's a3 (only the 107888 attack branch passes 1).
+RIDER_LOCAL void (*browserHardCrash)(int,const OriginalCollisionEvent&,bool attacked)=nullptr;
 RIDER_LOCAL bool (*browserLandingCrash)(const OriginalLandingState&)=nullptr;
 RIDER_LOCAL extern std::unique_ptr<WorldBodyCollision> browserBodies;
 RIDER_LOCAL static std::array<float,17> landingProbeInfo{};RIDER_LOCAL static uint32_t lastPosedContactTick=0xffffffffu;
@@ -359,7 +360,8 @@ OriginalCollisionReaction dispatch_body_event(const OriginalCollisionEvent& even
  // 105D98 (105EEC/105F50) restarts the flight with 1135B8 = 113198 (clears hit/heading/normal/times) + 113618, not 113618 alone.
  if(result.resetPredictor&&!grounded)begin_prediction({physicsState.position,physicsState.velocity});
  if(result.kind==OriginalCollisionReactionKind::SurfaceReset&&browserResetBegin)browserResetBegin(1);
- if(result.kind==OriginalCollisionReactionKind::Crash&&browserHardCrash)browserHardCrash(result.animation,event);
+ // 105D98's crash 10EB30 at 0x1064E4 passes attacked = 0.
+ if(result.kind==OriginalCollisionReactionKind::Crash&&browserHardCrash)browserHardCrash(result.animation,event,false);
  return result;
 }
 OriginalCollisionReaction classify_body_contact(const WorldBodyHit& hit,const ObstacleResponse& response,const BodyCollisionVolume& volume,std::array<float,3> incoming,int controlState,const CollisionRandom& random,int motion){ // motion: 11FE98 when the caller knows it (0 after a touchdown in 139C88), else from this tick's motion

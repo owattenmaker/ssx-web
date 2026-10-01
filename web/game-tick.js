@@ -149,7 +149,7 @@ s.worldAiTick?.();
     if (s.raceInfo[2]) {
       s.finished = true; s.postFinishTicks = 0;
       const r = f32(core, core._race_result_info(), 6), dump = Uint32Array.from(new Uint32Array(core.HEAPU8.buffer, core._score_object_dump(), 0x1d0 / 4));
-      rec.finish = { score: dump[0x198 / 4] | 0, ticks: r[1], dnf: !!core._race_timed_out?.() }; rec.finishDump = dump; s.replay?.finish();
+      rec.finish = { score: dump[0x198 / 4] | 0, ticks: r[1], dnf: !!core._race_timed_out?.() }; rec.finishDump = dump; s.replay?.finish(rec.finish);
       // rival challenges (23B8C8/23BDB8): only the winner (place 0) celebrates; rider+0x100: the race results handler 0x23A760 clears it for
       // a human placing 4th or worse (place array >= 3), picking the finish reaction 314 over 315
       // freestyle: 0x239230 ranks the run with the posted scores and sets rider+0x100 for the top three

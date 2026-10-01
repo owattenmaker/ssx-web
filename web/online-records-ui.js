@@ -18,6 +18,7 @@ const TEXT = {
   online: 'Online Records', watch: 'Watch Replay', page: (a, b) => `Page ${a} of ${b}`, saving: 'Saving your record online...',
   saved: (rank) => `Your record is number ${rank + 1} online.`, notKept: 'Your best time under this name is already listed.', notKeptScore: 'Your best score under this name is already listed.',
   offline: 'Online records unavailable.', loading: 'Loading...', failed: 'The record could not be saved.',
+  review: 'Your run is under review.',   // the server held it (under its event's floor: records.mjs), neutral on purpose
 };
 let shared = null;
 export const onlineRecords = () => (shared ??= new OnlineRecords());
@@ -91,8 +92,8 @@ export class OnlineRecordsUI {
     if (res?.ok) {
       run.state = 'sent';
       run.id = res.id;
-      run.rank = res.kept ? res.rank : run.rank;
-      this.note = res.kept ? TEXT.saved(res.rank) : run.timed ? TEXT.notKept : TEXT.notKeptScore;
+      run.rank = res.kept ? res.rank : res.review ? -1 : run.rank;
+      this.note = res.review ? TEXT.review : res.kept ? TEXT.saved(res.rank) : run.timed ? TEXT.notKept : TEXT.notKeptScore;
       if (this.ui.screen === 'ctm-records' && this.ui.index === 1) this.ui.index = 0;
     } // the greyed Save Records gives the focus to Continue
     else {

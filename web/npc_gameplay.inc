@@ -298,9 +298,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pair_set_velocity(float x,float y,float z,i
 }
 // The typed reaction request of 0x107E70: 1 soft (0x108388, as 105398's soft path), 2 crash
 // (0x10EB30 with the request's semantic). event: point xyz, normal xyz, incoming xyz, closing speed.
+// attack: 107E70's a3 (1 from 107888's attack branch), passed on as 10EB30's a2 (0x1082F4): an attacked bail, score +0x12C.
 extern "C" EMSCRIPTEN_KEEPALIVE void pair_react(int kind,int animation,int attack,const float* e){
- OriginalCollisionEvent event;for(unsigned k=0;k<3;++k){event.pointCm[k]=e[k];event.normal[k]=e[3+k];event.incomingDirection[k]=e[6+k];}event.closingSpeedCmps=e[9];(void)attack;
- if(kind==2){if(!browserHardCrash)throw std::runtime_error("Pair crash lifecycle unavailable");if(!crash.active&&!browserResetActive)browserHardCrash(animation,event);return;}
+ OriginalCollisionEvent event;for(unsigned k=0;k<3;++k){event.pointCm[k]=e[k];event.normal[k]=e[3+k];event.incomingDirection[k]=e[6+k];}event.closingSpeedCmps=e[9];
+ if(kind==2){if(!browserHardCrash)throw std::runtime_error("Pair crash lifecycle unavailable");
+  if(!crash.active&&!browserResetActive)browserHardCrash(animation,event,attack!=0);return;}
  if(kind!=1||crash.active||browserResetActive)return;
  terrain_original::Rounding rounding;auto physical=originalOrientationBasis(physicsState.quaternion);OriginalCollisionContext context;
  if(browserBodyVolume&&browserBodyVolume->reactionFrame)context.presentation=*browserBodyVolume->reactionFrame;

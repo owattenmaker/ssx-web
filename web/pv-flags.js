@@ -136,8 +136,6 @@
 // event INFO's top time) come from the server's boards (web/server/records.mjs, /mp/records); a run that makes an event's online top 5
 // is submitted with its replay through Save Records and the game's keyboard; the records screen's Online Records and the main menu's
 // Leaderboards show the full boards with Watch Replay. On (2026-09-30; npm test 208/208 with it on). Off: the local PS2 table only.
-// versionedAssets (web/asset-versions.js, web/downloads.js; docs/hosting.md "Versioned asset URLs"): game files asked for as
-// /assets/<dir>/<name>?v=<hash> from the build's asset manifest, answered immutable by the origin. Pending.
 // careerRival (career-rival agent, docs/career-events.md "The peak rival in career events"): a career race FINAL's slot 1 rides the peak
 // semiFresh (career-rival agent, docs/ai-racers.md "The semi's fresh riders"): a career race SEMI's computer riders start with +0x434 = 0x31
 // (ground.state.rider_type / identity.rider_type434): WS13 makes new riders (constructor 11B718: 0x31) and 1289F0 places them without a
@@ -184,7 +182,6 @@ export const PV_DEFAULTS = Object.freeze({
   padCarry: true,
   heatRoles: true,
   onlineRecords: true,
-  versionedAssets: false,
   careerRival: true,
   careerLevel: true,
   semiFresh: true

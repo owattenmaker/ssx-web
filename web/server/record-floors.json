@@ -1,0 +1,289 @@
+{
+ "source": "speedrun.com API v1 (individual levels)",
+ "game": "k6qwy96g",
+ "fetched": "2026-10-01",
+ "factor": 0.9,
+ "rule": "a timed run under floorTicks race ticks (0.9 x the fastest verified racing record, any category, any platform) is stored flagged, not listed",
+ "events": {
+  "0:ARA1": {
+   "level": "Snow Jam",
+   "levelId": "kwj7npnw",
+   "source": "https://www.speedrun.com/api/v1/levels/kwj7npnw/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 126,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2026-01-21",
+     "url": "https://www.speedrun.com/ssx3/runs/ydoo69jz"
+    },
+    "Racing (NMG)": {
+     "seconds": 124,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "SamOnKBD",
+     "date": "2023-02-23",
+     "url": "https://www.speedrun.com/ssx3/runs/yj8w2j7m"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 104,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2025-04-07",
+     "url": "https://www.speedrun.com/ssx3/runs/zgj5w3dz"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 104,
+   "floorTicks": 5616
+  },
+  "0:BRA2": {
+   "level": "Metro City",
+   "levelId": "owo7zyo9",
+   "source": "https://www.speedrun.com/api/v1/levels/owo7zyo9/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 118,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2020-08-14",
+     "url": "https://www.speedrun.com/ssx3/runs/y4wvj0km"
+    },
+    "Racing (NMG)": {
+     "seconds": 85,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "RixtyNoMore",
+     "date": "2025-10-25",
+     "url": "https://www.speedrun.com/ssx3/runs/y8nr9p1y"
+    }
+   },
+   "floorFrom": "Racing (NMG)",
+   "wr": 85,
+   "floorTicks": 4590
+  },
+  "4:ABC1": {
+   "level": "Happiness",
+   "levelId": "xd1jgxed",
+   "source": "https://www.speedrun.com/api/v1/levels/xd1jgxed/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 136,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2019-10-19",
+     "url": "https://www.speedrun.com/ssx3/runs/yojdpjdm"
+    },
+    "Racing (NMG)": {
+     "seconds": 134,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2026-05-01",
+     "url": "https://www.speedrun.com/ssx3/runs/med0od2y"
+    },
+    "Racing (NMG+)": {
+     "seconds": 124,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "otakung8",
+     "date": "2025-07-18",
+     "url": "https://www.speedrun.com/ssx3/runs/znge8g9m"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 75,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-03-09",
+     "url": "https://www.speedrun.com/ssx3/runs/y66e6r0y"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 75,
+   "floorTicks": 4050
+  },
+  "0:CRA3": {
+   "level": "Ruthless Ridge",
+   "levelId": "ewp7gekw",
+   "source": "https://www.speedrun.com/api/v1/levels/ewp7gekw/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 120,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-02-24",
+     "url": "https://www.speedrun.com/ssx3/runs/z18qvpgy"
+    },
+    "Racing (NMG)": {
+     "seconds": 108,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "otakung8",
+     "date": "2025-07-31",
+     "url": "https://www.speedrun.com/ssx3/runs/yljx7v3m"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 103,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-03-06",
+     "url": "https://www.speedrun.com/ssx3/runs/yw0nlenm"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 103,
+   "floorTicks": 5562
+  },
+  "0:DRA4": {
+   "level": "Intimidator",
+   "levelId": "y9m5ly5d",
+   "source": "https://www.speedrun.com/api/v1/levels/y9m5ly5d/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 123,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2025-05-08",
+     "url": "https://www.speedrun.com/ssx3/runs/m7lq5o0y"
+    },
+    "Racing (NMG)": {
+     "seconds": 115,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2020-12-05",
+     "url": "https://www.speedrun.com/ssx3/runs/mk8o05xm"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 88,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-03-10",
+     "url": "https://www.speedrun.com/ssx3/runs/y42l2r2m"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 88,
+   "floorTicks": 4752
+  },
+  "4:DBC2": {
+   "level": "Ruthless",
+   "levelId": "5wkky82w",
+   "source": "https://www.speedrun.com/api/v1/levels/5wkky82w/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 142,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "wittyboyslim",
+     "date": "2024-02-06",
+     "url": "https://www.speedrun.com/ssx3/runs/yld9rrxm"
+    },
+    "Racing (NMG)": {
+     "seconds": 141,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-02-07",
+     "url": "https://www.speedrun.com/ssx3/runs/y2vjnp6z"
+    },
+    "Racing (NMG+)": {
+     "seconds": 133,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2023-02-25",
+     "url": "https://www.speedrun.com/ssx3/runs/yj8wn3dm"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 114,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-02-24",
+     "url": "https://www.speedrun.com/ssx3/runs/yo9lw5dy"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 114,
+   "floorTicks": 6156
+  },
+  "0:ERA5": {
+   "level": "Gravitude",
+   "levelId": "5920x3od",
+   "source": "https://www.speedrun.com/api/v1/levels/5920x3od/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 123,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "otakung8",
+     "date": "2025-08-07",
+     "url": "https://www.speedrun.com/ssx3/runs/yd4v22wy"
+    },
+    "Racing (NMG)": {
+     "seconds": 113,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2022-09-09",
+     "url": "https://www.speedrun.com/ssx3/runs/y8xx14nm"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 104,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-03-08",
+     "url": "https://www.speedrun.com/ssx3/runs/m78ne45z"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 104,
+   "floorTicks": 5616
+  },
+  "4:EBC3": {
+   "level": "The Throne",
+   "levelId": "29vmoj39",
+   "source": "https://www.speedrun.com/api/v1/levels/29vmoj39/records",
+   "records": {
+    "Racing (Clean)": {
+     "seconds": 121,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2020-12-18",
+     "url": "https://www.speedrun.com/ssx3/runs/mk8or51m"
+    },
+    "Racing (NMG)": {
+     "seconds": 119,
+     "platform": "GameCube",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2020-11-05",
+     "url": "https://www.speedrun.com/ssx3/runs/zpl28pvm"
+    },
+    "Racing (No Restrictions)": {
+     "seconds": 60,
+     "platform": "PlayStation 2",
+     "emulated": true,
+     "player": "Kelecat",
+     "date": "2021-02-24",
+     "url": "https://www.speedrun.com/ssx3/runs/z50ewn5y"
+    }
+   },
+   "floorFrom": "Racing (No Restrictions)",
+   "wr": 60,
+   "floorTicks": 3240
+  }
+ }
+}

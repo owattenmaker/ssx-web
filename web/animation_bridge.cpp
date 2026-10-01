@@ -154,7 +154,8 @@ static BodyCollisionVolume offsetBodyVolume(BodyCollisionVolume volume,const std
  return volume;}
 void apply_reset_placement(const OriginalResetPlacement&,bool);void leave_reset_motion();void clear_reset_contacts();void reset_resume_velocity();void commit_rider_physics();
 RIDER_LOCAL extern bool browserCrashActive,browserCrashExitFrame;RIDER_LOCAL extern int browserCrashResetReason;
-RIDER_LOCAL extern void (*browserCrashReset)();RIDER_LOCAL extern bool (*browserCrashControl)(bool);RIDER_LOCAL extern void (*browserCrashMotion)();RIDER_LOCAL extern void (*browserHardCrash)(int,const OriginalCollisionEvent&);RIDER_LOCAL extern bool (*browserLandingCrash)(const OriginalLandingState&);
+RIDER_LOCAL extern void (*browserCrashReset)();RIDER_LOCAL extern bool (*browserCrashControl)(bool);RIDER_LOCAL extern void (*browserCrashMotion)();
+RIDER_LOCAL extern void (*browserHardCrash)(int,const OriginalCollisionEvent&,bool attacked);RIDER_LOCAL extern bool (*browserLandingCrash)(const OriginalLandingState&);
 extern std::unique_ptr<CollisionWorld> cameraTerrain;RIDER_LOCAL extern std::unique_ptr<WorldBodyCollision> browserBodies;
 RIDER_LOCAL extern std::array<OriginalGroundProfile,19> physicsMaterials;RIDER_LOCAL extern OriginalLandingProfile landingProfile;RIDER_LOCAL extern OriginalCollisionProfile collisionProfile;RIDER_LOCAL extern OriginalCollisionHistory collisionHistory;
 int browser_surface_property(int);void publish_crash_actor(const OriginalCrashActorState&,int);void leave_crash_motion(OriginalCrashActorState&,int);void sync_crash_prediction(const OriginalAirTrajectory&,OriginalAirState,bool);
@@ -251,7 +252,10 @@ static OriginalCrashClipState crash_clip(){
 }
 static void reset_crash(){auto host=std::move(crash.host);crash={};crash.host=std::move(host);crash.riderCategory=1;browserCrashActive=false;browserCrashExitFrame=false;crashSerial=crashObservers=0;lastCrashObserver=lastCrashSemantic=-1;lastCrashImpact=crashPresentation=0;}
 static void detach_rail_for_crash();
-static void enter_crash(int semantic,const OriginalCollisionEvent& event){
+// 10EB30(rider, a1 semantic, a2 attacked, a3 impact type, t0 event). a2 only reaches 119B08 (0x10EB94): attacked counts the
+// victim's score +0x12C and posts popup 0x2D, else +0x124. Only 107E70 (0x1082F4) passes a nonzero a2, its own a3, which is 1
+// from 107888's attack branch (0x107E0C) alone; 105D98 (0x1064E4), 1311B8 / 1311D0, 13A530 and 13F22C (surface 18) pass 0.
+static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool attacked=false){
  if(crash.active)return;clear_start();
  const bool crashFromAirControl=gs.controlState==5&&!heldAirMode&&!passiveMode&&!::grounded;
  const int previousMotion=browserRailActive?4:(::grounded||groundDeparturePending)?0:1;
@@ -284,7 +288,7 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event){
   if(previousMotion==0&&!groundDeparturePending)originalLandingGroundLeave(physicsState,motionTick,lastGroundLeave); /*a departure tick already left the ground (core.cpp begin_airborne)*/
   physicsState.prewindStyle=0;physicsState.manualSpin=0;publish_crash_actor(crash.actor,crash.motion.submode);
  };
- originalHardCrashEnter(state,semantic,false,0,event,cb);lastCrashSemantic=semantic;++crashSerial;
+ originalHardCrashEnter(state,semantic,attacked,0,event,cb);lastCrashSemantic=semantic;++crashSerial;
 }
 static bool landing_crash(const OriginalLandingState& state){
  if(!physicsAttached)return false;

@@ -3,7 +3,7 @@
 // pulling an entry, and the HTTP mount in mp-server.mjs (off without MP_RECORDS_DIR, behind the password gate). Synthetic tables
 // only (no game data needed).
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -71,7 +71,8 @@ b = ok(R.submit(upload({ event: '1:TSS1', mode: 1, course: 'TSS1', name: 'P2', s
 bad(R.submit(upload({ event: '2:TST1', mode: 2 }), 'g'), 400, 'event');
 bad(R.submit(upload({ event: '0:TST1', course: 'TSS1' }), 'g'), 400, 'event');
 bad(R.submit(upload({ name: 'BAD<NAME' }), 'h'), 400, 'name');
-bad(R.submit(upload({ ticks: 5000 }), 'i'), 400, 'claim');                          // under the course floor (100 s)
+{ const b = ok(R.submit(upload({ name: 'FAST', ticks: 5000 }), 'i')); assert.equal(b.review, true); assert.equal(b.kept, false);   // under the route floor (100 s): flagged
+  assert.ok(!R.board('0:TST1').rows.some((r) => r.name === 'FAST'), 'a flagged run is not listed'); }
 bad(R.submit(upload({ ticks: 9000, finishTick: 9999 }), 'i'), 400, 'claim');        // the race clock does not match the recorded ticks
 bad(R.submit(upload({ extra: { giveUp: true } }), 'j'), 400, 'claim');
 bad(R.submit(upload({ extra: { finishTick: 5 } }), 'j'), 400, 'replay');
@@ -89,12 +90,58 @@ clock += 61e3; ok(R.submit(upload({ name: 'R9', ticks: 12102 }), 'rate'));
 // at most MAX_ENTRIES real runs; the slowest drop with their replays
 for (let i = 0; i < MAX_ENTRIES + 5; i++) { clock += 700e3; R.submit(upload({ name: 'M' + i, ticks: 14000 + i }), 'many' + i); }
 const full = R.board('0:TST1', 0, 200); assert.equal(full.total, MAX_ENTRIES + 5); assert.equal(full.rows.length, 100);
-assert.equal(fs.readdirSync(path.join(dir, 'replays')).length, MAX_ENTRIES + 2, 'replays of the kept runs (+2 slope style)');
+assert.equal(fs.readdirSync(path.join(dir, 'replays')).length, MAX_ENTRIES + 3, 'replays of the kept runs (+2 slope style, +1 flagged)');
 // persistence across a restart
 const before = JSON.stringify(R.summary()); R = make(); assert.equal(JSON.stringify(R.summary()), before);
 // the verifier pulls a failed entry
 const top = R.summary().events['0:TST1'].top[0]; assert.equal(top.name, 'Owen'); assert.equal(top.verified, null);
 assert.ok(R.verify(top.id, false)); assert.notEqual(R.summary().events['0:TST1'].top[0].name, 'Owen');
+// ---- the anti-cheat floor, the admin CLI, the verifier's rules (fresh state; record-floors.json style floors) ----
+{
+  const d2 = path.join(tmp, 'floors'), floorsDoc = { events: { '0:TST1': { floorTicks: 7000 } } };
+  let F = createRecords({ dir: d2, assets, now: () => clock, log: { warn() {} }, floors: floorsDoc });
+  assert.deepEqual(F.floors.get('0:TST1'), { ticks: 7000, source: 'speedrun.com' }, 'the record floor wins over the route floor');
+  assert.equal(createRecords({ dir: path.join(tmp, 'f2'), assets, log: { warn() {} }, floors: null }).floors.get('0:TST1').source, 'route');
+  const under = ok(F.submit(upload({ name: 'CHEAT', ticks: 6999 }), 'u1'));
+  assert.equal(under.review, true); assert.equal(under.rank, -1);
+  const at = ok(F.submit(upload({ name: 'EXACT', ticks: 7000 }), 'u2')); assert.equal(at.rank, 0, 'at the floor: listed');
+  const above = ok(F.submit(upload({ name: 'ABOVE', ticks: 7300 }), 'u3')); assert.equal(above.rank, 1, 'above the floor: listed');
+  const names = () => F.board('0:TST1').rows.map((r) => r.name);
+  assert.ok(!names().includes('CHEAT') && !F.summary().events['0:TST1'].top.some((r) => r.name === 'CHEAT'), 'flagged: hidden from board and summary');
+  assert.equal(F.stored.flagged.length, 1); assert.equal(F.stored.flagged[0].flagged.reason, 'under-floor');
+  assert.ok(F.replayPath(under.id), 'the flagged run keeps its replay (the admin / verifier watch it)');
+  const two = ok(F.submit(upload({ name: 'CHEAT2', ticks: 6000 }), 'u4'));
+  // the admin CLI on the same directory; the running server sees its edits
+  const admin = (...a) => spawnSync(process.execPath, ['server/records-admin.mjs', '--dir', d2, ...a], { cwd: web, encoding: 'utf8' });
+  let r = admin('flagged'); assert.equal(r.status, 0); assert.match(r.stdout, /CHEAT .*under-floor \(floor 7000 from speedrun\.com\)/);
+  assert.match(admin('show', under.id).stdout, /"name": "CHEAT"/);
+  assert.equal(admin('approve', 'ffffffffffffffff').status, 1, 'a bad id');
+  assert.equal(admin().status, 2, 'usage');
+  r = admin('approve', under.id); assert.equal(r.status, 0); assert.match(r.stdout, /listed/);
+  assert.equal(names()[0], 'CHEAT', 'approved: listed (the server read the changed board.json)');
+  r = admin('delete', two.id); assert.equal(r.status, 0); assert.equal(F.stored.flagged.length, 0); assert.equal(F.replayPath(two.id), null);
+  assert.match(admin('list', '0:TST1').stdout, /1\. .*CHEAT/);
+  assert.equal(admin('delete', under.id).status, 0); assert.ok(!names().includes('CHEAT'));
+  // the verifier: an own-core mismatch pulls a listed run; another core's run is marked stale, once per core; ok re-stamps it;
+  // a flagged run that verifies is listed; one that fails stays flagged
+  const own = ok(F.submit(upload({ name: 'OWN', ticks: 7100 }), 'v1')), old = ok(F.submit(upload({ name: 'OLD', ticks: 7200 }), 'v2'));
+  const fl = ok(F.submit(upload({ name: 'FL', ticks: 6500 }), 'v3')), fl2 = ok(F.submit(upload({ name: 'FL2', ticks: 6600 }), 'v4'));
+  const C = 'abcdef0123456789', NEW = '1111222233334444';
+  let q = F.queue(C).map((x) => x.id); assert.deepEqual(q.slice(0, 2), [fl.id, fl2.id], 'flagged runs first');
+  assert.ok(q.includes(own.id) && q.includes(old.id));
+  assert.equal(F.verify(own.id, { ok: false, reason: 'finish 7300', core: C }).action, 'pulled'); assert.ok(!names().includes('OWN'));
+  assert.equal(F.verify(old.id, { ok: false, reason: 'drift', core: NEW }).action, 'stale');
+  assert.ok(names().includes('OLD') && F.board('0:TST1').rows.find((x) => x.name === 'OLD').stale, 'an older core\'s run stays listed, stale');
+  assert.ok(!F.queue(NEW).some((x) => x.id === old.id), 'one try per core');
+  assert.equal(F.verify(fl.id, { ok: true, reason: 'ok', core: C, value: 6500 }).action, 'listed'); assert.equal(names()[0], 'FL');
+  assert.equal(F.verify(fl2.id, { ok: false, reason: 'finish 9000', core: C }).action, 'kept-flagged'); assert.ok(!names().includes('FL2'));
+  assert.match(F.stored.flagged.find((x) => x.id === fl2.id).flagged.reason, /verify-failed/);
+  assert.equal(F.verify(at.id, { ok: true, core: C }).action, 'verified');
+  assert.ok(F.queue(NEW).some((x) => x.id === at.id), 'a new core re-verifies the verified runs (D7 (3))');
+  assert.ok(!F.queue(C).some((x) => x.id === at.id));
+  for (let k = 0; k < 3; k++) F.verify(above.id, { ok: null, reason: 'no chrome', core: C });
+  assert.ok(!F.queue(C).some((x) => x.id === above.id), 'three failed attempts: not again on this core');
+}
 // off: no directory given / the tables missing
 assert.equal(createRecords({ dir: null, assets }).enabled, false);
 assert.equal(createRecords({ dir: path.join(tmp, 'x'), assets: path.join(tmp, 'none'), log: { warn() {} } }).enabled, false);
@@ -116,6 +163,21 @@ async function serve(env) {
     r = await fetch(s.url + '/mp/records/board?event=nope'); assert.equal(r.status, 404);
     r = await fetch(s.url + '/mp/records/replay?id=../../etc'); assert.equal(r.status, 404);
     r = await fetch(s.url + '/mp/records/submit', { method: 'POST', body: Buffer.alloc(700 * 1024) }); assert.equal(r.status, 413);
+  } finally { s.stop(); }
+}
+{   // the verifier's endpoints: loopback, the token, never with CF-Connecting-IP (through the tunnel); else 404
+  const tok = 'v'.repeat(8) + Math.random().toString(16).slice(2) + 'token-x'; fs.writeFileSync(path.join(tmp, 'vtoken'), tok + '\n');
+  const s = await serve({ MP_RECORDS_DIR: path.join(tmp, 'vhttp'), MP_RECORDS_VERIFIER_TOKEN_FILE: path.join(tmp, 'vtoken') });
+  try {
+    const sub = await (await fetch(s.url + '/mp/records/submit', { method: 'POST', body: upload({ name: 'VER', ticks: 10150 }) })).json();
+    assert.equal((await fetch(s.url + '/mp/records/verifier/queue?core=abc')).status, 404, 'no token');
+    assert.equal((await fetch(s.url + '/mp/records/verifier/queue?core=abc', { headers: { 'x-ssx-verifier': 'wrong' } })).status, 404, 'wrong token');
+    assert.equal((await fetch(s.url + '/mp/records/verifier/queue', { headers: { 'x-ssx-verifier': tok, 'cf-connecting-ip': '1.2.3.4' } })).status, 404, 'through the tunnel');
+    const q = await (await fetch(s.url + '/mp/records/verifier/queue?core=abcdef0123456789', { headers: { 'x-ssx-verifier': tok } })).json();
+    assert.equal(q.items[0]?.id, sub.id);
+    const res = await fetch(s.url + '/mp/records/verifier/result', { method: 'POST', headers: { 'x-ssx-verifier': tok }, body: JSON.stringify({ id: sub.id, ok: true, core: 'abcdef0123456789', reason: 'ok' }) });
+    assert.equal((await res.json()).action, 'verified');
+    const top = (await (await fetch(s.url + '/mp/records')).json()).events['0:TST1'].top[0]; assert.equal(top.verified, true);
   } finally { s.stop(); }
 }
 { const s = await serve({}); try { const r = await fetch(s.url + '/mp/records'); assert.equal(r.status, 503); } finally { s.stop(); } }

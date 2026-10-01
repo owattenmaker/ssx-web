@@ -93,7 +93,7 @@ export function createRecording() {
 //   event(e)              apply a recorded out-of-band call before its tick
 //   ended()               the replay stopped: host clean-up (relationships back, flags)
 export function createReplay(host) {
-  let rec = null, snapshot = null, finishTick = -1, autoPending = false;   // the live run: recording, its start state, its finish tick
+  let rec = null, snapshot = null, finishTick = -1, autoPending = false, finishInfo = null;   // the live run: recording, its start state, its finish tick
   let mode = null, t = 0, paused = false, slow = 0, cursor = {}, loops = 0, played = 0, seekTo = -1;
   // Highlight buckets (0x2707E0 / 0x270870 / 0x2708F0): the 60-tick bucket of a take-off is kept when its landing gained 1000
   // points or the jump lasted 5 s, or it ended in a crash; a forced reset drops it; 3 per human in single player (R+0xC).
@@ -103,7 +103,7 @@ export function createReplay(host) {
   let camera = 0;   // REPLAY_CAMERAS index (R+0x630), 0 = Web-cam at every start (0x26F228 / 0x26EEA0)
   const api = {
     // ---- live run ----
-    liveStart() { if (mode) api.stop(); rec = createRecording(); snapshot = host.snapshot(); finishTick = -1; autoPending = false; highlights = []; air = null; replayed = false; host.prepare?.(); },
+    liveStart() { if (mode) api.stop(); rec = createRecording(); snapshot = host.snapshot(); finishTick = -1; finishInfo = null; autoPending = false; highlights = []; air = null; replayed = false; host.prepare?.(); },
     // After each live tick (web/game-tick.js): the run's highlights. grounded / score (the banked run score) / crash / reset.
     observe(grounded, score, crashing, resetting) {
       if (!rec || finishTick >= 0 || mode || highlights.length >= 3) return;
@@ -122,7 +122,9 @@ export function createReplay(host) {
     // post-finish coast is not recorded: 0x233C50 -> 0x26FA50 writes the end frame at EndRace).
     record(input) { if (rec && finishTick < 0 && !mode) rec.push(input); },
     note(kind, value) { if (rec && finishTick < 0 && !mode) rec.note(kind, value); },
-    finish() { if (rec && finishTick < 0 && !mode) finishTick = rec.ticks - 1; },
+    // info: the finish record of that tick (web/game-tick.js rec.finish: {score latched at the finish, ticks, dnf}; pv onlineRecords' claim)
+    finish(info = null) { if (rec && finishTick < 0 && !mode) { finishTick = rec.ticks - 1; finishInfo = info; } },
+    get finishInfo() { return finishInfo; },
     get recording() { return rec; }, get finishTick() { return finishTick; }, get snapshot() { return snapshot; },
     get length() { return finishTick + 1; },
     available() { return !!rec && finishTick >= 0 && !!snapshot && host.allowed(); },
