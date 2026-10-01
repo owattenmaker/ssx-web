@@ -83,8 +83,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE void section_restart(){if(sectionsRunning)sectio
 // rollers and pickups back to their load state (the port's reset_race world part, browser_reset_pickups); the activation list is kept
 // (no 0x103358: PS2 c0d-ws15 75 entries through WS15). pv eventReturnInWorld (main.js). Unconfirmed item by item against 230180's
 // callees (26CA90, 309030, 2D9B40, 22E7C8, 3A6800, 26F228, 2789E0, 15DB58, 229498, 343BC0, 357B38, 309F18, 308C60, 28B180).
-void browser_reset_pickups();
-extern "C" EMSCRIPTEN_KEEPALIVE void ctm_world_reset(){browser_reset_pickups();}
+void browser_reset_pickups();void browser_mission_world_reset(); // web/mission_gameplay.inc: 308C60 -> 308DB8 (the markers' Hide again)
+extern "C" EMSCRIPTEN_KEEPALIVE void ctm_world_reset(){browser_reset_pickups();browser_mission_world_reset();}
 // A NIS director's camera point in the activation (engine/section_streaming.hpp Activation::points): on = 1 adds it (0x281370 ->
 // 0x1033B0, when the script starts) or, while it is in, sets where it is (0x281100: the outer camera's +0x20 = the rendered eye as the
 // previous tick's camera update left it, copied in the director's update before this tick's 0x101B60); on = 0 removes it (0x281400 ->

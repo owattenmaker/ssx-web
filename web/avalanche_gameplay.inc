@@ -127,9 +127,13 @@ static void avalanche_entities_released(size_t from){
  avalancheReleased.resize(kept);
 }
 static void avalanche_entities_clear(bool restore){if(restore)for(const auto& p:avalancheEntities)avalanche_entity_restore(p);avalancheEntities.clear();}
-// A streamed location leaving the world (web/stage_world.inc browser_stage_track_reset): its pieces lose their entities.
+// A streamed location's unload start (web/peak_world.inc row -> 7): 230360 -> 3551A8(entities, group 1, track) destroys its pieces' Object
+// entities (group 1) -> 361038 -> 3553C0 -> 34FBF0: the authored geometry back, flags = (flags & 0xFFFF0300) | (flags >> 16) | 2. (Before, at
+// the eviction (row 7 -> 0, T+8), a tick after pv peakRelease's free at T+7: no freed node was read, avalanche_entity_instance needs the
+// authored node count, but the pieces moved and collided 6 ticks longer than on the PS2.)
 void browser_avalanche_track_reset(uint32_t track){
- std::erase_if(avalancheEntities,[track](const AvalanchePiece& p){if((p.resource&255u)!=track)return false;avalanche_entity_restore(p);return true;});
+ std::erase_if(avalancheEntities,[track](const AvalanchePiece& p){if((p.resource&255u)!=track)return false;avalanche_entity_restore(p);
+  if(p.collidable){const uint32_t masked=stage_flags(p.resource)&0xFFFF0300u;stage_set_flags(p.resource,masked|uint32_t(int32_t(masked)>>16)|2u);}return true;});
 }
 // ---- The computer riders' definitions ------------------------------------------------------------------------------------------
 // The PS2 has one world: an avalanche any rider sets off plays, and its rocks collide, for everyone. The computer riders are rider

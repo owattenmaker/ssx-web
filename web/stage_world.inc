@@ -969,7 +969,7 @@ void browser_stage_track_reset(uint32_t track){
  std::erase_if(stageFlags,[track](const auto& p){return (p.first&255u)==track;});std::erase_if(stageNodeState,[track](const auto& p){return (p.first&255u)==track;});std::erase_if(stageSectionLiveComps,[track](const auto& p){return (p.first&255u)==track;});
  for(auto& e:stageEntities)if((e.resource&255u)==track)e.alive=false;
  for(auto& s:stageInstances)if((s.resource&255u)==track){const auto* h=s.handler;const uint32_t r=s.resource;s=StageInstance{};s.resource=r;s.handler=h;}
- void browser_avalanche_track_reset(uint32_t);browser_avalanche_track_reset(track);
+ // (the pieces' Object entities went at the unload start: web/peak_world.inc browser_avalanche_track_reset)
 }
 // Mid-run seed of a streamed world (web/peak-capture.mjs from tools/export_peak_seed.py): the node entities (6 DeadNode,
 // 16 Hide, 19 RestoreNode) and instance flags a PS2 savestate holds.

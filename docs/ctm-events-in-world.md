@@ -834,14 +834,56 @@ grid placement on the first record without it (14538, WS1's last tick), the card
   step there under the gondola), +0x454 0, the route reattached (+0x490, +0x4C0..+0x4C8; record 14017). web/event-heat.js heatEnter
   ends with it (core event_row_enter = transport_map_enter without WS14's boost meter clear); compare-ai-capture --ws13 passes the
   location's start rows. +0x460 / +0x454 exact through the gondola since.
+- **The grid-wait ranks.** 1289F0's riders are fresh (+0xEC 0) and the human keeps its place (14036: 2,0,0,0,0,0), so 10F998 over the
+  equal grid distances gives 5,1,2,3,0,4 (keys -(remaining + 20 x rank), shell sort 0x3E6328). The held human's +0x4D0 stays the
+  start row's 353496 (121818 skips 112338 under +0xAC4: ctm-parity.md "Each tick while held"). WS1 arg 3's update, once its NIS list has
+  ended (279298 == 0), runs 128958 / 128998, 128A48(C, 0) and, in a race, 128A48(C, 1) (rank mode 1, +0xEC = the list index): ARMSX2
+  call-site probe local/ctm-events/caps/c0a-ws13prank, 0x234570 / 0x234594 at tick 222, two frames after 123B48 (tick 220). The
+  comparer passes the ranks into racers.start({ ranks }) and calls race_world_rank_mode(1) at that frame (the probe's: the list end is
+  the NIS engine's, which it does not run). Ranks exact through the capture since.
 - **The semi's route roles** are round 2's (ai-racers.md "Route roles by round": 1 1 1 0 0, not lineups.json's final 2 2 1 1 0):
   Elise's path pick at 479 (path 117) and the riders' later picks.
 - **The human's start in the semi** is the normal 12BF68 (phase 1 crouch 1 at GO, the push-off at pose 0.62, tick 202); a hold
   carried past C2 (nis_hold's start clear) had stopped it.
-- Score (core-row: core-pad + event_row_enter; the semi's roles): the qualifier exact to the live stop; the grid wait: riders exact;
-  the semi to the capture's end (1500 ticks): the human and riders 1 / 2 / 4 / 5 exact, Nate to 1221, the RNG to 867. Open: the
-  grid-wait rank (the PS2 has the human 5th in the gondola), Nate at 1222, the RNG at 868, the +0x470 start after a Give Up, the
-  human's +0xAFC holds (the gondola: +0x430 / +0xB00 / +0x370 keep the placement's, the PS2 probes and misses).
+- **The world reset re-hides the Big Challenge markers.** 230180 purges set-piece bucket 1 (355118(S, 1) at 0x2301B8), which holds
+  the Hide nodes (350E90 -> 34FB00 with bucket 1, type 16), and then calls 308C60 (0x23027C). 308C60's mode-4 test (0x535C10 == 4)
+  gates only its mission build loop. It always ends with 308DB8 (0x308D84), which runs each loaded stage's mission records' +0x4C
+  programs again, so the markers' Hide (2FFB50) runs again too. PS2 c0a-ws13.tick0.p2s (the semi's tick 0):
+  mdl_ARA1_BigCGate_1001 (599560) and flg_ARA1_BigCFlag_1001 (648456) are type-16 nodes with +8 = 0x210205 (0x20 clear: the body
+  collision skips them). core ctm_world_reset now ends with browser_mission_world_reset (web/mission_gameplay.inc): 308DB8 outside
+  mode 4; in mode 4 the next WScript tick's mission_build runs it once. web/event-heat.js heatEnter then copies the human context's
+  node states into the rider contexts (syncWorldNodes). The rider contexts run no stage programs, so without the copy they kept the
+  qualifier's kind-9 replays (266760 at 0x200004, so the PS2's semi-tick-867 Spline fire was missed). With the copy but without
+  308DB8, rider 1 hit the gate at 802.
+- Score (core-hide; gate ctm-events/c0a-ws13-semi, compare-ai-capture --ws13 --ticks 16100): the qualifier, the grid wait and the
+  semi to the capture's end (1500 ticks) are all exact: the human, all five riders, the RNG, the ranks and the pair records. Open: the
+  human's +0xAFC holds (the gondola: +0x430 / +0xB00 / +0x370 keep the placement's; the PS2 probes and misses). **Parked
+  (2026-10-01), the NIS clip export:** under the gondola's hold the PS2 plays semantic 432 on channel 2 (sequence clip 0x5A8E00) and
+  then 411 on channel 3, not semantic 5. 432 has no variant record (*(gp+0xD0C) count 0), so its clip comes from the NIS's own bank.
+  Bone 22 sits 43 cm forward of and 18 cm above +0x110. To pick this up: export the NIS rider clips from the cutscene banks (to
+  scratch, then the coordinator copies them in), trace how the NIS selects 432 / 411, and pose them through core nis_hold_board_root
+  (QA only: a copy of the graph at the hold transform). Then verify bone 22 against c0a-ws13 14017.. and fr-booth2 (the booth hits
+  and their 111AA0 impacts), and wire nis_hold_probe on the page behind a switch. ctm-parity.md "Not modelled".
+
+**The race clock's GO: WS3 selects Race (2026-09-30).** Every human finish on the web came out one race tick short of the
+PS2's +0x478: the c0a-ws13 qualifier 11794 vs 11795, the c0a-ret2 Give Up 1519 vs 1520, and the rider contexts 11707 / 11715 vs
+11708 / 11716. That is 1/60 s on the results time.
+- The rule. WS3's update (cGFGateState 234C68) runs in WS_tick after the rider manager's tick and its total-tick increment. With the
+  clock's countdown +0x1C at 0 (and 0x535C10 != 4, 270280(S+0x28) == 0) it requests WS4 at once (233AA0). WS4's enter 234E20
+  selects Race (0x234E30 -> 113B10). The next tick's 113C20 (0x128B14) then enters Race and counts race tick 1, so the clock's own
+  countdown select (0x113D60) never runs. In a tick, race ticks = total - 179.
+- Evidence (ARMSX2 call probes, local/ctm-events/probe_calls.py):
+  - c0a-ws13pclk2: 0x234E30 at total 180 with +0x1C 0; the Race handler's 12A250 call (0x113DCC) from total 180; no 0x113D60.
+  - c0a-ws13pclk: 113C20 takes +0xC from 0 to 1 at total 180.
+  - c0a-ret13: the Give Up's finish (125228's 125368 branch, 0x125390 -> 125108) reads +0xC 1520 at total 1699.
+- Port: core race_bridge.cpp gate_go at the end of race_end, after its info is filled: Countdown entered with 0 left, event kind
+  != 4 -> select Race. The info still reports the tick's own phase 4, so the page's GO HUD / sounds keep the next tick's 4 -> 5
+  (the monster-* audio gates: the GO sounds at the same tick). A first try that selected before the info moved them one tick
+  early (monster-yellowcard / deepsky / swollen / xexec failed at 179).
+- Not modelled: 270280, the streamer state *(S+0x28). Unconfirmed whether a countdown can end while it reports busy.
+- Results: c0a-ret2's finish ticks are 1520, as the PS2's. peak3/kick-doubt-event-tuck (a timed event: 125228's limit reads the
+  race ticks) went from exact through 3781 to exact to the end.
+- +0x470 itself was already right: the PS2's 1/60 at record 3033 is the web's from tick 1700 on.
 
 **Carried presses (pv padCarry, 2026-09-30).** Two rules from the code:
 - **One pad history.** cSSXApp_preUpdate (0x227E98; the jal at 0x227F20) runs 0x321298 on each port's history once per app update

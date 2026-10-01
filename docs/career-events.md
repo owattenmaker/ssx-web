@@ -100,6 +100,13 @@ then Final, with 6 riders each; the handler never reads the course.
 - **Time limit:** the table value × 60 ticks (GameModeMan+0x78 = `0x1454F8`(course, round) × 60 when +0x88 is set). 125228
   (per rider from 121818) ends an unfinished run once race ticks pass int(limit/60)×60 (tick 7201 for 2:00): rider+0x480 = 1
   (DNF) and the finish routine 125108; the results handler 239230 then stores the heat score as 0.
+- **The race clock's start (2026-09-30):** race tick 1 is counted in the tick after the countdown reaches 0, not one later. WS3's
+  update 234C68 (after the rider manager's tick) requests WS4 when the countdown +0x1C is 0, and WS4's enter 234E20 selects Race
+  (0x234E30) before the clock's own 0x113D60 select runs. So in a tick, race ticks = total - 179 (ARMSX2 call probes c0a-ws13pclk /
+  c0a-ws13pclk2 / c0a-ret13). core race_bridge.cpp gate_go. Its effects: +0x478, the results time, the HUD clock and this time limit
+  (peak3/kick-doubt-event-tuck's 1:00 time-out is now exact). **Gap:** WS3 also requires 0x535C10 != 4 and 270280(*(S+0x28)) == 0,
+  the streamer state. The port does not model 270280; whether a countdown can end while it reports busy is unconfirmed.
+  [ctm-events-in-world.md](ctm-events-in-world.md) "The race clock's GO".
 - **Single Event:** the final only, and the posted final scores are the round-1 values.
 - **Difficulty:** +0x284/+0x286. It steps up on a heat-2 win or a final medal and down on a final fail.
 

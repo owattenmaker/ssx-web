@@ -293,6 +293,13 @@ void browser_mission_track_teardown(uint32_t track){ // 230360 -> 308FE0 -> 308F
 void browser_mission_reset(){missionPool.clear();for(auto& l:missionLists)l.clear();missionHud={};missionHud[3]=-1;missionHud[9]=-1;missionHud[11]=-1;missionEvents.clear();missionOffers={};missionOfferRead=missionOfferWrite=0;
  missionActive=-1;missionCurrent=missionCurrentTask=-1;missionPendingOp=0;missionPendingId=-1;missionRebuildIn=-1;missionContextResetIn=-1;missionTicks=0;missionUiEvents.clear();}
 
+// 230180's 308C60 (0x23027C), after its bucket-1 purge 355118(S, 1) (0x2301B8) destroyed the Hide nodes (350E90 -> 34FB00 bucket 1,
+// type 16): 308C60 builds the missions only in mode 4 (0x535C10 == 4: the port's first WScript tick, missionTicks 0) and ends with
+// 308DB8 (0x308D84) whatever the mode: each loaded stage's mission records' +0x4C programs run again, the Big Challenge markers'
+// Hide (2FFB50) among them. PS2 c0a-ws13: mdl_ARA1_BigCGate_1001 / flg_ARA1_BigCFlag_1001 are type-16 nodes (+8 0x2102x5) at the
+// semi's tick 0. In mode 4 the next tick's mission_build runs 308DB8 (one run, as the PS2's).
+void browser_mission_world_reset(){if(!mission_mode())mission_refresh_visuals();}
+
 // ---- events (3097E0 .. 3099F8) and the WScript tick (309270) ------------------------------------------------------------------
 static void mission_post_event(uint32_t kind,uint32_t a=0,uint32_t b=0){if(missionEvents.size()<32)missionEvents.push_back({0x70000u|kind,a,b});}
 // 30A060 -> 3097E0: every rider contact that reaches 30A060 posts kind 0 with the instance's resource (+0x78).

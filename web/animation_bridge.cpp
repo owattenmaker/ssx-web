@@ -604,6 +604,22 @@ static void reset_place_at(const terrain_original::Vector& point,const terrain_o
    AnimationTransform boardRoot;const auto bodyRoot=originalRiderRootPresentation({physicsState.position,physicsState.quaternion},local.at(22).position,graph.scale,rs,&boardRoot);resetPlacedBoardRoot=boardRoot;resetStaleWorld=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});
    if(contactPose){poseContact.normal=physicsState.normal;poseContact.boardDirection=browserBoardNormalForPose;poseContact.boardLiftCm=physicsState.boardLift;poseContact.boardAlignment=physicsState.boardAlignment.current;legWeight=originalGrabLegWeight(legWeight,graph.currentClass(2));poseContact.legWeight=legWeight;originalRiderPoseContact(resetStaleWorld,local,graph.scale,poseContact);}}
 }
+// The NIS hold's board root (docs/ctm-parity.md "120F20's re-probe under the hold"): 123640's animator part on a copy of the graph,
+// so the drawn graph and the rider's state stay as they are: 311A50 (sequences cleared, animator +0x1C = 1), 3128E8(anim, 5, -1.0, 0),
+// then `steps` full-rate 11EB60 steps, posed (11EB98) at the rider's transform: bone 22's world point (rider+0x2C[+0x8A0]), PS2 cm.
+std::array<float,3> nis_hold_board_point(int semantic,int steps){
+ if(!graph.rig)throw std::runtime_error("NIS board root without a rig");
+ auto g=graph;const bool stance=physicsState.reverseStance;
+ g.sequences.clear();g.sampledLocal.reset();g.requestedSemantics.fill(438);g.nextRate=1;g.defaultMirror=stance;g.defaultRoot={};
+ const auto sc=originalSinCos((stance?-3.1415927410125732f:-0.f)*.5f);g.defaultRoot.rotation={0.f*sc[0],0.f*sc[0],sc[0],sc[1]};
+ if(!g.enter(semantic))throw std::runtime_error("Missing NIS hold animation");
+ for(int k=0;k<steps;k++){auto step=physicsState;step.timeScale=1;g.advance(step,prewind.spin.current,prewind.flip.current);g.completeSequences();}
+ const auto local=originalAnimationLocalPose(g.rig->bones,g.rig->clips,originalAnimationLayers(g.sequences));RiderRootPresentation rs;rs.turn=physicsState.turn.current;rs.brake=physicsState.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
+ AnimationTransform boardRoot;const auto bodyRoot=originalRiderRootPresentation({physicsState.position,physicsState.quaternion},local.at(22).position,g.scale,rs,&boardRoot);
+ const auto world=originalAnimationWorldPose(g.rig->bones,local,bodyRoot,g.scale,{bodyRoot,boardRoot});
+ return world.at(22).position;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE float* nis_hold_board_root(int semantic,int steps){RIDER_LOCAL static float out[3];const auto p=nis_hold_board_point(semantic,steps);for(int k=0;k<3;k++)out[k]=p[k];return out;} // QA
 void browser_mission_placed(); // web/mission_gameplay.inc: 3099F8 (WScript event kind 5)
 static bool step_reset(){
  OriginalResetControlCallbacks cb;
@@ -620,7 +636,8 @@ static bool step_reset(){
 }
 static void follow_rider_route(float bestRemaining,int32_t tick){
  if(!physicsAttached)return;
- if(browserNisHold)return; // 121818: rider+0xAC4 set skips 112338 and the score tick 117C28 (the NIS hold)
+ // 121818 (0x12187C..0x1218AC): rider+0xAC4 set (the NIS hold) skips 112338 (the course progress: web/race_bridge.cpp race_end) and
+ // the score tick 117C28; 1125C0, the route progress here, and 125228 run on (PS2 c0a-ws13 14018: the held human's +0x4C0..+0x4CC move).
  // 121818: the route passes (112338 / 1125C0) and then 117C28, the score tick, on every tick (rider+0xAC4 == 0): a streamed
  // location's path bank evicted before the next one is delivered leaves no route to follow here, but the score still ticks
  // (PS2 allpeak/apr-start 11879: the EBC3 bank goes at the EBC3_E crossing while the rider grinds; the grind distance kept counting).
@@ -628,7 +645,7 @@ static void follow_rider_route(float bestRemaining,int32_t tick){
  OriginalNpcPathScoreContext context;context.position=physicsState.position;context.velocity=physicsState.velocity;context.computerControlled=false;
  originalNpcRouteProgress(resetPaths,resetRoute,context,bestRemaining,tick,[]()->uint32_t{throw std::runtime_error("Human route progress unexpectedly requested NPC randomness");});
  physicsState.headingOffset=resetRoute.heading;++routeProgressUpdates;}
- tick_rail_score();
+ if(!browserNisHold)tick_rail_score(); // 117C28
 }
 // A streamed location's reset path bank (web/peak_world.inc, 12A340 -> 112180): the human's route is re-attached to the
 // region row's reset path (+0xAB8): fresh cache (+0xABC +0x14 = -1), 26A638 -> closest point +0x490 and distance

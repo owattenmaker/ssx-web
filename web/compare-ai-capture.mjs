@@ -359,6 +359,7 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
         heat.enter = (await import('./event-heat.js')).heatEnter({ human, racers, doc, finishOrder: heat.finishOrder, lineupData: JSON.parse(text(`${courseCode}/lineups.json`)),
           riderText: (pkg) => (resources.riderText[pkg] ??= text(`${pkg}/rider.json`)), cstr: (t) => str(human, t), bank: heatBank() });
         console.error('ws13: enter at record', i + 1, 'semi lineup', heat.enter.values.join(' '), 'changed slots', heat.enter.changed.join(' '));
+        if (process.env.RANK_TRACE) console.error('ws13: human progress after the enter', Array.from(f32(human, human._race_progress_info(), 8)).map((x) => +x.toFixed(1)).join(','), 'pos', Array.from(f32(human, human._reference_motion(), 3)).map(Math.round).join(','));
         // (the stop frame is this record's interval: WS13's first frame writes record W, its section scan after the record is the next one's)
         { const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true); human._nis_hold(1, q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)); }
         { const w = Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)), ps2w = records[i + 1].rng; if (w.some((x, k) => x !== ps2w[k])) { heat.rngFirst = { record: i + 1, tick: records[i + 1].tick, webBehind: drawsBetween(w, ps2w), webAhead: drawsBetween(ps2w, w) }; console.error('ws13: RNG first differs at record', i + 1, JSON.stringify(heat.rngFirst)); } }
@@ -385,8 +386,13 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
       if (i === heat.G) { for (const n of racers.npcs) n.core._npc_fresh_rider(); // 128958 -> 129E20: the round's riders made fresh (WS13 phase 0)
         // 1289F0's riders are the round's fresh ones (+0xEC 0, constructor 0x125EB8) and the human keeps its place (PS2 c0a-ws13 14036: 2,0,0,0,0,0);
         // 10F998's first ranking over the equal grid distances then gives 5,1,2,3,0,4 (keys -(remaining + 20 x rank), shell sort 0x3E6328)
-        { const humanRank = racers.worldState ? racers.worldState[360] : 0; racers.start({ gridStart: true, hold: true, ranks: [humanRank, 0, 0, 0, 0, 0] }); }
+        { const humanRank = racers.worldState ? racers.worldState[360] : 0; racers.start({ gridStart: true, hold: true, ranks: [humanRank, 0, 0, 0, 0, 0] }); console.error('ws13: grid ranks from', humanRank, racers.worldState ? Array.from(racers.worldState.slice(360, 396)).filter((_, k) => k % 6 === 0).join(',') : null); }
         console.error('ws13: grid start at record', i); } // 1289F0: the semi's riders on the grid (PreRace), the tick restarts
+      // WS1 arg 3's update once its NIS list has ended (279298 == 0): 128958 / 128998, 128A48(C, 0) and, in a race, 128A48(C, 1) (rank mode
+      // 1, +0xEC = the list index), before that frame's rider manager tick. PS2 call-site probe local/ctm-events/caps/c0a-ws13prank: 0x234570
+      // and 0x234594 at tick 222, two frames after the gondola actor's release 123B48 (tick 220, record 14538); the list's end is the NIS
+      // engine's, which the comparer does not run: its frame is the probe's (the hold's last record + 2).
+      if (heat.gridPlaced && i === heat.gridPlaced + 2) { human._race_world_rank_mode(1); console.error('ws13: WS1 rank reset (128A48(C, 1)) before record', i); }
       if (i === heat.C2 - 1) { heat.pendingHold = null; continue; } // the card (WS2): the world holds; its Continue is the next record's tick 0
     }
     if (heat && i === heat.C2) { // the card's Continue: WS1's exit (128958, 1289F0, 128A10: 1297C8(C, 0) + 128A48), WS3's countdown (as the first heat's C)
@@ -580,6 +586,7 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
   if (aiCapture) { // 10F560 of tick T runs before record T: this browser tick's world vs record i.
     const rec = aiCapture.records[i], ranks = [rec.human.rank, ...rec.ai.map((a) => a.rank)], web = ranks.map((_, s) => racers.worldState[360 + s * 6]); // 2 riders in the backcountry rival events
     if (ranks.some((r, s) => r !== web[s]) && !first.rank) first.rank = { tick: rec.tick, web, ps2: ranks };
+    if (process.env.RANK_TRACE && heat && i >= heat.G && i < heat.G + +process.env.RANK_TRACE) console.error('ranks', i, rec.tick, 'web', web.join(','), 'ps2', ranks.join(','), 'remaining web', racers.standings().map((r) => Math.round(r.remaining)).join(','), 'ps2', [rec.human.remaining, ...rec.ai.map((a) => a.remaining)].map(Math.round).join(',')); // (diagnostic)
     for (let k = 0; k < rec.ai.length; k++) for (let b = 0; b <= rec.ai.length; b++) { const pr = rec.ai[k].pairRecords[b], wr = racers.worldState.slice(((k + 1) * 6 + b) * 10, ((k + 1) * 6 + b) * 10 + 10);
       if ((pr.enabled !== 0) !== (wr[0] !== 0) || Math.fround(wr[2]) !== pr.distance || Math.fround(wr[3]) !== pr.bearing) { const m = { tick: rec.tick, slot: k + 1, other: b, web: wr.slice(0, 4), ps2: [pr.enabled, pr.human, pr.distance, pr.bearing] }; if (!first.records) first.records = m; if (ctmReturn?.rowR != null && rows.length > ctmReturn.rowR && !first.returnRecords) first.returnRecords = { ...m, row: rows.length }; } }
     rowsRank.push(ranks.join('')); }

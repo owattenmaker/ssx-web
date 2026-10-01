@@ -70,6 +70,7 @@ export function createGameTick(host, { trace = null } = {}) {
   function simulate(input, ticksLeft = null) {
     const s = host, core = s.core;
     if (s.freeRide?.stalled()) { s.freeRide.tick(); return null; } // streamed world: +0x1D0 wait (2306B8 skips the gameplay part of the frame; the streamer still runs, web/free-ride.js)
+    s.nisStart?.(); // pv nisAfterScan: the NIS tick (0x230BE4: a rider actor's start, 123640) before every pass of this game tick (main.js)
     // One consumed PS2 pad sample per 60 Hz tick: original history, INPUT.MAP and provider 0x127998.
     // HUD pre-pass state (0x1EA930: orb/coil palette + flash phase, Uber-hint gating) is one tick behind the slot draws (PS2
     // uber-chain frame 1557: total 5850 with the tier-4 gold coil).

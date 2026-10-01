@@ -574,7 +574,12 @@ rider held by the cut's rider actor.
 - **Each tick while held:**
   - Control 13 has no tick (table 0x456C10 -> 111824). Motion 3's tick A is 136958 (11E098 only) and tick B 136978 is empty. So
     there is no integration, gravity or contact.
-  - With +0xAC4 set, these are skipped: 11EB60 / 11EB98 (121700 / 121728), 112338 and the score tick 117C28 (121818).
+  - With +0xAC4 set, these are skipped: 11EB60 / 11EB98 (121700 / 121728), 112338 and the score tick 117C28 (121818: the tests at
+    0x12187C / 0x1218A0). 1125C0 (the route progress, 0x121890), 125228 and 120E30 run on. 112338 holds 112FB0 (+0x4D0 / +0x4D4 and
+    the checkpoint-bonus crossings 10E558), the race-path pick (1127F0 / 26AC48) and the course events 10E5D8 (finish, checkpoints).
+    Port (2026-09-30): race_session endTick(…, held) skips the progress step and its events under nis_hold; follow_rider_route runs
+    the route progress and skips only tick_rail_score. PS2 c0a-ws13: the held human's +0x4D0 stays 353496 through the gondola while
+    its +0x4C0..+0x4CC move.
   - The pad is read (121068), but nothing uses it.
   - The NIS moves the rider through 123DA8 -> 124788: position += R(+0x700) . delta key, then 11E098. The velocity is delta
     position / dt, or the root bone's (+0x8A0) delta when +0xAFC is set.
@@ -604,10 +609,42 @@ rider held by the cut's rider actor.
   bone, 0 none): only the CTM approach's computer riders run it (ai-racers.js holdTick, +0xAFC 0). PS2 +0xAFC: 0 for those riders
   and the Transport arrivals' stage holds (a miss every tick), 1 for the human's CTM approach, the gondola and the booth (fr-booth2
   2644: a miss, then hits with the 111AA0 impact). The page does not pose the rider under an NIS, so its +0xAFC holds do not probe.
+- **The NIS teleport after the section scan (pv `nisAfterScan`, default off, 2026-10-01).**
+  - PS2 frame order (docs/visual-rng-order.md 2): builtin 68 fires in update U's 121818. The rider manager then ends with the
+    section pass 0x101B60 (0x129124), and WS_tick enters world state 14. The cut's rider actor places the rider (123640) at update
+    U + 1's NIS tick 0x230BE4, before that update's rider manager. So update U's scan still sees the rider where it was.
+  - PS2 peak1-green-start: record 393 control 3, record 394 control 13 at the actor (the record is taken after the NIS tick).
+  - The page's station cut fires inside game-tick.js simulate (free-ride.js drainEvents -> main.js 'stationCut' -> nisHoldAt), so
+    today's hold comes before that tick's _section_pass: one scan early. It only shows when the firing tick is a scan tick: a scan
+    runs every 20 ticks or after a 20 m move (engine/section_streaming.hpp due), and the scan box is centred a few metres off.
+  - Port: with pv nisAfterScan, nisHoldAt keeps the actor root, and gameHost.nisStart applies it at the next simulate's start, before
+    every pass. Transport rides (cutscenes.js onHumanActor) and the WS1 / WS10 holds already run between ticks.
+  - Checks:
+    - test-nis-after-scan: game-tick.js's order on a stub core.
+    - compare-ps2-capture --station-hold: the hold after the firing tick's section pass, at the next record's actor root.
+      STATION_HOLD_EARLY=1 runs the old order; SECTION_TRACE=a:b logs the scans.
+  - On peak1-green-start both orders give the same result. The rider is at the record-394 position (0 cm), control 13, and the
+    visual RNG matches through 439. Velocity and mode at 394 differ because the actor's own moves (124788) are not modelled. Ticks
+    393 and 394 are not scan ticks (the 21st scan is at 400), so no PS2 capture yet shows the difference.
+  - Page check, Chrome (--mute-audio) and WebKit (webkit-driver), ?mute=1. PEAK1 autostart, Green's session point 0 (kind 1 row 0),
+    a neutral pad to the lodge door with a frozen frame clock and ssxQA.advance, logging the core calls (scratchpad nisscan2.mjs).
+    - Off: tick 345 runs _race_begin, _nis_hold(1), _section_pass.
+    - On: tick 345 runs _race_begin, _section_pass, then _nis_hold(1) before tick 346's passes.
+    - Both browsers: control 13 under lodge_arr3 and the world ticking.
+    - QA note: an autostart has no career free ride (careerUI.freeRide), so the station cut bails. Before the first prefetch,
+      cutscenes.actorStart is null, and nisHoldAt falls back to anchorOf.
 - **Not modelled:**
   - the actor's per-tick moves 124788 and their velocity (PS2 fr-booth2: (-6046, 6153, -1654) on the first tick, a few cm/s
     after, 0 by the end);
   - the animator's 311A50 + semantic 5 (the pose is not drawn under the cut or the prompt / map);
+  - the hold's pose, and with it bone 22 for +0xAFC holds (2026-09-30). PS2 c0a-ws13, the gondola (records 14017..): channel 2
+    plays semantic 432 (0x1B0; sequence clip 0x5A8E00, not semantic 5). 432 has no record in the variant table (*(gp+0xD0C) count
+    0), so its clip comes from the NIS's own bank. In the second NIS record, channel 3 plays 411. Bone 22 stays at (-308703.3,
+    -99357.9, -648442.3), 43 cm forward of and 18 cm above +0x110. core nis_hold_board_root(semantic, steps) (QA: poses a copy of the
+    graph at the hold transform) gives (-308698.4, -99400.5, -648458.2) for semantic 5, about 2 cm from +0x110; semantic 432 is not in
+    the port's state table. Deriving bone 22 needs the NIS rider clips (the cutscene banks) and their selection traced. The
+    c0a-ws13 semi stays exact with the record's bone (compare-ai-capture HOLD_BONE=record), so nothing reads the gondola's probe
+    results before the placement.
   - the +0x1F0..+0x2D3 clear (+0x25C = +0x264 = 1.0).
   - The release's 11D390 rewrites the velocity, the animation and the controls.
 - **Checks:**

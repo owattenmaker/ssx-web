@@ -85,11 +85,14 @@ public:
         state.clockEffects=originalRaceClockBeginTick(state.clock,{&state.finish.elapsed,1});
         originalRaceFinishElapsedStep(state.finish);state.courseEffects={};state.unhandledEvents.clear();tickOpen=true;
     }
-    void endTick(std::array<float,3> position,std::array<float,3> velocity) {
+    // held: rider+0xAC4 (an NIS hold, 123640): 121818 skips 112338, so the course progress (+0x4D0 / +0x4D4, the path cache) and its
+    // events stay as they are (PS2 c0a-ws13: the human's +0x4D0 = 353496 from WS13's start-row attach through the gondola, records
+    // 14017..14317, though the NIS carries it far off the course).
+    void endTick(std::array<float,3> position,std::array<float,3> velocity,bool held=false) {
         if(!tickOpen)throw std::runtime_error("Race tick was not begun");
         std::vector<int32_t> crossings;state.bonusAwards.clear();
         // A streamed world between a bank's eviction and the next location's read has no bank (112338 finds no path).
-        auto events=paths.empty()?std::vector<OriginalRacePathEvent>{}:originalRaceProgressStep(paths,state.progress,position,velocity,state.clock.totalTicks,&state.bonus,&crossings);
+        auto events=paths.empty()||held?std::vector<OriginalRacePathEvent>{}:originalRaceProgressStep(paths,state.progress,position,velocity,state.clock.totalTicks,&state.bonus,&crossings);
         for(int32_t value:crossings){
             if(state.globalFlags&0x200u)continue;if(state.gameMode!=1)continue; //10E558: bit 9 of 0x5308D0, then 0x535C12 == 1
             bool accept=false; //1194C0 -> 238510 -> handler vfunc +0x30

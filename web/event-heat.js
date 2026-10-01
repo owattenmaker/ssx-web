@@ -1,10 +1,11 @@
 // pv eventReturnInWorld (docs/ctm-events-in-world.md stage 5 "WS13"): Next heat in the world, one code path for the page (main.js) and
 // compare-ai-capture.mjs --ws13. Everything here follows the PS2 order; the addresses are in the doc.
 import { assembleLineup, buildRoster, lineupFor, peakRival, roundEntries } from './lineup.js';
+import { syncWorldNodes } from './ai-racers.js';
 
 // The core exports WS13's path runs (pv eventReturnInWorld): a core without one throws here rather than riding on with the wrong state.
-export const HEAT_CORE_EXPORTS = ['_ctm_world_reset', '_game_tick_restart', '_event_row_enter', '_free', '_nis_hold', '_event_route_seed', '_event_grid_start'];
-export const HEAT_RIDER_EXPORTS = ['_game_tick_restart', '_npc_fresh_rider', '_npc_grid_start', '_event_clock_hold'];
+export const HEAT_CORE_EXPORTS = ['_world_node_states', '_shared_world_nodes', '_ctm_world_reset', '_game_tick_restart', '_event_row_enter', '_free', '_nis_hold', '_event_route_seed', '_event_grid_start'];
+export const HEAT_RIDER_EXPORTS = ['_world_instance_states', '_world_node_states_apply', '_ctm_world_reset', '_game_tick_restart', '_npc_fresh_rider', '_npc_grid_start', '_event_clock_hold'];
 export function requireHeatCore(human, racers) {
   const missing = HEAT_CORE_EXPORTS.filter((f) => typeof human?.[f] !== 'function');
   for (const n of racers?.npcs ?? []) for (const f of HEAT_RIDER_EXPORTS) if (typeof n.core?.[f] !== 'function' && !missing.includes(f)) missing.push(f);
@@ -21,7 +22,12 @@ export function requireHeatCore(human, racers) {
 export function heatEnter({ human, racers, doc, finishOrder, lineupData, riderText, bank, cstr, round = 2 }) {
   requireHeatCore(human, racers);
   if (!bank || !cstr) throw new Error('heatEnter: the location\'s start rows (bank) and cstr are required');
-  human._ctm_world_reset();
+  for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._ctm_world_reset(); // 230180 resets the one world every rider context mirrors (web/shared_world.inc)
+  // ... and every context then holds the human context's node states (web/ai-racers.js syncWorldNodes): a rider context's copy of an
+  // instance the qualifier changed by a shared-world replay (no stage script of its own to reset) is the load state again (PS2 c0a-ws13:
+  // the semi's rider 1 re-fires trigger 266760's Spline pieces at 868; without it the riders' copy kept the fired 0x200004). The human's
+  // reset includes 308C60's 308DB8 (the Big Challenge markers hidden again, core ctm_world_reset), so the riders take those Hides too.
+  syncWorldNodes(human, racers.npcs.map((n) => n.core));
   const base = doc.relationships.persistent_human_character, rival = peakRival(lineupData.peak, base);
   const entries = buildRoster(doc.lineup_state.roster_seed, base, lineupData.peak);
   const current = roundEntries(entries, { round: round - 1, career: true, rival, previous: [] });

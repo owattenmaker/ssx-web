@@ -146,6 +146,16 @@ const arrivalMode = args.includes('--peak-arrival') || !!ws15Seed;
 // CTM last-lodge start): record 0 is the placement of the world load's new rider, which the browser reproduces with core
 // fresh_rider_start + place_rider_region (web/free-ride.js placeRegion; docs/peak-mountain.md "Fresh rider at a world start").
 const freshMode = args.includes('--peak-fresh');
+// --station-hold (pv nisTick + nisAfterScan; docs/ctm-parity.md "The NIS teleport after the section scan"): builtin 68's lodge door /
+// booth (core peak_world_events kind 1, action 3 / 4, fired in a tick's 121818) starts the cut's rider actor: 123640 holds the rider at
+// the next update's NIS tick (0x230BE4), after the firing tick's section pass 0x101B60 and before the next record (the provider exit),
+// so the firing tick's section pass still sees the rider where it was. The actor root is the next record's (+0x110, facing +0x1B0 /
+// +0x1B4). STATION_HOLD_EARLY=1 (diagnostic): the hold inside the firing tick, before its section pass (the page
+// with pv nisAfterScan off).
+const stationHold = args.includes('--station-hold');
+let stationPending = null; globalThis.__beforeSectionPass = null;
+const stationFired = () => { if (!stationHold || !core._peak_world_events) return false; const p = core._peak_world_events() >> 2, H = new Int32Array(core.HEAPU8.buffer), n = H[p]; let fired = false;
+  for (let k = 0; k < n; k++) { const kind = H[p + 1 + 4 * k], b = H[p + 3 + 4 * k]; if (kind === 1 && (b === 3 || b === 4)) fired = true; } return fired; };
 let arrivalSeedWords = null; // web/ctm-in-world-setup.mjs arrivalSeeds: the words the placement 11D390 keeps, from the records
 if (arrivalMode) { const R0 = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8')).record || 8192;
   arrivalSeedWords = ws15Seed ? inWorldSetup.ws15Seeds(raw, R0, ws15Seed) : inWorldSetup.arrivalSeeds(raw, R0); raw = raw.subarray(arrivalSeedWords.P * R0); }
@@ -287,7 +297,11 @@ function padFrame(c) {
   const pose = f32(core._pose_physical(), 12);
   boothInject(); // PS2 booth-contact injection captures (docs/stage-teleport.md): this tick's 121818 runs the booth program
   core._race_end(); // course events (finish -> camera 0x162258) precede the camera update, as in main.js
-  if (stageSnaps || peakWorld) core._section_pass?.(); phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences)
+  if (globalThis.__beforeSectionPass) { const f = globalThis.__beforeSectionPass; globalThis.__beforeSectionPass = null; f(); } // --station-hold with STATION_HOLD_EARLY
+  if (stageSnaps || peakWorld) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)
+  // --station-hold: the next update's NIS tick (0x230BE4) runs after this section pass and before the next record (the provider exit),
+  // so this tick's outputs below are compared with a record that already holds the rider at the actor
+  if (stationPending) { const [x, y, z, fx, fy] = stationPending; stationPending = null; core._nis_hold(1, x, y, z, fx, fy); console.error('station hold after the section pass of tick', globalThis.__visTickNow); }
   if (phases) globalThis.__visPhases = phases.slice(1).map((w, k) => (globalThis.__visualSyncWords && k === 1) ? 'sync' : drawsBetween(phases[k], w)); // race_begin, step_rider, animation_tick, race_end+sections
   const vis = () => core._visual_rng_words ? Array.from(new Uint32Array(core.HEAPU8.buffer, core._visual_rng_words(), 6)) : null;
   const visBeforeCamera = process.env.VISUAL_TRACE ? vis() : null;
@@ -555,6 +569,9 @@ for (let i = 0; i + 1 < records.length; i++) {
   globalThis.__visualSyncWords = syncVisual >= 0 && core._visual_rng_words ? Array.from({ length: 6 }, (_, k) => dv.getUint32(i * RECORD + captureManifest.layout.watch_offset + syncVisual + 4 * k, true)) : null;
   let cmd, web;
   peakWorld?.beforeTick(i); // the capture's streaming rows and path-bank events for this tick
+  if (stationHold) { // this tick's check of builtin 68, before its section pass
+    const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true), next = i + 1 < records.length ? [q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)] : null;
+    globalThis.__beforeSectionPass = () => { if (!stationFired() || !next) return; if (process.env.STATION_HOLD_EARLY) { core._nis_hold(1, ...next); console.error('station hold (early) inside tick', records[i].tick); } else stationPending = next; }; }
   if (cameraVariant && i === 0) core._camera_variant_qa(cameraVariant); // before the first camera step (the seed or the construction uses it)
   if (padMode) {
     core.HEAPF32.set(padFor(records[i].index), padPtr >> 2);
