@@ -98,6 +98,7 @@ void refresh_rider_scope(){const auto basis=originalOrientationBasis(physicsStat
  const auto b=originalRiderQueryBounds({p[0],p[1],p[2],1},{r[0],r[1],r[2],0},{f[0],f[1],f[2],0},{u[0],u[1],u[2],0});riderScope=terrain_original::RiderScope{{b.minimum[0],b.minimum[1],b.minimum[2]},{b.maximum[0],b.maximum[1],b.maximum[2]}};}
 // World state 14's rider actor hold (123640 -> 123B48; docs/ctm-parity.md "The NIS rider hold"): rider+0xAC4. nis_hold below.
 RIDER_LOCAL bool browserNisHold=false;
+RIDER_LOCAL bool nisProbeContact=false;RIDER_LOCAL float nisProbeSpeed=0;RIDER_LOCAL int nisProbeMode=0;RIDER_LOCAL std::array<float,3> nisProbeBone{}; // rider+0xB00 / +0xB04: 1242B0's contact flag and last speed (nis_hold_ground_probe)
 RIDER_LOCAL bool browserResetActive=false;RIDER_LOCAL bool browserResetFromController=false;RIDER_LOCAL void (*browserResetBegin)(int)=nullptr;RIDER_LOCAL void (*browserResetDecline)()=nullptr;RIDER_LOCAL void (*browserResetRerequest)(int)=nullptr;RIDER_LOCAL bool (*browserResetControl)()=nullptr;RIDER_LOCAL void (*browserResetClear)()=nullptr;
 RIDER_LOCAL bool browserPosedLandingEnabled=false,browserCrashActive=false,browserCrashExitFrame=false;RIDER_LOCAL int browserCrashResetReason=0;
 RIDER_LOCAL void (*browserCrashReset)()=nullptr;RIDER_LOCAL bool (*browserCrashControl)(bool)=nullptr;RIDER_LOCAL void (*browserCrashMotion)()=nullptr;
@@ -434,8 +435,17 @@ EMSCRIPTEN_KEEPALIVE void nis_hold(int on,float x,float y,float z,float fx,float
  if(!std::isfinite(z))z=physicsState.position[2]; // the caller snaps (main.js: the cut engine's 3369D8 ground snap of the anchor)
  const float half=(std::atan2(fy,fx)-1.5707963705062866f)*.5f;physicsState.quaternion={0.f,0.f,std::sin(half),std::cos(half)};
  physicsState.position={x,y,z};physicsState.velocity={0.f,0.f,0.f};physicsState.controlState=13;airMotionThisTick=false;reset_prediction();
+ if(!browserNisHold){nisProbeContact=true;nisProbeSpeed=0;nisProbeMode=0;} // 123640 at the hold's entry: +0xB00 = 1, +0xB04 = 0; the probe off until the caller's nis_hold_probe
  browserNisHold=true;publish_motion();
 }
+// The hold's 120F20 re-probe (1242B0, nis_hold_ground_probe) runs only for a hold that opts in, after nis_hold, per hold entry:
+// mode 1 = an actor with +0xAFC 0 (the NIS record's byte 7, 123640): the probe from +0x110, which the caller's placement gives
+// (the CTM approach's computer riders: PS2 c0a-ws13 +0xAFC 0); mode 2 = +0xAFC 1: the probe from the posed board-root bone
+// (+0x780->+0x2C[+0x8A0], index 22) at (x, y, z) source cm, and 1242B0's hit after a miss fires the 111AA0 snow impact; 0 = none
+// (every other hold: the lodge door, the booth, the Transport's steps, the human's CTM approach and the gondola run as before
+// 1242B0 was ported; the page does not pose the rider under an NIS, so it cannot give mode 2's bone). A new hold entry clears it
+// (123B48 clears +0xAFC).
+EMSCRIPTEN_KEEPALIVE void nis_hold_probe(int mode,float x,float y,float z){if(mode<0||mode>2)throw std::runtime_error("Invalid NIS probe mode");nisProbeMode=browserNisHold?mode:0;nisProbeBone={x,y,z};}
 EMSCRIPTEN_KEEPALIVE void reset_rider(float x,float y,float z,float angle) {
  browserNisHold=false; // 123B48 releases the NIS hold before 11D390 places
  eventCameraSeedArmed=false;
@@ -624,6 +634,61 @@ EMSCRIPTEN_KEEPALIVE float* reference_motion(){
  values[15]=boostState.meter;values[16]=boostState.amount;values[17]=float(boostState.tier);values[18]=boostState.superTime;values[19]=physicsState.manualSpin;
  return values;
 }
+// 120F20 under the NIS hold (rider+0xAC4 set, 0x120FD4): 1242B0, the playback ground re-probe, before the motion. Every write:
+// - +0x380 = +0x370 (always, 0x12442C);
+// - the query: 32E100 over the 13D818 contact's segment (center = +0x110 + +0x3B0 x (+0x780+0x140 x +0x1F0 x 45), from center
+//   - 100 x +0x370 to center + 200 x +0x370, preferred fraction 0.5), 3342D0 on the rider's world (+0x860, no cache);
+// - distance > 0 with a patch: +0x430 = patch+0x150, +0xAAC/+0xAB0 = the hit's u / v, +0x2D4 = patch+0xA; else +0x430 = -1.
+//   1218D0 after the motion sets +0x434 from the track byte when +0x430 != -1 (22E0E0);
+// - a miss (distance < 0): +0xB00 = 0, +0x370 = (0, 0, 1) (0x4FF160), +0x3D0 = 0, +0x3A0 = |+0x1B0 - n (n . +0x1B0)|, +0x3B0 =
+//   n x +0x3A0, +0xB04 = |+0x1E0|, +0x75C / +0x438 / +0x750 / +0x754 / +0x758 = 0 (+0x454 / +0x460 kept);
+// - a hit: (+0xAFC set and +0xB00 0: 111AA0 snow impact at the hit, strength |surface velocity|), +0xB00 = 1, +0x438 = the
+//   surface (-1 -> 0), +0x370 = the hit normal, +0x460 = the hit point, +0x3D0 = the surface velocity, +0x3A0 / +0x3B0 as above,
+//   +0x454 = (center - hit) . n, +0x750 = min(-(+0xB04 - speed) x 0.0036, 1) when +0xB04 < speed else 0, +0x75C = min(speed x
+//   0.00072, 1), +0xB04 = speed, +0x758 = 0.3, +0x754 = 0 (gp-0x789C / -0x7898 / -0x7894). speed = |+0x1E0| (+0x6C0 vt+0x14).
+// 123640 (nis_hold) sets +0xB00 = 1 and +0xB04 = 0. The web's terrain is static (surface velocity 0, as the 13D818 contact). It runs
+// only for a hold that opts in (nis_hold_probe): mode 1 from +0x110 for an actor with +0xAFC 0, mode 2 from the caller's board-root
+// bone for +0xAFC 1 (the probe point and the impact). PS2 +0xAFC: 0 for the CTM approach's computer riders (c0a-ws13 1091..1332) and
+// the Transport arrivals' stage holds (peak1-arrive-*, a miss every tick); 1 for the human's CTM approach (c0a-ws13 814..1332, a hit
+// every tick), the gondola (14017..14136, a miss every tick) and the booth (fr-booth2 2644: a miss, then hits from 2646). A mesh
+// (non-analytic) hit is +0x430 -1 here, as in the contact path.
+// PS2 c0a-ws13: the first heat's riders take location 0 on their first held tick at gate + 2 (record 1092); the semi's, placed on the
+// grid without a hold, keep the constructor's -1 / 0x31 to the push-off.
+// QA: [rider+0x430, +0x434, +0xB00, the surface +0x438]
+EMSCRIPTEN_KEEPALIVE int32_t* rider_patch_info(){RIDER_LOCAL static int32_t v[4];v[0]=browserGroundPatch;v[1]=physicsState.riderType;v[2]=nisProbeContact;v[3]=physicsProfile.surface.id;return v;}
+// QA: rider+0x460 (the last contact point the painters step at)
+EMSCRIPTEN_KEEPALIVE float* rider_contact_point(){return browserTrailContact.data();}
+void browser_snow_impact(std::array<float,3> point,std::array<float,3> normal,float strength,int surface); // web/animation_bridge.cpp (111AA0 -> 2E23E0)
+static void nis_hold_select_surface(int surface){if(surface!=physicsProfile.surface.id){const float limit=physicsProfile.speedLimit;physicsProfile=physicsMaterials.at(surface);physicsProfile.speedLimit=limit;}}
+static void nis_hold_ground_probe(){
+ terrain_original::Rounding rounding;using terrain_original::add;using terrain_original::mul;using terrain_original::sub;
+ physicsState.previousNormal=physicsState.normal;
+ const auto& v=physicsState.velocity;const float speed=terrain_original::sqrt(add(add(mul(v[0],v[0]),mul(v[1],v[1])),mul(v[2],v[2])));
+ const float offset=mul(physicsProfile.bodyScale,mul(physicsState.turn.current,45.f));std::array<float,3> center;
+ const auto& p=nisProbeMode==2?nisProbeBone:physicsState.position; // 120F20: +0xAFC selects the board-root bone
+ for(unsigned k=0;k<3;k++)center[k]=add(p[k],mul(physicsState.lateral[k],offset));
+ const Vec3 at{p[0]/100.,p[2]/100.,-p[1]/100.};
+ const Vec3 n{physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]},l{physicsState.lateral[0],physicsState.lateral[2],-physicsState.lateral[1]};
+ RayHit h;
+ if(cameraTerrain)h=cameraTerrain->sourceGroundContact(at,n,l,physicsState.turn.current,physicsProfile.bodyScale,nullptr,riderScope?&*riderScope:nullptr); // 3342D0 without a cache
+ else {h=world->raycast(at+n*2,n*-1,3);}
+ if(h.hit&&h.analytic){browserGroundPatch=int(h.resource);browserGroundU=h.u;browserGroundV=h.v;browserPatchFlags=uint16_t(h.patchFlags|0x40);physicsState.forceHeadingBoost=(browserPatchFlags&0x10)!=0;
+  physicsState.riderType=originalStreamingLocationIndex(browserStreamingTracks,int32_t(h.resource&0xFF));}
+ else browserGroundPatch=-1;
+ if(!h.hit){
+  nisProbeContact=false;const float distance=physicsState.distance;originalGroundContact(physicsState,physicsState.position,{0,0,1},{});physicsState.distance=distance;
+  nisProbeSpeed=speed;audioSpeed75C=0;nis_hold_select_surface(0);audioBrake750=0;audioTurn754=0;audioCompression758=0;
+ }else{
+  const auto point=sourceVector(h.position),hn=sourceDirection(h.normal);
+  if(nisProbeMode==2&&!nisProbeContact)browser_snow_impact(point,hn,0.f,originalGroundSurfaceId(true,h.surface)); // 111AA0: strength |surface velocity|, 0 on the static terrain
+  nisProbeContact=true;nis_hold_select_surface(originalGroundSurfaceId(true,h.surface));browserTrailContact=point;
+  originalGroundContact(physicsState,point,hn,{});
+  physicsState.distance=terrain_original::dot(terrain_original::difference(center,point),hn);
+  const float gap=sub(nisProbeSpeed,speed);float brake=0;if(gap<0){brake=mul(-gap,0.0036000001709908247f);if(brake>1)brake=1;}audioBrake750=brake;
+  float s75c=mul(speed,0.0007200000109151006f);if(s75c>1)s75c=1;audioSpeed75C=s75c;nisProbeSpeed=speed;audioCompression758=0.30000001192092896f;audioTurn754=0;
+ }
+ normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};
+}
 EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boost) {
  physicsState.modeTiming=browser_finish_elapsed(); //rider+0x470 finish marker: 13C948 drops the forward drive and 12E778 hands over to control 10 once it is >= 0 (pipe-run-event 2213)
  // The world job refreshes one rider's scope a tick, in roster order: rider k after the ticks whose record tick is k mod 3 (PS2
@@ -676,6 +741,7 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  // pv nisTick: world state 14's rider actor holds the rider (control 13 / motion 3, 123640). The pipeline's 1210B0 (the collision timers
  // above, the boost tick 1200D0) and the 1211F8 filters run; control 13 has no tick (0x456C10) and motion 3 only 11E098 (136958).
  if(browserNisHold){
+  if(nisProbeMode)nis_hold_ground_probe(); // 120F20 at the start of the rider pass (before the motion; nis_hold_probe)
   browser_boost_tick(boostState,boostProfile,physicsState.timeScale,3,13);physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;physicsState.boostTierCounter=boostState.tier;
   for(auto* value:{&physicsState.turn,&physicsState.brake,&physicsState.crouch,&physicsState.presentationLift,&physicsState.animationTurn,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll,&physicsState.balance280,&physicsState.adjustment28C,&physicsState.adjustment298})groundControlApproach(*value);
   browser_rail_idle_approach();

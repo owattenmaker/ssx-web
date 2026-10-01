@@ -52,6 +52,16 @@ export function readAiCapture(binPath) {
   // a0 of a marker -> which rider (actor or motion-owner component), -1 = human, k = computer rider slot k.
   const bases = [[humanActor, -1, 'actor'], [humanOwner, -1, 'owner'], ...others.map((a, k) => [a, slotOfBlock[k], 'actor']), ...owners.map((o, k) => [o, slotOfBlock[k], 'owner'])];
   const riderOf = (a0) => { let best = null; for (const [b, k, kind] of bases) if (a0 >= b && a0 - b < 0x1000 && (!best || b > best[0])) best = [b, k, kind]; return best ? { slot: best[1], kind: best[2], offset: a0 - best[0] } : null; };
+  // Next heat (local/ctm-events/ws13_capture.py, manifest.ws13.relisted): WS13's 128958 makes the next round's riders at new addresses and
+  // the run lists their blocks again (ascending) from that record; their roster order is the game roster (C+0x28) the records hold then.
+  const relist = manifest.ws13?.relisted?.[0] ?? null, heatFrom = relist ? relist.record : Infinity;
+  const heat = relist ? (() => { const others2 = relist.game.map(Number), owners2 = others2.map((a) => a - 0xE10), at = heatFrom * RECORD, g = A.game_info_00_a0;
+    const roster2 = Array.from({ length: 6 }, (_, j) => dv.getUint32(at + g + 0x28 + 4 * j, true)).filter((a) => a !== humanActor);
+    const order2 = roster2.map((a) => others2.indexOf(a)); if (!order2.every((j) => j >= 0)) throw new Error(`${binPath}: the next round's roster is not the re-listed blocks`);
+    const slot2 = []; order2.forEach((j, k) => { slot2[j] = k; });
+    const bases2 = [[humanActor, -1, 'actor'], [humanOwner, -1, 'owner'], ...others2.map((a, k) => [a, slot2[k], 'actor']), ...owners2.map((o, k) => [o, slot2[k], 'owner'])];
+    const riderOf2 = (a0) => { let best = null; for (const [b, k, kind] of bases2) if (a0 >= b && a0 - b < 0x1000 && (!best || b > best[0])) best = [b, k, kind]; return best ? { slot: best[1], kind: best[2], offset: a0 - best[0] } : null; };
+    return { others: others2, order: order2, riderOf: riderOf2 }; })() : null;
   const records = [];
   for (let at = 0; at + RECORD <= raw.length; at += RECORD) {
     const u = (o) => dv.getUint32(at + o, true), i32 = (o) => dv.getInt32(at + o, true), f = (o) => dv.getFloat32(at + o, true);
@@ -71,13 +81,13 @@ export function readAiCapture(binPath) {
       return Array.from({ length: 6 }, (_, j) => { const o = base + 36 * j;
         return { enabled: u(o), human: u(o + 4), distance: f(o + 8), bearing: f(o + 12), t10: u(o + 16), t14: u(o + 20), t18: u(o + 24), t1c: u(o + 28), t20: u(o + 32) }; });
     }
-    const ai = [];
-    for (let k = 0; k < others.length; k++) {
+    const ai = [], inHeat = heat && at / RECORD >= heatFrom, riderAt = inHeat ? heat.riderOf : riderOf, orderAt = inHeat ? heat.order : order, othersAt = inHeat ? heat.others : others;
+    for (let k = 0; k < othersAt.length; k++) {
       const b = A.base + k * A.stride, s = A.slot_fields;
       const act = (off) => b + s.actor_000_b40 + off, oc = (off) => b + s.owner_de0_f50 + off - 0xde0, n = b + s.npc_words_w0_w1_tick_calls;
       const ab8 = u(act(0xab8));
       ai.push({
-        actor: others[k], position: fv(act(0x110), 3), velocity: fv(act(0x1e0), 3), quaternion: fv(act(0x120), 4),
+        actor: othersAt[k], position: fv(act(0x110), 3), velocity: fv(act(0x1e0), 3), quaternion: fv(act(0x120), 4),
         motionMode: u(oc(0xde0)), controlState: u(oc(0xde4)),
         words: [u(n), u(n + 4)], wordsTick: u(n + 8), providerCalls: u(n + 12),
         pairRecords: pairs(act(0)), rank: i32(act(0xec)), peerF0: i32(act(0xf0)), peerF8: i32(act(0xf8)),
@@ -90,9 +100,9 @@ export function readAiCapture(binPath) {
     }
     const R = A.rng_draws_total_marka0_markra_npcunmatched, draws = u(R);
     const log = Array.from({ length: Math.min(draws, A.rng_log_entries) }, (_, i) => { const o = A.rng_log + 16 * i, ma0 = u(o + 8), mra = u(o + 12);
-      return { ra: u(o), leafRa: u(o + 4), markerA0: ma0, markerRa: mra, pass: PASS_BY_RA[mra] ?? null, rider: riderOf(ma0) }; });
+      return { ra: u(o), leafRa: u(o + 4), markerA0: ma0, markerRa: mra, pass: PASS_BY_RA[mra] ?? null, rider: riderAt(ma0) }; });
     records.push({
-      seq: u(0), tick: u(4), human, ai: order.map((j) => ai[j]),
+      seq: u(0), tick: u(4), human, ai: orderAt.map((j) => ai[j]),
       rng: { words: Array.from({ length: 6 }, (_, k) => u(L.shared_rng_6 + 4 * k)), draws, total: u(R + 4), logged: log.length, truncated: draws > log.length,
         markerAtRecord: { a0: u(R + 8), ra: u(R + 12) }, npcUnmatched: u(R + 16), log },
       game: { pointer: u(A.globals_pathbank_coursepaths_game_humanowner + 8), aiPathBank: u(A.globals_pathbank_coursepaths_game_humanowner), coursePaths: u(A.globals_pathbank_coursepaths_game_humanowner + 4),

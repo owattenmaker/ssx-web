@@ -438,6 +438,7 @@ bool browser_weather_wind(float& speedKmh,float& directionDeg){if(!snowReady)ret
 extern "C" EMSCRIPTEN_KEEPALIVE float* weather_painter_info(){RIDER_LOCAL static std::array<float,40> v{};v[0]=float(weatherSteps);v[1]=breathEnvironment.distance;for(unsigned i=0;i<19;i++){v[2+i]=breathEnvironment.properties.current[i];v[21+i]=breathEnvironment.properties.target[i];}return v.data();}
 RIDER_LOCAL static SnowVector snowImpactPoint{},snowImpactNormal{};RIDER_LOCAL static float snowImpactStrength=0;RIDER_LOCAL static int snowImpactSurface=0;
 static void record_snow_crash(SnowVector point,SnowVector normal,float strength,int surface){snowImpactPoint=point;snowImpactNormal=normal;snowImpactStrength=strength;snowImpactSurface=surface;++snowImpactSerial;}
+extern "C" void browser_snow_impact(std::array<float,3> point,std::array<float,3> normal,float strength,int surface){record_snow_crash(point,normal,strength,surface);} // web/core.cpp nis_hold_ground_probe (1242B0's 111AA0)
 static void reset_impact_fx(bool clearParticles); //web/impact_fx_gameplay.inc
 RIDER_LOCAL static int sparkSurface438=0; //rider+0x438 as the rider FX passes read it (web/impact_fx_gameplay.inc): the rail surface on rails, kept in the air
 // pv sprayReset (web/pv-flags.js, set per rider context by the page): 2DF3B0, the DynamicSpray reset (the constructor
@@ -1347,7 +1348,9 @@ EMSCRIPTEN_KEEPALIVE void event_grid_start(float x,float y,float z,float angle){
 EMSCRIPTEN_KEEPALIVE void npc_grid_start(){
  const uint32_t leave=lastGroundLeave,focus=groundFocusTick;const auto meter=boostState.meter,amount=boostState.amount;const auto drain=boostState.drainEnabled;
  const auto previousNormal=physicsState.previousNormal,boardNormal=physicsState.boardNormal;const float limit=physicsProfile.speedLimit;
+ const int riderType=physicsState.riderType; // +0x434 too (11D390 keeps it): a fresh rider's 0x31 until its first ground contact (PS2 c0a-ws13 semi)
  npc_start_event();
+ physicsState.riderType=gs.riderType=riderType;
  ::grounded=true;airMotionThisTick=false;
  speed_limit_seed(limit);
  lastGroundLeave=leave;groundFocusTick=focus;boostState.meter=meter;boostState.amount=amount;boostState.drainEnabled=drain;physicsState.boost=amount;
@@ -1372,7 +1375,15 @@ EMSCRIPTEN_KEEPALIVE void fresh_rider_start(){
 }
 // pv eventInWorldAi: a CTM computer rider built at gate + 2 (129E20, constructor 0x125EB8 over zeroed memory): fresh_rider_start's words
 // and the board normal +0x390 zero too (PS2 c0a-full-ai: 0 in every rider from 3131 to the race, 11D390 does not write it).
-EMSCRIPTEN_KEEPALIVE void npc_fresh_rider(){fresh_rider_start();physicsState.boardNormal={0,0,0};gs.boardNormal={0,0,0};}
+// The motion-0 stamps (owner +0x10 / +0x14, 13C7A8's push-off speed scale) are 0 in the new rider too: a context reused for the next
+// round (WS13's 128958, pv eventReturnInWorld) otherwise pushes off with the last race's (PS2 c0a-ws13: 0 in every semi rider until its
+// push-off tick writes it; the port's launched at 0.75x).
+extern "C" void ground_tick_seed(uint32_t,uint32_t); // web/core.cpp
+// The constructor 11B718 (0x11B748) sets the contact patch +0x430 = -1 and the patch location +0x434 = 0x31; 1218D0 rewrites +0x434
+// only while +0x430 != -1, i.e. after a ground contact (or the NIS hold's re-probe, web/core.cpp nis_hold_ground_probe). 13C948's drive
+// reads it (>= 17 halves the auto boost): PS2 c0a-ws13, the semi's riders hold -1 / 49 from 128958 to their push-off tick (records
+// 14036..14746), the first heat's take 0 on their first held tick at gate + 2.
+EMSCRIPTEN_KEEPALIVE void npc_fresh_rider(){fresh_rider_start();physicsState.boardNormal={0,0,0};gs.boardNormal={0,0,0};ground_tick_seed(0,0);browserGroundPatch=-1;physicsState.riderType=gs.riderType=0x31;}
 EMSCRIPTEN_KEEPALIVE float* route_info(){RIDER_LOCAL static float v[14];v[0]=resetRoute.pathIndex;v[1]=resetRoute.previousDistance;v[2]=resetRoute.currentDistance;v[3]=resetRoute.lateralDistance;v[4]=resetRoute.heading;v[5]=routeProgressUpdates;v[6]=resetRoute.cache.segment;v[7]=resetRoute.cache.distance;for(unsigned i=0;i<3;i++){v[8+i]=resetRoute.closestPoint[i];v[11+i]=resetRoute.lookaheadPoint[i];}return v;}
 EMSCRIPTEN_KEEPALIVE float* reset_info(){RIDER_LOCAL static float v[9];v[0]=browserResetActive;v[1]=resetControl.progress;v[2]=resetPlacements;v[3]=resetCompletions;v[4]=resetReason;v[5]=resetRoute.pathIndex;v[6]=resetObservers;v[7]=resetRoute.currentDistance;v[8]=browserResetActive&&resetInputs.deviceEnabled&&resetInputs.deviceIndex>=0?originalResetFadeAlpha(resetControl.progress):0;return v;}
 EMSCRIPTEN_KEEPALIVE float* upper_request_info(){RIDER_LOCAL static float v[12];v[6]=float(riderMask8C0>>16);v[7]=float(riderMask8C0&0xffff);v[8]=float(riderMask8C8>>16);v[9]=float(riderMask8C8&0xffff);v[10]=float(riderMask8D0);v[0]=upperRequest358;v[1]=float(upperRequestTick354);v[2]=float(controllerGround.logicTick);v[3]=idleSeconds;v[4]=graph.requestedSemantics[1];v[5]=graph.currentClass(1);return v;} // QA: 10E028 pending kind/tick, logic tick, 115D48 clock; [6..10] channel-1 masks +8C0/+8C8 (hi16, lo16), +8D0

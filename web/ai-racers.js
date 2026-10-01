@@ -414,9 +414,12 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     get worldEventKinds() { return { ...worldEventKinds }; }, // by kind (web/shared_world.inc)
     // Event start for the computer riders (call right after the human's start_event).
     // gridStart (pv eventInWorldAi): the CTM riders' carried words kept through the grid placement (core npc_grid_start).
-    start({ gridStart = false } = {}) {
+    // hold (pv eventReturnInWorld, WS13's 1289F0): the riders' event clocks stay in PreRace (core event_clock_hold) until the next start.
+    start({ gridStart = false, hold = false } = {}) {
       if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
-      for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); explain(n.core, `${n.character} start`, () => (gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event())); n.finished = false; }
+      for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); if (hold) n.core._event_clock_hold(1);
+        try { explain(n.core, `${n.character} start`, () => (gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event())); } finally { if (hold) n.core._event_clock_hold(0); }
+        n.finished = false; }
       tick = 0; stage = 0; world.reset(); lastControllerDraws.fill(0); knownTriggers.clear();
       for (const c of cores()) if (c._world_events) c._world_events(); // drop entries of the previous run
       worldEvents = 0; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
@@ -460,7 +463,7 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     holdTick(place, { fresh = false } = {}) {
       for (const n of npcs) { const p = place(n.slot); if (!p) continue; const c = n.core;
         if (fresh) (c._npc_fresh_rider ?? c._fresh_rider_start)?.();
-        c._nis_hold(1, p[0], p[1], p[2], p[3], p[4]);
+        c._nis_hold(1, p[0], p[1], p[2], p[3], p[4]); c._nis_hold_probe?.(1, 0, 0, 0); // 120F20's re-probe from +0x110 (the approach actors' +0xAFC is 0; web/core.cpp)
         { const w = new Float32Array(c.HEAPF32.buffer, c._npc_world_buffer(), 160); w.fill(0); w[0] = -1; w[1] = count; } // no peers under the hold (the tick reads the world block)
         explain(c, `${n.character} held tick`, () => { c._race_begin(); const st = f32(c, c._step_rider(0, 0, 0, 0), 16); c._animation_tick(st[7], 0, 0, st[9], st[8], 0, 0, 0, 0, 0, st[15], 0); c._race_end(); }); }
     },

@@ -32,6 +32,16 @@ static int browser_control_state(){
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE void reset_pad_history(){padHistory=settled_pad();padCommand={};}
+// One pad sample consumed outside the game tick (pv padCarry): cSSXApp_preUpdate (0x227F20) runs 0x321298 on the port's history once per
+// app update with a pending sample, whatever runs (the front end, a card, the pause menu, the results), and the game's provider reads the
+// same history. So a button pressed in a menu and still held when the ride resumes is held there without a new press edge (PS2 c0a-ret2:
+// the Give Up's Yes Cross, menu samples 354..362, gives crouch target 1 and no prewind on the resumed tick 1699). The history only: no
+// INPUT.MAP, no provider (no game tick runs).
+extern "C" EMSCRIPTEN_KEEPALIVE void pad_history_sample(const float* values){
+ ssx::OriginalPadValues sample;
+ for(unsigned i=0;i<24;i++){if(!std::isfinite(values[i])||values[i]<0||values[i]>1)throw std::runtime_error("Invalid original pad channel");sample[i]=values[i];}
+ ssx::originalUpdatePad(padHistory,sample);
+}
 // FE Controller Settings (web/fe-options.js): 0 Default = INPUT.MAP, 1 Pro = INPUT2.MAP (engine/original_input_provider.cpp).
 extern "C" EMSCRIPTEN_KEEPALIVE void set_input_map(int variant){ssx::originalSetInputMap(variant);}
 RIDER_LOCAL static bool rideLateSpin=false; // control5 LateSpin (word0 bit15) for the air controller's late-spin modes (animation_bridge.cpp)

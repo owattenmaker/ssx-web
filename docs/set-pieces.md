@@ -632,3 +632,53 @@ and the RNG. peak-set-pieces.js now survives a missing attached.json: the dev se
   section leave destroys is released in the other contexts too (`browser_spline_piece_released`: the piece and its owner's launch
   guard), and web/ai-racers.js forgets the owner key so the next launch replicates again.
 - **Suite with PEAK_SPLINES=1** (core-suite4): all 266 scenarios pass; ctm-events/c0a-ws13-splines is exact to the live stop.
+
+## Streamed worlds: page QA of peakSplines, peakAttached and the re-split packages (2026-09-30, peakSplines QA agent)
+
+Tools and frames: `local/peak-splines-qa/` (overlay-server.mjs serves a scratch export over web/public/assets; run.mjs: headless
+Chrome with --mute-audio or web/webkit-driver.mjs; qa.mjs: the frame clock frozen from the first frame, so tick 0 is the ready
+screen and every configuration gets the same neutral-pad ticks and views; matrix.mjs, analyze.mjs (pixel diffs), trigger.mjs (the
+rider dropped into a trigger, then the piece's draw checked), memtour.mjs (WebKit footprint with in-world Transports), diverge.mjs
+(per-tick rider / RNG / contact log)). Configurations: A switch off + live assets; B on + live; C on + the new packages
+(local/ctm-fix/export); D off + new; `p` = with pv peakAttached; D0 / C0p = the new packages with `env` / `lighting` stripped.
+
+**What the 42 changed area files are.** Every triangle keeps its texture, lightmap, blend and instance flags (multisets equal in
+all 42 + their indices.bin). Besides the `moving_resource` / `livecomp_resource` split they carry what the live streamed packages
+predate and the event packages already have: the env-map second pass (`env`, 1..418 batches per location; pv envMap) and lit
+instances (`lighting`, up to 198; pv litInstances), plus one texture reference (9-50). vertex-alpha.bin is unchanged everywhere.
+
+**Frames (Chrome and WebKit, R&B, Junction, Ruthless Ridge, Intimidator, Perpendiculous; MOUNTAIN at Intimidator and R&B):**
+- A2 = A, B = A and D0 = A to 0 px on every frame before a piece launches: the re-split loses or doubles nothing (D0 max delta
+  <= 6 on single pixels: batch order).
+- D / C differ from A only where env / lit batches are (the R&B stand glass, 5.8 % of the t900 frame; the Ruthless Ridge
+  billboard; the Perpendiculous stadium). Against the event packages at the same camera (local/peak-splines-qa/evcmp/crop-*.png,
+  tri-*.png) the new streamed frame matches the event's glass / billboard sheen and A lacks it. The env and lit rules are the
+  models' own material words (37F2A4..37FD2C) and the event and streamed resources are the same models, so this is a fix. The only
+  streamed-world PS2 frames near such objects (peak1-arrive-ass1 2101..2311, the stand far off) do not contradict it.
+- B after a launch: the rider leaves A's path (Intimidator: 0.22 m at 2230). Traced (div-A/B.jsonl): the dragontrig contact at
+  2193 is the same in both, B's builtin 19 takes one shared-RNG draw, the rider stays bit-equal to 2215 and then drifts. It is the
+  RNG, not a contact: the dragonworks has no collision (descriptor type 0, collision_resource 0xFFFFFFFF) and never appears in
+  the contact log. The launched rockets' sparks fly in B (particles.json is live), but their bodies stay at rest.
+- Flybys on their splines (C + peakAttached, moved meshes checked, pinned views): the R&B ravens, the Ruthless Ridge eagle and
+  osprey, the Junction blimp, the Perpendiculous eagles, both Throne cessnas, the ABC1 tumbler; the moving-batch pieces (the R&B
+  train, the Kick Doubt sled, the Intimidator dragonworks) under C alone. Without peakAttached the spline LiveComps stay at rest.
+- **Draw / collision.** Spline pieces with collision (browser_entity_rigid: Spline): ASS1 locomotive / boxcar / flatbed / tanker,
+  ESS3 sleda, CRA3 osprey and blimpa, ABC1 ava2Tumbler. Under B none of them is drawn moving (trigger.mjs: no moving mesh), and
+  under C without peakAttached the osprey, the blimp and the tumbler stay at rest. Only C + peakAttached keeps them together.
+  Already today (A, switch off) a crashbag the rider hits moves in the core (R&B t900, crashbag_ssb_1027 in moving_instances)
+  while the live package draws it static; the new packages move crashbags, avalanche pieces and trams.
+- Console: the same messages in every configuration (missing terrain-glint / camera-triggers / freestyle-event jsons, "Replay
+  cameras unavailable"); peakAttached with the live packages adds the expected "attached.json unavailable".
+- Memory and load: ready 8.2-8.7 s everywhere; wasm 128 / 154 MB alike. WebKit phone policy (`__XPC_JSC_forceRAMSize`, 844x390,
+  quality=low, 2 runs each), A vs C + peakAttached: MOUNTAIN (R&B -> CRA3 -> DRA4 -> EHP3) lifetime peak 1135 / 1057 vs 1096 /
+  1118 MB, steady 607 / 615 vs 619 / 624; PEAK2 (CRA3 -> DRA4 -> DSS2) peak 1408 / 1208 vs 1159 / 1220, steady 1370 / 693 vs
+  662 / 711 (the 1370 is a late collection). The files are +1.95 MB on the wire. Area build times are within run-to-run noise.
+
+**Ship rule.** The 42 changed + 4 new files (local/peak-splines-qa/ship-files.txt) and pv peakSplines + peakAttached together.
+Never: B (switch on, old data: moving collision drawn still, sparks without bodies), C without peakAttached (osprey / blimp /
+tumbler). D (new data, switch off) shows no mismatch (it also fixes the crashbags) but leaves every flyby at rest.
+
+**Open.** The eagle at the Ruthless Ridge start and the R&B ravens relaunch every 40 / 120 ticks while the rider is near
+(builtin 19 each time; the draw counts are capture-gated), so they restart their path: not yet compared with a PS2 frame sequence.
+In QA (no career) some in-world Transports did not arrive or reloaded the page (MOUNTAIN -> ABA1 / The Throne / BRA2), with
+either data; not investigated.

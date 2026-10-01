@@ -5,7 +5,7 @@
 // - /assets/* is then fetched through Cloudflare's cache (the origin marks it shareable only for requests carrying
 //   X-SSX-Edge = EDGE_SECRET), so each file leaves the home server about once per Cloudflare location.
 const COOKIE = 'ssx_gate';
-const CACHE_GEN = 35; // edge cache generation (bump to retire all cached copies)
+const CACHE_GEN = 36; // edge cache generation (bump to retire all cached copies)
 let keyPromise = null;
 
 export default {
