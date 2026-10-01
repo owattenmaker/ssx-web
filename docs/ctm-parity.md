@@ -655,7 +655,9 @@ rider held by the cut's rider actor.
       bone 22 (each record's, or the one before it). The rider before the hold is where the PS2's is (page (-71924, 39377), PS2
       record 2642 (-71921, 39378)), and the patch is 61185 at both points. So the bone source is not the cause. The miss comes from
       1242B0's other inputs (the 13D818 segment from +0x370 and +0x3B0, the scope list +0x860); 4116 is the human's scope-refresh tick
-      (tick mod 3 = 0). Not settled: it needs a booth comparer run seeded from fr-booth2. nisBoneProbe stays off.
+      (tick mod 3 = 0). Parked (coordinator, 2026-10-01): a booth comparer seeded from fr-booth2 is not worth two snow puffs now.
+      The lead when it is taken up: the scope list (+0x860) is still the riding spot's until the human's refresh. nisPreload and
+      nisBoneProbe stay off.
   - the hold's pose, and with it bone 22 for +0xAFC holds (2026-09-30). PS2 c0a-ws13, the gondola (records 14017..): channel 2
     plays semantic 432 (0x1B0; sequence clip 0x5A8E00, not semantic 5). 432 has no record in the variant table (*(gp+0xD0C) count
     0), so its clip comes from the NIS's own bank. In the second NIS record, channel 3 plays 411. Bone 22 stays at (-308703.3,

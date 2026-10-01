@@ -180,6 +180,7 @@ Transport's stopAutoReplay 0x2706F0 restores (no re-simulation).
 | 0x26D988 / 0x26DDC0 | gp+0x2898 entity group 1 (every entity: count, then each one; the restore deletes and rebuilds through the factory 0x4816C0) | stage world entities (set pieces, LiveComps, MeshAnim, pickups as DeadNodes): stage_world.inc, set_piece_gameplay.inc, pickup_gameplay.inc, shared_world.inc |
 | 0x26DA88 / 0x26E340 | entity group 8 | to identify |
 | race+0xA4: 0x103480 / 0x103578 | the section activation (C+0xA4) | section_gameplay.inc |
+| not in it | the replay camera: the trigger manager 0x4C5830 (the loaded triggers, the entered stack, the active volumes) and the view's director (0x161FA0); the loop's 0x1620D0 keeps the trigger lists | web/snapshot-policy.mjs SNAPSHOT_CURRENT: every replay_camera.inc variable (R9, 2026-10-01) |
 | restore only | 354C98 / 355118 (group 1 queues), 3A6800(gp+0x16C8: the world cache), 26DE58 (group walk), 2C03E8 (every painter wrapper reset), 12B788 (120E50 per rider: the scope lists), 22E840 (the views) | re-derived after a restore, not saved |
 
 **Cross-check against the fingerprint** (REPLAY_PROBE, the core's info exports at the countdown, live against the naive restart):

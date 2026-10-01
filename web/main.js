@@ -1973,6 +1973,10 @@ function setupCutscenes() {
     if (!w || !core) return false;
     worldEvent = null;
     worldAiHold = null;
+    // the event course's replay camera triggers go with it (the results-time restore put them back): free ride has none, as on the PS2
+    // and as prepare leaves a streamed world; the next event loads its own
+    core._replay_camera_triggers?.(0);
+    replayTriggersCode = null;
 
     // pv eventReturnInWorld: WS15 keeps the race's riders for the return's first ticks (transportInWorld places them with the human,
     // worldAiBefore removes them)
@@ -2985,14 +2989,8 @@ function createRaceReplay() {
         .then((r) => (r.ok && !/html/.test(r.headers.get('content-type') || '') ? r.text() : null))
         .then((t) => {
           if (!t || core !== c) return;
-          const b = new TextEncoder().encode(t + '\0'),
-            p = c._malloc(b.length);
-          c.HEAPU8.set(b, p);
-          try {
-            c._replay_camera_triggers(p);
-          } finally {
-            c._free(p);
-          }
+          replayTriggersText = { core: c, code, text: t };
+          loadReplayTriggers(c, t);
         })
         .catch((e) => console.warn('Replay cameras unavailable', e));
     },
@@ -3039,6 +3037,13 @@ function inWorldReplayRestart(R) {
   const racers = inWorldRacers();
   if (!inWorldResults) inWorldResults = snapshotSave(SNAPSHOT_RESULTS, { human: core, racers });
   snapshotRestore(SNAPSHOT_COUNTDOWN, R.inWorld.js, { human: core, racers });
+  // the countdown save comes before the run's trigger load (web/replay.js liveStart: snapshot, then prepare). A core whose snapshot
+  // holds the replay camera emptied its triggers here: the event course's again, from the fetched text (R9). The PS2's snapshot does
+  // not hold the replay camera (web/snapshot-policy.mjs SNAPSHOT_CURRENT): on such a core they are still loaded and the active trigger
+  // carries over the loop, so nothing is reloaded
+  const tt = replayTriggersText;
+  if (tt && tt.core === core && tt.code === worldEvent?.code && core._replay_camera_info && !replayTriggerCount(core))
+    loadReplayTriggers(core, tt.text);
   aiRace?.replayRestore?.(R.ai);
   aiActive = !!racers;
   readyShown = readyAi = false;
@@ -3067,7 +3072,19 @@ function inWorldResultsRestore() {
   currentRiderFrame = previousRiderFrame = null;
 }
 let replayTriggersCore = null,
-  replayTriggersCode = null;
+  replayTriggersCode = null,
+  replayTriggersText = null;
+const replayTriggerCount = (c) => new Float32Array(c.HEAPF32.buffer, c._replay_camera_info(), 10)[4];
+function loadReplayTriggers(c, text) {
+  const b = new TextEncoder().encode(text + '\0'),
+    p = c._malloc(b.length);
+  c.HEAPU8.set(b, p);
+  try {
+    c._replay_camera_triggers(p);
+  } finally {
+    c._free(p);
+  }
+}
 replay = createRaceReplay();
 // QA: the run's replay (web/replay.js)
 if (new URL(location.href).searchParams.has('qa')) window.__replay = replay;
@@ -5042,6 +5059,7 @@ async function unloadCourse() {
   if (ui.characterSelect) ui.characterSelect.core = null;
   core = null;
   replayTriggersCore = null;
+  replayTriggersText = null;
   worldRewarm = null;
   // its promise's reactions reach the old free ride
   // the replay host's cached core kept the old course's wasm memory alive through the next load

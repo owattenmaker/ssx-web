@@ -31,6 +31,7 @@ export const SNAPSHOT_KEEP = {
 export const SNAPSHOT_OWN = ['bodySnapshot', 'stageVmSnapshot', 'avalancheSnapshot'];
 // Left as they are because the PS2's snapshot does not hold them (0x26D818: the shared RNG 0x4FF030, not the visual stream
 // 0x4FF018 or the LCG gp+0xA0C): a replay draws them on from where the run left them. Not restored, not checked.
+const RCAM = 'the replay camera (trigger manager 0x4C5830, the view director): not in the PS2 snapshot';
 export const SNAPSHOT_CURRENT = {
   snowParticleRandom: 'the visual stream 0x4FF018', stageWorldVisualOwn: 'the visual stream 0x4FF018 (before the snow data)',
   trailVisualRandom: 'the LCG gp+0xA0C',
@@ -38,6 +39,14 @@ export const SNAPSHOT_CURRENT = {
   sourceSkinMatrices: 'the drawn frame\'s skin matrices', sourcePalette: 'the drawn frame\'s skin palette',
   // the streaming's event queue, drained by the page every frame (web/peak_world.inc): a restore would hand it stale events
   'peak_stream::events': 'the streamed world\'s event queue (allpeak/apr-start and peak3/fr-throne-unload change it)',
+  // the replay view (web/replay_camera.inc): 0x26D818 / 0x26DBF0 hold neither the camera trigger manager 0x4C5830 (the loaded triggers,
+  // the entered stack, the active volumes) nor the view's director; the restore only steps the cameras (22E840 -> 0x15DF98) and the
+  // loop's 0x1620D0 keeps the trigger lists (a loop carries the last loop's active trigger, as the event-load path's startRun(R))
+  replayTriggers: RCAM, replayActive: RCAM, replayStack: RCAM, replayAlgorithm: RCAM, replayCompositor: RCAM, replayMode: RCAM,
+  replayPreferred: RCAM, replayOverrideType: RCAM, replayOverrideAction: RCAM, replayOverride: RCAM, replayCutPending: RCAM,
+  replayRevertTimer: RCAM, replayFired: RCAM, replayLastTrigger: RCAM, replayCuts: RCAM, replayOut: RCAM,
+  manualYaw: 'the Manual camera\'s session global 0x4A127C', manualPitch: 'the Manual camera\'s session global 0x4A1280',
+  manualDistance: 'the Manual camera\'s session global 0x4A1284',
 };
 // Restored, then re-derived by a restore hook as the PS2 does (excluded from the save / restore self-check): the painter wrappers
 // (0x2C03E8: web/weather.inc hook) and the painter trees' views of their node lists (web/environment_bridge.cpp hook).
