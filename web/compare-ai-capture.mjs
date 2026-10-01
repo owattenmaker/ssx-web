@@ -15,6 +15,7 @@ import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
 
 const args = process.argv.slice(2);
+if (args.includes('--coast-device')) process.env.COAST_DEVICE = '1'; // the Give Up's coast from the device pad (menu_pad.py's samples), as the PS2 read it
 if (args.includes('--peak-splines')) process.env.PEAK_SPLINES = '1'; // pv peakSplines for this run (web/peak-capture.mjs: core set_piece_streamed)
 const capturePath = args.find((a) => !a.startsWith('--') && a.endsWith('.bin'));
 const reportPath = args.includes('--report') ? args[args.indexOf('--report') + 1] : null;
@@ -258,6 +259,8 @@ if (ctmFull) { for (const r of records) r.gameTick = r.tick; // (peak-capture.mj
       const pauseAt = startIndex >= 0 ? records.findIndex((r) => r.index === startIndex) : -1, coast = menuSampleWatch >= 0 && pauseAt > 0 && pauseAt < R - 1;
       const stopTicks = coast ? (manifest.menus_run?.map_total_ticks != null ? manifest.menus_run.map_total_ticks - (records[R - 1].tick + 1) : Number(argValue('--return-stop-ticks') ?? 2)) : 0;
       ctmReturn = { R, out, entry, bank, pauseAt: coast ? pauseAt : -1, stopTicks }; console.error('ctm return: WS15 record', R, 'tick', records[R].tick, 'riders out at record', out, coast ? `pause at record ${pauseAt}, coast to ${R - 1}, ${stopTicks} ticks after the stop` : ''); } }
+  // the event location's start rows (its paths.json variant 0), for WS13's 1297C8(C, 1) (web/event-heat.js)
+  var heatBank = () => { const loc = peakWorld.manifest.locations.find((l) => l.code === ctmFull); return JSON.parse(text(`${loc.root.replace(/^\/assets\//, '')}paths.json`)).variants['0']; };
   if (ws13) { heat = (await import('./ctm-heat-setup.mjs')).planHeat({ records, C: ctmPlan.C }); console.error('ws13: replay from record', heat.S, 'WS13', heat.W, 'grid', heat.G, 'semi countdown', heat.C2); }
 } else { human._reset_pad_history(); human._start_event(); racers.start(); }
 if (inWorldAi && !ctmFull) { const seed = argValue('--node-seed'); if (seed) console.error('node seed', human._peak_world_seed(str(human, fs.readFileSync(seed, 'utf8'))), 'nodes');
@@ -354,7 +357,7 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
         eventSnapshot.snapshotRestore(eventSnapshot.SNAPSHOT_RESULTS, heat.results, { human, racers }); // 0x2706F0 (0x20CCF8's Next heat)
         tick(neutral, null); // the stop frame: one live tick of the restored results time before WS13 (as the Transport's, c0a-ret3; PS2 c0a-ws13: riders 3 and 4's 115D48 draws)
         heat.enter = (await import('./event-heat.js')).heatEnter({ human, racers, doc, finishOrder: heat.finishOrder, lineupData: JSON.parse(text(`${courseCode}/lineups.json`)),
-          riderText: (pkg) => (resources.riderText[pkg] ??= text(`${pkg}/rider.json`)), cstr: (t) => str(human, t) });
+          riderText: (pkg) => (resources.riderText[pkg] ??= text(`${pkg}/rider.json`)), cstr: (t) => str(human, t), bank: process.env.WS13_NO_ROW ? null : heatBank() });
         console.error('ws13: enter at record', i + 1, 'semi lineup', heat.enter.values.join(' '), 'changed slots', heat.enter.changed.join(' '));
         // (the stop frame is this record's interval: WS13's first frame writes record W, its section scan after the record is the next one's)
         { const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true); human._nis_hold(1, q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)); }

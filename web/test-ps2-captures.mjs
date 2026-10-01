@@ -634,6 +634,13 @@ const aiCases = [
   // everywhere, the pair records from the return. (The coast, race ticks 1700..1987, comes from the tick script, not the device pad: not gated here.)
   { name: 'ctm-events/c0a-ret3', coreExport: '_snapshot_save', returnGate: true, args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--replay-return', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json'],
     humanThrough: 0, ai: [], rngThrough: Infinity, ranks: true, records: true, why: 'CTM qualifier, the in-world return to Session point 1' },
+  // Carried presses (pv padCarry; docs/ctm-events-in-world.md "Carried presses"): c0a-ret2's pause menu Give Up, its Yes Cross (menu samples
+  // 354..362) still held on the resumed ticks. The menu's samples go into the human's pad history (core pad_history_sample: cSSXApp_preUpdate's
+  // 0x321298 on every app update), so tick 1699 reads Cross held with no press edge (word0 0x8000), and 1162C8's +0x360 latch (set: control 0
+  // has run) requests no control 2: crouch target 1, brake 0 (0x1317B4), then the finish's control 10. Human, riders, RNG and ranks exact through
+  // the coast (1987 race ticks) from the device pad.
+  { name: 'ctm-events/c0a-ret2-coast', coreExport: '_pad_history_sample', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--coast-only', '--coast-device', '--pad-carry'],
+    humanThrough: 1987, ai: [1987, 1987, 1987, 1987, 1987], rngThrough: 1987, ranks: true, why: 'the Give Up\'s held Yes Cross carried into the coast (one pad history)' },
   // A player's full qualifier in the world (local/ctm-events/caps/c0a-ws13, local/ctm-events/ws13_capture.py: the Snow Jam arrival, the
   // gate, WS1, the card, the race ridden closed-loop by ps2_autopilot's Pilot to the human's own 3rd place, the results' Next heat, WS13,
   // the semi). Scored to race tick 11864 (--ticks 13171): Allegra's air crash at 5940 (12CA30 adds rider+0x9D0 with the instance push to

@@ -597,6 +597,13 @@ rider held by the cut's rider actor.
   - The world passes run as usual.
 - **`nis_hold(0, ...)`** releases without placing. `reset_rider`, `place_rider_region` and `fresh_rider_start` release first
   (123B48 before 11D390).
+- **120F20's re-probe under the hold (1242B0, 2026-09-30):** every held tick probes the ground on the 13D818 segment from
+  +0x110 (+0xAFC 0) or from the posed board-root bone 22 (+0xAFC 1, the NIS record's byte 7) and writes +0x380 = +0x370, then on a
+  hit +0x370 / +0x3A0 / +0x3B0 / +0x3D0 / +0x438 / +0x454 / +0x460 / +0x430 / +0x2D4 / +0x75x / +0xB00 / +0xB04 (on a miss the
+  normal (0, 0, 1), +0x438 0, +0x430 -1). core nis_hold_ground_probe, opt-in per hold (nis_hold_probe mode 1 +0x110, 2 a given
+  bone, 0 none): only the CTM approach's computer riders run it (ai-racers.js holdTick, +0xAFC 0). PS2 +0xAFC: 0 for those riders
+  and the Transport arrivals' stage holds (a miss every tick), 1 for the human's CTM approach, the gondola and the booth (fr-booth2
+  2644: a miss, then hits with the 111AA0 impact). The page does not pose the rider under an NIS, so its +0xAFC holds do not probe.
 - **Not modelled:**
   - the actor's per-tick moves 124788 and their velocity (PS2 fr-booth2: (-6046, 6153, -1654) on the first tick, a few cm/s
     after, 0 by the end);

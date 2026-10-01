@@ -37,6 +37,18 @@ static ssx::OriginalRollerContactRecord roller_record(const OriginalInstanceCont
  ssx::OriginalRollerContactRecord out;out.point=r.point;out.direction=r.direction;out.normal=r.normal;out.closingSpeed=r.closingSpeed;return out;
 }
 // New race: restore the countdown runtime state (static route, no entity).
+// A streamed location's unload start (web/peak_world.inc row -> 7; 230360 -> 3551A8(entities, group 1 / 8, track): every
+// entity whose instance+0x78 track matches is destroyed): the crashbag's Object entity goes with its RollerModifier
+// (361038 -> 3553C0 deletes +0x1C; 34FBF0 puts the instance flags back). Its collider points into the location's
+// collision nodes, which pv peakRelease frees once the row is evicted (peak_world_free_track): a roller left running read
+// freed memory ("Original roller collider has no sphere tree", then out-of-bounds traps: the in-world Transport stalls).
+#include "../engine/pickup_instance_flags.hpp"
+void browser_rollers_track_teardown(uint32_t track){
+ std::erase_if(browserRollers,[track](BrowserRoller& r){
+  if((r.resource&255u)!=track)return false;
+  if(r.instance){r.instance->entity.reset();r.instance->eventRuntimeFlags=ssx::originalPickupRestoredFlags(r.instance->eventRuntimeFlags.value_or(r.instance->flags));}
+  return true;});
+}
 void browser_reset_rollers(){
  for(auto& r:browserRollers)if(r.instance){r.instance->entity.reset();if(const auto* s=scripted_instance(r.resource))r.instance->eventRuntimeFlags=s->runtimeFlags;}
  browserRollers.clear();rollerCreated=rollerKicks=rollerTicks=0;

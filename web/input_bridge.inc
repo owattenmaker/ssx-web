@@ -10,6 +10,9 @@ struct BrowserPadCommand {
  bool active=false;int control=0;ssx::OriginalCommandWords words;ssx::OriginalCommandFields fields;
 };
 RIDER_LOCAL static BrowserPadCommand padCommand;
+RIDER_LOCAL static int cruiseLastControl=-1; // the controller of the last command (131608: control 0's entry clears the +0x360 jump latch)
+// A placement's 11FEC8(0) (11DE60 / 11D660, reset_rider): control 0 is entered again, whatever ran before.
+extern "C" void browser_cruise_enter(){cruiseLastControl=-1;}
 // Control 2 on a rail (rider+0x328 set) steers the rail with RailBalance (word1 bits 6..11), not PrewindTurn (bits 0..5, the
 // `steering` it passes off the rail): 12E9B8 clamps both to +-0.5 (f22 / f21) and calls 113F38(f21) at 12EC1C / 12EDF0. The
 // human's INPUT.MAP packs the same stick into both; the computer-rider provider does not (R&B Allegra 700: word1 0xD).
@@ -31,7 +34,9 @@ static int browser_control_state(){
  return gs.controlState;
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE void reset_pad_history(){padHistory=settled_pad();padCommand={};}
+// QA: the controller about to run (motion owner +0xDE4) and the +0x360 jump latch
+extern "C" EMSCRIPTEN_KEEPALIVE float* rider_control_info(){RIDER_LOCAL static float v[3];v[0]=float(browser_control_state());v[1]=prewind.jumpGate;v[2]=float(cruiseLastControl);return v;}
+extern "C" EMSCRIPTEN_KEEPALIVE void reset_pad_history(){padHistory=settled_pad();padCommand={};cruiseLastControl=-1;}
 // One pad sample consumed outside the game tick (pv padCarry): cSSXApp_preUpdate (0x227F20) runs 0x321298 on the port's history once per
 // app update with a pending sample, whatever runs (the front end, a card, the pause menu, the results), and the game's provider reads the
 // same history. So a button pressed in a menu and still held when the ride resumes is held there without a new press edge (PS2 c0a-ret2:
@@ -63,10 +68,15 @@ static float* apply_command_words(int control,ssx::OriginalCommandWords words){
  switch(control){
   case 0: //131620 cruise
    turn=f.cruiseTurn;crouch=f.cruiseCrouch;brake=f.cruiseBrake;board=f.boardPress;jump=f.jumpHeld;boost=f.boostHeld;
-   // Control0 returns right after requesting control2 (1162C8 from 131794), before its cruise targets. 1162C8
-   // also accepts a held jump while the latch +0x360 is 0; control-0 entry 131608 clears it (e.g. a crash exit with
-   // Cross still held), and a tick without a press sets it, so a held jump in control 0 always requests control 2.
-   apply=(f.jumpPressed||f.jumpHeld)?0:1;animTurn=turn;animBrake=brake;break;
+   // Control0 returns right after requesting control2 (1162C8 from 131794: a press, or a held jump while the latch +0x360 is 0),
+   // before its cruise targets. Control-0 entry 131608 clears the latch (a crash exit or a landing with Cross still held requests
+   // control 2); 1162C8's no-request return sets it. A jump held without a request (the press consumed elsewhere: a menu's, with
+   // the history carried through it, core pad_history_sample) leaves 131620 at its cruise targets with 0x8000's crouch 1 and brake 0
+   // (0x1317B4) and no control 2 (PS2 c0a-ret2 tick 1699: word0 0x8000, crouch target 1, control 0 then the finish's 10).
+   if(cruiseLastControl!=0)prewind.jumpGate=0; // 131608 at control 0's entry (any other controller ran since its last tick)
+   if(ssx::originalCrouchRequest(prewind.jumpGate,f.jumpHeld,f.jumpPressed))apply=0;
+   else {jump=0;if(f.jumpHeld){crouch=1;brake=0;}}
+   animTurn=turn;animBrake=brake;break;
   case 1: //12FC80 board press: the controller decodes its own words (web/boardpress_gameplay.inc).
    turn=f.cruiseTurn;board=f.boardPress;jump=f.jumpHeld;boost=f.boostHeld;animTurn=turn;break;
   case 2: //12E9B8 prewind
@@ -96,6 +106,7 @@ static float* apply_command_words(int control,ssx::OriginalCommandWords words){
  padOut[8]=grab;padOut[9]=apply;padOut[10]=animTurn;padOut[11]=animBrake;padOut[12]=tweak;padOut[13]=animFlip;padOut[14]=control;
  padOut[15]=float(words.word0&0xffff);padOut[16]=float(words.word0>>16);padOut[17]=float(words.word1&0xffff);padOut[18]=float(words.word1>>16);
  padOut[19]=f.resetPath;padOut[20]=f.wipeoutRecover;padOut[21]=f.handplant;padOut[22]=float(int(f.attackLeft)|int(f.attackRight)<<1);padOut[23]=f.jumpPressed;
+ cruiseLastControl=control;
  return padOut;
 }
 

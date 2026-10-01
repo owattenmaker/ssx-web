@@ -702,8 +702,8 @@ flat.
   - compare-ai-capture.mjs `--coast-only` scores that stretch: the five computer riders are exact through all 288 coast ticks, the
     RNG and the ranks too with a neutral coast pad (COAST_NEUTRAL). The human is not: the Yes's Cross is still held on resume (menu
     samples 354..362, ticks 1699..1705). The PS2 then shows crouch target 1 with no prewind in 1699 and no jump in control 10; the port
-    enters the prewind (a fresh press edge) or, with the Cross from 1700, jumps out of control 10. What the PS2's pad history does with
-    a button held through the pause menu is not settled (0x321298's edge debounce; unconfirmed).
+    enters the prewind (a fresh press edge) or, with the Cross from 1700, jumps out of control 10. Settled 2026-09-30: one history for the
+    menus and the ride plus 1162C8's +0x360 latch ("Carried presses" below).
   - Page (pv eventReturnInWorld): game-tick.js stops an in-world event's live ticks at finish + 288 / + 408 (main.js
     gameHost.liveStopAt); the Transport runs the two ticks (stop frame, WS14 frame) before the return. The event-load path already
     ends its live ticks there: its auto replay starts with the results (main.js, running = false).
@@ -814,6 +814,45 @@ hud() while the riders ride; the ranks are gated by ctm-events/c0a-ret3). The wh
   the gondola 27A860 / 2790A0 / 27AAF8 / 278F38, Loading bit 3) and update 235CC8 (phase 0: 12ABD0 -> 12B030 (+12B000), 128958; phase 1:
   12A180 else 1296F8, then 1289F0 and the streaming box 122C28 / 3A9658; phase 2: 3A9770 >= 20000, >= 120 ticks, 2791D8, 230698, 279298,
   the NIS idle -> 27A9F0; phase 3: 233AA0 -> WS1 arg 3), then the card and the semi.
+
+**WS13 through the semi (compare-ai-capture --ws13, 2026-09-30).** The comparer runs WS13's own order (web/event-heat.js heatEnter,
+web/ctm-heat-setup.mjs planHeat): the results save at the live stop, the replay skipped, Next heat's restore and stop frame at W - 1,
+the gondola's NIS placement after each frame (the next frame's section scan sees it), 128958's fresh riders and 1289F0's grid at G
+(their event clocks held in PreRace, core event_clock_hold), the human's hold while the record's +0xAC4 is set and 1297C8(C, 0)'s
+grid placement on the first record without it (14538, WS1's last tick), the card skipped, and the Continue at C2. Rules settled:
+- **The semi's push-off.** The constructor 11B718 (0x11B748) sets +0x430 = -1 and +0x434 = 0x31; 1218D0 writes +0x434 =
+  22E0E0(track byte of +0x430) only while +0x430 != -1. The first heat's riders take location 0 on their first NIS-held tick
+  (120F20's 1242B0 re-probe, record 1092); the semi's, placed by 1289F0 without a hold, keep 0x31 to their push-off (records
+  14036..14746), and 13C948 halves the auto boost for >= 17. core npc_fresh_rider: +0x430 -1 / +0x434 0x31; npc_grid_start keeps
+  +0x434. (Without the re-probe the first heat's riders kept 0x31, the qualifier's finish order flipped and the semi lineup came
+  out 8 2 13 9 6 instead of the race copy 0x535B20's 2 8 7 9 6: the 8.096 cm "grid offset" was Psymon on Allegra's row.)
+- **The semi lineup** is 23A108's: the qualifier's places 0x536708 (238BF8: ascending 0x536640 = each rider's finish time +0x478,
+  written by 23A760), human skipped, then entries 5..7. PS2 c0a-ws13: Allegra 11708 before Psymon 11716.
+- **The human's start in the semi** is the normal 12BF68 (phase 1 crouch 1 at GO, the push-off at pose 0.62, tick 202); a hold
+  carried past C2 (nis_hold's start clear) had stopped it.
+- Score (on the 1242B0 / padCarry core): the qualifier exact to the live stop as before; the grid wait: riders exact; the semi:
+  human exact to 1442, riders to 481 / 656 / 671 / 958 / 1245, RNG to 490. Open: the grid-wait rank (the PS2 has the human 5th in
+  the gondola), Elise's path pick at 479 (path 5 ends; the web picks path 120 at lateral 325 cm, the PS2 a path at lateral 842 cm),
+  the human's +0x460 after Next heat (PS2: the qualifier's grid point; web: the live stop's contact), the +0x470 start after a Give Up.
+
+**Carried presses (pv padCarry, 2026-09-30).** Two rules from the code:
+- **One pad history.** cSSXApp_preUpdate (0x227E98; the jal at 0x227F20) runs 0x321298 on each port's history once per app update
+  with a pending sample (326B48), whatever runs: the front end, a card, the pause menu, the results. The game's provider reads the
+  same history, so a button pressed in a menu and still held is held on the ride with no new press edge. core pad_history_sample
+  (the history only); the page feeds every 60 Hz frame the game does not tick (main.js padCarryFeed) and keeps the held keys and the
+  history through the menus and a run's start (a replay starts settled).
+- **1162C8's +0x360 latch** (131620 at 0x131794 with held = bit 15, pressed = bit 14): a press, or a held jump while +0x360 is 0,
+  requests control 2; otherwise +0x360 = 1. Control 0's entry 131608 clears it (also 12FC60, 131D08). With no request and the jump
+  held, 131620 runs its cruise targets with crouch 1 and brake 0 (0x1317B4). core input_bridge.inc (prewind.jumpGate; cleared on
+  control 0's entry, reset_pad_history, reset_rider, place_rider_region).
+- PS2 c0a-ret2: the Give Up's Yes Cross (menu samples 354..362) reaches tick 1699 as word0 0x8000 (no 0x4000): crouch target 1,
+  control 0, then the finish's control 10. Gate ctm-events/c0a-ret2-coast (--coast-only --coast-device --pad-carry): human, riders,
+  RNG and ranks exact through all 1987 race ticks (without --pad-carry the human prewinds at 1700 and jumps out of control 10).
+- Page check (Chrome --mute-audio and WebKit, ?mute=1, keyboard and a scripted standard gamepad, padCarry on / off): a jump held
+  through pause -> resume stays crouched with no jump and jumps on release (off, keyboard: a jump on resume); a steer held through
+  pause applies on the first resumed tick (off, keyboard: lost until re-pressed); a Cross tap on a restart gives no jump at GO
+  (the start's own phase-1 crouch, as off). The gamepad path behaved already with padCarry off (its history was never settled
+  mid-run); the menus' own 0x321298 model (web/gamepad-menus.js) is separate and unchanged.
 
 ### Turning it on
 

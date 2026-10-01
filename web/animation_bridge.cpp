@@ -1275,12 +1275,21 @@ EMSCRIPTEN_KEEPALIVE int location_entry_place(const char* bankText,int slot,floa
 // = 0 (0x2362B4), then 11D390(human) (0x2363DC) while the event kind still holds, i.e. its event branch: 112180(human, 1) on the start
 // row and the grid hold (11FE78(3) / 11FEC8(6)). PS2 c0a-ret7: +0xAB8 -> the bank's path 2 before the WS14 frame's 112338; c0a-ret6b:
 // that frame's 1125C0 then writes +0x4CC = -2.9563, the heading WS15's record shows.
+// 1297C8(C, 1)'s 11D390(human) event branch with no world state 14 around it (pv eventReturnInWorld): WS13's enter 235AA0 -> 12AB20 ->
+// 129768 -> 1297C8(C, 1) places every listed rider while the event kind holds (PS2 entry probe local/ctm-events/caps/c0a-ws13p460: at
+// tick 12383 1297C8 from 0x1297B0, then 11D390 six times from 0x129860, each with 112180's 11D660 from 0x112250), before the gondola's
+// NIS takes the human: its +0x460 is the start row's point, +0x454 0, the route reattached (+0x490 / +0x4C0..+0x4C8; c0a-ws13 record
+// 14017). As transport_map_enter without WS14's boost meter clear.
+EMSCRIPTEN_KEEPALIVE int event_row_enter(const char* bankText){
+ if(!start_row_reattach(bankText,0,true))return 0;grid_hold_enter();return 1;
+}
 EMSCRIPTEN_KEEPALIVE int transport_map_enter(const char* bankText){
  boostState.meter=0;if(!start_row_reattach(bankText,0,true))return 0;grid_hold_enter();return 1;
 }
 EMSCRIPTEN_KEEPALIVE void place_rider_region(float x,float y,float z,float dx,float dy,float dz,int transport){
  browserNisHold=false; // 123B48 releases the NIS hold before 11D390
  if(browserResetActive)clear_reset();
+ browser_cruise_enter(); // 11DE60's 11FEC8(0): control 0's entry 131608 (the +0x360 jump latch)
  // 11DE60 is straight-line code: every caller runs its 11FEC8(0) / 11FE78(0) (0x11DED8 / 0x11DEE4), so a running crash ends here.
  // Control 8's exit (table 0x456B90 -> 12E690) is the wipeout speech 2A02D8 plus, on an even logic tick, 10E028(reaction 4), which
  // 11D660 below clears again (+0x358 = 0). Motion 2's exit (table 0x456B10 -> 136F28) is empty. PS2 c0a-ret record 3031 -> 3032:

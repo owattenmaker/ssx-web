@@ -53,7 +53,8 @@ EMSCRIPTEN_KEEPALIVE int peak_world_resident(int track){return track>=0&&track<2
 // PS2 measurements: S/peak1/streaming.md (frA1/frA2 A -> ARA1, frB1..3 ARA1 -> B, fr-tuck ABC1 -> A).
 #include "json.hpp"
 #include "../engine/npc_path.hpp"
-void browser_section_rescan();void browser_section_drop_track(uint32_t);void browser_stage_track_reset(uint32_t); // web/section_gameplay.inc, web/stage_world.inc
+void browser_section_rescan();void browser_section_drop_track(uint32_t);void browser_stage_track_reset(uint32_t);void browser_rollers_track_teardown(uint32_t); // web/roller_gameplay.inc (the crashbags' Object entities at the unload start)
+ // web/section_gameplay.inc, web/stage_world.inc
 void browser_stage_seed_node(uint32_t,int,uint32_t);void browser_stage_track_setup(uint32_t);void browser_stage_track_teardown(uint32_t);void browser_section_seed_entity(uint32_t,const std::string&);
 void browser_lighting_default_course(int);bool browser_race_replace_paths(std::vector<ssx::OriginalRacePath>,int);bool browser_reset_replace_paths(std::vector<ssx::OriginalNpcPath>,int);
 void browser_game_tick_restart(uint32_t);int browser_stage_collect_path(); // web/animation_bridge.cpp, web/stage_script_gameplay.inc
@@ -119,7 +120,7 @@ static void octree_insert(int32_t id){auto& r=rows[size_t(id)];if(r.track>=0&&r.
 static void set_state(int32_t id,int32_t state){auto& r=rows[size_t(id)];if(r.state==state)return;const int32_t from=r.state;r.state=state;r.order=++orderCounter;r.released=false;if(state==7){r.evict=kEvictionPasses;r.evictFresh=true;}apply(id); // 22E298: to the queue tail
  if(r.track<0||r.kind!=0)return;
  if((from==6||from==8)&&(state==1||state==2)){octree_insert(id);browser_section_rescan();}
- else if(state==7){ssx::worldTrackOctree()[size_t(r.track)]=0;browser_section_drop_track(uint32_t(r.track));browser_stage_track_teardown(uint32_t(r.track));}
+ else if(state==7){ssx::worldTrackOctree()[size_t(r.track)]=0;browser_section_drop_track(uint32_t(r.track));browser_stage_track_teardown(uint32_t(r.track));browser_rollers_track_teardown(uint32_t(r.track));}
  else if(from==7)browser_stage_track_reset(uint32_t(r.track));
 }
 static bool wanted_by(const Residency& set,int32_t id){return id==set.sky||id==set.transp||std::find(set.locations.begin(),set.locations.end(),id)!=set.locations.end();}

@@ -446,8 +446,10 @@ EMSCRIPTEN_KEEPALIVE void nis_hold(int on,float x,float y,float z,float fx,float
 // 1242B0 was ported; the page does not pose the rider under an NIS, so it cannot give mode 2's bone). A new hold entry clears it
 // (123B48 clears +0xAFC).
 EMSCRIPTEN_KEEPALIVE void nis_hold_probe(int mode,float x,float y,float z){if(mode<0||mode>2)throw std::runtime_error("Invalid NIS probe mode");nisProbeMode=browserNisHold?mode:0;nisProbeBone={x,y,z};}
+void browser_cruise_enter(); // web/input_bridge.inc
 EMSCRIPTEN_KEEPALIVE void reset_rider(float x,float y,float z,float angle) {
  browserNisHold=false; // 123B48 releases the NIS hold before 11D390 places
+ browser_cruise_enter(); // a placement enters control 0 again (131608 clears the +0x360 jump latch; web/input_bridge.inc)
  eventCameraSeedArmed=false;
  browserPatchFlags=0x49;
  riderScope.reset(); // no scope list yet: the first queries are unscoped until the slot's refresh (as on a fresh load, so a restart rides the same)
