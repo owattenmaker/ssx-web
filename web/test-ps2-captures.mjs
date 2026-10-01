@@ -500,6 +500,13 @@ const aiCases = [
   // knockdown's relationship change (0x155BF0); was human 265, Moby 265, rider 5 314, RNG 308.
   { name: 'ko-attack', args: ['--zoe'], humanThrough: 367, ai: [367, 367, 367, 367, 367], rngThrough: 367, scoreThrough: 367, ranks: true, records: true,
     why: 'knockdown: a charged punch (closed-loop pad recorded in the browser) knocks Moby down at 264: 10E468 -> 119400 KO +0x128, popup 0x2C and 10E098(attacker, 1.0, 2) (score, HUD bank and boost words exact); 266 the post-knockdown pair separation of human and Moby lands 0.005 cm off (rider-pair physics, open)' },
+  // ko-attack again (same savestate and pad, records byte-equal before the watch window) with Moby's score object *(rider+0x790) =
+  // 0x5D6600 watched (local/attacked-bail/runs, linked): the victim side of the knockdown. 107888's attack branch (0x107E0C) ->
+  // 107E70 a3 = 1 -> 10EB30 a2 (0x1082F4) -> 119B08 on Moby: +0x12C at 265, not +0x124. web/ai-score-compare.mjs compares the watch.
+  // coreExport: a core without the attacked-bail flag (pair_attacked_bail, web/npc_gameplay.inc) skips it.
+  { name: 'attackbail/ko-attack-moby', coreExport: '_pair_attacked_bail', args: ['--zoe'], tickHook: 'ai-score-compare.mjs', aiScoreThrough: 386,
+    humanThrough: 367, ai: [367, 367, 367, 367, 367], rngThrough: 367, scoreThrough: 367, ranks: true, records: true,
+    why: 'knockdown of Moby: the attacked bail on the victim (score +0x12C) and the KO on the attacker (+0x128)' },
   { name: 'event-race-ai-pairs', args: ['--zoe'], humanThrough: 2417, ai: [2417, 2417, 2417, 2417, 2417], rngThrough: 2417, ranks: true, records: true,
     why: 'event-race pad WITHOUT --isolate: human<->computer rider bump inside the human 121750 (0x107888, soft reactions 285), Luther landing crash 770 (13AA48 as a ragdoll), 115D48 rival flag +0x1C' },
   // Happiness (ABC1) Rival Time vs Mac from the rolling start (no countdown; docs/backcountry.md), not isolated. idle: Cross held
@@ -668,10 +675,12 @@ const aiCases = [
   // careerLevel) equals it leaf for leaf.
   { name: 'careerrival/cra3-final', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/CRA3/lineups-career/CRA3-final-zoe.json', '--in-world-ai', '--node-seed', '../local/career-rival/caps/cra3-final.nodes.json'],
     humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true, scoreThrough: 1500, why: 'Ruthless Ridge career final, Nate in slot 1: human (score too), five riders, RNG, ranks, pair records exact to the end' },
-  // 229: the human's hard crash (control 8, physics exact) is an ATTACKED bail on the PS2 (119B08 a1 != 0: score +0x12C, popup 0x2D); the
-  // port's enter_crash (web/animation_bridge.cpp originalHardCrashEnter(..., false, ...)) always counts +0x124 (open, not career-specific).
+  // 229: the human's hard crash (control 8) is an ATTACKED bail (107888's attack branch -> 107E70 a3 = 1 -> 10EB30 a2 -> 119B08:
+  // score +0x12C, popup 0x2D; docs/crash-motion.md "Attacked bails"). Exact to the end on a core whose pair_react passes the flag
+  // (the _pair_attacked_bail marker); 228 on an older core.
   { name: 'careerrival/dra4-final', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/DRA4/lineups-career/DRA4-final-zoe.json', '--in-world-ai', '--node-seed', '../local/career-rival/caps/dra4-final.nodes.json'],
-    humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true, scoreThrough: 228, why: 'Intimidator career final, Nate in slot 1: human physics, five riders, RNG, ranks, pair records exact to the end; human score to 228' },
+    humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true,
+    scoreThrough: coreJsText.includes('_pair_attacked_bail') ? 1500 : 228, why: 'Intimidator career final, Nate in slot 1: human (score too, the attacked bail at 229), five riders, RNG, ranks, pair records exact to the end' },
   // pv semiFresh (docs/ai-racers.md "The semi's fresh riders"): the Snow Jam career semi (c0c-race, linked) on the EVENT-LOAD path (no
   // --in-world-ai: the page's live career heat) with the semi countdown's own document, whose riders hold +0x434 = 0x31 (WS13's new riders,
   // 11B718), which web/lineup.js assembleLineup gives under semiFresh (web/test-career-rival.mjs: leaf for leaf). With the Single Event value 0
@@ -693,7 +702,10 @@ for (const c of aiCases) {
   const bin = runs + c.name + '.bin';
   if (!fs.existsSync(bin) || !fs.existsSync(runs + c.name + '.capture.json')) { console.log(`skip ${c.name}: capture not present`); continue; }
   const report = reportPath(c.name, 'ai-regression.json');
-  execFileSync(process.execPath, ['compare-ai-capture.mjs', bin, '--world-draws', '--report', report, ...c.args], { cwd: new URL('.', import.meta.url).pathname, stdio: ['ignore', 'ignore', 'inherit'] });
+  // c.tickHook: a TICK_HOOK observer module (compare-ai-capture.mjs), e.g. ai-score-compare.mjs for the computer riders' score objects.
+  const hookEnv = c.tickHook ? { env: { ...process.env, TICK_HOOK: c.tickHook } } : {};
+  execFileSync(process.execPath, ['compare-ai-capture.mjs', bin, '--world-draws', '--report', report, ...c.args],
+    { cwd: new URL('.', import.meta.url).pathname, stdio: ['ignore', 'ignore', 'inherit'], ...hookEnv });
   const { summary, rows } = JSON.parse(fs.readFileSync(report, 'utf8'));
   if (c.returnGate) { const g = summary.ctmReturn; if (!g || g.row == null || g.outRow == null) throw new Error(`${c.name}: no in-world return in the report`);
     const human = rows.findIndex((r, k) => k >= g.row && !r.humanExact); if (human >= 0) throw new Error(`${c.name}: human left the original ${human - g.row} records after the return (tick ${rows[human].tick}; ${c.why})`);
@@ -710,6 +722,10 @@ for (const c of aiCases) {
   if (c.ranks && summary.firstRankMismatch) throw new Error(`${c.name}: race ranking +0xEC differs at ${summary.firstRankMismatch.tick}`);
   if (c.recordsThrough !== undefined && summary.firstPairRecordMismatch && summary.firstPairRecordMismatch.tick <= c.recordsThrough) throw new Error(`${c.name}: 10F560 pair record differs at ${summary.firstPairRecordMismatch.tick} (baseline ${c.recordsThrough})`);
   if (c.records && summary.firstPairRecordMismatch) throw new Error(`${c.name}: 10F560 pair record ${summary.firstPairRecordMismatch.slot}->${summary.firstPairRecordMismatch.other} differs at ${summary.firstPairRecordMismatch.tick}`);
+  // c.aiScoreThrough: every watched computer rider's score object (ai-score-compare.mjs) exact through that tick.
+  if (c.aiScoreThrough !== undefined) { const list = summary.aiScore || []; if (!list.length) throw new Error(`${c.name}: no computer-rider score watch compared`);
+    for (const a of list) if (a.first && a.first.tick <= c.aiScoreThrough) {
+      throw new Error(`${c.name}: ${a.character} score object left the original at ${a.first.tick} (${a.first.key}: web ${a.first.web}, PS2 ${a.first.ps2})`); } }
   if (c.scoreThrough !== undefined) { const h = summary.humanScore; if (!h || !h.ticks) throw new Error(`${c.name}: no human score compare`);
     if (h.first && h.first.tick <= c.scoreThrough) throw new Error(`${c.name}: human score object left the original at ${h.first.tick} (${h.first.key}: web ${h.first.web}, PS2 ${h.first.ps2})`);
     if (h.firstBoost) throw new Error(`${c.name}: human boost words differ at ${h.firstBoost.tick}`); }

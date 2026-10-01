@@ -1,3 +1,4 @@
+import { detectDevice, loadSaved, resolveQuality } from './quality.js';
 // Rollout switches (AGENTS.md "Shared tree"). The tree deploys as it stands, so a change that is not verified yet sits behind
 // a switch here, default off, until it is checked against the PS2 (frames, captures) and in WebKit and Chrome; then its default flips,
 // and once it has been on through a few deploys the switch and its off path are deleted (2026-09-30 cleanup: 216 -> 40).
@@ -186,6 +187,24 @@ export const PV_DEFAULTS = Object.freeze({
   careerLevel: true,
   semiFresh: true
 });
+// Desktop-tier switches (CTM agent, 2026-10-01; docs/ctm-events-in-world.md "Turning it on"): the in-world CTM events. On for the desktop
+// tier, off on a phone: the old mountainRide split (docs/ctm-parity.md "The whole mountain"), not iOS / Android and not the low quality
+// tier (the effective one at page load: ?quality=, the saved choice, the device's). PV_DEFAULTS holds their phone value (off); ?pv=
+// overrides as for every switch. Node harnesses (no page) keep PV_DEFAULTS. The event-load CTM path stays as the phones' path and the
+// fallback for one release.
+export const PV_DESKTOP = Object.freeze(['worldUnderCuts', 'eventWorldData', 'eventInWorld', 'eventInWorldAi', 'nisSectionPoint', 'eventReturnInWorld']);
+export function desktopTier(env = globalThis) {
+  if (!env.location) return false;
+  try {
+    const device = detectDevice(env),
+      q = resolveQuality(device, loadSaved(env.localStorage), new URLSearchParams(env.location.search ?? ''));
+    return !device.ios && !device.android && q.tier !== 'low';
+  } catch {
+    return false;
+  }
+}
+const desktop = desktopTier();
+const defaultOf = (k) => (desktop && PV_DESKTOP.includes(k) ? true : PV_DEFAULTS[k]);
 const overrides = new Map();
 function fromQuery() {
   // node harnesses: SSX_PV=name,-name (the page's ?pv= syntax) when there is no page URL
@@ -194,7 +213,7 @@ function fromQuery() {
   const all = (on) => new Map(Object.keys(PV_DEFAULTS).map((k) => [k, on]));
   if (q === '1' || q === 'all') return all(true);
   if (q === '0' || q === '') return all(false);
-  const out = new Map(Object.entries(PV_DEFAULTS));
+  const out = new Map(Object.keys(PV_DEFAULTS).map((k) => [k, defaultOf(k)]));
   for (const w of q.split(',')) { const off = w.startsWith('-'), k = off ? w.slice(1) : w; if (k in PV_DEFAULTS) out.set(k, !off); }
   return out;
 }
@@ -202,7 +221,7 @@ const query = fromQuery();
 export function pv(name) {
   if (!(name in PV_DEFAULTS)) throw new Error(`Unknown presentation switch ${name}`);
   if (overrides.has(name)) return overrides.get(name);
-  return query ? query.get(name) : PV_DEFAULTS[name];
+  return query ? query.get(name) : defaultOf(name);
 }
 // Tests: force a switch (null restores the default / query).
 export function setPv(name, on) { if (on == null) overrides.delete(name); else overrides.set(name, !!on); }

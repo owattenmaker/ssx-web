@@ -103,7 +103,8 @@ export function createReplay(host) {
   let camera = 0;   // REPLAY_CAMERAS index (R+0x630), 0 = Web-cam at every start (0x26F228 / 0x26EEA0)
   const api = {
     // ---- live run ----
-    liveStart() { if (mode) api.stop(); rec = createRecording(); snapshot = host.snapshot(); finishTick = -1; finishInfo = null; autoPending = false; highlights = []; air = null; replayed = false; host.prepare?.(); },
+    liveStart() { if (mode) api.stop(); rec = createRecording(); snapshot = host.snapshot(); finishTick = -1;
+      finishInfo = null; autoPending = false; highlights = []; air = null; replayed = false; host.prepare?.(); },
     // After each live tick (web/game-tick.js): the run's highlights. grounded / score (the banked run score) / crash / reset.
     observe(grounded, score, crashing, resetting) {
       if (!rec || finishTick >= 0 || mode || highlights.length >= 3) return;

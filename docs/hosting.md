@@ -164,6 +164,31 @@ applies it; not done by the feature's deploy):
 - Endpoints (behind the password gate like everything else): `GET /mp/records`, `GET /mp/records/board?event=`, `GET
   /mp/records/replay?id=`, `POST /mp/records/submit`. With the directory unset or unusable they answer 503 and nothing else changes.
 
+## The records verifier (docs/online-records.md "The verifier")
+
+`web/server/records-verifier.mjs` re-simulates submitted runs in headless Chrome with the game's own page and reports to mp-server on
+loopback. It is its own LaunchAgent, **not** under the server sandbox (it starts Chrome); it runs niced (`nice -n 19` for Chrome,
+launchd `Nice` 10, `ProcessType Background`, `LowPriorityIO`), one run at a time, skips while the 1-minute load per core is above
+0.6 or an online race is running (`/mp/status`), and closes Chrome whenever its queue is empty.
+
+Install on the host (once):
+
+1. Chrome: Google Chrome in /Applications (or set `--chrome` in the plist to another Chrome / Chromium; WebGPU must work headless).
+2. The shared secret: `openssl rand -hex 32 > ~/ssx-host/state/verifier-token && chmod 600 ~/ssx-host/state/verifier-token`.
+3. The server reads it: `MP_RECORDS_VERIFIER_TOKEN_FILE` = `__HOME__/ssx-host/state/verifier-token` in the server plist's
+   EnvironmentVariables (deploy/ssx.server.plist.example and the local `<SSX_LABEL>.server.plist` have it), then reload the server agent.
+   Without the file the verifier endpoints answer 404. They also answer 404 to anything not on loopback or carrying CF-Connecting-IP
+   (a request through the tunnel), so the endpoints are never reachable from the internet.
+4. The agent: `deploy/<SSX_LABEL>.verifier.plist` from `deploy/ssx.verifier.plist.example` (label, `__HOME__`), copied to
+   `~/Library/LaunchAgents/` with `__HOME__` filled in, `mkdir -p ~/ssx-host/state/verifier`, then
+   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<SSX_LABEL>.verifier.plist`. Log: `~/ssx-host/logs/verifier.log` (one line
+   per run: the verdict, wall time, the page's simulation time, Chrome's CPU seconds and the process tree's peak memory).
+5. After a code deploy nothing is needed: the verifier loads the page fresh for each batch; a new core makes it re-verify the listed
+   runs (D7 (3)). To stop it: `launchctl bootout gui/$(id -u)/<SSX_LABEL>.verifier`.
+
+Admin by hand: `cd ~/ssx-host/app/web && node server/records-admin.mjs --dir ~/ssx-host/state/records flagged | list <event> |
+show <id> | approve <id> | delete <id>` (the running server reads the changed board on its next request).
+
 ## Game data
 
 `web/public/assets/` (about 2.5 GB) is extracted from your own discs by `npm run setup`/`tools/`; it is git-ignored

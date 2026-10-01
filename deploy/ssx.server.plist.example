@@ -20,6 +20,8 @@
     <key>MP_PRECOMPRESSED</key><string>__HOME__/ssx-host/app/web/precompressed</string>
     <key>MP_REQUIRE_LOOPBACK</key><string>1</string>
     <key>MP_ORIGINS</key><string>https://ssx.example.com</string>
+    <key>MP_RECORDS_DIR</key><string>__HOME__/ssx-host/state/records</string>
+    <key>MP_RECORDS_VERIFIER_TOKEN_FILE</key><string>__HOME__/ssx-host/state/verifier-token</string>
     <key>NODE_ENV</key><string>production</string>
   </dict>
   <key>RunAtLoad</key><true/>

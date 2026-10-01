@@ -133,11 +133,55 @@ the course floor (route length / plausibility.mjs MAX_AVERAGE, from `<code>/npc-
 character 0-9, a hex core id. Rate limits per client address, in memory only: 6 a minute and 30 an hour. At most 100 runs per board;
 the slowest drop with their replays. Nothing about the client is stored; `at` is the UTC day.
 
+### Anti-cheat floors (2026-10-01)
+
+`web/server/record-floors.json` (made by `tools/fetch-record-floors.mjs` from speedrun.com's API, fetched 2026-10-01): for each timed
+board the fastest verified run of every racing category (Racing (Clean), (NMG), (NMG+), (No Restrictions); not 'Alternate'), with
+player, platform, emulator flag, date and URL. The floor is 0.9 x the fastest of them, any category and platform: the port is
+bit-exact, so the glitches and shortcuts the PS2 / GameCube runners use are open to a port player too.
+
+| Event | Record (category, platform) | Floor |
+|---|---|---|
+| 0:ARA1 Snow Jam | 104 s (No Restrictions, GameCube emu, Kelecat; Clean 126 s) | 93.6 s |
+| 0:BRA2 Metro City | 85 s (NMG, GameCube emu, RixtyNoMore) | 76.5 s |
+| 0:CRA3 Ruthless Ridge | 103 s (No Restrictions, GameCube emu) | 92.7 s |
+| 0:DRA4 Intimidator | 88 s (No Restrictions, GameCube emu) | 79.2 s |
+| 0:ERA5 Gravitude | 104 s (No Restrictions, GameCube emu) | 93.6 s |
+| 4:ABC1 Happiness (Rival Time) | 75 s (No Restrictions, GameCube emu) | 67.5 s |
+| 4:DBC2 Ruthless (Rival Time) | 114 s (No Restrictions, PS2 emu) | 102.6 s |
+| 4:EBC3 The Throne (Rival Time) | 60 s (No Restrictions, PS2 emu) | 54.0 s |
+
+Every timed board has a speedrun.com level; the score boards (slope style, big air, super pipe, Rival Points) have none and get no
+floor: only the verifier checks them. An event missing from the table would fall back to the route floor (route length / MAX_AVERAGE).
+The old tier-0 route floor rejected outright, and it was wrong: Metro City 87.2 s against the real 85 s, Intimidator 96.4 / 88,
+Happiness 78.5 / 75, The Throne 75.0 / 60. It no longer rejects anything.
+
+A run under its floor is stored in `board.flagged` (reason, floor, source) with its replay and not listed; the response says
+`review: true` and the records screen's help line reads "Your run is under review.". The verifier lists it if it reproduces; else
+`records-admin.mjs approve` / `delete` decides (docs/hosting.md). On its own the floor buys little: it stops absurd claims, but a
+forger can still claim just above it (0.9 x the world record beats every human) and take first place; only re-simulation proves a run.
+
+### The verifier (D5, 2026-10-01)
+
+- **Page** (web/online-replay.js, `?verify`: `window.ssxVerify(id)`, `window.ssxVerifyCore()`): the Watch Replay loader (rider,
+  outfit, lineup, course, warm-up, attribute bytes, `replay.load`), then every recorded tick as fast as it runs; the first finish
+  record (game-tick.js `rec.finish`: race ticks, the score latched at the finish tick, DNF) decides. Reproduced = a finish, not DNF,
+  on the run's last recorded tick, with the claimed time / score. A run that finishes earlier stops there (not reproduced).
+- **The claim** is now that same finish record (`replay.finishInfo`, kept by `replay.finish(rec.finish)`): the race ticks, and for score
+  events the score latched at the finish tick (before: the HUD total at the results).
+- **Service** (web/server/records-verifier.mjs, a LaunchAgent on the host, docs/hosting.md): asks `/mp/records/verifier/queue?core=`
+  (the page's core id), runs each item in the page, posts `/mp/records/verifier/result`. A page timeout counts as not reproduced;
+  any other page failure as 'could not run' (three tries per core).
+- **Rules** (records.mjs `verifyEntry`): reproduced -> verified (a flagged run is listed, one entry per name); not reproduced on the
+  core it was recorded on -> pulled (a flagged run stays flagged); not reproduced on another core -> `stale` ("Recorded on an earlier
+  version", kept listed), one try per core; after a core deploy every verified run is re-verified on the new core (D7 (3)).
+- **Measured** (this Mac, Apple silicon, Chrome for Testing headless, Snow Jam ~16,000-tick runs; see the HANDOFF entry for the run):
+  about 20 s wall per run once the page is up (12-13 s of simulation), 18-24 s of Chrome CPU, the Chrome process tree's resident
+  memory about 2.8 GB summed over its processes (shared pages counted in each, so an upper bound); the page load before the first
+  run of a batch about 30-60 s.
+
 ### Not done / open
 
-- The verifier (D5, second pass): `records.verify(id, ok)` and the `verified` field are in place; the job (headless Chrome on the
-  host running the page's replay path in a verify mode, outside the server sandbox) is not built. Until then entries are listed with
-  only the tier-0 checks.
 - Runs in-world (pv eventInWorld, off today) and the peak runs are not submittable (their replays need the streamed world's
   snapshots).
 - Single Event outside the career leaves the core's attribute bytes as the last career run set them (main.js `runAttributes` returns

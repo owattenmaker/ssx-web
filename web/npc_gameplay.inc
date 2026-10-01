@@ -311,6 +311,8 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pair_react(int kind,int animation,int attac
  auto reaction=originalSoftCollisionReaction(collisionProfile,context,event,[](){return rng.nextMotion();});
  if(reaction.kind==OriginalCollisionReactionKind::Soft&&::grounded&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7)))soft_collision_begin(reaction.animation,reaction.manualSpin);
 }
+// Feature marker for web/test-ps2-captures.mjs: this core passes the attack flag into 10EB30 (attacked bails, +0x12C).
+extern "C" EMSCRIPTEN_KEEPALIVE int pair_attacked_bail(){return 1;}
 // QA: the rider's query caches +0x864 (terrain/landing) and +0x868 (body): [valid, resource, u, v, half] each.
 extern "C" EMSCRIPTEN_KEEPALIVE float* rider_query_caches(){RIDER_LOCAL static float v[10];const auto& t=ssx::browser_rider_terrain_cache();const auto& b=ssx::browser_rider_body_cache();
  v[0]=t.valid;v[1]=float(t.resource);v[2]=float(t.cellU);v[3]=float(t.cellV);v[4]=float(t.half);v[5]=b.valid;v[6]=float(b.resource);v[7]=float(b.cellU);v[8]=float(b.cellV);v[9]=float(b.half);return v;}

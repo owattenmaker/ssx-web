@@ -575,9 +575,9 @@ local/career-rival/difficulty.py, web/test-career-rival.mjs). Port: web/lineup.j
 heatLevel passes web/career.js's live level.race.level (ev.raceLevel, not saved) for a career race under **pv careerLevel** (off). Without it
 a career race at level 0 or 2 rides level 1's pacing.
 
-Open (found on careerrival/dra4-final, not career-specific): the human's hard crash at 229 (control 8, physics exact) is an attacked bail on
-the PS2 (119B08 with a1 != 0: score +0x12C and HUD popup 0x2D); the port's enter_crash (web/animation_bridge.cpp) always passes
-attacked = false, so the score object counts +0x124. Which call passes the attacker (10E468's crash attack -> 10EB30) is not traced here.
+Fixed 2026-10-01 (found on careerrival/dra4-final, not career-specific): the human's hard crash at 229 is an attacked bail on the PS2
+(107888's attack branch -> 107E70 a3 = 1 -> 10EB30 a2 -> 119B08: score +0x12C, HUD popup 0x2D). pair_react now passes the flag; the human
+score is exact to the end. The rule, the attacker's KO and the second gate: docs/crash-motion.md "Attacked bails".
 
 ## The semi's fresh riders (2026-10-01, career-rival agent)
 

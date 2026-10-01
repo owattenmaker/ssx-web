@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template (copy to deploy/<SSX_LABEL>.verifier.plist, git-ignored; set the label and the host folder if not ssx-host). The online records' verifier (docs/hosting.md "The records verifier"): headless Chrome running the game's own page on loopback, re-simulating submitted runs. Not sandboxed (it starts Chrome); niced, background priority. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.ssx.verifier</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/opt/node/bin/node</string><string>server/records-verifier.mjs</string>
+    <string>--page</string><string>http://127.0.0.1:8787</string>
+    <string>--token-file</string><string>__HOME__/ssx-host/state/verifier-token</string>
+    <string>--profile</string><string>__HOME__/ssx-host/state/verifier/profile</string>
+    <string>--chrome</string><string>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</string>
+    <string>--interval</string><string>60</string><string>--max-load</string><string>0.6</string><string>--per-cycle</string><string>10</string>
+  </array>
+  <key>WorkingDirectory</key><string>__HOME__/ssx-host/app/web</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>NODE_ENV</key><string>production</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/ssx-host/logs/verifier.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/ssx-host/logs/verifier.log</string>
+</dict></plist>

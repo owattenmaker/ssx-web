@@ -156,7 +156,7 @@ replays the same riders; a won round leaves them 0 for the next round's build.
   Nate's skin part and grid[1][3f7fffff] from those countdowns (additive; scratch local/career-rival/export), behind **pv careerRival**.
 - The career race level (pv **careerLevel**): docs/ai-racers.md "Difficulty by race level".
 - Gates: test-ps2-captures careerrival/cra3-final (human incl. score, five riders, RNG, ranks, pair records exact to 1500) and
-  careerrival/dra4-final (the same; human score to 228: the attacked bail, docs/ai-racers.md); web/test-career-rival.mjs (the page's
+  careerrival/dra4-final (the same, the human's attacked bail at 229 included: docs/crash-motion.md "Attacked bails"); web/test-career-rival.mjs (the page's
   assembly equals the PS2 countdowns' riders leaf for leaf).
 
 **The race card's round and record (2026-10-01, career-rival agent).** 40race_pre's setup (0x1FB874..0x1FB928) hides tab_qualifier,

@@ -44,7 +44,10 @@ export class OnlineRecordsUI {
     const info = this.ui.cb.onlineRun?.();
     if (info?.inWorld) return null;
     if (!this.records.has(key)) return null;   // no board (offline, none cached): the PS2's own decision on the local table
-    const timed = this.records.timed(key), value = timed ? (result.dnf ? null : result.ticks) : Math.round(result.score || 0);
+    // the claim: the finish tick's record when the page has it (game-tick.js rec.finish: race ticks, the score latched at the finish,
+    // what the verifier re-simulates), else the results' values
+    const fin = info?.finish, timed = this.records.timed(key);
+    const value = timed ? (result.dnf ? null : Math.round(fin?.ticks ?? result.ticks)) : fin ? fin.score | 0 : Math.round(result.score || 0);
     if (!info?.available || info.giveUp || result.dnf || !(value > 0)) return false;   // no replay, a Give Up / TIME'S UP / DNF: not submitted
     const rank = this.records.rank(key, value, this.playerName());
     this.run = { key, ev: { mode: ev.mode, course: ev.course }, timed, value, rank, character: info.character, state: 'new', id: null };

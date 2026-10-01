@@ -65,7 +65,7 @@ Each routine is a literal port with EE float semantics:
 | 119D40 via 10E910 | landing boundary: stance = (320^324) != 0, alternate = normal.z < 0.7, flag = +0x330. Uber tier progression from +0x114; 10E098 meter award; Uber landing reaction request 2 | `score_landing()` from `finish_landing` |
 | 119E38 via 114298 | takeoff boundary. The alternate flag is the ramp branch at 114660 (`OriginalJumpMotion::rampTakeoff`) | `browser_score_takeoff(ramp)` from core.cpp's three takeoffs |
 | 119C98 | new D-pad trick in the air (air control 133734 phase 3) | `score_trick_start()` when `frame.trickStarted` |
-| 119B08 | bail: lost-point popups, crash counters, reset, -0.25 meter penalty when points were pending (through 10E098) | `score_bail()` from `recordCrash` |
+| 119B08 | bail: lost-point popups, crash counters (+0x12C attacked + popup 0x2D, else +0x124; crash-motion.md "Attacked bails"), reset, -0.25 meter penalty when points were pending (through 10E098) | `score_bail(attacked)` from `recordCrash` |
 | 119BB0 via 10F280 | quick recovery: +0.1 meter, popup 0x21 RECOVERED! | `score_recovery()` from `crash.host.refund` |
 | 119368 | reset placement: lost points (11A7A8); meter * -0.7 or -0.1 | `score_reset()` |
 | 119608 | pickup | engine only |

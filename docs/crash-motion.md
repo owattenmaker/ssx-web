@@ -108,3 +108,28 @@ impact handling.
 - **Port.** web/animation_bridge.cpp `pending_pose_translation()` = the tick's contacts translation (`tickBodyTranslation`, the post's
   former local), the in-flight instance pushes (`instancePendingTranslation`, web/instance_contact_gameplay.inc) + `pairCompanion` +
   `browserLandingTranslation`, passed to `beginControl` whether or not the post is running.
+
+## Attacked bails: who counts the crash (2026-10-01)
+
+- **The flag.** 10EB30(rider, a1 semantic, a2 attacked, a3 impact type, t0 event) uses a2 only for 119B08(score object, a2) at
+  0x10EB94. 119B08 (0x119B18): attacked -> score +0x12C += 1 and HUD popup 117B88(score, 0x2D, 0, 0, 1.5); else +0x124 += 1. Both
+  then add the lost points to +0x1A0 (11A7A8), return the -0.25 bail penalty when points are pending (117948), and reset the combo.
+- **Who passes it.** Of the six 10EB30 calls, only 107E70's (0x1082FC) passes a nonzero a2: its own a3 (0x1082F4). 107E70(victim,
+  other, direction, a3 attack, f12 impulse) gets a3 = 1 only from 107888's attack branch (0x107E08..0x107E0C: victim = the opponent,
+  other = the attacking owner); the ordinary pair impulses (0x107BA0 / 0x107BBC) pass 0. 105D98 (0x1064E4), 1311B8 / 1311D0, 13A530
+  and 13F22C (surface 18) pass a2 = 0.
+- **No window.** Nothing stores the attack: only the crash that the same 107E70 call enters is attacked. A later crash (a landing, an
+  obstacle, an ordinary bump) counts +0x124 again. Re-hits are gated by 107888's own reciprocal +0x18 attack cooldown
+  (docs/rider-pair-collision.md).
+- **Credit.** After 10EB30 the crash path of 107E70 calls 10E468(victim, other) when attacked (0x10830C), else 10E2E8. 10E468 makes the
+  audio calls (298138, 2A0A30, 298D00 on 28B180), the relationship event 155BF0(.., 3), then 119400 on the ATTACKER's score object: +0x128 += 1 (KO),
+  popup 0x2C for 1.5 s, and returns 1.0, which 10E098(attacker, 1.0, 2) awards. The soft paths (10E3A8 attack, 10E228 not) change no
+  score. So the victim counts +0x12C and the attacker +0x128, whether the human or a computer rider is either one.
+- **Port.** web/npc_gameplay.inc pair_react passes the reaction request's attack flag to browserHardCrash (web/core.cpp, now
+  (semantic, event, attacked)); enter_crash (web/animation_bridge.cpp) hands it to originalHardCrashEnter -> score_bail ->
+  originalScoreBail (engine/score_object.cpp, 119B08). The attacker's KO stays web/ai-racers.js -> pair_knockout. Marker export
+  `_pair_attacked_bail` (the capture gates key on it).
+- **Gates.** careerrival/dra4-final: the human's crash at 229 is attacked; the human score object is exact to the end (was 228).
+  attackbail/ko-attack-moby: ko-attack re-captured with Moby's score object 0x5D6600 watched (--watch 0x5d6600:0x1d0; records
+  byte-equal to ko-attack before the watch window); web/ai-score-compare.mjs (a compare-ai-capture TICK_HOOK) compares it: Moby's
+  +0x12C at 265 (+0x124 on the old core) and the whole object exact for all 368 ticks; the human's KO (+0x128) as in ko-attack.

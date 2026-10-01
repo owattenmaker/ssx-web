@@ -951,13 +951,36 @@ the map, Snow Jam.
   lifetime peak is 1540. The wasm heap stays flat after cycle 4 (221). So the growth is outside the wasm heap (JS heap or graphics),
   not flat. This is R8, and it fails the phone gate. Desktop is not affected at this size.
 
-**In-world WS13 on the page is not the PS2's yet.**
+**Memory, phone policy, after the rider-shadow fix (2026-10-01; WebKit 844x390, 6 GB, 8 cycles, core-rcam, WS13 on the page).**
+Per-cycle footprint medians (MB): 930, 955, 974, then 1297 at cycle 4's qualifier results, then 1265, 1248, 1240, 1234. The cycle
+peaks are 1083, 977, 1111, 1361, 1354, 1408, 1378, 1372; the lifetime peak is 1519, at boot. The wasm heap is 221 MB from cycle 2
+and there are no world loads (3 course loads, all at boot).
+- The steady growth is gone: before the fix it was about +35 MB per cycle (1180 -> 1430). From cycle 4 on the medians fall.
+- There is a one-time step of about +320 MB, inside cycle 4's results, outside the wasm heap. The run samples only the total
+  footprint, so its category is not known; a JIT tier-up or a graphics allocation are candidates, neither confirmed.
+- WS13 on the page in WebKit (heatqa.mjs, Restart and Next heat): grid 301, release 492, list end 521, rank mode 523, card 525, as
+  in Chrome.
+- The station preload in WebKit (pv nisPreload): the booth's t 0 pose is there in the firing tick (off: 26 ticks after the hold).
+
+**In-world WS13 on the page (superseded 2026-10-01: see "The page's in-world WS13" above).**
 - The results' Restart and Next heat call ui.cb.cutscene({kind: 'heat'}). In a free-ride course that kind is not in the playable
   list (main.js cb.cutscene), so the gondola never plays: the card opens at once, over the rider where it gave up.
 - event-heat.js heatEnter (the start rows, 1297C8(C, 1), the rider sync) runs only in the comparer.
 - The event-load path plays the gondola.
 
 ### Turning it on
+
+**Desktop, 2026-10-01 (approved by the coordinator).** web/pv-flags.js PV_DESKTOP: worldUnderCuts, eventWorldData, eventInWorld,
+eventInWorldAi, nisSectionPoint and eventReturnInWorld default on where desktopTier() holds: not iOS / Android and not the low quality
+tier (the effective one at page load), the old mountainRide split. Phones keep the event-load path (PV_DEFAULTS: off), and ?pv=
+overrides as for every switch. nisPreload, nisBoneProbe and transportFade stay off. Node harnesses keep PV_DEFAULTS. Test:
+test-pv-desktop.mjs. Smokes (local/ctm-events/qa/r9replay.mjs NOPV=1 HEAT=1, Chrome, the page's own defaults):
+- desktop (Mac UA, no touch): the gate's event in MOUNTAIN, the auto replay with ARA1's triggers, Restart -> the in-world WS13 card,
+  the heat, Give Up, the results, Transport, the WS15 return (the six removed after 8 ticks);
+- phone setup (MOBILE=1: an Android UA, 844x390 touch metrics): the gate loads ARA1 (the event-load path), its replay, its heat,
+  Transport, MOUNTAIN again.
+Phones follow once the categorized memory run names cycle 4's step. The event-load CTM path stays the phones' path and the fallback
+for one release.
 
 1. Stage 1 as soon as its gates pass (it needs pv `pauseContexts`).
 2. Stages 3 + 4 + 5 together on the desktop tier.
