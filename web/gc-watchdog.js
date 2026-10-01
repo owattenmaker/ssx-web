@@ -57,8 +57,18 @@ export function createGcWatchdog({ isSafe = () => false, now = () => performance
   });
   const safe = () => { try { return !!isSafe(); } catch { return false; } };
   let seq = 0, gapMax = 0, gapUntil = 0, lastFrame = 0;
-  const frame = (t) => { if (lastFrame) gapMax = Math.max(gapMax, t - lastFrame); lastFrame = t; if (t < gapUntil) raf(frame); else { const s = state.stalls.at(-1); if (s) s.maxFrameMs = Math.round(gapMax); lastFrame = 0; } };
-  const watchFrames = (t) => { const idle = gapUntil <= t; gapUntil = t + 3000; if (idle) { gapMax = 0; if (typeof raf === 'function') raf(frame); } };   // the longest frame from a kick to 3 s after it
+  const frame = (t) => {
+    if (lastFrame) gapMax = Math.max(gapMax, t - lastFrame);
+    lastFrame = t;
+    if (t < gapUntil) raf(frame);
+    else {
+      const s = state.stalls.at(-1);
+      if (s) s.maxFrameMs = Math.round(gapMax);
+      lastFrame = 0;
+    }
+  };
+  // the longest frame from a kick to 3 s after it
+  const watchFrames = (t) => { const idle = gapUntil <= t; gapUntil = t + 3000; if (idle) { gapMax = 0; if (typeof raf === 'function') raf(frame); } };
   const tick = () => {
     const t = now();
     reg.register({ young: t }, -(++seq));

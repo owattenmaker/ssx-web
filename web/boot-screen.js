@@ -53,8 +53,26 @@ const ui = {
     let total = 0; for (const ch of value) total += (glyphs[ch]?.advance || 10) * scale;
     if (align === 'right') x -= total; if (align === 'center') x -= total / 2;
     let im = tints.get(font + color);
-    if (!im) { im = document.createElement('canvas'); im.width = atlas.width; im.height = atlas.height; const c = im.getContext('2d', SPRITE_2D); c.drawImage(atlas, 0, 0); c.globalCompositeOperation = 'source-in'; c.fillStyle = color; c.fillRect(0, 0, im.width, im.height); tints.set(font + color, im); }
-    for (const ch of value) { const g = glyphs[ch]; if (!g) { x += 10 * scale; continue; } ctx.drawImage(im, g.x, g.y, g.w, g.h, x + g.dx * scale, y + g.dy * scale, g.w * scale, g.h * scale); x += g.advance * scale; }
+    if (!im) {
+      im = document.createElement('canvas');
+      im.width = atlas.width;
+      im.height = atlas.height;
+      const c = im.getContext('2d', SPRITE_2D);
+      c.drawImage(atlas, 0, 0);
+      c.globalCompositeOperation = 'source-in';
+      c.fillStyle = color;
+      c.fillRect(0, 0, im.width, im.height);
+      tints.set(font + color, im);
+    }
+    for (const ch of value) {
+      const g = glyphs[ch];
+      if (!g) {
+        x += 10 * scale;
+        continue;
+      }
+      ctx.drawImage(im, g.x, g.y, g.w, g.h, x + g.dx * scale, y + g.dy * scale, g.w * scale, g.h * scale);
+      x += g.advance * scale;
+    }
   },
 };
 const title = D.title ? new TitleScreen(D.title, images, ui, { t0 }) : null;
@@ -66,13 +84,25 @@ try { performance.setResourceTimingBufferSize?.(4000); } catch {}
 try {
   const observer = new PerformanceObserver((list) => {
     for (const e of list.getEntries()) {
-      if (e.entryType === 'resource') { if (progress.done(e.name, e.transferSize || 0) && bootKey(e.name) === D.mainScript) progress.step('js', 0, now(), { begin: true }); courseProgress?.done(e.name, e.transferSize || 0); continue; }
+      if (e.entryType === 'resource') {
+        if (progress.done(e.name, e.transferSize || 0) && bootKey(e.name) === D.mainScript) progress.step('js', 0, now(), { begin: true });
+        courseProgress?.done(e.name, e.transferSize || 0);
+        continue;
+      }
       if (!/^ai:.+:(create|done)$/.test(e.name)) continue;
-      if (e.name.endsWith(':create')) { progress.step('ai', 0, now(), { begin: true }); courseProgress?.step('ai', 0, now(), { begin: true }); }
-      else { aiDone++; for (const p of [progress, courseProgress]) { p?.step('ai', aiDone / AI_RIDERS); if (aiDone >= AI_RIDERS) p?.step('final', 0, now(), { begin: true }); } }
+      if (e.name.endsWith(':create')) {
+        progress.step('ai', 0, now(), { begin: true });
+        courseProgress?.step('ai', 0, now(), { begin: true });
+      } else {
+        aiDone++;
+        for (const p of [progress, courseProgress]) {
+          p?.step('ai', aiDone / AI_RIDERS);
+          if (aiDone >= AI_RIDERS) p?.step('final', 0, now(), { begin: true });
+        }
+      }
     }
   });
-  for (const type of ['resource', 'mark']) observer.observe({ type, buffered: true });   // buffered: what finished before this script ran (the CSS)
+  for (const type of ['resource', 'mark']) observer.observe({ type, buffered: true }); // buffered: what finished before this script ran (the CSS)
 } catch {}
 
 let lastDraw = 0, handed = false, painted = false; const history = [];
@@ -98,15 +128,48 @@ function loop() {
 draw(fg, bg); requestAnimationFrame(loop);
 
 globalThis.ssxBoot = {
-  t0, progress, images, fonts, state, history, lazy, courseProgress,
-  bytes(url, got, total) { progress.bytes(url, got, total); courseProgress?.bytes(url, got, total); },
-  begin(id) { progress.step(id, 0, now(), { begin: true }); courseProgress?.step(id, 0, now(), { begin: true }); },
-  step(id, fraction = 1) { progress.step(id, fraction); courseProgress?.step(id, fraction); },
-  courseDone() { courseProgress?.finish(); },
-  ready() { if (state.ready) return; progress.finish(); state.ready = true; state.error = null; mark('boot:ready'); },
-  fail(text) { state.error = text; },
-  handoff() { handed = true; },
-  draw(c, b, opts) { return draw(c, b, opts); },
+  t0,
+  progress,
+  images,
+  fonts,
+  state,
+  history,
+  lazy,
+  courseProgress,
+  bytes(url, got, total) {
+    progress.bytes(url, got, total);
+    courseProgress?.bytes(url, got, total);
+  },
+  begin(id) {
+    progress.step(id, 0, now(), { begin: true });
+    courseProgress?.step(id, 0, now(), { begin: true });
+  },
+  step(id, fraction = 1) {
+    progress.step(id, fraction);
+    courseProgress?.step(id, fraction);
+  },
+  courseDone() {
+    courseProgress?.finish();
+  },
+  ready() {
+    if (state.ready) return;
+    progress.finish();
+    state.ready = true;
+    state.error = null;
+    mark('boot:ready');
+  },
+  fail(text) {
+    state.error = text;
+  },
+  handoff() {
+    handed = true;
+  },
+  draw(c, b, opts) {
+    return draw(c, b, opts);
+  },
   // Boot timeline for field diagnostics (web/main.js diagnose('boot')): ms since navigation.
-  timeline() { const m = (n) => Math.round(performance.getEntriesByName(n)[0]?.startTime ?? -1); return { script: Math.round(t0), paint: m('boot:paint'), logo: m('boot:logo'), ready: m('boot:ready') }; },
+  timeline() {
+    const m = (n) => Math.round(performance.getEntriesByName(n)[0]?.startTime ?? -1);
+    return { script: Math.round(t0), paint: m('boot:paint'), logo: m('boot:logo'), ready: m('boot:ready') };
+  }
 };

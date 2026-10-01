@@ -74,7 +74,22 @@ export function syncWorldNodes(human, cores) {
     try { c._world_node_states_apply(q); } finally { c._free(q); }
   }
 }
-export async function createAiRacers({ human: humanModule, resources, document: initialDoc, isolate = false, count = Math.min(SLOTS, initialDoc.riders.length + 1) /* 2 in the backcountry rival events (docs/backcountry.md) */, onDraws = null, afterRider = null, sharedVisual = false, contexts = null, contextSetup = null, prepareWorld = null, hostAtStart = false, anchorTick = null }) {
+export async function createAiRacers({
+  human: humanModule,
+  resources,
+  document: initialDoc,
+  isolate = false,
+  // 2 in the backcountry rival events (docs/backcountry.md)
+  count = Math.min(SLOTS, initialDoc.riders.length + 1),
+  onDraws = null,
+  afterRider = null,
+  sharedVisual = false,
+  contexts = null,
+  contextSetup = null,
+  prepareWorld = null,
+  hostAtStart = false,
+  anchorTick = null
+}) {
   if (!singleCoreSupported(humanModule)) throw new Error('This core has no rider contexts (web/rider_context.cpp)');
   // The human's own context seen through a view, so its exports run in it even while a computer rider's context is
   // current (rider pairs call back into the human's race world from inside a computer rider's 121750).
@@ -89,51 +104,112 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   // Run at creation and again by reconfigure() when a new lineup puts another rider (or relationship row) in the slot.
   function configureRider(core, rider) {
     const inputs = [];
-    const put = (bytes) => { const p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); inputs.push(p); return p; };
+    const put = (bytes) => {
+      const p = core._malloc(bytes.length);
+      core.HEAPU8.set(bytes, p);
+      inputs.push(p);
+      return p;
+    };
     const str = (text) => put(enc.encode(text + '\0'));
-    const release = () => { for (const p of inputs.splice(0)) core._free(p); };
+    const release = () => {
+      for (const p of inputs.splice(0)) core._free(p);
+    };
     const riderText = resources.riderText[rider.package];
     if (!riderText) throw new Error(`Missing rider package ${rider.package}`);
     const settings = JSON.stringify(mergeSettings(initial, rider.settings));
     performance.mark(`ai:${rider.character}:animation`);
-    core._init_animation(str(resources.packetsJson), str(riderText), str(settings), put(resources.packetsBin), resources.packetsBin.length); release();
+    core._init_animation(str(resources.packetsJson), str(riderText), str(settings), put(resources.packetsBin), resources.packetsBin.length);
+    release();
     configureNpc(core, rider);
   }
   // npc_configure alone: the provider's driving/route/pacing state from the record. Also run at every start(): the
   // original reloads the event on a restart, so a restart must not keep the previous run's NPC state.
   function configureNpc(core, rider) {
     const inputs = [];
-    const str = (text) => { const bytes = enc.encode(text + '\0'), p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); inputs.push(p); return p; };
-    try { core._npc_configure(str(JSON.stringify(rider)), str(JSON.stringify({ event_variant: doc.event_variant, relationships: doc.relationships, anchor_tick: anchorTick ?? doc.anchor_tick }))); }
-    catch (e) { throw new Error(`${rider.character} configure: ${core.getExceptionMessage ? core.getExceptionMessage(e) : e}`); }
-    finally { for (const p of inputs) core._free(p); }
+    const str = (text) => {
+      const bytes = enc.encode(text + '\0'),
+        p = core._malloc(bytes.length);
+      core.HEAPU8.set(bytes, p);
+      inputs.push(p);
+      return p;
+    };
+    try {
+      core._npc_configure(
+        str(JSON.stringify(rider)),
+        str(
+          JSON.stringify({ event_variant: doc.event_variant, relationships: doc.relationships, anchor_tick: anchorTick ?? doc.anchor_tick })
+        )
+      );
+    } catch (e) {
+      throw new Error(`${rider.character} configure: ${core.getExceptionMessage ? core.getExceptionMessage(e) : e}`);
+    } finally {
+      for (const p of inputs) core._free(p);
+    }
     // The rider's own stat getters (0x1494C0..: attribute bank 2 for computer riders, tools/export_npc_riders.py): Peak 2
     // riders ride at level 4 (raw 20) where the Peak 1 anchors hold 5 (docs/peak2.md). Documents without it keep the seeds.
     const a = rider.attributes;
     if (a?.raw?.length === 7 && core._set_rider_attributes && a.raw.some((v) => v !== 5)) {
-      const raw = core._malloc(28); new Int32Array(core.HEAPU8.buffer, raw, 7).set(a.raw); core._set_rider_attributes(raw, a.override | 0); core._free(raw);
+      const raw = core._malloc(28);
+      new Int32Array(core.HEAPU8.buffer, raw, 7).set(a.raw);
+      core._set_rider_attributes(raw, a.override | 0);
+      core._free(raw);
     }
   }
-  // keep the loading screen drawing (resources.yieldFn, pv eventSlices: a frame, as task yields alone let the setup run back to back)
+  // keep the loading screen drawing (resources.yieldFn, eventSlices: a frame, as task yields alone let the setup run back to back)
   const yieldFrame = resources.yieldFn ?? (() => new Promise((resolve) => setTimeout(resolve, 0)));
   // A rider context's course world: the init calls a fresh core runs for its course, but init_world / init_terrain, whose
   // geometry every context shares (web/core.cpp); the course package parses are copies of the human's (web/world_bridge.cpp
   // parse cache), so a context sets up in ~0.1 s.
   async function attachWorld(core) {
-    const inputs = [], put = (bytes) => { const p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); inputs.push(p); return p; };
-    const str = (text) => put(enc.encode(text + '\0')), release = () => { for (const p of inputs.splice(0)) core._free(p); };
-    if (resources.yieldFn && core._animation_prepare) { core._animation_prepare(str(resources.initialText)); release(); await yieldFrame(); } // (pv eventSlices: the settings parsed in a frame of their own)
-    core._init_race(str(resources.initialText)); release();
+    const inputs = [],
+      put = (bytes) => {
+        const p = core._malloc(bytes.length);
+        core.HEAPU8.set(bytes, p);
+        inputs.push(p);
+        return p;
+      };
+    const str = (text) => put(enc.encode(text + '\0')),
+      release = () => {
+        for (const p of inputs.splice(0)) core._free(p);
+      };
+    // (eventSlices: the settings parsed in a frame of their own)
+    if (resources.yieldFn && core._animation_prepare) {
+      core._animation_prepare(str(resources.initialText));
+      release();
+      await yieldFrame();
+    }
+    core._init_race(str(resources.initialText));
+    release();
     core._animation_use_physics(1);
-    // pv eventSlices (web/ai-race.js worldKeys): the parse caches by the documents' keys (no multi-MB text copied into the core per rider;
+    // eventSlices (web/ai-race.js worldKeys): the parse caches by the documents' keys (no multi-MB text copied into the core per rider;
     // the rail catalog parsed once); a cache holding another document answers 0 and the texts are fetched and passed as before.
-    const keys = resources.worldKeys, keyed = (fn, key) => { if (!key || !fn) return false; const ok = !!fn(str(key)); release(); return ok; };
-    const texts = async () => { if (!resources.worldCollisionText && resources.worldTexts) Object.assign(resources, await resources.worldTexts()); };
-    if (!keyed(core._init_world_collision_cached, keys?.world)) { await texts(); core._init_world_collision(str(resources.worldCollisionText), str(resources.terrainHash)); release(); }
+    const keys = resources.worldKeys,
+      keyed = (fn, key) => {
+        if (!key || !fn) return false;
+        const ok = !!fn(str(key));
+        release();
+        return ok;
+      };
+    const texts = async () => {
+      if (!resources.worldCollisionText && resources.worldTexts) Object.assign(resources, await resources.worldTexts());
+    };
+    if (!keyed(core._init_world_collision_cached, keys?.world)) {
+      await texts();
+      core._init_world_collision(str(resources.worldCollisionText), str(resources.terrainHash));
+      release();
+    }
     await yieldFrame();
-    if (!keyed(core._init_body_terrain_cached, keys?.body)) { await texts(); core._init_body_terrain(str(resources.terrainText)); release(); }
+    if (!keyed(core._init_body_terrain_cached, keys?.body)) {
+      await texts();
+      core._init_body_terrain(str(resources.terrainText));
+      release();
+    }
     await yieldFrame();
-    if (!keyed(core._init_rails_cached, keys?.rails)) { await texts(); core._init_rails(str(resources.railsText), str(resources.terrainHash)); release(); }
+    if (!keyed(core._init_rails_cached, keys?.rails)) {
+      await texts();
+      core._init_rails(str(resources.railsText), str(resources.terrainHash));
+      release();
+    }
   }
   for (const rider of riders) {
     performance.mark(`ai:${rider.character}:create`);
@@ -141,20 +217,52 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     const core = riderContextCore(humanModule, contexts?.length ? contexts.shift() : humanModule._rider_context_create());
     contextSetup?.(core);
     if (prepareWorld && !npcs.length) await prepareWorld(core);
-    await attachWorld(core); await yieldFrame(); // keep the loading screen drawing
-    // pv eventSlices: init_animation's three documents parsed ahead, one a frame (core animation_prepare: the same parses)
-    if (resources.yieldFn && core._animation_prepare) for (const text of [resources.packetsJson, resources.riderText[rider.package], JSON.stringify(mergeSettings(initial, rider.settings))]) {
-      const b = enc.encode(text + '\0'), p = core._malloc(b.length); core.HEAPU8.set(b, p); try { core._animation_prepare(p); } finally { core._free(p); } await yieldFrame(); }
+    await attachWorld(core);
+    await yieldFrame(); // keep the loading screen drawing
+    // init_animation's three documents parsed ahead, one a frame (core animation_prepare: the same parses)
+    if (resources.yieldFn && core._animation_prepare)
+      for (const text of [
+        resources.packetsJson,
+        resources.riderText[rider.package],
+        JSON.stringify(mergeSettings(initial, rider.settings))
+      ]) {
+        const b = enc.encode(text + '\0'),
+          p = core._malloc(b.length);
+        core.HEAPU8.set(b, p);
+        try {
+          core._animation_prepare(p);
+        } finally {
+          core._free(p);
+        }
+        await yieldFrame();
+      }
     configureRider(core, rider);
-    if (resources.yieldFn) await yieldFrame(); // (pv eventSlices: the next rider's init_race in a frame of its own)
+    if (resources.yieldFn) await yieldFrame(); // (eventSlices: the next rider's init_race in a frame of its own)
     performance.mark(`ai:${rider.character}:done`);
-    npcs.push({ slot: rider.slot, character: rider.character, package: rider.package, core, record: rider, command: null, state: null, progress: null, finished: false });
+    npcs.push({
+      slot: rider.slot,
+      character: rider.character,
+      package: rider.package,
+      core,
+      record: rider,
+      command: null,
+      state: null,
+      progress: null,
+      finished: false
+    });
   }
   const f32 = (core, ptr, n) => new Float32Array(core.HEAPF32.buffer, ptr, n);
   // Views are cached per rider (the pointers are fixed per context; a view is rebuilt only after memory growth): the
   // per-tick choreography below reads them many times per tick and must not allocate much (GC pauses on phones).
   const rngViews = new Map();
-  const rngView = (core) => { let v = rngViews.get(core); if (!v || v.buffer !== core.HEAPU8.buffer) { v = new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6); rngViews.set(core, v); } return v; };
+  const rngView = (core) => {
+    let v = rngViews.get(core);
+    if (!v || v.buffer !== core.HEAPU8.buffer) {
+      v = new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6);
+      rngViews.set(core, v);
+    }
+    return v;
+  };
   const humanRider = { slot: 0, core: human, human: true, character: 'human' };
   let allList = null; // [human, ...computer riders], rebuilt only if the rider list changes (called many times per tick)
   const all = () => (allList && allList.length === npcs.length + 1 ? allList : (allList = [humanRider, ...npcs]));
@@ -165,16 +273,27 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     // record the refresh skips (a disabled pair: --isolate) holds the original's countdown value too.
     proximity() {
       const init = [count, doc.world.tail, doc.world.rank_mode];
-      for (let a = 0; a < 6; a++) { for (let b = 0; b < 6; b++) init.push(a !== b && a < count && b < count ? 1 : 0, 0, 1e10, 0, 0, 0, 0, 0, 0); init.push(a); }
+      for (let a = 0; a < 6; a++) {
+        for (let b = 0; b < 6; b++) init.push(a !== b && a < count && b < count ? 1 : 0, 0, 1e10, 0, 0, 0, 0, 0, 0);
+        init.push(a);
+      }
       for (let a = 0; a < 36; a++) init.push(0);
-      const p = human._malloc(init.length * 4); human.HEAPF32.set(init, p >> 2); human._race_world_reset(p); human._free(p);
-      const buf = f32(human, riderBuffer, 36); buf.fill(0);
-      for (const r of all()) { const s = live(r).state; buf.set([s[0], s[1], s[2], 1e5, 0, 1], r.slot * 6); }
+      const p = human._malloc(init.length * 4);
+      human.HEAPF32.set(init, p >> 2);
+      human._race_world_reset(p);
+      human._free(p);
+      const buf = f32(human, riderBuffer, 36);
+      buf.fill(0);
+      for (const r of all()) {
+        const s = live(r).state;
+        buf.set([s[0], s[1], s[2], 1e5, 0, 1], r.slot * 6);
+      }
       human._race_world_frame(0, riderBuffer);
       const w = f32(human, human._race_world_state(), 360);
       return (a, b) => [w[(a * 6 + b) * 10 + 2], w[(a * 6 + b) * 10 + 3]];
     },
-    reset(ranks = null) { // ranks: the riders' +0xEC to start from (default the document's)
+    reset(ranks = null) {
+      // ranks: the riders' +0xEC to start from (default the document's)
       const near = this.proximity();
       const init = [count, doc.world.tail, doc.world.rank_mode];
       for (let a = 0; a < 6; a++) {
@@ -188,40 +307,106 @@ export async function createAiRacers({ human: humanModule, resources, document: 
         init.push(ranks?.[a] ?? doc.world.ranks[a] ?? a);
       }
       for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) init.push(doc.relationships.scores[a]?.[b] ?? 0);
-      const p = human._malloc(init.length * 4); human.HEAPF32.set(init, p >> 2); human._race_world_reset(p); human._free(p);
-      const pairs = []; for (let s = 0; s < 6; s++) { const w = doc.world.pair_inputs?.[s]; pairs.push(w ? w.weight_attribute : 0, w ? w.collision_stat : 0, w ? w.attack_stat : 0); } pairs.push(doc.world.knockdown_cheat ? 1 : 0);
-      const q = human._malloc(pairs.length * 4); human.HEAPF32.set(pairs, q >> 2); human._race_world_pair_setup(q); human._free(q);
-    },
+      const p = human._malloc(init.length * 4);
+      human.HEAPF32.set(init, p >> 2);
+      human._race_world_reset(p);
+      human._free(p);
+      const pairs = [];
+      for (let s = 0; s < 6; s++) {
+        const w = doc.world.pair_inputs?.[s];
+        pairs.push(w ? w.weight_attribute : 0, w ? w.collision_stat : 0, w ? w.attack_stat : 0);
+      }
+      pairs.push(doc.world.knockdown_cheat ? 1 : 0);
+      const q = human._malloc(pairs.length * 4);
+      human.HEAPF32.set(pairs, q >> 2);
+      human._race_world_pair_setup(q);
+      human._free(q);
+    }
   };
-  const toArray = (v) => { const a = new Array(v.length); for (let i = 0; i < v.length; i++) a[i] = v[i]; return a; }; // Array.from without the iterator objects
-  const live = (r) => ({ state: f32(r.core, r.core._rider_world_state(), 16).slice(), progress: f32(r.core, r.core._race_progress_info(), 8).slice() });
+  const toArray = (v) => {
+    const a = new Array(v.length);
+    for (let i = 0; i < v.length; i++) a[i] = v[i];
+    return a;
+  }; // Array.from without the iterator objects
+  const live = (r) => ({
+    state: f32(r.core, r.core._rider_world_state(), 16).slice(),
+    progress: f32(r.core, r.core._race_progress_info(), 8).slice()
+  });
   // The same two reads without copies, for a reader that uses them at once (worldBuffer): the exports fill fixed per-context
   // arrays, viewed in place (views renewed after memory growth); `liveNow` hands out one reused record.
   const fixedViews = new Map(); // core -> { buffer, state, progress, npc } typed arrays over rider_world_state / race_progress_info / npc_world_buffer
-  const fixedOf = (core) => { let v = fixedViews.get(core); if (!v || v.buffer !== core.HEAPU8.buffer) { v = { buffer: core.HEAPU8.buffer, state: null, progress: null, npc: null }; fixedViews.set(core, v); } return v; };
-  const worldStateNow = (core) => { const p = core._rider_world_state(), v = fixedOf(core); if (!v.state || v.state.byteOffset !== p) v.state = new Float32Array(v.buffer, p, 16); return v.state; };
-  const progressNow = (core) => { const p = core._race_progress_info(), v = fixedOf(core); if (!v.progress || v.progress.byteOffset !== p) v.progress = new Float32Array(v.buffer, p, 8); return v.progress; };
+  const fixedOf = (core) => {
+    let v = fixedViews.get(core);
+    if (!v || v.buffer !== core.HEAPU8.buffer) {
+      v = { buffer: core.HEAPU8.buffer, state: null, progress: null, npc: null };
+      fixedViews.set(core, v);
+    }
+    return v;
+  };
+  const worldStateNow = (core) => {
+    const p = core._rider_world_state(),
+      v = fixedOf(core);
+    if (!v.state || v.state.byteOffset !== p) v.state = new Float32Array(v.buffer, p, 16);
+    return v.state;
+  };
+  const progressNow = (core) => {
+    const p = core._race_progress_info(),
+      v = fixedOf(core);
+    if (!v.progress || v.progress.byteOffset !== p) v.progress = new Float32Array(v.buffer, p, 8);
+    return v.progress;
+  };
   const liveRecord = { state: null, progress: null };
-  const liveNow = (r) => { liveRecord.state = worldStateNow(r.core); liveRecord.progress = progressNow(r.core); return liveRecord; };
-  function snapshot() { for (const r of all()) r.start = live(r); } // tick-start: [pos3, vel3, path, upper class, control, motion, human, quat4, timeScale] + progress
+  const liveNow = (r) => {
+    liveRecord.state = worldStateNow(r.core);
+    liveRecord.progress = progressNow(r.core);
+    return liveRecord;
+  };
+  function snapshot() {
+    for (const r of all()) r.start = live(r);
+  } // tick-start: [pos3, vel3, path, upper class, control, motion, human, quat4, timeScale] + progress
   // npc_world_buffer for `target`; view(r) picks which state of peer r the reading pass sees.
   // upperClass(r): the class word (+7) to use for peer r instead of view(r)'s, or undefined.
   function worldBuffer(target, view, worldState, upperClass = null) {
-    const fixed = fixedOf(target.core); if (!fixed.npc) fixed.npc = new Float32Array(fixed.buffer, target.core._npc_world_buffer(), 160); // a fixed array (pure getter)
-    const w = fixed.npc; w.fill(0);
-    w[0] = tick; w[1] = count;
-    const self = target.slot, per = 360; // worldState[360..]: per-rider words (read in place, no per-call copies)
-    w[2] = worldState[per + self * 6 + 1]; w[3] = worldState[per + self * 6 + 2]; w[4] = worldState[per + self * 6 + 3]; w[5] = worldState[per + self * 6 + 4];
+    const fixed = fixedOf(target.core);
+    if (!fixed.npc) fixed.npc = new Float32Array(fixed.buffer, target.core._npc_world_buffer(), 160); // a fixed array (pure getter)
+    const w = fixed.npc;
+    w.fill(0);
+    w[0] = tick;
+    w[1] = count;
+    const self = target.slot,
+      per = 360; // worldState[360..]: per-rider words (read in place, no per-call copies)
+    w[2] = worldState[per + self * 6 + 1];
+    w[3] = worldState[per + self * 6 + 2];
+    w[4] = worldState[per + self * 6 + 3];
+    w[5] = worldState[per + self * 6 + 4];
     for (const r of all()) {
-      const p = 8 + 12 * r.slot, v = view(r), s = v.state;
-      w[p] = s[0]; w[p + 1] = s[1]; w[p + 2] = s[2]; w[p + 3] = s[3]; w[p + 4] = s[4]; w[p + 5] = s[5];
+      const p = 8 + 12 * r.slot,
+        v = view(r),
+        s = v.state;
+      w[p] = s[0];
+      w[p + 1] = s[1];
+      w[p + 2] = s[2];
+      w[p + 3] = s[3];
+      w[p + 4] = s[4];
+      w[p + 5] = s[5];
       const cls = upperClass ? upperClass(r) : undefined;
-      w[p + 6] = s[6]; w[p + 7] = r.human ? 1 : 0; w[p + 8] = cls === undefined ? s[7] : cls; w[p + 9] = v.progress[0]; w[p + 10] = 1;
+      w[p + 6] = s[6];
+      w[p + 7] = r.human ? 1 : 0;
+      w[p + 8] = cls === undefined ? s[7] : cls;
+      w[p + 9] = v.progress[0];
+      w[p + 10] = 1;
       const rec = (self * 6 + r.slot) * 10;
       for (let k = 0; k < 10; k++) w[80 + 10 * r.slot + k] = worldState[rec + k];
     }
   }
-  const explain = (core, label, fn) => { try { return fn(); } catch (e) { if (e instanceof Error) throw e; throw new Error(`${label}: ${core.getExceptionMessage ? core.getExceptionMessage(e) : e}`); } };
+  const explain = (core, label, fn) => {
+    try {
+      return fn();
+    } catch (e) {
+      if (e instanceof Error) throw e;
+      throw new Error(`${label}: ${core.getExceptionMessage ? core.getExceptionMessage(e) : e}`);
+    }
+  };
   let coreList = null; // [human, ...computer riders' cores], rebuilt only if the rider list changes (read many times per tick)
   const cores = () => (coreList && coreList.length === npcs.length + 1 ? coreList : (coreList = [human, ...npcs.map((n) => n.core)]));
   // ---- One shared world, the original pass order (0x128AF0) ----
@@ -244,25 +429,57 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   // from their previous tick, docs/ai-racers.md). Stages 2 and 3 draw in slot order from one cursor
   // (the running core holds it; pair dispatch draws from it).
   let anchorRng = null;
-  let stage = 0, tickStart = new Uint32Array(6), cursor = new Uint32Array(6), motionTotal = 0, activeCore = human;
+  let stage = 0,
+    tickStart = new Uint32Array(6),
+    cursor = new Uint32Array(6),
+    motionTotal = 0,
+    activeCore = human;
   const lastControllerDraws = new Array(SLOTS).fill(0);
   const later = (slot) => lastControllerDraws.reduce((sum, c, j) => sum + (j > slot ? c : 0), 0);
-  const enter = (core, slot) => { rngView(core).set(cursor); core._animation_rng_split(1); core._animation_rng_defer(later(slot) + motionTotal); };
+  const enter = (core, slot) => {
+    rngView(core).set(cursor);
+    core._animation_rng_split(1);
+    core._animation_rng_defer(later(slot) + motionTotal);
+  };
   const leaveStage1 = (core, slot) => {
-    const info = core._animation_rng_split_info(), counts = new Uint32Array(core.HEAPU8.buffer, info, 3);
-    const before = onDraws ? Array.from(cursor) : null; cursor.set(rngView(core)); lastControllerDraws[slot] = counts[0]; motionTotal += counts[1];
+    const info = core._animation_rng_split_info(),
+      counts = new Uint32Array(core.HEAPU8.buffer, info, 3);
+    const before = onDraws ? Array.from(cursor) : null;
+    cursor.set(rngView(core));
+    lastControllerDraws[slot] = counts[0];
+    motionTotal += counts[1];
     if (onDraws) onDraws(slot, before, counts[0], counts[1]);
   };
-  const countDraws = (a, b) => { const w = Uint32Array.from(a); for (let n = 0; n <= 256; n++) { if (w.every((x, k) => x === b[k])) return n; rngNext(w); } return -1; };
+  const countDraws = (a, b) => {
+    const w = Uint32Array.from(a);
+    for (let n = 0; n <= 256; n++) {
+      if (w.every((x, k) => x === b[k])) return n;
+      rngNext(w);
+    }
+    return -1;
+  };
   // Run `fn` in `core` with the shared cursor; returns the cursor after it.
   function onShared(core, slot, words, fn) {
-    const v = rngView(core); v.set(words); const prev = activeCore; activeCore = core;
-    try { fn(); } finally { activeCore = prev; }
+    const v = rngView(core);
+    v.set(words);
+    const prev = activeCore;
+    activeCore = core;
+    try {
+      fn();
+    } finally {
+      activeCore = prev;
+    }
     const after = rngView(core).slice();
-    if (onDraws) { const n = countDraws(words, after); if (n) onDraws(slot, words, 0, n); }
+    if (onDraws) {
+      const n = countDraws(words, after);
+      if (n) onDraws(slot, words, 0, n);
+    }
     return after;
   }
-  const advance = (words, n) => { for (let k = 0; k < n; k++) rngNext(words); return words; };
+  const advance = (words, n) => {
+    for (let k = 0; k < n; k++) rngNext(words);
+    return words;
+  };
   // sharedVisual: the one visual stream of the original (0x4FF018 six words + the gp+0xA0C LCG) lives in the human core;
   // a computer rider's core borrows it for its passes that draw (FX passes, 121818 programs) and hands it back. The FX
   // passes run after every rider's 121818, phase by phase over all riders (0x128F20..0x1290F0: board sparks for every
@@ -274,17 +491,29 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     let v = visualViews.get(core);
     if (!v || v.buffer !== core.HEAPU8.buffer || v.context !== core.riderContext) {
       const buffer = core.HEAPU8.buffer;
-      v = { buffer, context: core.riderContext, words: core._visual_rng_words ? new Uint32Array(buffer, core._visual_rng_words(), 6) : null, lcg: core._visual_lcg_word ? new Uint32Array(buffer, core._visual_lcg_word(), 1) : null };
+      v = {
+        buffer,
+        context: core.riderContext,
+        words: core._visual_rng_words ? new Uint32Array(buffer, core._visual_rng_words(), 6) : null,
+        lcg: core._visual_lcg_word ? new Uint32Array(buffer, core._visual_lcg_word(), 1) : null
+      };
       visualViews.set(core, v);
     }
     return v;
   };
   function onVisual(core, fn) {
     if (!sharedVisual || core === human) return fn();
-    const v = visualOf(core); if (!v.words || !v.lcg) return fn();
+    const v = visualOf(core);
+    if (!v.words || !v.lcg) return fn();
     const h = visualOf(human);
-    v.words.set(h.words); v.lcg[0] = h.lcg[0];
-    try { return fn(); } finally { h.words.set(v.words); h.lcg[0] = v.lcg[0]; }
+    v.words.set(h.words);
+    v.lcg[0] = h.lcg[0];
+    try {
+      return fn();
+    } finally {
+      h.words.set(v.words);
+      h.lcg[0] = v.lcg[0];
+    }
   }
   const fxPassLabels = ['fx pass 0', 'fx pass 1', 'fx pass 2', 'fx pass 3', 'fx pass 4'];
 
@@ -295,35 +524,71 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   const pairCounts = [0, 0, 0, 0, 0];
   // pair_view is a pure read of a rider: inside one dispatch (race_world_pairs of one slot) a slot's view is reused until a
   // callback moves, pushes or reacts a rider (then every view is read again). Outside a dispatch nothing is reused.
-  let pairViewGeneration = 0, pairDispatching = false;
-  const pairViewBytes = Array.from({ length: SLOTS }, () => new Uint8Array(560)), pairViewSeen = new Array(SLOTS).fill(-1);
+  let pairViewGeneration = 0,
+    pairDispatching = false;
+  const pairViewBytes = Array.from({ length: SLOTS }, () => new Uint8Array(560)),
+    pairViewSeen = new Array(SLOTS).fill(-1);
   humanModule.pairHost = {
     view(slot, out) {
-      if (pairDispatching && pairViewSeen[slot] === pairViewGeneration) { human.HEAPU8.set(pairViewBytes[slot], out); return; }
-      const p = cores()[slot]._pair_view(); human.HEAPU8.copyWithin(out, p, p + 560); // 140 words, byte copy (one memory)
-      if (pairDispatching) { pairViewBytes[slot].set(human.HEAPU8.subarray(out, out + 560)); pairViewSeen[slot] = pairViewGeneration; }
+      if (pairDispatching && pairViewSeen[slot] === pairViewGeneration) {
+        human.HEAPU8.set(pairViewBytes[slot], out);
+        return;
+      }
+      const p = cores()[slot]._pair_view();
+      human.HEAPU8.copyWithin(out, p, p + 560); // 140 words, byte copy (one memory)
+      if (pairDispatching) {
+        pairViewBytes[slot].set(human.HEAPU8.subarray(out, out + 560));
+        pairViewSeen[slot] = pairViewGeneration;
+      }
     },
-    translate(slot, x, y, z) { pairViewGeneration++; cores()[slot]._pair_translate(x, y, z); },
-    velocity(slot, x, y, z, reseed) { pairViewGeneration++; cores()[slot]._pair_set_velocity(x, y, z, reseed); },
+    translate(slot, x, y, z) {
+      pairViewGeneration++;
+      cores()[slot]._pair_translate(x, y, z);
+    },
+    velocity(slot, x, y, z, reseed) {
+      pairViewGeneration++;
+      cores()[slot]._pair_set_velocity(x, y, z, reseed);
+    },
     react(slot, kind, animation, attack, eventPtr, other) {
       pairViewGeneration++;
-      if (other !== undefined) {   // 107E70 -> 10E228/10E2E8/10E3A8/10E468: speech 2A0A30 first, then the relationship 155BF0
+      if (other !== undefined) {
+        // 107E70 -> 10E228/10E2E8/10E3A8/10E468: speech 2A0A30 first, then the relationship 155BF0
         api.onPairAudio?.(slot, other, kind, attack);
         api.onReact?.(slot, other, kind, attack);
         if (kind === 2 && attack) cores()[other]?._pair_knockout?.(); // 10E468: 119400 KO count + popup 0x2C, 10E098(attacker, 1.0, 2)
       }
-      const c = cores()[slot], e = new Float32Array(human.HEAPF32.buffer, eventPtr, 10).slice(), p = c._malloc(40); c.HEAPF32.set(e, p >> 2);
+      const c = cores()[slot],
+        e = new Float32Array(human.HEAPF32.buffer, eventPtr, 10).slice(),
+        p = c._malloc(40);
+      c.HEAPF32.set(e, p >> 2);
       if (c === activeCore) explain(c, `pair reaction ${slot}`, () => c._pair_react(kind, animation, attack, p));
-      else { const a = rngView(activeCore), v = rngView(c); v.set(a); explain(c, `pair reaction ${slot}`, () => c._pair_react(kind, animation, attack, p)); rngView(activeCore).set(rngView(c)); }
+      else {
+        const a = rngView(activeCore),
+          v = rngView(c);
+        v.set(a);
+        explain(c, `pair reaction ${slot}`, () => c._pair_react(kind, animation, attack, p));
+        rngView(activeCore).set(rngView(c));
+      }
       c._free(p);
     },
-    random() { return rngNext(rngView(activeCore)); },
+    random() {
+      return rngNext(rngView(activeCore));
+    }
   };
   const dispatchPairs = (slot) => {
     if (!pairsEnabled || stage !== 2) return;
-    pairViewGeneration++; pairDispatching = true;
-    let out; try { out = explain(human, 'rider pairs', () => Array.from(f32(human, human._race_world_pairs(tick, slot), 5))); } finally { pairDispatching = false; pairViewGeneration++; }
-    out.forEach((v, k) => { pairCounts[k] += v; });
+    pairViewGeneration++;
+    pairDispatching = true;
+    let out;
+    try {
+      out = explain(human, 'rider pairs', () => Array.from(f32(human, human._race_world_pairs(tick, slot), 5)));
+    } finally {
+      pairDispatching = false;
+      pairViewGeneration++;
+    }
+    out.forEach((v, k) => {
+      pairCounts[k] += v;
+    });
   };
   // One shared world: a course-script trigger fired in one core, and every change a rider makes to a
   // shared entity (crashbag rollers, boost pickups, log teeters, trigger contacts, section MultiSplines;
@@ -332,21 +597,38 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   const knownTriggers = new Set();
   const syncWorld = (from) => {
     if (from._world_triggers) {
-      const p = from._world_triggers(), n = new Uint32Array(from.HEAPU8.buffer, p, 1)[0], list = new Uint32Array(from.HEAPU8.buffer, p + 4, n).slice();
-      for (const k of list) if (!knownTriggers.has(k)) { knownTriggers.add(k); for (const c of cores()) if (c !== from) c._world_trigger_apply(k); }
+      const p = from._world_triggers(),
+        n = new Uint32Array(from.HEAPU8.buffer, p, 1)[0],
+        list = new Uint32Array(from.HEAPU8.buffer, p + 4, n).slice();
+      for (const k of list)
+        if (!knownTriggers.has(k)) {
+          knownTriggers.add(k);
+          for (const c of cores()) if (c !== from) c._world_trigger_apply(k);
+        }
     }
     if (!from._world_events) return;
-    const p = from._world_events(), n = new Uint32Array(from.HEAPU8.buffer, p, 1)[0];
+    const p = from._world_events(),
+      n = new Uint32Array(from.HEAPU8.buffer, p, 1)[0];
     if (!n) return;
     const words = new Uint32Array(from.HEAPU8.buffer, p + 4, n).slice();
-    for (let at = 0; at < n;) {
-      const len = 2 + words[at + 1], event = words.subarray(at, at + len);
-      for (const c of cores()) if (c !== from) { const q = c._malloc(len * 4); new Uint32Array(c.HEAPU8.buffer, q, len).set(event); explain(c, 'shared world event', () => c._world_event_apply(q)); c._free(q); }
-      if (words[at] === 10) knownTriggers.delete(words[at + 3]); // a released Spline piece's owner (pv peakSplines): its next launch replicates again
-      worldEvents++; worldEventKinds[words[at]] = (worldEventKinds[words[at]] || 0) + 1; at += len;
+    for (let at = 0; at < n; ) {
+      const len = 2 + words[at + 1],
+        event = words.subarray(at, at + len);
+      for (const c of cores())
+        if (c !== from) {
+          const q = c._malloc(len * 4);
+          new Uint32Array(c.HEAPU8.buffer, q, len).set(event);
+          explain(c, 'shared world event', () => c._world_event_apply(q));
+          c._free(q);
+        }
+      if (words[at] === 10) knownTriggers.delete(words[at + 3]); // a released Spline piece's owner: its next launch replicates again
+      worldEvents++;
+      worldEventKinds[words[at]] = (worldEventKinds[words[at]] || 0) + 1;
+      at += len;
     }
   };
-  let worldEvents = 0; const worldEventKinds = {};
+  let worldEvents = 0;
+  const worldEventKinds = {};
   // pv eventReturnInWorld: after a WS15 return the rider manager's tick counts world state 1's frames (resume sets it to 0); its phases
   // 1 and 2 (the return's ticks 3 and 4) run with C+0x14 = 0, so 0x128AF0's rider array leaves the computer riders out of every stage
   // (0x128C18 .. 0x128C64, the FX copies too; 12AB20 at 0x12AB40 clears it, phase 3 sets it again at 0x234634). The human's pairs still
@@ -354,34 +636,52 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   let returnTick = -1;
   const ridersExcluded = () => returnTick === 3 || returnTick === 4;
   const tickingNpcs = () => (ridersExcluded() ? [] : npcs);
-  function stage1() { // riderHost.afterPose: the human's pose is done
+  function stage1() {
+    // riderHost.afterPose: the human's pose is done
     if (stage !== 1) return;
-    leaveStage1(human, 0); syncWorld(human);
+    leaveStage1(human, 0);
+    syncWorld(human);
     for (const n of tickingNpcs()) {
       // 121068 reads peers' positions/routes/progress at the tick start and earlier riders' upper-body classes after their controllers
       // (an earlier rider's class read now, in place: rider_world_state is a pure read).
-      worldBuffer(n, (r) => r.start, api.worldState, (r) => (r.slot < n.slot ? worldStateNow(r.core)[7] : undefined));
+      worldBuffer(
+        n,
+        (r) => r.start,
+        api.worldState,
+        (r) => (r.slot < n.slot ? worldStateNow(r.core)[7] : undefined)
+      );
       enter(n.core, n.slot);
       n.command = explain(n.core, `${n.character} provider`, () => f32(n.core, n.core._npc_tick(), 24)).slice();
       n.info = f32(n.core, n.core._npc_tick_info(), 9).slice();
       explain(n.core, `${n.character} tick`, () => {
-        const c = n.command, core = n.core;
+        const c = n.command,
+          core = n.core;
         core._race_begin();
         const state = f32(core, core._step_rider(c[0], c[6], c[2] ? 1 : 0, c[7]), 16);
         core._animation_pose(state[7], c[10], c[11], state[9], state[8], c[6], c[8], c[12], c[7], 0, state[15], c[13]);
       });
-      leaveStage1(n.core, n.slot); syncWorld(n.core);
+      leaveStage1(n.core, n.slot);
+      syncWorld(n.core);
     }
-    for (const c of cores()) { c._animation_rng_split(0); c._animation_rng_defer(0); }
+    for (const c of cores()) {
+      c._animation_rng_split(0);
+      c._animation_rng_defer(0);
+    }
     rngView(human).set(advance(cursor.slice(), motionTotal));
     stage = 2;
   }
-  function stage2() { // riderHost.beforeProgress: the human's 121750 is done
+  function stage2() {
+    // riderHost.beforeProgress: the human's 121750 is done
     if (stage === 1) stage1();
     if (stage !== 2) return;
-    let words = rngView(human).slice(); syncWorld(human);
+    let words = rngView(human).slice();
+    syncWorld(human);
     for (const n of tickingNpcs()) {
-      words = onShared(n.core, n.slot, words, () => explain(n.core, `${n.character} post`, () => { n.core._animation_post(); }));
+      words = onShared(n.core, n.slot, words, () =>
+        explain(n.core, `${n.character} post`, () => {
+          n.core._animation_post();
+        })
+      );
       syncWorld(n.core);
     }
     rngView(human).set(words);
@@ -395,7 +695,15 @@ export async function createAiRacers({ human: humanModule, resources, document: 
   // the human's tick); rider pairs go to the slot of the running context.
   humanModule._rider_parse_cache_clear?.();
   const slotOf = new Map([[humanBlock, 0], ...npcs.map((n) => [n.core.riderContext, n.slot])]);
-  const riderHost = humanModule.riderHost = { afterPose: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage1(); }, beforeProgress: () => { if (riderTlsCurrent(humanModule) === humanBlock) stage2(); }, pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule))) };
+  const riderHost = (humanModule.riderHost = {
+    afterPose: () => {
+      if (riderTlsCurrent(humanModule) === humanBlock) stage1();
+    },
+    beforeProgress: () => {
+      if (riderTlsCurrent(humanModule) === humanBlock) stage2();
+    },
+    pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule)))
+  });
   // | 4: no renderer poses (a computer rider is drawn from its skin palette, not animation_post's bone poses; web/animation_bridge.cpp)
   for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4);
   let detached = false;
@@ -404,47 +712,119 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     // pv eventInWorldAi: the in-world race ends and the human rides on alone in the same core: its hooks and pair host off; returns the
     // rider-context blocks for the next in-world race (createAiRacers contexts).
     detach() {
-      if (detached) throw new Error('Computer riders already detached'); detached = true;
-      human._rider_host(0); if (humanModule.riderHost === riderHost) humanModule.riderHost = null; human._free(riderBuffer);
+      if (detached) throw new Error('Computer riders already detached');
+      detached = true;
+      human._rider_host(0);
+      if (humanModule.riderHost === riderHost) humanModule.riderHost = null;
+      human._free(riderBuffer);
       return npcs.map((n) => n.core.riderContext);
     },
-    get tick() { return tick; },
-    get pairCounts() { return pairCounts.slice(); }, // [checks, separations, impulses, attacks, reactions]
-    get worldEvents() { return worldEvents; }, // shared-entity changes replayed across the rider cores
-    get worldEventKinds() { return { ...worldEventKinds }; }, // by kind (web/shared_world.inc)
+    get tick() {
+      return tick;
+    },
+    get pairCounts() {
+      return pairCounts.slice();
+    }, // [checks, separations, impulses, attacks, reactions]
+    get worldEvents() {
+      return worldEvents;
+    }, // shared-entity changes replayed across the rider cores
+    get worldEventKinds() {
+      return { ...worldEventKinds };
+    }, // by kind (web/shared_world.inc)
     // Event start for the computer riders (call right after the human's start_event).
     // gridStart (pv eventInWorldAi): the CTM riders' carried words kept through the grid placement (core npc_grid_start).
     // hold (pv eventReturnInWorld, WS13's 1289F0): the riders' event clocks stay in PreRace (core event_clock_hold) until the next start.
     // ranks (pv eventReturnInWorld, WS13's 1289F0): the +0xEC each rider keeps into the grid wait (the round's fresh riders 0, the human its own)
     start({ gridStart = false, hold = false, ranks = null } = {}) {
       if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
-      for (const n of npcs) { configureNpc(n.core, n.record); n.core._reset_pad_history(); if (hold) n.core._event_clock_hold(1);
-        try { explain(n.core, `${n.character} start`, () => (gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event())); } finally { if (hold) n.core._event_clock_hold(0); }
-        n.finished = false; }
-      tick = 0; stage = 0; world.reset(ranks); lastControllerDraws.fill(0); knownTriggers.clear();
+      for (const n of npcs) {
+        configureNpc(n.core, n.record);
+        n.core._reset_pad_history();
+        if (hold) n.core._event_clock_hold(1);
+        try {
+          explain(n.core, `${n.character} start`, () =>
+            gridStart && n.core._npc_grid_start ? n.core._npc_grid_start() : n.core._npc_start_event()
+          );
+        } finally {
+          if (hold) n.core._event_clock_hold(0);
+        }
+        n.finished = false;
+      }
+      tick = 0;
+      stage = 0;
+      world.reset(ranks);
+      lastControllerDraws.fill(0);
+      knownTriggers.clear();
       for (const c of cores()) if (c._world_events) c._world_events(); // drop entries of the previous run
-      worldEvents = 0; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
+      worldEvents = 0;
+      for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
     },
-    setSharedRng(words) { rngView(human).set(words); },
+    setSharedRng(words) {
+      rngView(human).set(words);
+    },
     // pv eventReturnInWorld: WS15 (236058) after an in-world event: the race's riders are placed where the human is (the same Session
     // point row: PS2 c0d-ws15 records 0..1, all six at one spot on the same line) and ride on in rider pairs until the WS4 restart removes
     // them (record 8). place(core) places one rider context (core place_rider_region). Nothing else of start() runs.
     // pv eventReturnInWorld (b): the orchestrator's own race state for the rider-context snapshot (web/event-snapshot.js; the cores'
     // state is theirs: core snapshot_save / snapshot_restore). The pair-view cache is invalidated, not kept.
     saveState() {
-      return { tick, stage, tickStart: tickStart.slice(), cursor: cursor.slice(), motionTotal, lastControllerDraws: lastControllerDraws.slice(), anchorRng: anchorRng ? anchorRng.slice() : null,
-        knownTriggers: [...knownTriggers], worldEvents, worldEventKinds: { ...worldEventKinds }, returnTick, pairCounts: pairCounts.slice(),
+      return {
+        tick,
+        stage,
+        tickStart: tickStart.slice(),
+        cursor: cursor.slice(),
+        motionTotal,
+        lastControllerDraws: lastControllerDraws.slice(),
+        anchorRng: anchorRng ? anchorRng.slice() : null,
+        knownTriggers: [...knownTriggers],
+        worldEvents,
+        worldEventKinds: { ...worldEventKinds },
+        returnTick,
+        pairCounts: pairCounts.slice(),
         riders: all().map((r) => ({ start: r.start === undefined ? undefined : structuredClone(r.start) })),
-        npcs: npcs.map((n) => ({ command: n.command === undefined ? undefined : structuredClone(n.command), info: n.info === undefined ? undefined : structuredClone(n.info), finished: n.finished, lastPlacements: n.lastPlacements, finishScore: n.finishScore, score: n.score })) };
+        npcs: npcs.map((n) => ({
+          command: n.command === undefined ? undefined : structuredClone(n.command),
+          info: n.info === undefined ? undefined : structuredClone(n.info),
+          finished: n.finished,
+          lastPlacements: n.lastPlacements,
+          finishScore: n.finishScore,
+          score: n.score
+        }))
+      };
     },
     restoreState(s) {
-      tick = s.tick; stage = s.stage; tickStart.set(s.tickStart); cursor.set(s.cursor); motionTotal = s.motionTotal; s.lastControllerDraws.forEach((v, k) => { lastControllerDraws[k] = v; });
-      anchorRng = s.anchorRng ? s.anchorRng.slice() : null; knownTriggers.clear(); for (const k of s.knownTriggers) knownTriggers.add(k);
-      worldEvents = s.worldEvents; for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k]; Object.assign(worldEventKinds, s.worldEventKinds);
-      returnTick = s.returnTick; s.pairCounts.forEach((v, k) => { pairCounts[k] = v; });
-      all().forEach((r, k) => { r.start = s.riders[k].start === undefined ? undefined : structuredClone(s.riders[k].start); });
-      npcs.forEach((n, k) => { const v = s.npcs[k]; n.command = v.command === undefined ? undefined : structuredClone(v.command); n.info = v.info === undefined ? undefined : structuredClone(v.info); n.finished = v.finished; n.lastPlacements = v.lastPlacements; n.finishScore = v.finishScore; n.score = v.score; });
-      pairViewGeneration++; pairViewSeen.fill(-1);
+      tick = s.tick;
+      stage = s.stage;
+      tickStart.set(s.tickStart);
+      cursor.set(s.cursor);
+      motionTotal = s.motionTotal;
+      s.lastControllerDraws.forEach((v, k) => {
+        lastControllerDraws[k] = v;
+      });
+      anchorRng = s.anchorRng ? s.anchorRng.slice() : null;
+      knownTriggers.clear();
+      for (const k of s.knownTriggers) knownTriggers.add(k);
+      worldEvents = s.worldEvents;
+      for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
+      Object.assign(worldEventKinds, s.worldEventKinds);
+      returnTick = s.returnTick;
+      s.pairCounts.forEach((v, k) => {
+        pairCounts[k] = v;
+      });
+      all().forEach((r, k) => {
+        r.start = s.riders[k].start === undefined ? undefined : structuredClone(s.riders[k].start);
+      });
+      npcs.forEach((n, k) => {
+        const v = s.npcs[k];
+        n.command = v.command === undefined ? undefined : structuredClone(v.command);
+        n.info = v.info === undefined ? undefined : structuredClone(v.info);
+        n.finished = v.finished;
+        n.lastPlacements = v.lastPlacements;
+        n.finishScore = v.finishScore;
+        n.score = v.score;
+      });
+      pairViewGeneration++;
+      pairViewSeen.fill(-1);
     },
     resume({ place }) {
       if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
@@ -452,35 +832,70 @@ export async function createAiRacers({ human: humanModule, resources, document: 
       // 230180's C vt+0xCC+0x28(3) = 129768 -> 1297C8(C, 1) -> 10F398: the pair records made again (core race_world_pair_restart),
       // and the game tick restarts at 0 (WS15), so 107888's first check (+0x14 < tick) is the second tick (PS2 c0a-ret: no pushes
       // into record 1, the six apart in record 2). The countdown anchor's RNG is not the return's.
-      human._race_world_pair_restart(); for (const c of [human, ...npcs.map((n) => n.core)]) c._rider_peers_restart(npcs.length + 1); anchorRng = null;
+      human._race_world_pair_restart();
+      for (const c of [human, ...npcs.map((n) => n.core)]) c._rider_peers_restart(npcs.length + 1);
+      anchorRng = null;
       // 1297C8 also zeroes the rider manager's tick C+8 (0x1297F0), which every rider's route pass reads: 112338's re-pick (tick % 60)
       // runs on the return's first tick (PS2 c0a-ret3: the riders leave the start rows' lane paths for free ride's in that tick)
       for (const c of cores()) c._game_tick_restart(0);
-      tick = 0; stage = 0; returnTick = 0;
+      tick = 0;
+      stage = 0;
+      returnTick = 0;
     },
     // pv eventInWorldAi: WS1's approach NIS carries the riders before the countdown (PS2 c0a-full-ai 3130..3370): each is a fresh rider
     // (0x129E20 at gate + 2; core fresh_rider_start) placed at its NIS actor and ticked held there (nis_hold, the rider manager's pass
     // under control 13): its +0x2E4 ramps, +0x380 takes the held contact's normal. place(slot) -> [x, y, z, forward x, forward y] (PS2 cm).
     holdTick(place, { fresh = false } = {}) {
-      for (const n of npcs) { const p = place(n.slot); if (!p) continue; const c = n.core;
+      for (const n of npcs) {
+        const p = place(n.slot);
+        if (!p) continue;
+        const c = n.core;
         if (fresh) (c._npc_fresh_rider ?? c._fresh_rider_start)?.();
-        c._nis_hold(1, p[0], p[1], p[2], p[3], p[4]); c._nis_hold_probe?.(1, 0, 0, 0); // 120F20's re-probe from +0x110 (the approach actors' +0xAFC is 0; web/core.cpp)
-        { const w = new Float32Array(c.HEAPF32.buffer, c._npc_world_buffer(), 160); w.fill(0); w[0] = -1; w[1] = count; } // no peers under the hold (the tick reads the world block)
-        explain(c, `${n.character} held tick`, () => { c._race_begin(); const st = f32(c, c._step_rider(0, 0, 0, 0), 16); c._animation_tick(st[7], 0, 0, st[9], st[8], 0, 0, 0, 0, 0, st[15], 0); c._race_end(); }); }
+        c._nis_hold(1, p[0], p[1], p[2], p[3], p[4]);
+        c._nis_hold_probe?.(1, 0, 0, 0); // 120F20's re-probe from +0x110 (the approach actors' +0xAFC is 0; web/core.cpp)
+        {
+          const w = new Float32Array(c.HEAPF32.buffer, c._npc_world_buffer(), 160);
+          w.fill(0);
+          w[0] = -1;
+          w[1] = count;
+        } // no peers under the hold (the tick reads the world block)
+        explain(c, `${n.character} held tick`, () => {
+          c._race_begin();
+          const st = f32(c, c._step_rider(0, 0, 0, 0), 16);
+          c._animation_tick(st[7], 0, 0, st[9], st[8], 0, 0, 0, 0, 0, st[15], 0);
+          c._race_end();
+        });
+      }
     },
-    get document() { return doc; },
-    onReact: null,   // (target, other, kind 1 soft / 2 crash, attack): a rider pair reaction (107E70), after onPairAudio
-    onPairAudio: null,   // same arguments, before the relationship update (the handlers' 2A0A30 speech precedes 155BF0)
+    get document() {
+      return doc;
+    },
+    onReact: null, // (target, other, kind 1 soft / 2 crash, attack): a rider pair reaction (107E70), after onPairAudio
+    onPairAudio: null, // same arguments, before the relationship update (the handlers' 2A0A30 speech precedes 155BF0)
     // Live relationship(a, b) (slots): score = 0x155B50 level, kind = 0x155AB0 kind (document.relationships.scores/kinds).
-    relation(a, b) { const r = doc.relationships; return { score: r.scores?.[a]?.[b] ?? 0, kind: r.kinds?.[a]?.[b] ?? null }; },
+    relation(a, b) {
+      const r = doc.relationships;
+      return { score: r.scores?.[a]?.[b] ?? 0, kind: r.kinds?.[a]?.[b] ?? null };
+    },
     // The game RNG words the original has at the countdown anchor (web/lineup.js anchorRandomWords); null keeps the
     // core's own (the capture gates set theirs with setSharedRng).
-    setAnchorRng(words) { anchorRng = words ? Uint32Array.from(words) : null; },
+    setAnchorRng(words) {
+      anchorRng = words ? Uint32Array.from(words) : null;
+    },
     // relationship(own, peer) levels (6x6): the human core's 10F560 world and each computer rider's own row.
     setRelationships(scores) {
       doc.relationships.scores = scores.map((row) => row.slice());
-      const m = human._malloc(36 * 4); human.HEAPF32.set(scores.flat(), m >> 2); human._race_world_set_relationships?.(m); human._free(m);
-      for (const n of npcs) { if (!n.core._npc_set_relationships) continue; const q = n.core._malloc(24); n.core.HEAPF32.set(scores[n.slot], q >> 2); n.core._npc_set_relationships(q); n.core._free(q); }
+      const m = human._malloc(36 * 4);
+      human.HEAPF32.set(scores.flat(), m >> 2);
+      human._race_world_set_relationships?.(m);
+      human._free(m);
+      for (const n of npcs) {
+        if (!n.core._npc_set_relationships) continue;
+        const q = n.core._malloc(24);
+        n.core.HEAPF32.set(scores[n.slot], q >> 2);
+        n.core._npc_set_relationships(q);
+        n.core._free(q);
+      }
     },
     // A new lineup (web/lineup.js): the document for world.reset/relationships, and every slot whose record or
     // relationship row changed is set up again in its own core (init_animation + npc_configure). Returns the slots
@@ -491,36 +906,52 @@ export async function createAiRacers({ human: humanModule, resources, document: 
       for (const n of npcs) {
         const rider = next.riders.find((r) => r.slot === n.slot);
         if (!rider) throw new Error(`Lineup lacks slot ${n.slot}`);
-        const same = JSON.stringify(rider) === JSON.stringify(n.record) && row(next, n.slot) === row(doc, n.slot)
-          && next.event_variant === doc.event_variant && next.anchor_tick === doc.anchor_tick;
+        const same =
+          JSON.stringify(rider) === JSON.stringify(n.record) &&
+          row(next, n.slot) === row(doc, n.slot) &&
+          next.event_variant === doc.event_variant &&
+          next.anchor_tick === doc.anchor_tick;
         if (same) continue;
         changed.push(n.slot);
       }
       doc = next;
-      for (const n of npcs) if (changed.includes(n.slot)) {
-        const rider = next.riders.find((r) => r.slot === n.slot);
-        configureRider(n.core, rider);
-        Object.assign(n, { character: rider.character, package: rider.package, record: rider, finished: false });
-      }
+      for (const n of npcs)
+        if (changed.includes(n.slot)) {
+          const rider = next.riders.find((r) => r.slot === n.slot);
+          configureRider(n.core, rider);
+          Object.assign(n, { character: rider.character, package: rider.package, record: rider, finished: false });
+        }
       return changed;
     },
     // Before the human's tick: manager refresh 10F560 on the tick-start state (0x128AF0 runs it
     // before any rider pass), the human's 115D48 peers, and the human's RNG cursors.
     beginTick() {
       if (returnTick === 3) human._race_world_rank_mode(0); // WS1 phase 1's 128A48(C, 0) (0x234570): rank mode 0, every rank 0
-      if (anchorRng && tick === doc.anchor_tick) rngView(human).set(anchorRng);   // the game RNG the original has at the anchor
+      if (anchorRng && tick === doc.anchor_tick) rngView(human).set(anchorRng); // the game RNG the original has at the anchor
       snapshot();
-      const buf = f32(human, riderBuffer, 36); buf.fill(0);
-      for (const r of all()) { const s = r.start.state; buf.set([s[0], s[1], s[2], r.start.progress[0], 0, 1], r.slot * 6); }
+      const buf = f32(human, riderBuffer, 36);
+      buf.fill(0);
+      for (const r of all()) {
+        const s = r.start.state;
+        buf.set([s[0], s[1], s[2], r.start.progress[0], 0, 1], r.slot * 6);
+      }
       // rank mode 2 (freestyle, R&B): every slot's run score +0x198 at the tick start (web/race_world.cpp race_world_score)
-      if (doc.world.rank_mode === 2 && human._race_world_score) for (const r of all()) human._race_world_score(r.slot, new Int32Array(r.core.HEAPU8.buffer, r.core._score_object_dump(), 0x1d0 / 4)[0x198 / 4]);
+      if (doc.world.rank_mode === 2 && human._race_world_score)
+        for (const r of all())
+          human._race_world_score(r.slot, new Int32Array(r.core.HEAPU8.buffer, r.core._score_object_dump(), 0x1d0 / 4)[0x198 / 4]);
       // 12A250 (11A228 early return): every human finished; the human core holds its +0x470 (web/score_gameplay.inc)
-      { const done = f32(human, human._race_progress_info(), 8)[3] >= 0 ? 1 : 0; for (const n of npcs) n.core._set_humans_finished?.(done); }
+      {
+        const done = f32(human, human._race_progress_info(), 8)[3] >= 0 ? 1 : 0;
+        for (const n of npcs) n.core._set_humans_finished?.(done);
+      }
       human._race_world_frame(tick, riderBuffer);
       this.worldState = toArray(f32(human, human._race_world_state(), 396)); // a plain array: consumers serialise it (compare-ai-capture reports)
-      worldBuffer(humanRider, (r) => r.start, this.worldState); human._rider_world_peers();
+      worldBuffer(humanRider, (r) => r.start, this.worldState);
+      human._rider_world_peers();
       if (sharedVisual) for (const c of [human, ...npcs.map((n) => n.core)]) c._set_fx_deferred?.(1); // lineups can bring new cores
-      tickStart = new Uint32Array(rngView(human)); cursor = new Uint32Array(tickStart); motionTotal = 0;
+      tickStart = new Uint32Array(rngView(human));
+      cursor = new Uint32Array(tickStart);
+      motionTotal = 0;
       enter(human, 0);
       stage = 1;
     },
@@ -529,35 +960,62 @@ export async function createAiRacers({ human: humanModule, resources, document: 
     endTick() {
       if (stage === 1) stage1(); // a human tick that ran without its hooks
       if (stage === 2) stage2();
-      let words = rngView(human).slice(); syncWorld(human);
+      let words = rngView(human).slice();
+      syncWorld(human);
       if (afterRider) advance(words, afterRider(0));
       for (const n of tickingNpcs()) {
         worldBuffer(n, liveNow, this.worldState);
-        words = onShared(n.core, n.slot, words, () => onVisual(n.core, () => explain(n.core, `${n.character} progress`, () => { const race = f32(n.core, n.core._race_end(), 8); if (race[2]) n.finished = true; })));
+        words = onShared(n.core, n.slot, words, () =>
+          onVisual(n.core, () =>
+            explain(n.core, `${n.character} progress`, () => {
+              const race = f32(n.core, n.core._race_end(), 8);
+              if (race[2]) n.finished = true;
+            })
+          )
+        );
         syncWorld(n.core);
         if (afterRider) advance(words, afterRider(n.slot));
       }
       // World pass 0x101B60 (section activation: slot-1/3 stage programs, their builtin3/19/77 draws) runs once
       // per tick after every rider's passes. A core that ports it exports race_world_pass (run here, in the
       // human core, with the shared cursor; single-rider builds run it at the end of race_end instead).
-      if (human._race_world_pass) { rngView(human).set(words); explain(human, 'world pass', () => human._race_world_pass()); words = rngView(human).slice(); syncWorld(human); }
+      if (human._race_world_pass) {
+        rngView(human).set(words);
+        explain(human, 'world pass', () => human._race_world_pass());
+        words = rngView(human).slice();
+        syncWorld(human);
+      }
       if (afterRider) advance(words, afterRider(-1));
       rngView(human).set(words);
       // The rider FX passes over every rider, phase-major, on the shared visual stream (deferred in every core).
-      if (sharedVisual) { const list = ridersExcluded() ? [human] : cores(); for (let phase = 0; phase <= 4; phase++) for (const c of list) onVisual(c, () => explain(c, fxPassLabels[phase], () => c._fx_pass?.(phase))); }
+      if (sharedVisual) {
+        const list = ridersExcluded() ? [human] : cores();
+        for (let phase = 0; phase <= 4; phase++)
+          for (const c of list) onVisual(c, () => explain(c, fxPassLabels[phase], () => c._fx_pass?.(phase)));
+      }
       // Section activation 0x101B60 (web/section_gameplay.inc): the end of the rider manager, after every rider; its
       // slot-1 programs' shared-RNG draws are the last draws of the tick.
       if (human._section_pass) human._section_pass();
-      stage = 0; tick++; if (returnTick >= 0) returnTick++;
+      stage = 0;
+      tick++;
+      if (returnTick >= 0) returnTick++;
     },
     // Standings from the shared ranking (+0xEC) and course progress (+0x4D0, finish +0x478).
     standings() {
       const rows = all().map((r) => {
         const progress = Array.from(f32(r.core, r.core._race_progress_info(), 8));
-        return { slot: r.slot, human: !!r.human, character: r.character, remaining: progress[0], finished: progress[3] >= 0, finishTicks: progress[4], rank: this.worldState ? this.worldState[360 + r.slot * 6] : r.slot };
+        return {
+          slot: r.slot,
+          human: !!r.human,
+          character: r.character,
+          remaining: progress[0],
+          finished: progress[3] >= 0,
+          finishTicks: progress[4],
+          rank: this.worldState ? this.worldState[360 + r.slot * 6] : r.slot
+        };
       });
       return rows;
-    },
+    }
   };
   return api;
 }

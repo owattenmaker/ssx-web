@@ -105,7 +105,16 @@ function encodeColour(t, codec, out, o) {
   let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
   for (const i of use) { const r = t[i * 4] - mr, g = t[i * 4 + 1] - mg, b = t[i * 4 + 2] - mb; xx += r * r; xy += r * g; xz += r * b; yy += g * g; yz += g * b; zz += b * b; }
   let ax = 1, ay = 1, az = 1;
-  for (let k = 0; k < 6; k++) { const nx = xx * ax + xy * ay + xz * az, ny = xy * ax + yy * ay + yz * az, nz = xz * ax + yz * ay + zz * az, l = Math.hypot(nx, ny, nz); if (l < 1e-9) break; ax = nx / l; ay = ny / l; az = nz / l; }
+  for (let k = 0; k < 6; k++) {
+    const nx = xx * ax + xy * ay + xz * az,
+      ny = xy * ax + yy * ay + yz * az,
+      nz = xz * ax + yz * ay + zz * az,
+      l = Math.hypot(nx, ny, nz);
+    if (l < 1e-9) break;
+    ax = nx / l;
+    ay = ny / l;
+    az = nz / l;
+  }
   let lo = Infinity, hi = -Infinity;
   for (const i of use) { const d = (t[i * 4] - mr) * ax + (t[i * 4 + 1] - mg) * ay + (t[i * 4 + 2] - mb) * az; if (d < lo) lo = d; if (d > hi) hi = d; }
   let e0 = q565(mr + ax * hi, mg + ay * hi, mb + az * hi), e1 = q565(mr + ax * lo, mg + ay * lo, mb + az * lo);
@@ -117,7 +126,16 @@ function encodeColour(t, codec, out, o) {
     for (let i = 0; i < 16; i++) {
       let best = 0, bd = Infinity;
       if (punch && t[i * 4 + 3] < 128) { bits |= 3 << (2 * i); continue; }
-      for (let k = 0; k < (four ? 4 : 3); k++) { const dr = t[i * 4] - pal[k * 4], dg = t[i * 4 + 1] - pal[k * 4 + 1], db = t[i * 4 + 2] - pal[k * 4 + 2], d = dr * dr + dg * dg + db * db; if (d < bd) { bd = d; best = k; } }
+      for (let k = 0; k < (four ? 4 : 3); k++) {
+        const dr = t[i * 4] - pal[k * 4],
+          dg = t[i * 4 + 1] - pal[k * 4 + 1],
+          db = t[i * 4 + 2] - pal[k * 4 + 2],
+          d = dr * dr + dg * dg + db * db;
+        if (d < bd) {
+          bd = d;
+          best = k;
+        }
+      }
       bits |= best << (2 * i); err += bd;
     }
     return { c0, c1, bits: bits >>> 0, err, four };
@@ -126,7 +144,17 @@ function encodeColour(t, codec, out, o) {
   // one least-squares refinement of the endpoints for the chosen indices (4-colour mode)
   if (best.four && best.c0 !== best.c1) {
     const w0 = [1, 0, 2 / 3, 1 / 3]; let aa = 0, ab = 0, bb = 0; const ra = [0, 0, 0], rb = [0, 0, 0];
-    for (let i = 0; i < 16; i++) { const a = w0[(best.bits >>> (2 * i)) & 3], b = 1 - a; aa += a * a; ab += a * b; bb += b * b; for (let c = 0; c < 3; c++) { ra[c] += a * t[i * 4 + c]; rb[c] += b * t[i * 4 + c]; } }
+    for (let i = 0; i < 16; i++) {
+      const a = w0[(best.bits >>> (2 * i)) & 3],
+        b = 1 - a;
+      aa += a * a;
+      ab += a * b;
+      bb += b * b;
+      for (let c = 0; c < 3; c++) {
+        ra[c] += a * t[i * 4 + c];
+        rb[c] += b * t[i * 4 + c];
+      }
+    }
     const det = aa * bb - ab * ab;
     if (Math.abs(det) > 1e-6) {
       const p = [0, 1, 2].map((c) => (ra[c] * bb - rb[c] * ab) / det), q = [0, 1, 2].map((c) => (rb[c] * aa - ra[c] * ab) / det);

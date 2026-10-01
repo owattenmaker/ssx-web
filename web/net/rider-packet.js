@@ -49,11 +49,42 @@ const FX_TYPES = (() => {
 })();
 const FX_SIZE = [4, 1, 2, 2, 4, 4], MASK = Math.ceil(FX_FIELDS / 8);
 function writeField(v, at, type, x) {
-  switch (type) { case 1: v.setUint8(at, x); break; case 2: v.setInt16(at, x, true); break; case 3: v.setUint16(at, x, true); break; case 4: v.setInt32(at, x, true); break; case 5: v.setUint32(at, x, true); break; default: v.setFloat32(at, x, true); }
+  switch (type) {
+    case 1:
+      v.setUint8(at, x);
+      break;
+    case 2:
+      v.setInt16(at, x, true);
+      break;
+    case 3:
+      v.setUint16(at, x, true);
+      break;
+    case 4:
+      v.setInt32(at, x, true);
+      break;
+    case 5:
+      v.setUint32(at, x, true);
+      break;
+    default:
+      v.setFloat32(at, x, true);
+  }
   return at + FX_SIZE[type];
 }
 function readField(v, at, type) {
-  switch (type) { case 1: return v.getUint8(at); case 2: return v.getInt16(at, true); case 3: return v.getUint16(at, true); case 4: return v.getInt32(at, true); case 5: return v.getUint32(at, true); default: return v.getFloat32(at, true); }
+  switch (type) {
+    case 1:
+      return v.getUint8(at);
+    case 2:
+      return v.getInt16(at, true);
+    case 3:
+      return v.getUint16(at, true);
+    case 4:
+      return v.getInt32(at, true);
+    case 5:
+      return v.getUint32(at, true);
+    default:
+      return v.getFloat32(at, true);
+  }
 }
 // records: [{back (ticks before the packet tick), values Float32Array(FX_FIELDS), reset (0, 1 placement, 2 rescue)}]
 export function encodeFx(records) {
@@ -122,7 +153,15 @@ export function decodeFrame(frame) {
   const slot = frame[0], bytes = frame.slice(1), v = new DataView(bytes.buffer), kind = bytes[0];
   if (kind === ATTACK) {
     if (bytes.length !== 24) return null;
-    return { kind, slot, victim: bytes[1], attacker: bytes[2], tick: v.getUint32(4, true), direction: [v.getFloat32(8, true), v.getFloat32(12, true), v.getFloat32(16, true)], amount: v.getFloat32(20, true) };
+    return {
+      kind,
+      slot,
+      victim: bytes[1],
+      attacker: bytes[2],
+      tick: v.getUint32(4, true),
+      direction: [v.getFloat32(8, true), v.getFloat32(12, true), v.getFloat32(16, true)],
+      amount: v.getFloat32(20, true)
+    };
   }
   if (kind === WORLD) {
     if (bytes.length < 8 || bytes.length % 4) return null;

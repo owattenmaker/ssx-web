@@ -5,7 +5,6 @@ import {Career,MODE,MEDAL,eventKey,estimateFinishTicks,aiFreestyleScore,adaptLev
 import {loadSave,writeSave} from './career-save.js';
 import {GearInventory} from './lodge.js';
 import {Locale,nameHash,format} from './locale.js';
-import {pv} from './pv-flags.js';
 
 const data=JSON.parse(fs.readFileSync('public/assets/CAREER/career.json'));
 const rules=data.rules;
@@ -97,7 +96,7 @@ assert.equal(career.medal('sam',MODE.RACE,0),MEDAL.PLATINUM,'best medal kept');
 // failed final: event complete without medal, the final is repeated next time
 ev=career.startEvent('sam',MODE.RACE,1);ev.round=3;
 r=career.raceResult(lineup(9000,[8000,8100,8200,8300,9500]),{raceTicks:9000,origin:353496});
-assert.equal(r.medal,MEDAL.NONE);assert.equal(r.cash,0);assert.equal(career.startEvent('sam',MODE.RACE,1).round,pv('freshEvent')?1:3,'pv freshEvent: a new entry is a fresh qualifier (0x238C80), else the final repeats');
+assert.equal(r.medal,MEDAL.NONE);assert.equal(r.cash,0);assert.equal(career.startEvent('sam',MODE.RACE,1).round,1,'a new entry is a fresh qualifier (0x238C80)');
 
 // --- peak goals, locks and passes ------------------------------------------------------------------------
 let events=career.goalEvents('sam',1,'race');

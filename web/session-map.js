@@ -1,4 +1,4 @@
-// The MCOMM Session map (OV.LUI 38session, overlay 0x20; pv sessionMap). PS2 code (SLUS_207.72):
+// The MCOMM Session map (OV.LUI 38session, overlay 0x20; sessionMap). PS2 code (SLUS_207.72):
 //   0x2086A8 setup: the location's map picture MapPic = "|ses_<x>.ssh" (0x208F10 -> 0x1A37F8, name from table 0x440770 +4);
 //   0x2087F0 the rows ("Top of run" / "Session point %d" / "Bottom of run"), the focus = 0x26B680's nearest point - 1;
 //   0x209970 per point k (region bank 0x4D33A0 kind 2, index k: 26B5E0): 'Map Indicator Icon' sprite 'dot_visited' and

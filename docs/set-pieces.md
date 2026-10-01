@@ -681,4 +681,5 @@ tumbler). D (new data, switch off) shows no mismatch (it also fixes the crashbag
 **Open.** The eagle at the Ruthless Ridge start and the R&B ravens relaunch every 40 / 120 ticks while the rider is near
 (builtin 19 each time; the draw counts are capture-gated), so they restart their path: not yet compared with a PS2 frame sequence.
 In QA (no career) some in-world Transports did not arrive or reloaded the page (MOUNTAIN -> ABA1 / The Throne / BRA2), with
-either data; not investigated.
+either data. Settled (2026-09-30): a crashbag roller running on collision peakRelease had freed, and the Transport's held loop dropped
+for the boot rider; see [course-switch.md](course-switch.md) "In-world Transports that stalled or took the page down".

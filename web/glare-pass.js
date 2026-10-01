@@ -49,7 +49,7 @@ function painterPayloadIndex(tree,x,y){
 export function createGlarePainter(pkg){
  let tree=pkg.painter,payloads=(tree?.payloads??[]).map(p=>FIELDS.map(k=>f(p[k])));const defaults=GLARE_DEFAULTS.map(f);
  let current=defaults.slice(),distance=-99999,lastX=0,lastY=0,lastTicks=-1,selected=-1;
- const region={track:-1,located:false};let missing=false; // pv regionTick (web/painter-regions.js): gp+0x770's record; missing: not loaded
+ const region={track:-1,located:false};let missing=false; // regionTick (web/painter-regions.js): gp+0x770's record; missing: not loaded
  const reset=()=>{current=defaults.slice();distance=0;};
  // 2BD068: f1 = w*p, f0 = (1-w)*cur, cur = f1 + f0 (EE mul/add round toward zero).
  const blend=(values,weight)=>{const w=mul(weight,weight),c=sub(1,w);current=current.map((v,i)=>add(mul(w,values[i]),mul(c,v)));};
@@ -69,11 +69,11 @@ export function createGlarePainter(pkg){
  return {step,
   tick(core){const info=new Float32Array(core.HEAPF32.buffer,core._fog_info(),11),ticks=info[7];
    if(!info[10])return;if(ticks<lastTicks){current=defaults.slice();distance=-99999;selected=-1;}
-   if(followWorldLoad(region,core)){current=defaults.slice();distance=0;selected=-1;} // pv painterWorldLoad: the class defaults, +0 = 0
+   if(followWorldLoad(region,core)){current=defaults.slice();distance=0;selected=-1;} // the class defaults, +0 = 0
    if(ticks>0&&ticks!==lastTicks){const r=followRegion(region,core,'glare');if(r){missing=!r.record;if(r.record)useTree(r.doc?.painter??null);}step(info[8],info[9]);}lastTicks=ticks;},
   seed(values){current=values.map(f);},
   // Streamed Peak 1 world (web/free-ride.js): the painter region's glare section (null: none); the blend state is kept. Ignored
-  // while the located records rule (pv regionTick).
+  // while the located records rule.
   setTree(next){if(!region.located)useTree(next);},
   get values(){return current.slice();},
   get state(){return {current:current.slice(),selected,distance};}};
@@ -111,13 +111,43 @@ export function glarePlan(bytes,r=GLARE_RENDERER){
  if(!bytes.enabled)return [];
  const [vx,vy,vw,vh]=r.viewport,buffers=[r.bufferBlock,r.bufferBlock+0x400],draws=[];
  const tbw=w=>Math.max(1,w>>6),clampOf=(x,y,w,h)=>[2,2,x,x+w-1,y,y+h-1];
- const copy=(level,srcBlock,srcFbw,src,dst,dw,J,N,colour)=>copySprites(src,dw,dw,J,N).forEach((p,sample)=>p.sprites.length&&draws.push({op:'copy',level,sample,samples:N,frame:[dst>>5,tbw(dw)],scissor:[0,dw-1,0,dw-1],tex:[srcBlock,srcFbw],clamp:clampOf(...src),alpha:p.abe?[0,2,2,1,128]:null,rgba:[colour,colour,colour,128],sprites:p.sprites}));
+ const copy = (level, srcBlock, srcFbw, src, dst, dw, J, N, colour) =>
+   copySprites(src, dw, dw, J, N).forEach(
+     (p, sample) =>
+       p.sprites.length &&
+       draws.push({
+         op: 'copy',
+         level,
+         sample,
+         samples: N,
+         frame: [dst >> 5, tbw(dw)],
+         scissor: [0, dw - 1, 0, dw - 1],
+         tex: [srcBlock, srcFbw],
+         clamp: clampOf(...src),
+         alpha: p.abe ? [0, 2, 2, 1, 128] : null,
+         rgba: [colour, colour, colour, 128],
+         sprites: p.sprites
+       })
+   );
  const S=bytes.sizes;let cur=buffers[0];
  copy(0,r.frameBlock,r.frameFbw,r.viewport,cur,S[0],0,1,bytes.source);
  const cols=S[0]>>5;
  draws.push({op:'cutoff',frame:[cur>>5,tbw(S[0])],scissor:[0,S[0]-1,0,S[0]-1],tex:null,clamp:null,alpha:[1,0,2,2,bytes.cutScale],rgba:[bytes.cut,bytes.cut,bytes.cut,128],
   sprites:Array.from({length:cols},(_,c)=>[c*512,0,Math.min((c+1)*512,S[0]*16),S[0]*16])});
- const composite=(i,block)=>{const a=bytes.alphas[i];draws.push({op:'composite',level:i,frame:[r.frameBlock>>5,r.frameFbw],scissor:[vx,vx+vw-1,vy,vy+vh-1],tex:[block,tbw(S[i])],clamp:clampOf(0,0,S[i],S[i]),alpha:[1,2,2,0,bytes.frameBlend],rgba:[a,a,a,a],sprites:compositeSprites(S[i],S[i],r.viewport)});};
+ const composite = (i, block) => {
+   const a = bytes.alphas[i];
+   draws.push({
+     op: 'composite',
+     level: i,
+     frame: [r.frameBlock >> 5, r.frameFbw],
+     scissor: [vx, vx + vw - 1, vy, vy + vh - 1],
+     tex: [block, tbw(S[i])],
+     clamp: clampOf(0, 0, S[i], S[i]),
+     alpha: [1, 2, 2, 0, bytes.frameBlend],
+     rgba: [a, a, a, a],
+     sprites: compositeSprites(S[i], S[i], r.viewport)
+   });
+ };
  for(let i=0;i<3;i++){
   if(bytes.alphas[i])composite(i,cur);
   const next=buffers[(i+1)&1];copy(i+1,cur,tbw(S[i]),[0,0,S[i],S[i]],next,S[i+1],bytes.jitter,4,bytes.copy);cur=next;
@@ -168,7 +198,13 @@ export async function createGlarePass(source){
  let bytes=glareBytes(painter.values,debug),renderer=null,finalPipeline=null,frameTarget=null,frameState={enabled:false};
  const S=bytes.sizes,VP=GLARE_RENDERER.viewport,J=uniform(bytes.jitter);
  const capturing=uniform(0),cut=uniform(0),cutScale=uniform(0),source_=uniform(0),copy=uniform(0),frameBlend=uniform(0),alphas=uniform(new Vector4());
- const target=size=>{const t=new RenderTarget(size,size,{type:UnsignedByteType,depthBuffer:false});t.texture.minFilter=t.texture.magFilter=NearestFilter;t.texture.generateMipmaps=false;t.texture.colorSpace=NoColorSpace;return t;};
+ const target = (size) => {
+   const t = new RenderTarget(size, size, { type: UnsignedByteType, depthBuffer: false });
+   t.texture.minFilter = t.texture.magFilter = NearestFilter;
+   t.texture.generateMipmaps = false;
+   t.texture.colorSpace = NoColorSpace;
+   return t;
+ };
  const levels=S.map(target);
  const gsPixel=()=>vec2(floor(screenCoordinate.x),floor(screenCoordinate.y));
  // Manual GS bilinear (see bilinear() above) of a level or of the frame target scaled to its
@@ -222,12 +258,19 @@ export async function createGlarePass(source){
   setTree(next){painter.setTree(next);},
   // Called by the fog renderer: finish(bytes) = ScreenTint etc. applied to the glared frame.
   attach(r,finish){
-   renderer=r;frameTarget=new RenderTarget(1,1,{type:UnsignedByteType,depthBuffer:false});frameTarget.texture.minFilter=frameTarget.texture.magFilter=NearestFilter;frameTarget.texture.colorSpace=NoColorSpace;frameTarget.texture.generateMipmaps=false;
+   renderer = r;
+   frameTarget = new RenderTarget(1, 1, { type: UnsignedByteType, depthBuffer: false });
+   frameTarget.texture.minFilter = frameTarget.texture.magFilter = NearestFilter;
+   frameTarget.texture.colorSpace = NoColorSpace;
+   frameTarget.texture.generateMipmaps = false;
    build(frameTarget.texture);
-   finalPipeline=new RenderPipeline(r);finalPipeline.outputColorTransform=false;if(finalPipeline._quadMesh?.material)finalPipeline._quadMesh.material.name='GlareFinal';finalPipeline.outputNode=Fn(()=>vec4(finish(frameNode.toVar()).div(255),1))();
+   finalPipeline = new RenderPipeline(r);
+   finalPipeline.outputColorTransform = false;
+   if (finalPipeline._quadMesh?.material) finalPipeline._quadMesh.material.name = 'GlareFinal';
+   finalPipeline.outputNode = Fn(() => vec4(finish(frameNode.toVar()).div(255), 1))();
   },
   // Per rendered frame: parameters from the painter; returns the frame target when the pass runs.
-  // warm (pv warmPost, main.js warmupRender): the race warm-up's frames run the pass whatever the values (a disabled glare draws
+  // warm (warmPost, main.js warmupRender): the race warm-up's frames run the pass whatever the values (a disabled glare draws
   // its levels and composites with zero alphas: the frame unchanged), so its pipelines and the fog composite's into the frame target
   // exist before the race; the pass reads nothing from earlier frames.
   // Every other warm frame, so the fog composite's pipelines for the canvas (glare off) are built as well.

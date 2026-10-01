@@ -17,7 +17,6 @@
 //     Brodi / JP / Marisol, 'This item is for sale.', the popup 'Cheat Character:' Brodi, Cost $20,000, You have $ 200,000).
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import { setPv } from './pv-flags.js';
 import { Career, PLAYER_NAME, MODE, recordSlot } from './career.js';
 import { UBER_ROWS, uberEntries, uberRow, uberChoiceRows, initialUber } from './lodge.js';
 import { uberSelection, uberRows, riderStamp, withProfile } from './career-rider.js';
@@ -95,9 +94,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   const ui = { screen: 'ctm-details', index: 0, feScreens: fe, set(s) { this.screen = s; }, sync() {}, riders: [] };
   const cs = { ui, career: c, riderId: 'zoe', t: (k, f) => f, lodgePeak: 1 };
   const lodge = new LodgeScreens(cs);
-  setPv('lodgeDetails', false);
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((i) => lodge.disabled('ctm-details', i)), [false, false, true, false, true, true, true], 'before');
-  setPv('lodgeDetails', true);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((i) => lodge.disabled('ctm-details', i)), [false, false, true, false, false, false, false], 'PS2 lodge/20-rider-details: only Cheat Characters greyed');
   lodge.choose(3); lodge.choose(5); lodge.choose(6);
   assert.deepEqual(calls, ['fe-uber', 'kb:name', 'fe-profile']);
@@ -105,13 +101,11 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   // Down skips Cheat Characters and wraps (PS2 l1: Trophies -> Ubertrick Setup)
   const key = (code) => lodge.key({ code, preventDefault() {} });
   ui.index = 1; key('ArrowDown'); assert.equal(ui.index, 3); ui.index = 6; key('ArrowDown'); assert.equal(ui.index, 0);
-  setPv('lodgeDetails', null);
   console.log('lodgeDetails: Rider Details items, Ubertrick Setup / Player Name / Rider Profile routes, the menu skip');
 }
 
 // ---- 3. playerName ----------------------------------------------------------------------------------------------------
 {
-  setPv('playerName', true);
   assert.equal(defaultPlayerName(), 'PLAYER 1'); assert.equal(PS2_PLAYER_NAME, 'PLAYER 1'); assert.equal(PLAYER_NAME_MAX, 8);
   assert.equal(PLAYER_NAME, 'PLAYER 1', 'career default = 0x147170 with an empty slot name');
   let k = { kind: 'name', text: 'PLAYER 1', caret: 7, caps: false, shift: false, max: 8, overwriteFull: true };
@@ -126,7 +120,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   const d = new Career(data, { storage: new Memory() }); d.startEvent('zoe', MODE.RACE, 0, true);
   d.save.records[slot].forEach((e, i) => { e.value = 900 + i; delete e.ticks; }); d.heatRecord(235 * 60);
   assert.equal(d.records(slot, true)[0].name, 'PLAYER 1', 'no name entered');
-  setPv('playerName', null);
   console.log('playerName: PLAYER 1, 8 characters, overwrite at the limit, the records name');
 }
 
@@ -168,7 +161,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   const cs = new CharacterSelect(ui); cs.data = { screens: {} }; ui.characterSelect = cs;
   Object.defineProperty(cs, 'ready', { get: () => true });
   const lodge = new LodgeScreens({ ui, career: c, riderId: 'zoe', t: (k, f) => f, lodgePeak: 1 });
-  setPv('lodgeDetails', true); setPv('lodgeCheats', true);
   assert.equal(lodge.disabled('ctm-details', 2), true, 'no cheat character owned: greyed (PS2 lodge/runs/l1)');
   c.rider('zoe').cash = 200000; assert.ok(c.buyReward('zoe', 'cheat_character', 0, 1), 'Brodi, $20,000 in the Peak 1 lodge (l11)');
   assert.equal(c.rider('zoe').cash, 180000);
@@ -179,8 +171,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(log, ['brodi:zoe:true'], 'the pick is the career rider: the skin on the base rider, career scale');
   assert.equal(cs.cheat?.id, 'brodi'); assert.equal(cs.cheatOpen, false);
-  setPv('lodgeCheats', false); cs.cheatOpen = true; assert.equal(cs.overlay('ctm-details'), false); assert.equal(lodge.disabled('ctm-details', 2), true);
-  setPv('lodgeCheats', null); setPv('lodgeDetails', null);
   console.log('lodgeCheats: Cheat Characters live once owned, the 131cheat_char list over the lodge, the pick = the career rider');
 }
 // ---- 6. the Transport freeride lists: the table 0x478D38 (peak * 0x360 + row * 0x6C: +0 course, +0xC station) in the order the
@@ -202,7 +192,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   const fe = { lodgeBack: () => {}, baseId: 'zoe', prompt: null, now: () => 0, data: { strings: {} } };
   const ui = { careerUI: { career: c, lodgePeak: 1, t: (k, f) => f }, sync() {} };
   const ex = Object.create(FeExtraScreens.prototype); Object.assign(ex, { fe, ui, category: 4, item: 0 });
-  setPv('lodgeRewards', true);
   assert.equal(ex.lodge(), true);
   assert.deepEqual([0, 1, 2, 3, 4, 7].map((i) => ex.status(i).state), ['buy', 'elsewhere', 'buy', 'elsewhere', 'buy', 'locked'], 'Peak 1 lodge: Brodi / JP / Marisol for sale (PS2 l11 $ slots)');
   const slot = ex.galleryOverride({ name: '06f92620' }); assert.equal(slot.sprite, undefined, "the slot's own '$'"); assert.equal(slot.alpha, 255);
@@ -212,7 +201,6 @@ const newUi = (career) => ({ careerMode: true, onlineMode: false, careerUI: { ca
   fe.prompt.yes(); assert.equal(c.rider('zoe').cash, 180000); assert.deepEqual(c.owned('zoe', 'cheat_character'), [0]);
   assert.equal(ex.status(0).state, 'owned');
   fe.lodgeBack = null; assert.equal(ex.lodge(), false); assert.equal(ex.status(2).state, 'elsewhere', 'the front end sells nothing (peak 0: every priced item is elsewhere)');
-  setPv('lodgeRewards', null);
   console.log('lodgeRewards: the rewards room sells at the lodge peak, the $ slots, the buy popup');
 }
 // ---- 8. rivalCard: a rival challenge's objectives card over the ready state (PS2 {happiness-mac,ruthless,the-throne}-ready:

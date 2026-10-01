@@ -194,7 +194,7 @@ const finish = (fe) => { const f = fe.flash; assert.ok(f, 'whitefade before the 
   // Display & Touch (web/fe-options.js displayScreen / optionsWithDisplay): above DONE, built from Game Options' rows
   assert.deepEqual(fe.items(), ['Game Options', 'Sound Options', 'Controller Settings', 'HUD Options', 'Save/Load', 'Enter Cheat', 'Credits', 'Display & Touch', 'DONE']);
   assert.equal(fe.displayIndex(), 7); assert.equal(fe.disabled(7), false);
-  { const { DISPLAY_ROWS, TEXTURE_SET_ROW } = await import('./fe-options.js'); const { quality, defaultRiderTextures, device } = await import('./quality.js'); const { pv } = await import('./pv-flags.js');
+  { const { DISPLAY_ROWS, TEXTURE_SET_ROW } = await import('./fe-options.js'); const { quality, defaultRiderTextures, device } = await import('./quality.js');
     const dirty = fe.extra.dirty; fe.extra.dirty = false;
     // rows by what they set (the Texture set row sits after PS2 softness only with pv xboxRiders)
     const row = (f) => DISPLAY_ROWS.findIndex(f), iUpscale = row((r) => r.q === 'upscale'), iSoft = row((r) => r.q === 'ps2Output'), iTier = row((r) => r.q === 'tier');
@@ -202,15 +202,15 @@ const finish = (fe) => { const f = fe.flash; assert.ok(f, 'whitefade before the 
     fe.choose(7); finish(fe); assert.equal(ui.screen, 'fe-display');
     assert.deepEqual(fe.items(), DISPLAY_ROWS.map((r) => r.label));
     assert.deepEqual(fe.disabledList(), DISPLAY_ROWS.map((r) => !!r.deck), 'no touch controller: layout / stick / vibration greyed');
-    // Texture set (docs/xbox-textures.md section 8): with pv xboxRiders right after PS2 softness, enabled, PS2 / Xbox HD, the device's
-    // default first, a change saved with the other quality settings; without the switch no row
-    if (pv('xboxRiders')) {
+    // Texture set (docs/xbox-textures.md section 8): right after PS2 softness, enabled, PS2 / Xbox HD, the device's default first, a
+    // change saved with the other quality settings
+    {
       assert.equal(iTextures, iSoft + 1); assert.equal(DISPLAY_ROWS[iTextures], TEXTURE_SET_ROW); assert.equal(fe.disabled(iTextures), false);
       assert.deepEqual(TEXTURE_SET_ROW.values.map(([v]) => v), ['ps2', 'xbox']);
       const was = quality.riderTextures; assert.equal(was, defaultRiderTextures(device, quality.tier));
       fe.extra.change('fe-display', iTextures, 1); assert.notEqual(quality.riderTextures, was); assert.equal(JSON.parse(mem.get('ssx3.quality')).riderTextures, quality.riderTextures);
       fe.extra.change('fe-display', iTextures, 1); assert.equal(quality.riderTextures, was, 'PS2 / Xbox HD wraps');
-    } else assert.equal(iTextures, -1);
+    }
     const touch = { shown: true, settings: { layout: 'split', stick: 'floating', haptics: true, show: 'auto' }, log: [], setSetting(k, v) { this.settings[k] = v; this.log.push(`${k}=${v}`); } };
     ui.touchControls = touch; assert.equal(fe.disabled(iLayout), false);
     fe.extra.change('fe-display', iLayout, 1); assert.deepEqual(touch.log, ['layout=below']);

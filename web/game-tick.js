@@ -43,8 +43,22 @@ export function readTrickHudSlots(core) {
   for (let k = 0; k < 44; k++) {
     const o = 6 * k, type = raw[o]; if (type === 0x34) continue;
     const points = raw[o + 5];
-    slots[k] = { type, maximum: raw[o + 1], value: raw[o + 2], arg: raw[o + 3], field10: raw[o + 4], points,
-      text: (type === 0 || type === 0xE) ? ((p) => { let t = ''; for (let i = 0; i < 0x80 && core.HEAPU8[p + i]; i++) t += String.fromCharCode(core.HEAPU8[p + i]); return t; })(core._score_hud_text(k)) : String(points) };
+    slots[k] = {
+      type,
+      maximum: raw[o + 1],
+      value: raw[o + 2],
+      arg: raw[o + 3],
+      field10: raw[o + 4],
+      points,
+      text:
+        type === 0 || type === 0xe
+          ? ((p) => {
+              let t = '';
+              for (let i = 0; i < 0x80 && core.HEAPU8[p + i]; i++) t += String.fromCharCode(core.HEAPU8[p + i]);
+              return t;
+            })(core._score_hud_text(k))
+          : String(points)
+    };
   }
   return { slots, total: raw[44 * 6] };
 }
@@ -78,7 +92,7 @@ export function createGameTick(host, { trace = null } = {}) {
     s.replay?.record(input);   // the run's pad for its replay (web/replay.js; ignored while a replay plays)
     core.HEAPF32.set(input, s.padPtr >> 2);
     s.worldAiBefore?.(); // (pv eventReturnInWorld: WS15's riders leave at the WS4 restart, before this tick's passes; main.js)
-    if (s.aiActive) s.aiRace.beginTick(); else { s.soloTickStart?.(core); s.mpGame?.beginTick(); }   // soloTickStart: a solo event's anchor RNG (main.js, pv eventAnchorRng)
+    if (s.aiActive) s.aiRace.beginTick(); else { s.soloTickStart?.(core); s.mpGame?.beginTick(); }   // soloTickStart: a solo event's anchor RNG (main.js, eventAnchorRng)
     const cmd = f32(core, core._pad_tick(s.padPtr), 24).slice();
     rec.cmdAir = cmd[14] === 4 || cmd[14] === 5; // controllers 4 passive air, 5 air: Simple keyboard mode routes new direction presses to the D-pad
     core._race_begin();
@@ -95,12 +109,25 @@ export function createGameTick(host, { trace = null } = {}) {
     }
     // course events (rider finish 0x125108 -> camera 0x162258) precede the camera update
     s.raceInfo = f32(core, core._race_end(), 8).slice();
-    // Stage builtin 34 (a Metro-City phone booth / water tower, pv boothTeleport, web/stage_teleport.inc) placed the rider inside
+    // Stage builtin 34 (a Metro-City phone booth / water tower, boothTeleport, web/stage_teleport.inc) placed the rider inside
     // race_end (121818 -> 0x123210): the placed state and pose (the camera follows the new head), and no interpolation across.
-    if (core._stage_teleport_info) { const n = f32(core, core._stage_teleport_info(), 1)[0];
-      if (n !== teleports.get(core)) { if (teleports.has(core) && n > 0) { rec.placement = true; s.lastResetPlacement = f32(core, core._reset_info(), 8)[2]; s.state = f32(core, core._rider_state(), 16).slice(); if (s.posePhysicalFrame) s.posePhysicalFrame = f32(core, core._pose_physical(), 12).slice(); } teleports.set(core, n); } }
+    if (core._stage_teleport_info) {
+      const n = f32(core, core._stage_teleport_info(), 1)[0];
+      if (n !== teleports.get(core)) {
+        if (teleports.has(core) && n > 0) {
+          rec.placement = true;
+          s.lastResetPlacement = f32(core, core._reset_info(), 8)[2];
+          s.state = f32(core, core._rider_state(), 16).slice();
+          if (s.posePhysicalFrame) s.posePhysicalFrame = f32(core, core._pose_physical(), 12).slice();
+        }
+        teleports.set(core, n);
+      }
+    }
     if (!s.replay?.active) s.rideTick?.(s.state, !!(rec.placement || rec.rescue)); // field stats: distance ridden (main.js gameHost -> diagnostics.js diagRide; reads only)
-    s.freeRide?.tick(); s.bigChallenges?.tick(); s.faqTick?.(); s.worldAiTick?.(); // (pv eventInWorldAi: the event's riders held at their NIS actors under WS1, main.js) // world state 4: the offer read 0x230890, then the deferred FAQ 0x2309A4 (pv faqDefer)
+    s.freeRide?.tick(); s.bigChallenges?.tick(); s.faqTick?.();
+    // (pv eventInWorldAi: the event's riders held at their NIS actors under WS1, main.js) // world state 4: the offer read 0x230890, then
+    // the deferred FAQ 0x2309A4 (pv faqDefer)
+s.worldAiTick?.();
     if (s.aiActive) {
       s.aiRace.endTick();
       // 0x2D4C08 per game tick: relationship icons over the computer riders (level = their record about the human, 3 for the peak rival)
@@ -114,14 +141,18 @@ export function createGameTick(host, { trace = null } = {}) {
       // a replay draws through its replay camera (web/replay_camera.inc), stepped from this tick's camera input
       if (s.replay?.active && core._replay_camera_step) { const m = s.replay.manual ?? NO_STICKS; rec.replayCamera = f32(core, core._replay_camera_step(0, m[0], m[1], m[2]), 10).slice(); }
     }
-    if (s.animationReady) { s.pending = f32(core, core._animation_info(), 19)[12]; const name = core._trick_name(); rec.trick = trickNames.decode(core.HEAPU8.subarray(name, core.HEAPU8.indexOf(0, name))); }
+    if (s.animationReady) {
+      s.pending = f32(core, core._animation_info(), 19)[12];
+      const name = core._trick_name();
+      rec.trick = trickNames.decode(core.HEAPU8.subarray(name, core.HEAPU8.indexOf(0, name)));
+    }
     if (s.raceInfo[2]) {
       s.finished = true; s.postFinishTicks = 0;
       const r = f32(core, core._race_result_info(), 6), dump = Uint32Array.from(new Uint32Array(core.HEAPU8.buffer, core._score_object_dump(), 0x1d0 / 4));
       rec.finish = { score: dump[0x198 / 4] | 0, ticks: r[1], dnf: !!core._race_timed_out?.() }; rec.finishDump = dump; s.replay?.finish();
       // rival challenges (23B8C8/23BDB8): only the winner (place 0) celebrates; rider+0x100: the race results handler 0x23A760 clears it for
       // a human placing 4th or worse (place array >= 3), picking the finish reaction 314 over 315
-      // freestyle (pv fsCelebrate): 0x239230 ranks the run with the posted scores and sets rider+0x100 for the top three
+      // freestyle: 0x239230 ranks the run with the posted scores and sets rider+0x100 for the top three
       const fsPlace = s.freestylePlace?.(rec.finish.dnf ? 0 : rec.finish.score) ?? null;
       if (fsPlace != null) { if (!core._finish_standing) core._finish_celebrate?.(fsPlace < 3 ? 1 : 0); } // a newer core asked main.js's finishHost inside race_end (0x239230 meter too)
       else if (s.aiActive) core._finish_celebrate?.((s.aiRace.hud()?.place ?? 0) < (s.backcountry ? 1 : 3) ? 1 : 0);
@@ -177,11 +208,23 @@ export function createGameTick(host, { trace = null } = {}) {
     }
     if (p.animPose) {
       p.previousRiderFrame = p.currentRiderFrame; const displayState = p.state.slice(); displayState[8] = p.posePhysicalFrame[8];
-      p.currentRiderFrame = p.captureRiderFrame(displayState, p.animPose, p.animInfo, p.rig.bones.map((b) => b.parent), p.origin, p.posePhysicalFrame.subarray(3, 7), p.posePhysicalFrame.subarray(0, 3));
+      p.currentRiderFrame = p.captureRiderFrame(
+        displayState,
+        p.animPose,
+        p.animInfo,
+        p.rig.bones.map((b) => b.parent),
+        p.origin,
+        p.posePhysicalFrame.subarray(3, 7),
+        p.posePhysicalFrame.subarray(0, 3)
+      );
       // presentation only: a frame draws the palettes of its last two ticks (as the computer riders', web/ai-race.js); a reset (no previous
       // frame) stays pending until the next capture, a frame whose last ticks did not run captures after the clock
       p.humanSkinReset ||= !p.previousRiderFrame;
-      if (rec.ticksLeft == null || rec.ticksLeft <= 2) { p.sam.userData.sourceSkin?.capture(core, p.humanSkinReset); p.humanSkinReset = false; p.humanSkinPending = false; } else p.humanSkinPending = true;
+      if (rec.ticksLeft == null || rec.ticksLeft <= 2) {
+        p.sam.userData.sourceSkin?.capture(core, p.humanSkinReset);
+        p.humanSkinReset = false;
+        p.humanSkinPending = false;
+      } else p.humanSkinPending = true;
       if (p.sam.userData.sourceLighting) { p.riderLightingUpdate.update(); p.sam.userData.sourceLighting.capture(core); }
     }
     if (p.terrainRefinement) p.terrainRefinement.update(Array.from(p.state.slice(0, 3)), f32(core, core._terrain_contact_info(), 12)[0], rec.clock);
@@ -191,8 +234,20 @@ export function createGameTick(host, { trace = null } = {}) {
     // pad vibration: this step's rumble calls (core audio events 30/31) + the 0x125B18 decay, before sfx-game drains the queue (web/rumble.js)
     p.rumble.tick(core, !replaying && !p.finished && (p.ui.feScreens?.vibration?.() ?? false));
     // game audio tick: core audio events, board loops, crowd, world sounds, painters, speech (web/game-audio.js)
-    p.audioSafe(() => p.gameAudio.gameTick({ core, ai: p.aiActive ? p.aiRace : null, raceInfo: p.raceInfo, finished: p.finished, pending: p.pending, character: p.selectedRider?.id, place: rec.place }));
-    if (!replaying) p.collectPoll(core, { careerMode: p.ui.careerMode, career: p.ui.careerUI?.career, riderId: p.careerId ?? p.selectedRider?.id, courseCode: p.course.code });   // careerId: a cheat skin's base rider (main.js, pv lodgeCheats)
+    p.audioSafe(() =>
+      p.gameAudio.gameTick({
+        core,
+        ai: p.aiActive ? p.aiRace : null,
+        raceInfo: p.raceInfo,
+        finished: p.finished,
+        pending: p.pending,
+        character: p.selectedRider?.id,
+        place: rec.place
+      })
+    );
+    if (!replaying)
+    // careerId: a cheat skin's base rider (main.js, lodgeCheats)
+p.collectPoll(core, { careerMode: p.ui.careerMode, career: p.ui.careerUI?.career, riderId: p.careerId ?? p.selectedRider?.id, courseCode: p.course.code });
     else { core._stage_collect_events?.(); core._score_career_events?.(); }   // drained, not paid: the live run already paid them
   }
   // One tick of the running game (the frame clock, ssxQA.advance, the online hidden-tab ticker).
@@ -202,7 +257,7 @@ export function createGameTick(host, { trace = null } = {}) {
     if (rec) present(rec);
   }
   // A frame's ticks on the fixed 60 Hz clock (web/fixed-step-clock.js): the same input for each, or input(k) for the frame's k-th tick
-  // (pv stallKeys: main.js stallKeyInput); returns the tick count.
+  // (stallKeys: main.js stallKeyInput); returns the tick count.
   function advance(clock, seconds, input) { let k = 0; return clock.advance(seconds, () => tick(typeof input === 'function' ? input(k++) : input, FixedStepClock.ticksLeft)); }
   return { simulate, present, tick, advance };
 }

@@ -281,6 +281,108 @@ frozen animation-frame clock it then never draws again.
 blocking pipelines for the TRANSP set, actors, sky and alpha fill at the switch); the Transport arrival's last 11 pipelines
 (encoded-pass effects, sky, post quad) are built by its first frame; the character select's FE model builds.
 
+## In-world Transports that stalled or took the page down (2026-09-30, Transport-stall agent)
+
+The peakSplines QA saw in-world Transports out of the MOUNTAIN world stall or take the page down, to ABA1 (Crow's Nest), The Throne (EBC3,
+16) and BRA2 (Metro-City), with either data set. These are not course switches: inside the streamed world a Transport is `main.js
+transportInWorld` -> `free-ride.js transport`, with no new core. Two separate causes.
+
+**1. A crashbag's roller ran on freed collision (core; use-after-free).**
+- **The chain:**
+  - A crashbag the rider hits becomes a roller (`web/roller_gameplay.inc` `browserRollers`: builtin 0 + 15, a RollerModifier). Its
+    collider keeps a raw pointer to the hit node's sphere tree (`hit.tree = node.sphereTree.get()`).
+  - Only a new race cleared the rollers (`browser_reset_rollers`).
+  - With pv peakRelease (on), the location's eviction frees its instances' collision nodes (`peak_world_free_track` ->
+    `WorldBodyCollision::releaseTrack`: `std::vector<WorldCollisionNode>().swap(i.nodes)`), and the sphere tree with them.
+  - `advance_world_entities` then ran the roller on freed memory, every tick.
+- **What it looked like:**
+  - Once the memory was reused, the first sign is a C++ throw out of the game tick, `std::runtime_error "Original roller collider has
+    no sphere tree"` (engine/roller_world_query.hpp).
+  - Then `std::bad_alloc`, out-of-bounds traps in `_race_begin` / `_pad_tick` / `_stage_world_instances`, and "Transport failed".
+  - Wasm memory 128 -> 186 MB.
+  - The QA agent's server logs (local/peak-splines-qa/srv-livecopy.log, srv-new.log) show this chain.
+  - The neutral pad at R&B (ASS1) rides into crashbag 376843 at about tick 670, so any Transport out of R&B after about 11 s of riding
+    is exposed. Riding on past the evicted location is the same path.
+  - Whether it traps depends on when the freed memory is reused: it trapped at the first Transport in 1 of 9 "before" runs below.
+- **PS2 (recompiled code):**
+  - The unload start (row -> 7) runs 230360, which calls 3551A8(gp+0x2898, group 1, track) and 3551A8(..., group 8, track).
+  - Every entity of those groups whose instance+0x78 track matches (vt+0x5C = 0x360920) is destroyed (vt+0xC).
+  - For the crashbag's Object entity (vtable 0x490E80): 361038 -> 3553C0 deletes its modifier at +0x1C (the RollerModifier), then
+    34FBF0 resets the instance flags: `(f & 0xFFFF0300) | sign-extended high half | 2`.
+- **Fix (core, no switch):**
+  - `browser_rollers_track_teardown(track)` (roller_gameplay.inc) runs from `web/peak_world.inc set_state(->7)` beside
+    `browser_stage_track_teardown`: the track's rollers go, their instance's entity is reset, and the flags go through
+    `ssx::originalPickupRestoredFlags` (34FBF0).
+  - The avalanche pieces' Object entities (group 1 too) moved to the same place: `browser_avalanche_track_reset` used to run at
+    row 7 -> 0 (T+8), a tick after the free at T+7. It read no freed node there (`avalanche_entity_instance` needs the authored node
+    count, and the composed entity owns its matrices), but the pieces moved and collided 6 ticks longer than on the PS2. It now also
+    restores the 34FBF0 flags.
+- **Other raw pointers past `releaseTrack` (audit):** none.
+  - Set pieces, chairlifts, attached pieces, spline pieces, stage LiveComps, falling billboards and avalanches index `instance.nodes`
+    under a size check or a node-count match.
+  - They keep `WorldCollisionInstance*` slots, which are reserved and stable.
+- **Gate:** `web/test-crashbag-release.mjs` (in test:all; `CORE_DIR=` for a scratch core).
+  - Headless Chrome, QA: R&B, the crashbag hit, a Transport to ABA1.
+  - No roller of the evicted track may survive, no core error, the arrival lands and the game ticks on.
+  - It fails on the old core: the core traps in the Transport.
+
+**2. The Transport's held loop was dropped for the boot rider (page).**
+- **The cause:**
+  - `bootRider()` is `{id, name, package}` with no `character`.
+  - A page that starts on its boot rider (QA and direct links with `rider=zoe`) keeps that object, so `cutsceneRider` gave
+    character -1 and `castWords` bit 0.
+  - Every rider-masked cut step was dropped, among them the Transport's held loop (HELI/GOND_INAIR_RIDER, flags 8).
+- **What it looked like:**
+  - The list ended after the 2 s in-air while the rows still loaded: 2-3 s of the game screen with the HUD, then the destination.
+  - For a backcountry, then the first-visit movie and heli drop.
+  - In QA a `cb.freeRide` in that window was dropped by `transportInWorld`'s `transporting` guard while still returning
+    'transport': "Throne -> BRA2 stays at course 16".
+  - `freeRide.course()` changes at the request, so it is no arrival signal; wait for the cut to end.
+- **Fix (main.js):** `cutsceneRider` falls back to the `ui.riders` entry's character by id. With rider=moby it was already right.
+- **PS2: no second Transport during one.**
+  - ARMSX2, local/transport-stall/ps2/run1 (from nav/p2/out-to-c/frprompt.p2s; script start-in-loop.json): the Transport prompt's Yes,
+    then Start held at samples 80 (WS14), 200 and 350 (WS11, the held loop) and 555 (WS10).
+  - The tick runs on and no MCOMM opens. Start in WS4 (sample 649) pauses.
+  - The port's three `startOpensPause` call sites now treat `transporting` as a cut.
+
+**Also found:** a dev server older than the last live-core install (Vite with watching off, as the QA overlay servers run) serves its
+cached core.js beside the new core.wasm. init() then rejects with a C++ exception of another instance's tag.
+- `init().catch` called `core.getExceptionMessage(e)`, which threw, so the page sat at 'loading' with no error.
+- It is now guarded and shows "Load failed".
+- This is the "MOUNTAIN autostart sits at loading" of 2026-09-30. A fresh server loads MOUNTAIN in 8.9-9.6 s (6 of 6 in headless
+  Chrome). It happened again in this agent's matrix after the core3 install: 2 runs, restarted and rerun.
+
+**Repro** (scratch `tq/` in the agent's scratchpad: tq.mjs per Transport, matrix.sh / lanes.sh, summ.py):
+- MOUNTAIN at R&B, 16 s of neutral-pad riding (the crashbag hit), then Transports 5 -> ABA1 (8) -> The Throne (16) -> BRA2 (1) -> CRA3
+  (2) -> EHP3 (13), 6 s apart.
+- before = core-pad (the live core before the fix) + main.js without the two page fixes.
+- after = the live core (core2 / core3) + the current page.
+- WebKit through the driver (desktop 960x720, phone `__XPC_JSC_forceRAMSize=6442450944` 844x390 quality=low).
+- QA = `?qa=1`. Normal = no qa (perf=1 for the handle). `?mute=1` everywhere.
+
+| run | before | after |
+| --- | --- | --- |
+| Chrome QA (x2) | r1: no trap; Throne -> BRA2 dropped (90 s at course 16). r2: C++ "no sphere tree" in the Transport to ABA1, then out-of-bounds traps every frame; the next 4 Transports never arrive | 2 of 2: 5 of 5 arrive (ABA1 2.5 s, Throne 20.6 s with the first-visit movie and heli drop, BRA2 4.5 s, CRA3 6.0 s, EHP3 2.5 s), no roller left, 0 errors |
+| Chrome normal | the roller survives every eviction; Throne -> BRA2 dropped | 5 of 5 arrive, 0 errors |
+| WebKit desktop QA (x2) | the roller survives; Throne -> BRA2 dropped (both); footprint max 933-1097 MB | 5 of 5 arrive (both), 0 errors; footprint max 920-1105 MB |
+| WebKit desktop normal | the same; footprint max 1001-1386 MB | 5 of 5 arrive, 0 errors; 1050-1181 MB |
+| WebKit phone QA (x2) | the same; footprint max 770-1119 MB | 5 of 5 arrive (both), 0 errors; 727-1066 MB |
+| WebKit phone normal | the same; footprint max 833-1170 MB | 5 of 5 arrive, 0 errors; 727-829 MB |
+
+- Before: the trap came in 1 of 9 runs. The roller of R&B outlived R&B in every run that recorded it (7), and the Throne -> BRA2
+  request was dropped in all 8 that got there.
+- After: 45 of 45 Transports arrive, 0 core errors, no roller left.
+- Before, a "Throne arrival" took 2-3.6 s: the loop ended early, and `course()` had already changed. After, it takes 20.6-22.4 s:
+  the held loop, the EBC3 movie and the heli drop, as listed.
+
+No page reload and no WebContent crash in any of the 18 runs (12 in WebKit): this machine shows no memory cause.
+- The QA agent's "reloads" were not reproduced. Its own logs show only the trap chain above.
+- A corrupted core can also loop inside wasm (no frame, no timer), as in "The course being built runs nothing", so a reload or hang
+  after the trap is possible but was not seen.
+- Also not reproduced: the lodge door cut (the harness cannot ride into the door volume).
+- Checked: station 17 -> CHP2 with the station's departure cut, in WebKit (the NIS-hold check on core-clock: remaining constant
+  through the hold, one step when the destination's path bank arrives, no jump at its end).
+
 ## Gaps
 
 - Save import (Options > Save/Load, `web/fe-saveload.js`) still reloads the page: a dozen modules read their part of

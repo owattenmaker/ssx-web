@@ -1,4 +1,4 @@
-// How much game time one drawn frame advances after a slow frame, as the PS2's frame loop does it (pv stallCap, web/main.js
+// How much game time one drawn frame advances after a slow frame, as the PS2's frame loop does it (stallCap, web/main.js
 // frame; docs/workers.md "Game tick"). Offline play only: online races keep the server-paced full catch-up.
 //
 // The PS2 (SLUS_207.72, recompiled local/output; measured with tools/ps2_capture.py stall savestates, docs/HANDOFF.md):

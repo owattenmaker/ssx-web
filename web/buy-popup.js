@@ -1,5 +1,5 @@
 // The lodge's buy popups as the PS2 draws them: cUIStateBuyPopup (0x1CABA8, "UITRICKBUY") shows FE.LUI 139buy_popup (0x1CAC30)
-// for Buy Attributes (0x1CAFC0), Ubertrick Setup (initBuyTrick 0x1CAF58) and the Rewards rooms; pv buyAttribs. The layout
+// for Buy Attributes (0x1CAFC0), Ubertrick Setup (initBuyTrick 0x1CAF58) and the Rewards rooms; buyAttribs. The layout
 // (UI/character-select.json '139buy_popup', tools/export_character_select.py) plays its own timeline: frame 1 the box grows
 // from 20 % (five shapes, 25 frames) and the veil fades in (8 frames), frame 25 the texts fade in (5 frames), frame 30 the
 // timeline stops and the menu takes over: the focused item's frame (Yes 35, No 40: its text white, the Cross icon beside it).

@@ -47,7 +47,15 @@ export class ReplayUi {
     let x = 0, y = 0, z = 0;
     const pad = pollPads();   // the active standard-layout pad (web/gamepad.js)
     if (pad?.axes?.length >= 4 && this.menu < 0) { const dz = (v) => (Math.abs(v) < 0.2 ? 0 : v); x = dz(+pad.axes[0] || 0); y = dz(+pad.axes[1] || 0); z = dz(+pad.axes[2] || 0); }
-    const k = this.keys; if (this.menu < 0) { if (k.has('KeyJ')) x = -1; if (k.has('KeyL')) x = 1; if (k.has('KeyI')) y = -1; if (k.has('KeyK')) y = 1; if (k.has('KeyU')) z = -1; if (k.has('KeyO')) z = 1; }
+    const k = this.keys;
+    if (this.menu < 0) {
+      if (k.has('KeyJ')) x = -1;
+      if (k.has('KeyL')) x = 1;
+      if (k.has('KeyI')) y = -1;
+      if (k.has('KeyK')) y = 1;
+      if (k.has('KeyU')) z = -1;
+      if (k.has('KeyO')) z = 1;
+    }
     this.replay.setManual(x, y, z);
   }
   key(e) {
@@ -111,5 +119,8 @@ export class ReplayUi {
     // 'top' (0, 20), flat grey 128 (PS2 replay/rmenu2.f00700: 128,128,128), fading in with the bar (frames 16..21)
     if (this.timeline && t >= 16) { c.globalAlpha = Math.min(1, (t - 16) / 5); c.fillStyle = 'rgb(128,128,128)'; c.fillRect(164 + Math.round(r.progress * 315), 54, 11, 11); c.globalAlpha = 1; }
     c.restore();
+    // pv onlineRecords (web/online-replay.js): a downloaded run recorded on another core build plays on this one (decision D7), noted
+    // under the bar in the help text's font and colour
+    if (this.note && this.timeline && t >= 21) this.ui.text?.(c, this.note, 50, Math.round(92 * SY), 12, '#cfe3ea', 'FEFONT');
   }
 }

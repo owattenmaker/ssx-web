@@ -188,16 +188,14 @@ assert.deepEqual([data.texts.message_center, data.texts.total.replace('%d', 2), 
 // pv ctmSmallFixes: the message view's Delete is 0x1E5800 -> 1E3268(item): the FIRST entry with that item goes (a repeated message:
 // the oldest), not the viewed one; the list's Square deletes by index.
 {
-  const { setPv } = await import('./pv-flags.js');
   const me = { messages: { entries: [[0x58, 0], [0x6D, 3], [0x58, 1]], read: 0, posted: [] } };
   const ui = { screen: 'ctm-message', index: 1, set(s) { this.screen = s; }, sync() {} };
   const m = new CareerMessages({ ui, me, career: { persist() {} } }); m.data = data;
-  for (const [on, want] of [[true, [[0x6D, 3], [0x58, 1]]], [false, [[0x58, 0], [0x6D, 3]]]]) {
-    setPv('ctmSmallFixes', on); me.messages.entries = [[0x58, 0], [0x6D, 3], [0x58, 1]];
+  for (const [on, want] of [[true, [[0x6D, 3], [0x58, 1]]]]) {
+    me.messages.entries = [[0x58, 0], [0x6D, 3], [0x58, 1]];
     m.view = { type: 'message', index: 2, item: 0x58, variant: 1 }; ui.screen = 'ctm-message'; m.choose(1);
     assert.deepEqual(me.messages.entries, want, on ? 'the oldest 0x58 removed (1E3268)' : 'switch off: the viewed entry');
   }
-  setPv('ctmSmallFixes', null);
 }
 // pv mailFreeze: the event's posts start the icon where the PS2's froze under WS5 (182 frames: race-f res 3.033), and the Message Center
 // freezes it (HUD events 3 / 4) instead of clearing it.

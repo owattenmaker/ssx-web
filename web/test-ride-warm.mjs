@@ -8,7 +8,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from './headless-chrome.mjs';
-import { PV_DEFAULTS } from './pv-flags.js';
 
 if (!fs.existsSync(new URL('./public/assets/courses.json', import.meta.url))) { console.log('ride warm: skipped (no game data)'); process.exit(0); }
 const browser = await startBrowser({ width: 960, height: 720, init: 'performance.setResourceTimingBufferSize(8000)' });
@@ -31,7 +30,7 @@ try {
   if (!(await browser.hasWebGPU(server.origin))) { console.log('ride warm: skipped (no WebGPU in headless Chrome)'); process.exit(0); }
   const off = await ride('-rideWarm'), on = await ride('rideWarm');
   // the career free ride's world at quality=low: MOUNTAIN once pv peakRelease is on (web/free-ride.js mountainFreeRide), else the peak world
-  const world = PV_DEFAULTS.peakRelease && PV_DEFAULTS.mountainRide ? 'MOUNTAIN' : 'PEAK1';
+  const world = 'MOUNTAIN';
   assert.equal(off.info.course, world); assert.equal(on.info.course, world);
   assert.deepEqual(on.info.warm.sort(), ['ride:compile', 'ride:rider'], 'the rider warmed under the load screen');
   assert.deepEqual(on.info.late, [], 'nothing of the rider package fetched after the ride started');

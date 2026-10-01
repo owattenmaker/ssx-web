@@ -1,5 +1,5 @@
 // The Conquer the Mountain freestyle heat results: OV.LUI 42freestyle_standings (tools/export_fs_standings.py ->
-// /assets/UI/fs-standings.json; pv fsStandings, docs/ctm-parity.md "Freestyle standings") in the OV_darkblue panel of
+// /assets/UI/fs-standings.json; fsStandings, docs/ctm-parity.md "Freestyle standings") in the OV_darkblue panel of
 // web/results-lui.js. web/career-ui.js draws the qualifying heats (rounds 1 and 2) through it; the final keeps
 // 43final_standings.
 //   0x1E5B80 (build): track_event '<course> - <event>', title kT_OVRCMNQFHeat1Stand / kT_OVRCMNQFHeat2Stand; the header "Total:"
@@ -18,7 +18,6 @@
 // 'Up next' the human (p0rider) with p0run1 = the heat 1 score before heat 2, else '- - -', and p0dashes under Heat 2; the
 // record score; Continue. The show pulses p0rider and p0dashes (heat 2) or p0run1.
 import { LuiScreen } from './lui-player.js';
-import { pv } from './pv-flags.js';
 
 const SY = 448 / 480;
 export const DASHES = '- - -';   // 0x4A2168
@@ -71,7 +70,7 @@ export class FsStandings {
       this.data = data;
     } catch (e) { console.warn('Freestyle standings panel missing (python3 tools/export_fs_standings.py)', e); }
   }
-  get ready() { return pv('fsStandings') && !!this.data && !!this.ui.careerUI?.resultsLui?.ready; }
+  get ready() { return (!!this.data) && !!this.ui.careerUI?.resultsLui?.ready; }
   get cardReady() { return this.ready && !!this.pre; }
   now() { return performance.now() * 60 / 1000; }
   // m: standingsModel(...); title / sub: the two header lines; items: the menu labels; index: focus; strings: t(key, fallback)
@@ -82,7 +81,9 @@ export class FsStandings {
     const lui = this.lui, name = (label) => this.by.get(label), focus = 40 + 10 * Math.max(0, Math.min(4, index));
     const events = lui.screen.events.filter((ev) => ev.frame === 30 || ev.frame === focus).map((ev) => ({ ev, start: ev.frame }));
     const tp = now - this.shownAt;
-    if (model.pulse >= 0) for (const l of [`rider_${model.pulse + 1}`, `run_${model.pulseRun}.${model.pulse + 1}`]) events.push({ ev: { element: name(l), anim: this.data.pulse, mode: 3, frame: 0 }, start: 1000 });
+    if (model.pulse >= 0)
+      for (const l of [`rider_${model.pulse + 1}`, `run_${model.pulseRun}.${model.pulse + 1}`])
+        events.push({ ev: { element: name(l), anim: this.data.pulse, mode: 3, frame: 0 }, start: 1000 });
     const helpShown = !model.help ? null : model.help.place ? `help_current0${model.help.place}` : `help_${model.help.key}`;
     const labelOf = new Map([...this.by].map(([l, n]) => [n, l]));
     const override = (e) => {

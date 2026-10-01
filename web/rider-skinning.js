@@ -11,7 +11,9 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
  const positions=new Float32Array(count*3),normals=new Float32Array(count*3),slots=new Float32Array(count),groupMap=new Map();
  for(let i=0;i<count;i++){
   positions.set([vertices[i*10]*100,-vertices[i*10+2]*100,vertices[i*10+1]*100],i*3);
-  const sourceNormal=[vertices[i*10+3],-vertices[i*10+5],vertices[i*10+4]];if(rig.source_normal_quantization===32768)for(let k=0;k<3;k++)sourceNormal[k]=Math.max(-32768,Math.min(32767,Math.round(sourceNormal[k]*32768)))/32768;
+  const sourceNormal = [vertices[i * 10 + 3], -vertices[i * 10 + 5], vertices[i * 10 + 4]];
+  if (rig.source_normal_quantization === 32768)
+    for (let k = 0; k < 3; k++) sourceNormal[k] = Math.max(-32768, Math.min(32767, Math.round(sourceNormal[k] * 32768))) / 32768;
   normals.set(sourceNormal,i*3);
   const group=rig.source_skin[i];if(group.length<1||group.length>4)throw Error('Invalid source influence count');
   const key=JSON.stringify(group);if(!groupMap.has(key))groupMap.set(key,groupMap.size);slots[i]=groupMap.get(key);
@@ -51,40 +53,88 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
   return mix(normalAt(0),normalAt(previousRows),alpha);
  })();
  return {
-  vertexNode,worldNode,lightingNormal,enabledNode:enabled,
-  attach(geometry){geometry.setAttribute('sourcePosition',new BufferAttribute(positions,3));geometry.setAttribute('sourceNormal',new BufferAttribute(normals,3));geometry.setAttribute('sourceSkinGroup',new BufferAttribute(slots,1));},
-  // A tick with no pose (count 0, no palette: the core cleared its cached world pose, rider+0x2C, and has not posed since: the
-  // mission builtin 64 teleport 300948 -> 1234D0 poses at the next tick) draws the last palette again, as the PS2 draws +0x2C as it
-  // stands; a reset asked for then applies at the next capture. Returns false for such a tick. A palette of another size throws.
-  capture(core,reset=false){
-   const size=core._rider_skin_palette_count(),pointer=size?core._rider_skin_palette():0;
-   if(!size&&!pointer){
-    resetPending||=reset;
-    if(available){data.copyWithin(0,stride);texture.needsUpdate=true;if(poseBones[1]&&poseBones[0]?.length===poseBones[1].length)poseBones[0].set(poseBones[1]);}
-    return false;
+   vertexNode,
+   worldNode,
+   lightingNormal,
+   enabledNode: enabled,
+   attach(geometry) {
+     geometry.setAttribute('sourcePosition', new BufferAttribute(positions, 3));
+     geometry.setAttribute('sourceNormal', new BufferAttribute(normals, 3));
+     geometry.setAttribute('sourceSkinGroup', new BufferAttribute(slots, 1));
+   },
+   // A tick with no pose (count 0, no palette: the core cleared its cached world pose, rider+0x2C, and has not posed since: the
+   // mission builtin 64 teleport 300948 -> 1234D0 poses at the next tick) draws the last palette again, as the PS2 draws +0x2C as it
+   // stands; a reset asked for then applies at the next capture. Returns false for such a tick. A palette of another size throws.
+   capture(core, reset = false) {
+     const size = core._rider_skin_palette_count(),
+       pointer = size ? core._rider_skin_palette() : 0;
+     if (!size && !pointer) {
+       resetPending ||= reset;
+       if (available) {
+         data.copyWithin(0, stride);
+         texture.needsUpdate = true;
+         if (poseBones[1] && poseBones[0]?.length === poseBones[1].length) poseBones[0].set(poseBones[1]);
+       }
+       return false;
+     }
+     reset ||= resetPending;
+     resetPending = false;
+     const hadPose = available && !reset;
+     if (size !== groupCount || !pointer) throw Error('Missing live source skin palette');
+     if (!available) {
+       const p = core._rider_skin_palette_indices();
+       if (!p) throw Error('Missing skin palette indices');
+       const ids = new Uint32Array(core.HEAPU8.buffer, p, count);
+       for (let i = 0; i < count; i++) if (ids[i] !== slots[i]) throw Error('Skin palette vertex mapping differs');
+     }
+     const current = new Float32Array(core.HEAPF32.buffer, pointer, stride);
+     if (available && !reset) data.copyWithin(0, stride);
+     else data.set(current, 0);
+     data.set(current, stride);
+     available = true;
+     texture.needsUpdate = true;
+     if (core._world_pose_bones && core._pose_physical) {
+       const bp = core._world_pose_bones() >> 2,
+         pp = core._pose_physical() >> 2,
+         F = core.HEAPF32,
+         length = 1 + 7 * F[bp];
+       const keep = hadPose && poseBones[1]?.length === length;
+       if (poseBones[1]?.length !== length) {
+         poseBones = [new Float32Array(length), new Float32Array(length)];
+         shadow.bones = new Float32Array(length);
+       }
+       const previous = poseBones[0];
+       poseBones[0] = poseBones[1];
+       poseBones[1] = previous;
+       poseBones[1].set(F.subarray(bp, bp + length));
+       if (!keep) poseBones[0].set(poseBones[1]);
+       posePhysical.set(F.subarray(pp, pp + 12));
+     }
+     return true;
+   },
+   // The fit inputs of the drawn pose: {bones (world_pose_bones layout, blended), physical (current pose_physical)}.
+   // Scratch result consumed immediately by rider-shadow.js; callers retaining it must copy.
+   shadowPose() {
+     if (!available || !poseBones[1]) return null;
+     const [a, b] = poseBones,
+       t = Math.max(0, Math.min(1, alpha.value)),
+       out = shadow.bones;
+     out[0] = b[0];
+     for (let i = 1; i < b.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+     return shadow;
+   },
+   display(active, fraction) {
+     enabled.value = !!active && available;
+     alpha.value = Math.max(0, Math.min(1, fraction));
+     return enabled.value;
+   },
+   reset() {
+     available = false;
+     resetPending = false;
+     enabled.value = false;
+   },
+   dispose() {
+     texture.dispose();
    }
-   reset||=resetPending;resetPending=false;
-   const hadPose=available&&!reset;
-   if(size!==groupCount||!pointer)throw Error('Missing live source skin palette');
-   if(!available){const p=core._rider_skin_palette_indices();if(!p)throw Error('Missing skin palette indices');const ids=new Uint32Array(core.HEAPU8.buffer,p,count);for(let i=0;i<count;i++)if(ids[i]!==slots[i])throw Error('Skin palette vertex mapping differs');}
-   const current=new Float32Array(core.HEAPF32.buffer,pointer,stride);
-   if(available&&!reset)data.copyWithin(0,stride);else data.set(current,0);
-   data.set(current,stride);available=true;texture.needsUpdate=true;
-   if(core._world_pose_bones&&core._pose_physical){
-    const bp=core._world_pose_bones()>>2,pp=core._pose_physical()>>2,F=core.HEAPF32,length=1+7*F[bp];
-    const keep=hadPose&&poseBones[1]?.length===length;
-    if(poseBones[1]?.length!==length){poseBones=[new Float32Array(length),new Float32Array(length)];shadow.bones=new Float32Array(length);}
-    const previous=poseBones[0];poseBones[0]=poseBones[1];poseBones[1]=previous;
-    poseBones[1].set(F.subarray(bp,bp+length));if(!keep)poseBones[0].set(poseBones[1]);
-    posePhysical.set(F.subarray(pp,pp+12));
-   }
-   return true;
-  },
-  // The fit inputs of the drawn pose: {bones (world_pose_bones layout, blended), physical (current pose_physical)}.
-  // Scratch result consumed immediately by rider-shadow.js; callers retaining it must copy.
-  shadowPose(){if(!available||!poseBones[1])return null;const [a,b]=poseBones,t=Math.max(0,Math.min(1,alpha.value)),out=shadow.bones;out[0]=b[0];for(let i=1;i<b.length;i++)out[i]=a[i]+(b[i]-a[i])*t;return shadow;},
-  display(active,fraction){enabled.value=!!active&&available;alpha.value=Math.max(0,Math.min(1,fraction));return enabled.value;},
-  reset(){available=false;resetPending=false;enabled.value=false;},
-  dispose(){texture.dispose();}
  };
 }

@@ -1,4 +1,4 @@
-// Avalanche trails (pv avalancheTrails; docs/avalanche.md "Trails"). The avalanche component's draw 0x2D9130 (vt +0x1C) runs
+// Avalanche trails (avalancheTrails; docs/avalanche.md "Trails"). The avalanche component's draw 0x2D9130 (vt +0x1C) runs
 // 0x2D8EA8(slot) for each active slot, and that runs 0x371688(emitter, 7) for each playing tumbler whose group has an emitter:
 // the colour emitter's birth ring drawn by particle program 0x439A40 entry 0xA00 (renderer +0x2A4 -> 0x380CE0, word0 0x100),
 // the rider snow's path. 0x371688 draws only with +0x174 (enabled) set and +0x1E0 (live births) > 0.
@@ -11,7 +11,6 @@ import {attribute, texture, vec4, select, uniform, positionGeometry, modelViewMa
 import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
 import {mul, add, sub, div, fromBits} from './ee-scalar-float.js';
-import {pv} from './pv-flags.js';
 import {drawOrder, SUBMIT} from './ps2-draw-order.js';
 
 // Dynamic emitter (engine/set_piece_particles.hpp dynamic_emitter) and particle kernel (particle_kernel) offsets, bytes.
@@ -101,7 +100,7 @@ export async function createAvalancheTrails({core, origin = [0, 0, 0], capacity 
   }));
   const encodedOutput = uniform(false), group = new T.Group(); group.name = 'avalanche trails'; group.userData.gameplayOnly = true;
   group.position.set(-origin[0], -origin[1], -origin[2]);
-  const meshes = new Map(), effectOrder = pv('effectOrder');
+  const meshes = new Map();
   function build(id) {
     const tex = maps.get(id); if (!tex) return null;
     const geometry = new T.PlaneGeometry(2, 2);
@@ -118,12 +117,21 @@ export async function createAvalancheTrails({core, origin = [0, 0, 0], capacity 
     material.fragmentNode = vec4(select(encodedOutput, rgb, toFrame(rgb)), texel.a.mul(tex.scale).mul(col.a).clamp(0, 1));   // GS 0x44
     const mesh = new T.InstancedMesh(geometry, material, capacity);
     mesh.count = 1; mesh.frustumCulled = false; mesh.visible = false;   // count 1: warmable
-    mesh.renderOrder = effectOrder ? drawOrder({priority: 7, mode: 4, fx: id}, SUBMIT.avalanche) : 689.5;
+    mesh.renderOrder = drawOrder({priority: 7, mode: 4, fx: id}, SUBMIT.avalanche);
     group.add(mesh);
     const entry = {mesh, centre, colour}; meshes.set(id, entry); return entry;
   }
   for (const id of maps.keys()) build(id);
-  registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => { for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true; return false; }});
+  registerEncodedEffect({
+    object: group,
+    setEncodedOutput: (v) => {
+      encodedOutput.value = !!v;
+    },
+    populated: () => {
+      for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true;
+      return false;
+    }
+  });
   const scratch = new Float32Array(capacity * TRAIL_FLOATS), counts = new Map(), state = {trails: 0, sprites: 0, unknownTexture: 0};
   return {
     group, state,

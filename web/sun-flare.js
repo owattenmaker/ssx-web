@@ -1,4 +1,19 @@
-import {Vector3,Vector2,Vector4,DataTexture,RGBAFormat,UnsignedByteType,LinearFilter,NearestFilter,ClampToEdgeWrapping,NoColorSpace,RenderTarget,HalfFloatType,MeshBasicNodeMaterial,QuadMesh} from 'three/webgpu';
+import {
+  Vector3,
+  Vector2,
+  Vector4,
+  DataTexture,
+  RGBAFormat,
+  UnsignedByteType,
+  LinearFilter,
+  NearestFilter,
+  ClampToEdgeWrapping,
+  NoColorSpace,
+  RenderTarget,
+  HalfFloatType,
+  MeshBasicNodeMaterial,
+  QuadMesh
+} from 'three/webgpu';
 import {Fn,uniform,texture,vec2,vec4,float,int,floor,min,max,select,screenUV,Loop,perspectiveDepthToViewZ} from 'three/tsl';
 import {followRegion,followWorldLoad} from './painter-regions.js';
 
@@ -41,7 +56,7 @@ export function painterPayloadIndex(tree,x,y){
 export function createSunPainter(pkg){
  let tree=pkg.painter,payloads=(tree?.payloads??[]).map(p=>payloadValues(p).map(f));const defaults=payloadValues(pkg.defaults).map(f);
  let current=defaults.slice(),distance=-99999,lastX=0,lastY=0,lastTicks=-1,selected=-1;
- const region={track:-1,located:false};let missing=false; // pv regionTick (web/painter-regions.js): gp+0x770's record; missing: not loaded
+ const region={track:-1,located:false};let missing=false; // regionTick (web/painter-regions.js): gp+0x770's record; missing: not loaded
  const reset=()=>{current=defaults.slice();distance=0;};
  const blend=(values,weight)=>{const w=f(weight*weight),c=f(1-w);current=current.map((v,i)=>i===6?Math.trunc(f(f(w*values[i])+f(c*v))):f(f(w*values[i])+f(c*v)));};
  function step(x,y){
@@ -59,10 +74,10 @@ export function createSunPainter(pkg){
  return {step,
   tick(core){const info=new Float32Array(core.HEAPF32.buffer,core._fog_info(),11),ticks=info[7];
    if(!info[10])return;if(ticks<lastTicks){current=defaults.slice();distance=-99999;selected=-1;}
-   if(followWorldLoad(region,core)){current=defaults.slice();distance=0;selected=-1;} // pv painterWorldLoad: the class defaults, +0 = 0
+   if(followWorldLoad(region,core)){current=defaults.slice();distance=0;selected=-1;} // the class defaults, +0 = 0
    if(ticks>0&&ticks!==lastTicks){const r=followRegion(region,core,'sun');if(r){missing=!r.record;if(r.record)useTree(r.doc?.painter??null);}step(info[8],info[9]);}lastTicks=ticks;},
   // Streamed Peak 1 world (web/free-ride.js): the painter region's Sun section (null: none); the blend state is kept. Ignored
-  // while the located records rule (pv regionTick).
+  // while the located records rule.
   setTree(next){if(!region.located)useTree(next);},
   get values(){return Object.fromEntries(SUN_FIELDS.map((k,i)=>[k,current[i]]));},
   get state(){return {current:current.slice(),selected,distance};}};
@@ -80,7 +95,14 @@ export function sunSprites(pkg,values,screen,vis){
  const half=values.size===1?c.default_glow_half_size:values.size;
  const glow={texture:pkg.sun_textures[values.texture],centre:screen,half,uv:[0,0,1,1],rgb:[values.r,values.g,values.b].map(byte),a:byte(f(1*f(vis*values.glowAlpha)))};
  const quad=[[0,0,.5,.5],[.5,0,1,.5],[0,.5,.5,1],[.5,.5,1,1]];
- const flares=pkg.flares.map(e=>({texture:'lens',centre:[cx+(screen[0]-cx)*e.position,cy+(screen[1]-cy)*e.position],half:e.size*c.flare_size_scale,uv:quad[e.quadrant]??[0,0,.5,1],rgb:e.argb.slice(1).map(byte),a:byte(f(e.argb[0]*f(vis*values.flareAlpha)))}));
+ const flares = pkg.flares.map((e) => ({
+   texture: 'lens',
+   centre: [cx + (screen[0] - cx) * e.position, cy + (screen[1] - cy) * e.position],
+   half: e.size * c.flare_size_scale,
+   uv: quad[e.quadrant] ?? [0, 0, 0.5, 1],
+   rgb: e.argb.slice(1).map(byte),
+   a: byte(f(e.argb[0] * f(vis * values.flareAlpha)))
+ }));
  return [glow,...flares];
 }
 // 2EC478 counting rule for the 16x16 rect centred on the sun (viewport pixels).
@@ -99,7 +121,13 @@ export async function createSunFlare(root='/assets/SUN_FLARE/'){
  const maps={};
  await Promise.all(Object.entries(pkg.textures).map(async([name,t])=>{
   const bytes=new Uint8Array(await (await fetch(root+t.file)).arrayBuffer());if(bytes.length!==t.width*t.height*4)throw Error('Sun texture extent');
-  const map=new DataTexture(bytes,t.width,t.height,RGBAFormat,UnsignedByteType);map.minFilter=map.magFilter=LinearFilter;map.wrapS=map.wrapT=ClampToEdgeWrapping;map.colorSpace=NoColorSpace;map.generateMipmaps=false;map.needsUpdate=true;maps[name]=map;
+  const map = new DataTexture(bytes, t.width, t.height, RGBAFormat, UnsignedByteType);
+  map.minFilter = map.magFilter = LinearFilter;
+  map.wrapS = map.wrapT = ClampToEdgeWrapping;
+  map.colorSpace = NoColorSpace;
+  map.generateMipmaps = false;
+  map.needsUpdate = true;
+  maps[name] = map;
  }));
  const painter=createSunPainter(pkg),c=pkg.constants,[VW,VH]=c.viewport;
  // Per-frame uniforms: sun in viewport pixels, glow bytes, flare alpha, query.
@@ -150,7 +178,9 @@ export async function createSunFlare(root='/assets/SUN_FLARE/'){
    })();
    visQuad=new QuadMesh(visMaterial);
    const update=worldPass.updateBefore.bind(worldPass);
-   worldPass.updateBefore=frame=>{update(frame);if(!frameState.visible&&!api.warm)return;/* warm (main.js loading-screen warm-up): the Z query pipeline builds even with the sun out of view (its result is unused then) */const prior=renderer.getRenderTarget();try{renderer.setRenderTarget(visTarget);visQuad.render(renderer);}finally{renderer.setRenderTarget(prior);}};
+   worldPass.updateBefore=frame=>{update(frame);if(!frameState.visible&&!api.warm)return;
+   // warm (main.js loading-screen warm-up): the Z query pipeline builds even with the sun out of view (its result is unused then)
+const prior=renderer.getRenderTarget();try{renderer.setRenderTarget(visTarget);visQuad.render(renderer);}finally{renderer.setRenderTarget(prior);}};
   },
   // Once per rendered frame with the displayed camera (2F4DB8 + 2F4A08 setup).
   update(camera){
@@ -165,7 +195,14 @@ export async function createSunFlare(root='/assets/SUN_FLARE/'){
    sunScreen.value.set(...screen);queryOrigin.value.set(...q.origin);queryRead.value.set(...q.read);sunDepth.value=-view.z;near.value=camera.near;far.value=camera.far;
    const sprites=sunSprites(pkg,v,screen,1);
    glowHalf.value=sprites[0].half;glowRgb.value.set(...sprites[0].rgb);glowAlpha.value=f(v.glowAlpha);glowSun2.value=v.texture===1?1:0;
-   sprites.slice(1).forEach((s,i)=>{const n=flareNodes[i];n.centre.value.set(...s.centre);n.half.value=s.half;n.uv.value.set(...s.uv);n.rgb.value.set(...s.rgb);n.alpha.value=f(pkg.flares[i].argb[0]*v.flareAlpha);});
+   sprites.slice(1).forEach((s, i) => {
+     const n = flareNodes[i];
+     n.centre.value.set(...s.centre);
+     n.half.value = s.half;
+     n.uv.value.set(...s.uv);
+     n.rgb.value.set(...s.rgb);
+     n.alpha.value = f(pkg.flares[i].argb[0] * v.flareAlpha);
+   });
    visible.value=1;frameState={visible:true,screen,query:q,depth:-view.z};return frameState;
   },
   // Widescreen band (widescreen.js view.band): 3D viewport lines of the 448-line buffer.

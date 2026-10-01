@@ -17,7 +17,10 @@ export const RETURN_CORE_EXPORTS = ['_transport_map_enter', '_event_course_seed'
   '_set_race_bonus', '_rider_setup_player_reset', '_race_world_player_setup', '_init_race', '_reset_race', '_reset_pad_history', '_mission_world_session',
   '_location_entry_place', '_place_rider_region', '_game_tick_restart', '_race_world_pair_restart', '_rider_peers_restart', '_race_world_rank_mode',
   '_rider_pose_step'];
-export function requireReturnCore(core) { const missing = RETURN_CORE_EXPORTS.filter((f) => typeof core?.[f] !== 'function'); if (missing.length) throw new Error(`This core has no ${missing.map((f) => f.slice(1)).join(', ')}`); }
+export function requireReturnCore(core) {
+  const missing = RETURN_CORE_EXPORTS.filter((f) => typeof core?.[f] !== 'function');
+  if (missing.length) throw new Error(`This core has no ${missing.map((f) => f.slice(1)).join(', ')}`);
+}
 
 function withString(human, cstr, text, f) { const p = cstr(text); try { return f(p); } finally { human._free(p); } }
 
@@ -47,7 +50,13 @@ export function sessionReturn({ human, racers, cstr, bank, entry, freeRideDoc })
   withString(human, cstr, JSON.stringify(bank), (b) => {
     human._mission_world_session(0);
     if (!human._location_entry_place(b, 0, x, y, z, dx, dy, dz)) throw new Error('location_entry_place: no start row');
-    if (racers) racers.resume({ place: (c) => { const slot = racers.npcs.findIndex((n) => n.core === c) + 1; if (!c._location_entry_place(b, slot, x, y, z, dx, dy, dz)) throw new Error('location_entry_place: no start row'); } });
+    if (racers)
+      racers.resume({
+        place: (c) => {
+          const slot = racers.npcs.findIndex((n) => n.core === c) + 1;
+          if (!c._location_entry_place(b, slot, x, y, z, dx, dy, dz)) throw new Error('location_entry_place: no start row');
+        }
+      });
     else human._game_tick_restart(0); // (no riders kept: 129768's C+8 = 0 for the human alone; web/ai-racers.js resume restarts every core's)
     human._place_rider_region(x, y, z, dx, dy, dz, 0);
     human._mission_world_session(1);
@@ -60,7 +69,8 @@ export function sessionReturn({ human, racers, cstr, bank, entry, freeRideDoc })
 // physics). The riders' contexts go back to the host (detach). The ticks before are counted by web/ai-racers.js (its riders sit out
 // ticks 3 and 4).
 export function sessionRidersLeave({ human, racers }) {
-  for (const n of racers?.npcs ?? racers?.racers?.npcs ?? []) { n.core._snapshot_clear?.(0); n.core._snapshot_clear?.(1); } // (web/event-snapshot.js snapshotReleaseRiders: the event's replay copies go with its riders; racers: the orchestrator or web/ai-race.js)
+  // (web/event-snapshot.js snapshotReleaseRiders: the event's replay copies go with its riders; racers: the orchestrator or web/ai-race.js)
+  for (const n of racers?.npcs ?? racers?.racers?.npcs ?? []) { n.core._snapshot_clear?.(0); n.core._snapshot_clear?.(1); }
   const blocks = racers ? racers.detach() : [];
   requireReturnCore(human); human._rider_peers_restart(1); human._game_tick_restart(0); // 12B030's 10F3B8 with the human alone; 1297C8(C, 0)'s C+8 = 0
   human._rider_pose_step(); // 129160

@@ -11,6 +11,9 @@ browser ──https/wss──> Cloudflare (the site)          ──tunnel (outb
                                                               (static game + /mp WebSocket + password gate)
 ```
 
+
+**Public since 2026-10-01.** The password gate is off: the host plist has no MP_GATE_PASSWORD_FILE (backup ~/ssx-host/state/server.plist.bak-20261001-gate) and the worker has no GATE_SECRET, so the edge checks no session. The origin sends `x-robots-tag: noindex, nofollow` and serves a disallow-all /robots.txt. To gate it again: restore MP_GATE_PASSWORD_FILE in the plist and reload the agent, then `cd deploy && npx wrangler@4 secret put GATE_SECRET --name ssx-edge` with ~/ssx-host/state/gate-secret.
+
 ## Security model
 
 - **No inbound ports.** `cloudflared` only dials out to Cloudflare; the Node server listens on `127.0.0.1` only, so
@@ -60,7 +63,7 @@ browser ──https/wss──> Cloudflare (the site)          ──tunnel (outb
   visit (one 304 instead of hundreds), counted by the loading screens. The payload is PNG, so precompress.mjs keeps no
   gzip copy (gzip saves 3%). Deploying them is a full asset deploy: the new world.json / wardrobe.json files reference
   the archives, and the per-location PNGs are gone from the export.
-- **Gzip copies:** `web/server/precompress.mjs` (run by `deploy/deploy.sh` on the host) writes
+- **Gzip copies:** `web/server/precompress.mjs` (run on the host by both deploy scripts) writes
   `~/ssx-host/app/web/precompressed/<path>.gz` for every file it shrinks by 10%+ (1347 MB -> 614 MB; `colors.bin`
   8.1 MB -> 314 KB). The server sends them to gzip clients (`MP_PRECOMPRESSED`), never when older than the file, and
   always adds `X-Decoded-Length` for the progress bar. Cloudflare does not compress `application/octet-stream` itself.
@@ -131,14 +134,35 @@ Nothing that names the host is in the repo. `deploy/env.sh` (sourced by both dep
 On the prep machine (it holds the extracted assets, which never go to GitHub):
 
 ```sh
-deploy/deploy.sh              # build, sync code + assets + sandbox profile, reinstall and restart the server agent
-deploy/deploy.sh --no-assets  # code only
-deploy/deploy-staged.sh       # preferred: stage code + assets beside the live copy, md5-verify, swap together (*.prev kept)
+deploy/deploy-staged.sh       # every deploy: stage code + assets beside the live copy, md5-verify, swap together (*.prev kept)
 deploy/deploy-staged.sh --rollback  # swap the previous version back in
+deploy/deploy.sh              # first install, or a change to deploy/ssx-server.sb or the server plist: build, sync code + assets,
+                              # install the sandbox profile and the LaunchAgent plist, restart the server agent (not staged)
+deploy/deploy.sh --no-assets  # the same without the game data
 ```
 
 Checks: `web/test-mp-gate.mjs` (in `npm test`); end to end over the public URL (login, Snow Jam race with computer
 riders, two-player online race through the tunnel: packets both ways, 13 ms RTT) on 2026-09-24.
+
+## Online records (docs/online-records.md)
+
+The boards and their replays (web/server/records.mjs) are off until the server has `MP_RECORDS_DIR`. Host change (the coordinator
+applies it; not done by the feature's deploy):
+
+- `~/Library/LaunchAgents/<SSX_LABEL>.server.plist`, EnvironmentVariables: `<key>MP_RECORDS_DIR</key><string>__HOME__/ssx-host/state/records</string>`
+  (`__HOME__` as in the other keys), then `launchctl bootout` / `bootstrap` the agent (or `kickstart -k` after a `launchctl` reload of
+  the plist). The directory is created on start.
+- Sandbox (`deploy/ssx-server.sb`): no change. Writes are allowed under `~/ssx-host/state` (board.json, replays/), reads under
+  `~/ssx-host`; the disc tables come from the static root (`public/assets/CAREER/career.json`, `<code>/npc-riders.json`).
+  Checked locally under the profile with sandbox-exec (a copy of web/server/ alone in a host-like tree): it starts and creates
+  `state/records/replays`.
+- `state/` survives deploys (deploy-staged swaps `app/` only), so the boards and replays persist; back up `state/records` with the
+  rest of `state` if anything is backed up.
+- Size: at most 100 runs per board, 20 boards, each replay ~2-60 KB deflated: under ~150 MB worst case.
+- Privacy: nothing about a client is stored (no address, user agent, cookie); the rate limits key on the address in memory only. The
+  boards hold names players typed, rider, time / score, the UTC day, core / build ids. diag.log is unrelated and never served.
+- Endpoints (behind the password gate like everything else): `GET /mp/records`, `GET /mp/records/board?event=`, `GET
+  /mp/records/replay?id=`, `POST /mp/records/submit`. With the directory unset or unusable they answer 503 and nothing else changes.
 
 ## Game data
 

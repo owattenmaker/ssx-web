@@ -101,6 +101,55 @@ def peak_rival(peak, human):
     return {0: 5 if human == 3 else 3, 1: 4 if human == 7 else 7, 2: 6 if human == 8 else 8}.get(peak, 3)
 
 
+# ---- per-round and per-level computer-rider words (cComputer_updateRiderDifficulty 0x10C758) ---------------------------
+# 0x10C450(C, slot, GMM+0): owner +0xE00 route role (jump table 0x456A70; GMM+0 = 1 qualifier, 2 semi, 3 final and a Single
+# Event); +0xE04 = 1 only for slot 1 in round 3. 0x10C4F8(rider, slot, level = 147CB8: the human's profile character +0x280,
+# the race level): +0xDF8 and +0xDFC from three per-slot jump tables (level 0: 0x456AB0, level 1: 0x456A90, level 2: 0x456AD0;
+# gp-0x7DD4..-0x7D24 floats), +0xDFC x 0.01 (gp-0x7D20); then 0x10C758 scales +0xDFC on course 4 by 1.25 and on courses 2 / 3
+# by 1.1 (gp-0x7D1C) and caps it at 1.0. The PS2 FPU rounds mul.s / add.s toward zero. Not modelled: the game mode 0x535C12
+# 4 / 5 role overrides and the options word 0x5308D0 bit 2 (DF8 100, DFC 1.0). Leaves: npc.score_state.role_e00 /
+# allow_flag0_e04 (round), npc.crouch_parameter_df8 / npc.driving_state.parameter_df8 / parameter_dfc (level).
+ROUND_LEAVES = ('npc.score_state.role_e00', 'npc.score_state.allow_flag0_e04')
+LEVEL_LEAVES = ('npc.crouch_parameter_df8', 'npc.driving_state.parameter_df8', 'npc.driving_state.parameter_dfc')
+COURSE_INDEX = {'ARA1': 0, 'BRA2': 1, 'CRA3': 2, 'DRA4': 3, 'ERA5': 4}
+SLOT_DIFFICULTY = {   # level -> slot 1..5 (DF8, DFC before the 0.01)
+    0: [(100.0, 83.89308166503906), (55.80497360229492, 64.6436767578125), (40.250186920166016, 60.00449752807617), (15.542302131652832, 52.00495529174805), (7.954832077026367, 35.020263671875)],
+    1: [(100.0, 86.91539764404297), (80.38914489746094, 79.59983825683594), (51.00757598876953, 68.90123748779297), (46.601898193359375, 56.843074798583984), (14.000700950622559, 42.441043853759766)],
+    2: [(100.0, 100.0), (84.99810028076172, 82.68248748779297), (74.99872589111328, 70.82238006591797), (54.99583435058594, 59.94406509399414), (29.981433868408203, 46.99877166748047)]}
+
+
+def _f32(x): return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def _toward_zero(x):
+    """float32 of an exact double result, rounded toward zero (the PS2 FPU)."""
+    y = _f32(x)
+    if abs(y) > abs(x): y = struct.unpack('<f', struct.pack('<I', struct.unpack('<I', struct.pack('<f', y))[0] - 1))[0]
+    return y
+
+
+def npc_round_role(slot, rnd):
+    """0x10C450: (+0xE00, +0xE04) of a computer rider in race round rnd."""
+    role = (1 if rnd in (1, 2) else 2) if slot in (1, 2) else (0 if rnd == 1 else 1) if slot == 3 else (0 if rnd in (1, 2) else 1) if slot == 4 else 0
+    return role, slot == 1 and rnd == 3
+
+
+def npc_difficulty(slot, level, course):
+    """0x10C4F8 + 0x10C758's course factor: (+0xDF8, +0xDFC) of a computer rider at race level `level` on course `course`."""
+    df8, dfc = SLOT_DIFFICULTY[level][slot - 1]
+    dfc = _toward_zero(_f32(dfc) * _f32(0.009999999776482582))
+    k = 0.25 if course == 4 else _f32(0.10000000149011612) if course in (2, 3) else None
+    if k is not None: dfc = _toward_zero(dfc + _toward_zero(dfc * k))
+    return _f32(df8), min(dfc, 1.0)
+
+
+def apply_round_level(record, slot, rnd=None, level=None, course=None):
+    if rnd is not None: record['npc']['score_state']['role_e00'], record['npc']['score_state']['allow_flag0_e04'] = npc_round_role(slot, rnd)
+    if level is not None:
+        df8, dfc = npc_difficulty(slot, level, course)
+        record['npc']['crouch_parameter_df8'] = df8; record['npc']['driving_state']['parameter_df8'] = df8; record['npc']['driving_state']['parameter_dfc'] = dfc
+
+
 def build_roster(seed, human, peak):
     w = seeded(seed)
     first = 10 + next_word(w) % 7
@@ -165,7 +214,7 @@ def participants_from_memory(memory):
 def roster_words(memory):
     u = lambda a: struct.unpack_from('<I', memory, a)[0]; i32 = lambda a: struct.unpack_from('<i', memory, a)[0]
     roster = u(GP - 0x480)
-    shared_seed, shared_draws = seed_of([u(0x4FF030 + 4 * k) for k in range(6)], 100000)   # the game RNG, seeded 0 at the load
+    shared_seed, shared_draws = seed_of([u(0x4FF030 + 4 * k) for k in range(6)], 1_000_000)   # the game RNG, seeded 0 at the load (a career final after a WS13 round: ~105,000 draws)
     return dict(characters=[i32(roster + 0x18 + 4 * k) for k in range(6)], cheats=[i32(roster + 0x40 + 4 * k) for k in range(6)],
                 riders=u(0x535BF8), posted=[i32(0x536640 + 4 * k) for k in range(6)],
                 event=i32(0x535C08), single_event=memory[0x535C11], tick=u(u(u(u(GP - 0x848) + 0x84) + 0x0C) + 8),
@@ -204,8 +253,11 @@ def export_career(course):
         participants = participants_from_memory(memory)
         if memory[0x535C11] != 0: raise ValueError(f'{name}: not a Conquer the Mountain state (0x535C11)')
         doc = extract_document(memory, path, participants, course, check_human=participants[0]['character'] == 'zoe')
+        char = memory[0x534FE0 + 0x11]   # 145C38: the career rider; 147CB8 reads its block's +0x280 (race level)
         doc['lineup_state'] = dict(rng_facts(memory), **roster_words(memory), human=participants[0]['character'],
-                                   human_base=participants[0]['gameplay_character_id'], lineup=[p['character'] for p in participants[1:]])
+                                   human_base=participants[0]['gameplay_character_id'], lineup=[p['character'] for p in participants[1:]],
+                                   round=struct.unpack_from('<i', memory, struct.unpack_from('<I', memory, GP - 0x480)[0])[0],
+                                   race_level=struct.unpack_from('<h', memory, 0x4A6CA8 + char * 0xF88 + 0x280)[0])
         (folder / f'{name}.json').write_text(json.dumps(doc, indent=1, allow_nan=False) + '\n')
         print(name, doc['lineup_state']['lineup'], flush=True)
 
@@ -367,8 +419,9 @@ def event_relationships(before, characters, banks):
     return table
 
 
-def assemble(data, human_base, values, moment=None, state=None, extra=None):
-    """The document for a lineup (web/lineup.js assembleLineup is the same). values: the five roster values (0x23A668)."""
+def assemble(data, human_base, values, moment=None, state=None, extra=None, rnd=None, level=None):
+    """The document for a lineup (web/lineup.js assembleLineup is the same). values: the five roster values (0x23A668).
+    rnd / level (a career race): the round's route roles and the race level's difficulty words (apply_round_level)."""
     template = data['template']
     doc = copy.deepcopy({k: v for k, v in template.items() if k != 'riders'})
     riders = []
@@ -380,6 +433,7 @@ def assemble(data, human_base, values, moment=None, state=None, extra=None):
                  (moment or data['moment'])[str(slot)], (state or data['state'])[str(slot)]]
         for part in parts:
             for path, value in part.items(): put(record, path, copy.deepcopy(value))
+        apply_round_level(record, slot, rnd, level, COURSE_INDEX.get(data['course']))
         riders.append(record)
     doc['riders'] = riders
     characters = [human_base] + [v if v < 10 else human_base for v in values]
@@ -433,7 +487,7 @@ def build(course, out_dir=None):
     # race course whose tables agree with this one on every common skin. Every other leaf of a same-course career rider must
     # equal this course's tables (record() raises on a difference).
     career_skins = {}
-    for (ccourse, name), doc in career_docs().items():
+    for (ccourse, name), doc in sorted(career_docs().items(), key=lambda kv: kv[0][0] != course):   # this course's own first (provenance)
         other = None
         if ccourse != course:
             f = ROOT / f'web/public/assets/{ccourse}/lineups.json'
@@ -445,8 +499,11 @@ def build(course, out_dir=None):
             flat = leaves(r); slot = str(r['slot']); skin = r['character']; base = str(r['gameplay_character_id'])
             scale = f32key(r['ground']['profile']['body_scale'])
             if ccourse == course:
+                ls = doc['lineup_state']; rule = copy.deepcopy(r); apply_round_level(rule, int(slot), ls['round'], ls['race_level'], COURSE_INDEX.get(course))
                 for path, value in flat.items():
-                    if path in PATHS['slot']: record(tables['slot'], slot, path, value, name)
+                    if path in ROUND_LEAVES + LEVEL_LEAVES:   # by the round / race level (0x10C450 / 0x10C4F8), not the Single Event slot tables
+                        if leaves(rule)[path] != value: raise ValueError(f'{name}: {path} slot {slot} differs from 0x10C758 at round {ls["round"]} level {ls["race_level"]}')
+                    elif path in PATHS['slot']: record(tables['slot'], slot, path, value, name)
                     elif path in PATHS['grid']: record(tables['grid'].setdefault(slot, {}), scale, path, value, name)
                     elif path in PATHS['base']: record(tables['base'], base, path, value, name)
                     elif path in PATHS['const']: record(constants, 'all', path, value, name)
@@ -582,8 +639,10 @@ def build(course, out_dir=None):
         ls = doc['lineup_state']; values = riding_values(ls)
         own_moment = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['moment']} for r in doc['riders']}
         own_state = {str(r['slot']): {p: leaves(r)[p] for p in PATHS['state']} for r in doc['riders']}
-        got = assemble(data, ls['human_base'], values, own_moment, own_state)
-        if json.dumps(got['riders']) != json.dumps(doc['riders']): raise ValueError(f'career {name}: the parts do not reproduce its riders')
+        got = assemble(data, ls['human_base'], values, own_moment, own_state, rnd=ls['round'], level=ls['race_level'])
+        if json.dumps(got['riders']) != json.dumps(doc['riders']):
+            a, b = leaves(got['riders']), leaves(doc['riders']); diff = [k for k in set(a) | set(b) if a.get(k) != b.get(k)]
+            raise ValueError(f'career {name}: the parts do not reproduce its riders: {diff[:6]}')
         if got['world']['pair_inputs'][1:] != doc['world']['pair_inputs'][1:]: raise ValueError(f'career {name}: computer riders pair inputs differ')
     grid_missing = [(s, k) for s in map(str, range(1, 1 + len(anchor['riders']))) for k in {v for v in skin_scale.values()} if k not in tables['grid'].get(s, {})]
     out = (Path(out_dir) / course / 'lineups.json') if out_dir else ROOT / f'web/public/assets/{course}/lineups.json'

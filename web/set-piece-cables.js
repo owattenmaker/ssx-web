@@ -1,4 +1,4 @@
-// pv cables: the chairlift / gondola cables and the Metro-City mill lines (docs/visual-parity.md section 37).
+// the chairlift / gondola cables and the Metro-City mill lines (docs/visual-parity.md section 37).
 //
 // The PS2 draws them with every MultiSplineModifier whose builtin-20 key 10 is set (default 1 at 0x4FB7D0; only the Junction
 // traffic and the Crow's Nest box vehicles pass 0):

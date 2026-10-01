@@ -4,9 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { aheadLocations, connectorDest } from './free-ride.js';
-import { PV_DEFAULTS } from './pv-flags.js';
 
-for (const k of ['ctmWorldAudio', 'streamGate', 'streamAhead', 'streamWarm', 'sliceLoad', 'lodgeWorldLoad']) assert.ok(k in PV_DEFAULTS, `pv ${k}`);
 
 // ---- read-ahead order ----
 {

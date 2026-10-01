@@ -1,9 +1,9 @@
 // pv riderPrefetch (docs/first-load.md "The event's riders and the course parse"): the human rider's files download from the event
 // pick, the lineup is planned (web/ai-race.js plan) before the human rider loads so its riders download alongside it, the intro's
 // cutscene data under the warm-up. Headless Chrome + a private Vite server, the reference presentation seed:
-//  - two Snow Jam events and a Big Air one in a row, the switches off and on: the same lineups (roster seeds, riders) and the same
+//  - two Snow Jam events and a Big Air one in a row, twice: the same lineups (roster seeds, riders) and the same
 //    first 300 race ticks (the human, every computer rider's reference motion, the game RNG);
-//  - on: no rider file is downloaded twice (each prefetched body is taken by its loader).
+//  - no rider file is downloaded twice (each prefetched body is taken by its loader).
 //   node test-rider-prefetch.mjs     (skips without Chrome / WebGPU or without the game data)
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,8 +14,8 @@ const browser = await startBrowser({ width: 960, height: 720, init: 'performance
 if (!browser) { console.log('rider prefetch: skipped (no Chrome)'); process.exit(0); }
 const server = await startServer();
 const E = (x) => browser.evaluate(x);
-async function session(flags) {
-  await browser.goto(`${server.origin}/?qa=1&mute=1&cutscenes=0&quality=low&presentationSeed=0x182200&rider=zoe&pv=${flags}`);
+async function session() {
+  await browser.goto(`${server.origin}/?qa=1&mute=1&cutscenes=0&quality=low&presentationSeed=0x182200&rider=zoe`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   const out = [];
   for (const code of ['ARA1', 'ARA1', 'BRA2']) {
@@ -35,7 +35,8 @@ async function session(flags) {
 }
 try {
   if (!(await browser.hasWebGPU(server.origin))) { console.log('rider prefetch: skipped (no WebGPU in headless Chrome)'); process.exit(0); }
-  const off = await session('-riderPrefetch,-sharedParse'), on = await session('riderPrefetch,sharedParse');
+  // two sessions: the prefetch and the shared parse leave the lineups and races as they are, run to run
+  const off = await session(), on = await session();
   off.forEach((o, i) => {
     const n = on[i], first = o.ticks.findIndex((t, k) => t !== n.ticks[k]);
     assert.equal(n.lineup, o.lineup, `${o.code} #${i + 1}: the lineup`);

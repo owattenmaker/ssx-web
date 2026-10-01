@@ -5,7 +5,16 @@ import {Matrix4} from 'three';
 export function originalRiderBoneInverses(rig,scale){
  if(!rig.source_bind_matrix_words)return null;
  const rows=rig.source_bind_matrix_words,slots=rig.source_bone_slots;
- if(rig.source_bind_matrix_space!=='source-centimeters-Z-up'||!Number.isFinite(scale)||scale<=0||rows.length!==rig.bones.length||slots?.length!==rows.length||new Set(slots).size!==slots.length||slots.some(x=>!Number.isInteger(x)||x<0||x>=rig.source_bone_slot_count))throw Error('Invalid original rider bind mapping');
+ if (
+   rig.source_bind_matrix_space !== 'source-centimeters-Z-up' ||
+   !Number.isFinite(scale) ||
+   scale <= 0 ||
+   rows.length !== rig.bones.length ||
+   slots?.length !== rows.length ||
+   new Set(slots).size !== slots.length ||
+   slots.some((x) => !Number.isInteger(x) || x < 0 || x >= rig.source_bone_slot_count)
+ )
+   throw Error('Invalid original rider bind mapping');
  const axes=[0,2,1,3],signs=[1,1,-1,1];
  return rows.map(words=>{
   if(words.length!==16||words.some(x=>!Number.isInteger(x)||x<0||x>0xffffffff))throw Error('Invalid original bind matrix words');

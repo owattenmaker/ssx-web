@@ -7,7 +7,6 @@
 import { loadAvalanches } from './avalanche-load.js';
 import fs from 'node:fs';
 import { locationBatches } from './peak-world-batches.js';
-import { pv } from './pv-flags.js';
 
 export function peakWatches(captureManifest) {
   const out = {}; let off = 0;
@@ -84,10 +83,10 @@ export async function loadPeakWorld({ core, root, captureManifest, dv, RECORD, r
   core._peak_world_event_kind(kind(0)); core._peak_world_game_mode(mode(0));
   // Stage builtin 108 (the stations' peak-race / jam fences follow the game mode byte) as the page runs it: pv stationFences
   // (web/free-ride.js); STATION_FENCES=1 / 0 forces it.
-  core._peak_world_builtin108?.(process.env.STATION_FENCES ? (process.env.STATION_FENCES === '1' ? 1 : 0) : pv('stationFences') ? 1 : 0);
-  core._stage_object_route?.(process.env.FINISH_FENCES ? (process.env.FINISH_FENCES === '1' ? 1 : 0) : pv('finishFences') ? 1 : 0); // pv finishFences
-  core._set_piece_streamed?.(process.env.PEAK_SPLINES ? (process.env.PEAK_SPLINES === '1' ? 1 : 0) : pv('peakSplines') ? 1 : 0); // pv peakSplines (web/set_piece_gameplay.inc)
-  core._stage_load_flags?.(process.env.LOAD_FLAGS ? (process.env.LOAD_FLAGS === '1' ? 1 : 0) : pv('loadFlags') ? 1 : 0); // pv loadFlags (LOAD_FLAGS=1 / 0 forces it)
+  core._peak_world_builtin108?.(process.env.STATION_FENCES ? (process.env.STATION_FENCES === '1' ? 1 : 0) : 1);
+  core._stage_object_route?.(process.env.FINISH_FENCES ? (process.env.FINISH_FENCES === '1' ? 1 : 0) : 1); // pv finishFences (FINISH_FENCES=0 turns it off)
+  core._set_piece_streamed?.(process.env.PEAK_SPLINES ? (process.env.PEAK_SPLINES === '1' ? 1 : 0) : 1); // pv peakSplines (web/set_piece_gameplay.inc; PEAK_SPLINES=0 turns it off)
+  core._stage_load_flags?.(process.env.LOAD_FLAGS ? (process.env.LOAD_FLAGS === '1' ? 1 : 0) : 1); // pv loadFlags (LOAD_FLAGS=1 / 0 forces it)
   // 0x535C11 (the watch's byte 9: 0 Conquer the Mountain): with kind 4 the score pays tricks as cash (web/score_gameplay.inc)
   core._set_stage_collect_state?.(dv.getUint8(gameW.offset + 9), 0, 0);
   let bank = -1;

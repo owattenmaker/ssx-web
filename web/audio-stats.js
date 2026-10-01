@@ -8,7 +8,7 @@
 //   decodeSlow / decodeMaxMs     main-thread decodes (music bar, speech line, sound patch at play time) over 8 ms / the longest,
 //   decodeWorst                  and what that was ('music', 'speech', 'sfx:<bank>/<sound>')
 //   sfxStolen / sfxDropped       voices stolen for a new request (3BA0B0) / requests that got no voice at all
-//   sfxGated                     requests dropped while the context was stopped (pv audioInterrupt; before: all played at once later)
+//   sfxGated                     requests dropped while the context was stopped (audioInterrupt; before: all played at once later)
 //   speechLate                   a speech line started after its planned time
 //   ctxInterrupted / ctxResumeFailed   the context left 'running' on its own (iOS interruption) / a resume that was refused
 export const audioStats = { musicLate: 0, musicLateMaxMs: 0, musicMissed: 0, musicPumpMaxMs: 0, decodeSlow: 0, decodeMaxMs: 0, decodeWorst: '',

@@ -33,10 +33,10 @@ export const UI_SOUND = Object.freeze({ 0: 3, 9: 3, 1: 4, 10: 4, 2: 2, 11: 2, 3:
 // 28CDF8: chartune event by the winner's CHARDB character (table 0x482A10).
 export const CHARTUNE_EVENT = Object.freeze([10, 2, 8, 1, 5, 9, 3, 7, 4, 6]);
 const SETTINGS_KEY = 'ssx3.audio';
-// pv audioDeclick (docs/audio-logic.md 9.13): music and speech that stop or start mid-waveform ramp over 5 ms (no click); a song's
+// docs/audio-logic.md 9.13: music and speech that stop or start mid-waveform ramp over 5 ms (no click); a song's
 // first bar is scheduled 40 ms ahead (its decode no longer makes it start late, skipping its first milliseconds).
 const DECLICK_MS = 5, SONG_LEAD_S = 0.04;
-// pv musicLookahead: the music scheduler simulates and schedules 2.5 s ahead instead of 1 s, so a main-thread stall of up to ~3 s
+// The music scheduler simulates and schedules 2.5 s ahead instead of 1 s, so a main-thread stall of up to ~3 s
 // (a phone's lazy course load under the menus: 1.6 s) cannot make a bar late. Inputs still act at their arrival time (the player
 // re-simulates from the last real-time snapshot), so events, intensity and the song timing are unchanged.
 const MUSIC_LOOKAHEAD_S = 2.5;
@@ -78,7 +78,7 @@ function loadSettings() {
 export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); }),
   fetchBytes = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.arrayBuffer(); }).then((b) => new Uint8Array(b)),
   now = () => performance.now(),
-  // pv musicStream (main.js): songs stream their .mus bar by bar (pathfinder.js createMusStream); busy() = the game's downloads run
+  // musicStream (main.js): songs stream their .mus bar by bar (pathfinder.js createMusStream); busy() = the game's downloads run
   musicStream = null,
   // fetchRange(path, start, end) -> {start, bytes} (tests; default: a Range request, rangeBytes)
   fetchRange = null } = {}) {
@@ -87,7 +87,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   const once = (key, make) => { if (!cache.has(key)) cache.set(key, make().catch((e) => { cache.delete(key); throw e; })); return cache.get(key); };
   const json = (p) => once('j:' + p, () => fetchJson(ROOT + p));
   const bytes = (p) => once('b:' + p, () => fetchBytes(ROOT + p));
-  // One byte range of a game file (pv musicStream): {start, bytes}; a 200 (no range support) is the whole file from 0. With the
+  // One byte range of a game file: {start, bytes}; a 200 (no range support) is the whole file from 0. With the
   // Range header it bypasses web/downloads.js: music is not load work, and is not counted by the load screens.
   const rangeBytes = (p, a, b, priority = 'high') => fetch(ROOT + p, { headers: { range: `bytes=${a}-${b - 1}` }, priority }).then(async (r) => {
     if (r.status !== 206 && !r.ok) throw new Error(`${p}: ${r.status}`);
@@ -114,16 +114,31 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
 
   async function init() {
     catalog = await json('catalog.json');
-    const mixes = catalog.mixes.map((m, index) => ({ index, timeMs: m.TIME ?? 0,
-      levels: Object.fromEntries(['MUSIC', 'DJ', 'PA', 'CHARACTER', 'BOARD', 'COLLISION', 'AMBIENT', 'ARCADESFX', 'ARCADESPEECH'].map((b) => [b, (m[b] ?? 100) < 0 ? undefined : (m[b] ?? 100) / 100])) }));
-    engine = createAudioEngine({ mixes, sliders: { music: settings.music, effects: settings.effects, speech: settings.speech }, djEnabled: settings.dj, radioMode: settings.radioMode, arcadeAudio: settings.arcadeAudio,
-      interruptGate: pv('audioInterrupt'), declickMs: pv('audioDeclick') ? DECLICK_MS : 0 }); // docs/audio-logic.md 9.13
+    const mixes = catalog.mixes.map((m, index) => ({
+      index,
+      timeMs: m.TIME ?? 0,
+      levels: Object.fromEntries(
+        ['MUSIC', 'DJ', 'PA', 'CHARACTER', 'BOARD', 'COLLISION', 'AMBIENT', 'ARCADESFX', 'ARCADESPEECH'].map((b) => [
+          b,
+          (m[b] ?? 100) < 0 ? undefined : (m[b] ?? 100) / 100
+        ])
+      )
+    }));
+    engine = createAudioEngine({
+      mixes,
+      sliders: { music: settings.music, effects: settings.effects, speech: settings.speech },
+      djEnabled: settings.dj,
+      radioMode: settings.radioMode,
+      arcadeAudio: settings.arcadeAudio,
+      interruptGate: true,
+      declickMs: DECLICK_MS
+    }); // docs/audio-logic.md 9.13
     installAudioUnlock(engine);
-    sfx = createSfx({ engine, fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), startAfterDecode: pv('sfxStartAfterDecode') }); // docs/audio-logic.md 9.13
-    // pv titleStart: the front end's bank before the first gesture (fetch and decode need no AudioContext), so the title's Start, which
+    sfx = createSfx({ engine, fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), startAfterDecode: true }); // docs/audio-logic.md 9.13
+    // The front end's bank before the first gesture (fetch and decode need no AudioContext), so the title's Start, which
     // also unlocks the audio, plays its sounds (docs/audio-menus.md "Title Press START"); the unlock below asks for the same bank again.
-    if (pv('titleStart')) sfx.loadBank(SLOT.MAIN, 'SSX3Menu');
-    speech = createSpeech({ engine, json, bytes, range: pv('speechRange') ? speechRange : null, declickMs: pv('audioDeclick') ? DECLICK_MS : 0, radioBigStops: () => pv('djQueueRules'), // 2A26F0 -> 2B11B0
+    sfx.loadBank(SLOT.MAIN, 'SSX3Menu');
+    speech = createSpeech({ engine, json, bytes, range: pv('speechRange') ? speechRange : null, declickMs: DECLICK_MS, radioBigStops: () => pv('djQueueRules'), // 2A26F0 -> 2B11B0
       onPost: (id, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('speech', id.toString(16)); },
       onLines: (banks, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('line', banks.join('+')); } });
     speech.init().catch((e) => console.warn('Speech events unavailable', e));
@@ -150,7 +165,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   const ctx = () => (engine?.unlocked ? engine.context : null);
   const musicMode = () => settings.radioMode !== 2; // 28D960
   // The human rider's radio mode and custom playlist from its profile record at a world load (api.riderMusic: web/audio-menu.js
-  // worldMusic, pv riderMusic); the global settings file keeps the last ones applied.
+  // worldMusic, riderMusic); the global settings file keeps the last ones applied.
   function riderMusic() {
     let m = null; try { m = api.riderMusic?.(); } catch {} if (!m) return;
     settings.playlist = m.playlist.slice(0, 35).map(Boolean);
@@ -200,7 +215,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const token = {}; state.musicToken = token;
     const file = songFile(id); // e.g. 'Rock Star' -> Rock_Star
     const song = await loadSong(file, { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), ...(musicStream ? { fetchRange: rangeBytes, busy: musicStream.busy, role: 'play' } : {}),
-      workerDecode: pv('musicWorkerDecode') }); // docs/audio-logic.md 9.13
+      workerDecode: true }); // docs/audio-logic.md 9.13
     if (state.musicToken !== token) return null;
     // Intensity (branch selector): 127 for front-end/podium/hub songs; races ramp it from 0 (28F000, raceIntensity).
     const level = intensity ?? (state.raceMusic ? 0 : 127);
@@ -208,23 +223,30 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const random = await (song.mus?.stream ? streamSongStart : prefetchSongStart)(song, event ?? 0, { intensity: level }).catch(() => null);   // streamed: its opening bars first
     if (state.musicToken !== token) return null;
     const player = createPathfinderPlayer({ context, destination: engine.bus(ambience ? 'AMBIENT' : 'MUSIC'), song, intensity: level, ambience, ...(random ? { random } : {}),
-      ...(pv('bigChallengeAudio') ? { clockRandom: true, loopDestination: ambience ? null : engine.master } : {}), // docs/audio-logic.md 3.9
-      ...(pv('audioDeclick') ? { declickMs: DECLICK_MS } : {}), ...(pv('musicLookahead') ? { lookahead: MUSIC_LOOKAHEAD_S, eventFirst: true } : {}) }); // docs/audio-logic.md 9.13
+      clockRandom: true, loopDestination: ambience ? null : engine.master, // docs/audio-logic.md 3.9
+      declickMs: DECLICK_MS, lookahead: MUSIC_LOOKAHEAD_S, eventFirst: true }); // docs/audio-logic.md 9.13
     state.intensityFrames = 0;
     state.music = player; state.musicId = id; state.song = song;
-    player.start(event, pv('audioDeclick') ? context.currentTime + SONG_LEAD_S : undefined); // (a lead: the first bar starts on time, not mid-waveform)
+    player.start(event, context.currentTime + SONG_LEAD_S); // (a lead: the first bar starts on time, not mid-waveform)
     if (state.paused || state.countdownHold) player.pause(); // (countdownHold: 29C420(1)'s song waits for GO)
     const s = catalog.songs.find((x) => x.id === id);
-    if (s?.ADDTOFE && state.inWorld && engine.busGain('MUSIC') > 0) { tl('nowplaying', s.TITLE); for (const f of nowPlaying) try { f({ title: s.TITLE, artist: s.ARTIST, album: s.ALBUM }); } catch {} } // 28F478
+    // 28F478
+    if (s?.ADDTOFE && state.inWorld && engine.busGain('MUSIC') > 0) {
+      tl('nowplaying', s.TITLE);
+      for (const f of nowPlaying)
+        try {
+          f({ title: s.TITLE, artist: s.ARTIST, album: s.ALBUM });
+        } catch {}
+    }
     return player;
   }
   const songFile = (id) => catalog.music?.find((m) => m.id === id)?.json?.replace(/^music\//, '').replace(/\.json$/, '') ?? id;
-  // pv musicPrefetchNext (docs/audio-logic.md 9.13): a song picked for a later request (ChangeSong's 2 s, a fly-over's 3 s) starts
+  // docs/audio-logic.md 9.13: a song picked for a later request (ChangeSong's 2 s, a fly-over's 3 s) starts
   // streaming its opening bars now, so the request finds them in (6 Mbit/s: 4.4-4.8 s of silence between the songs).
   function prefetchPicked(event = 0) {
-    if (!pv('musicPrefetchNext') || !musicStream || !ctx()) return;
+    if (!musicStream || !ctx()) return;
     const s = feSongs()[state.songIndex]; if (!s) return;
-    loadSong(songFile(s.id), { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), fetchRange: rangeBytes, busy: musicStream.busy, workerDecode: pv('musicWorkerDecode'), role: 'next' })
+    loadSong(songFile(s.id), { fetchJson: (p) => json(p), fetchBytes: (p) => bytes(p), fetchRange: rangeBytes, busy: musicStream.busy, workerDecode: true, role: 'next' })
       .then((song) => streamSongStart(song, event, { intensity: state.raceMusic ? 0 : 127 })).catch(() => {});
   }
   function stopMusic() { state.musicToken = null; state.music?.stop(); state.music = null; }
@@ -240,13 +262,13 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     loopsRequested: () => !!state.music?.loops?.requested,
     event: (e) => { if (musicMode()) { tl('event', e); state.music?.send?.(e); } }, // forced send (2B3B88), not the SendEvent filter
     resetIntensity: () => { state.intensityFrames = 0; },
-    // 29C420(digit) (pv ctmRestartAudio), with audio+0x627C set: "3" (0x29C6B4..0x29C704) fades a hub song (ids 1-3) or chartune
+    // 29C420(digit), with audio+0x627C set: "3" (0x29C6B4..0x29C704) fades a hub song (ids 1-3) or chartune
     // (0xC9) over 2 s; "1" (0x29C710..0x29C784), when no song is going (audio+0x530 clear: here, none or it has ended) or a hub song /
     // chartune plays, picks the next playlist song (28D488), plays it with event 0 (28CF98) and pauses it (2B3A70) for GO's resume.
     // PS2 music logs: results-restart-audio (round 1, the finished heat's song: pick / play 0 / pause at "1", resume + event 0 at
     // GO); pause-restart-audio2 and heat2-audio (a song going: nothing at the countdown).
     countdown: (d) => {
-      if (!pv('ctmRestartAudio') || !musicMode() || !state.resumeGo || state.free || !ctx()) return; // (audio locked: nothing plays yet)
+      if (!musicMode() || !state.resumeGo || state.free || !ctx()) return; // (audio locked: nothing plays yet)
       const special = /^Peak[123]$/.test(state.musicId ?? '') || state.musicId === 'chartune';
       if (d === 3 && special && state.music) { fadeOutMusic(2); return; }
       if (d === 1 && (special || !state.music || state.music.finished) && !(state.musicToken && !state.music)) { // (not while a song loads)
@@ -338,7 +360,12 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   async function playMusic(event, { forced = false, songId = -1, t0 = false } = {}) {
     if (state.replay) return; // 288AE0 (+0x6294 is never set by the port)
     state.trigger.zone = 0; state.trigger.zoneExit = 0; // +0x623C / +0x6240
-    if (!musicMode()) { const peak = songId > 0 ? songId : peakMask(state.course); log(`ambience Peak${peak === 1 ? 1 : peak === 2 ? 2 : 3}Amb`); await playSong(`Peak${peak === 1 ? 1 : peak === 2 ? 2 : 3}Amb`, 12, { ambience: true, intensity: 127 }); return; }
+    if (!musicMode()) {
+      const peak = songId > 0 ? songId : peakMask(state.course);
+      log(`ambience Peak${peak === 1 ? 1 : peak === 2 ? 2 : 3}Amb`);
+      await playSong(`Peak${peak === 1 ? 1 : peak === 2 ? 2 : 3}Amb`, 12, { ambience: true, intensity: 127 });
+      return;
+    }
     if (state.course >= 17 && !forced && !t0 && !challenge()) { await playHubSong(peakMask(state.course)); return; }
     const songs = feSongs(); if (state.songIndex < 0) pickSong();
     state.previousSong = state.songIndex; // +0x62A4
@@ -351,7 +378,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   function radioModeChanged() {
     const m = settings.radioMode, id = state.currentId ?? state.musicId ?? '', amb = /^Peak\dAmb$/.test(id);
     log(`radio mode ${m}`); tl('radio', m);
-    if (m === 2) { if (!amb) { playMusic(0); if (pv('bigChallengeAudio')) { state.challengeMusic = false; state.challengeType = 0; } } return; } // 0x28C2B0: +0x5FD0 / +0x5FD4 = 0
+    if (m === 2) { if (!amb) { playMusic(0); state.challengeMusic = false; state.challengeType = 0; } return; } // 0x28C2B0: +0x5FD0 / +0x5FD4 = 0
     if (m === 0) { if (amb) { pickSong(); playMusic(0); } return; }
     if (!settings.playlist.some(Boolean) || /^Peak\d$/.test(id)) return;
     const i = feSongs().findIndex((x) => x.id === id);
@@ -359,11 +386,11 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   }
   // PickNextSong + PlayMusic (world load 2867E8, restarts, radio changes).
   async function playWorldMusic(event) { if (musicMode()) pickSong(); await playMusic(event); }
-  // pv mountainAudio: the whole-mountain world (MOUNTAIN: the All Peak Race / Peak 2 Race, the CTM free ride on desktop) streams like
+  // The whole-mountain world (MOUNTAIN: the All Peak Race / Peak 2 Race, the CTM free ride on desktop) streams like
   // a peak world, so its world audio follows the streaming rows too (286CA8: a location's slot 8 / 9 banks when its data arrives).
   // Before: every location of world/MOUNTAIN.json counted as resident, the 44 location banks were decoded at the load (+130 MB of
   // PCM) and slots 8 / 9 held the last one's (B's) at the start.
-  const isPeakWorld = (code) => /^PEAK\d$/.test(code ?? '') || (code === 'MOUNTAIN' && pv('mountainAudio'));
+  const isPeakWorld = (code) => /^PEAK\d$/.test(code ?? '') || code === 'MOUNTAIN';
   // 2A4168 / 2A41D8 / 2A4030 on the current course (and kind): Big Air, Half Pipe, backcountry.
   const courseFlags = (c) => ({ bigAir: (c >= 8 && c <= 10) || gameKind() === 2, halfPipe: (c >= 11 && c <= 13) || gameKind() === 3, backcountry: isBackcountry(c) });
   // Entering the lodge (PS2 music/runs/lodge): 286A80 leaves the world (Resume if paused, Stop without a fade, timers and
@@ -473,13 +500,30 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   }
   // 28E8C0(20, 1) from 27A860 (transport / lodge / return from an event, with 28F558's destination in +0x6284).
   // Not called at a location crossing (22DF50): see freeRideCourse.
-  // pv boothDj: the transport booth (stage builtin 68 action 3, 0x302410) calls 2A49E8: audio+0x5818 = 1 and a 30 000 ms timer (2ADCA0, the
+  // The transport booth (stage builtin 68 action 3, 0x302410) calls 2A49E8: audio+0x5818 = 1 and a 30 000 ms timer (2ADCA0, the
   // pmf at 0x4A36F0 -> 2A4A68) that clears it. 2A4A38 = the flag and 2A10C0(audio, 10) (the request being spoken is the DJ's): while
   // that holds, the travel (28E8C0 20) neither stops the speech before pktrans (0x28EDF0: 2B11B0 skipped) nor queues the radio big
   // intro (0x28EDB4: 2A26F0 / 2B1758 / +0x6258 / +0x5754 skipped), so a DJ line started at the booth plays on over the transport.
   // 2A4550: the pending DJ flags (0x5740..0x5788) cleared.
-  function clearPendingDj() { for (const k of ['bcChallenge', 'radioBigOutro', 'finishLine', 'hubChatter', 'hubChatter2', 'hubChatter3', 'eventIntro', 'radioBigIntro', 'firstSpoke', 'freeRideIntro', 'artist', 'textMessage', 'bcIntro']) state.pendingDj[k] = 0; }
-  const boothHold = () => pv('boothDj') && !!state.boothFlag && !!speech?.speaking?.(0xa);
+  function clearPendingDj() {
+    for (const k of [
+      'bcChallenge',
+      'radioBigOutro',
+      'finishLine',
+      'hubChatter',
+      'hubChatter2',
+      'hubChatter3',
+      'eventIntro',
+      'radioBigIntro',
+      'firstSpoke',
+      'freeRideIntro',
+      'artist',
+      'textMessage',
+      'bcIntro'
+    ])
+      state.pendingDj[k] = 0;
+  }
+  const boothHold = () => !!state.boothFlag && !!speech?.speaking?.(0xa);
   function travel() {
     log(`travel (28E8C0 20) dest ${dir.dest}`); tl('code', 20);
     dir.arrived = 0; state.pendingDj.textMessage = 0; dir.lastDest = dir.dest; dir.cinematic = 1; state.trigger.latch = -1; dir.bcIntro = 0;
@@ -492,12 +536,19 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     }
     let pick = true;
     if (!state.free || state.free.kind !== 4) { // 2A4078 race / 2A40E8 slope event: a new song unless round 1
-      if ((state.course < 5 || gameKind() === 0 || (state.course >= 5 && state.course <= 7) || gameKind() === 1 || gameKind() === 6) && round() >= 2) { pickSong(); pick = false; post('request', 10, request(3, true)); }
+      if (
+        (state.course < 5 || gameKind() === 0 || (state.course >= 5 && state.course <= 7) || gameKind() === 1 || gameKind() === 6) &&
+        round() >= 2
+      ) {
+        pickSong();
+        pick = false;
+        post('request', 10, request(3, true));
+      }
     }
     const d = dir.dest;
     if (d !== NO_DEST && isBackcountry(d) && dir.firstVisit[d] === 1) { // pktrans: first arrival on a new peak
       if (!boothHold()) speech.stop(); log('pktrans');
-      state.pktransHold = true; // paused until world state 10's enter resumes it (2B3A98 at 0x2357B8; pv worldSwitchAudio: ws10)
+      state.pktransHold = true; // paused until world state 10's enter resumes it (2B3A98 at 0x2357B8; ws10)
       playSong('pktrans', peakMask(d) === 2 ? 2 : 3, { intensity: 127 }).then((m) => { if (state.pktransHold) m?.pause(); });
       return;
     }
@@ -505,7 +556,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     if (dir.lastDest !== NO_DEST && dir.lastDest !== state.course && !boothHold()) { speech.radioBigIntro(0, 1); speech.flush(); dir.arrived = 1; state.pendingDj.hubChatter3 = 1; } // 2A4718, 2A4A38
   }
 
-  // pv worldSwitchAudio: world state 10 at a course change (22DF50 pushes it at every crossing / Transport arrival; a carried world switch's
+  // World state 10 at a course change (22DF50 pushes it at every crossing / Transport arrival; a carried world switch's
   // arrival). The push enter 0x234F40 (234FE0..235058): a Conquer the Mountain backcountry whose visited bit (+0xACC) is clear is a first
   // visit: +0x578C BC intro, +0x5790 = 0, +0x6254 = 1. The enter 0x2355C0: 2B3A98 resumes the song (the pktrans code 20 left paused) and
   // 2A4B68 stops the speech while pktrans (id 0x191) plays.
@@ -519,7 +570,17 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   // ---- loading loop (28F768 / 28FA98: LoadingScreen.bnk looped on MUSIC, 1 s fade out) --------------------------
   async function loadingLoop(on) {
     const context = ctx(); if (on !== !!state.loadingWanted) tl('loading', on ? 1 : 0); state.loadingWanted = on;
-    if (!on) { const l = state.loading; state.loading = null; if (l && context) { const t = context.currentTime; l.gain.gain.setValueAtTime(l.gain.gain.value, t); l.gain.gain.linearRampToValueAtTime(0, t + 1); l.source.stop(t + 1.05); } return; }
+    if (!on) {
+      const l = state.loading;
+      state.loading = null;
+      if (l && context) {
+        const t = context.currentTime;
+        l.gain.gain.setValueAtTime(l.gain.gain.value, t);
+        l.gain.gain.linearRampToValueAtTime(0, t + 1);
+        l.source.stop(t + 1.05);
+      }
+      return;
+    }
     if (!context || state.loading) return;
     const [bank, bnk] = await Promise.all([json('banks/LoadingScreen.json'), bytes('banks/LoadingScreen.bnk')]);
     const patch = bank.entries[0].patches[0];
@@ -552,7 +613,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     if (p.firstSpoke) { p.firstSpoke = 0; return idle('First_Spoke', () => speech.dj(E.FIRST_SPOKE, [peak])); }                           // 0x576C 2A2638
     if (p.textMessage) { p.textMessage = 0; return idle('Text_Message', () => { speech.dj(E.TEXT_MESSAGE, [dir.tmVariant]); dir.tmVariant = 1; }); } // 0x577C 2A2B88
     if (p.freeRideIntro) { p.freeRideIntro = 0; return idle('Free_Ride_Intro', () => speech.dj(E.FREE_RIDE_INTRO, [courseBit(state.course)])); } // 0x5770 2A2C30
-    if (p.bcChallenge) { const r = p.bcChallenge; p.bcChallenge = 0; return idle('BC_Challenge', () => speech.bcChallenge({ id: charId(r) }, { id: charId(state.character) })); } // 0x5788 (2A1138: rival slot 1 -> human slot 0)
+    // 0x5788 (2A1138: rival slot 1 -> human slot 0)
+    if (p.bcChallenge) { const r = p.bcChallenge; p.bcChallenge = 0; return idle('BC_Challenge', () => speech.bcChallenge({ id: charId(r) }, { id: charId(state.character) })); }
     if (p.artist) { p.artist = 0; return idle('Artist_Intro', () => { if (musicMode()) speech.artistIntro(p.sed); }); }                   // 0x5774 2A2860
     if (p.hubChatter) { p.hubChatter = 0; return idle('Hub', () => hubChatter(0)); }                                                   // 0x574C
     if (p.hubChatter2) { p.hubChatter2 = 0; return idle('Hub', () => hubChatter(0)); }                                                 // 0x5750
@@ -653,26 +715,60 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const eventMode = challenge(); // 2A42C8: mode 6..11 (time / points challenges)
     const leave = () => { if (T.zone) sendEvent(T.zone + 1); T.zone = 0; T.zoneExit = 0; }; // 28D7D8
     let store = true;
-    if (a === -1) { if (T.a === 1 || T.a === 2) leave(); T.rearm = 1; }
-    else if (a === 1) { if (changed && !(pv('bigChallengeAudio') && (state.challengeMusic || state.challengePrompt))) { if (T.zone && T.zone !== b) sendEvent(T.zone + 1); sendEvent(b); T.zone = b; T.zoneExit = 0; } } // 28D630 (+0x5FD4 / +0x5FD8 gate)
-    else if (a === 2) { if (changed) { if (T.zone === b) T.zoneExit = b; else leave(); } }                                          // 28D740
+    if (a === -1) {
+      if (T.a === 1 || T.a === 2) leave();
+      T.rearm = 1;
+    } else if (a === 1) {
+      if (changed && !(state.challengeMusic || state.challengePrompt)) {
+        if (T.zone && T.zone !== b) sendEvent(T.zone + 1);
+        sendEvent(b);
+        T.zone = b;
+        T.zoneExit = 0;
+      }
+    } // 28D630 (+0x5FD4 / +0x5FD8 gate)
+    else if (a === 2) {
+      if (changed) {
+        if (T.zone === b) T.zoneExit = b;
+        else leave();
+      }
+    } // 28D740
     else if (a === 0) {
-      if (b === 0) { if (!state.music && !state.musicToken) playMusic(0); else sendEvent(0); }
-      else if (b === 11) { // hub approach: event 11, the hub song 2 s later (forced with the DJ on), the spoke / hub DJ at
+      if (b === 0) {
+        if (!state.music && !state.musicToken) playMusic(0);
+        else sendEvent(0);
+      } else if (b === 11) {
+        // hub approach: event 11, the hub song 2 s later (forced with the DJ on), the spoke / hub DJ at
         // 1.5 s; in a time / points challenge a song change instead
         if (T.rearm && latch(11)) {
-          if (eventMode) { if (changed) changeSong(false); }
-          else {
-            log('trigger 11'); sendEvent(11);
+          if (eventMode) {
+            if (changed) changeSong(false);
+          } else {
+            log('trigger 11');
+            sendEvent(11);
             post('request', 2000, request(0, djOn()));
             if (changed) post('dj', 1500, () => djTimer(dir.hubFirst ? 1 : 0));
           }
           T.rearm = 0;
         }
-      } else if (b === 13) { if (latch(13)) { if (changed && !eventMode) state.pendingDj.hubChatter2 = 1; sendEvent(13); } }
-      else if (b >= 14 && b <= 17) { if (latch(b) && changed && !eventMode) { state.pendingDj.eventIntro = 1; state.pendingDj.region = b; state.pendingDj.radioBigOutro = 1; } }
-      else if (b === 18) { if (gameKind() === 4 && !eventMode && T.rearm && latch(18)) { if (changed) changeSong(false); T.rearm = 0; } }
-      else if (b === 42) { if (changed) state.music?.send?.(42); } // 2B3B88
+      } else if (b === 13) {
+        if (latch(13)) {
+          if (changed && !eventMode) state.pendingDj.hubChatter2 = 1;
+          sendEvent(13);
+        }
+      } else if (b >= 14 && b <= 17) {
+        if (latch(b) && changed && !eventMode) {
+          state.pendingDj.eventIntro = 1;
+          state.pendingDj.region = b;
+          state.pendingDj.radioBigOutro = 1;
+        }
+      } else if (b === 18) {
+        if (gameKind() === 4 && !eventMode && T.rearm && latch(18)) {
+          if (changed) changeSong(false);
+          T.rearm = 0;
+        }
+      } else if (b === 42) {
+        if (changed) state.music?.send?.(42);
+      } // 2B3B88
       else sendEvent(b);
     } else store = false;
     if (store) { T.a = a; T.b = b; }
@@ -743,7 +839,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // Front-end screen entered (28F140): charsel plays in the front end, with the screen's section event.
     async screen(name) {
       await whenReady();
-      if (name === 'results' || name.startsWith('ctm-results')) { state.replay = true; speech.replay = true; if (sfxGame) sfxGame.G.replay = true; api.podium(); return; } // 288AE0: the replay runs behind the results
+      // 288AE0: the replay runs behind the results
+      if (name === 'results' || name.startsWith('ctm-results')) { state.replay = true; speech.replay = true; if (sfxGame) sfxGame.G.replay = true; api.podium(); return; }
       if (name === 'ctm-objectives') { const c = context(); if (c.career && round() < 2 && eventKind(state.course) !== 4) speech.sponsorIntro(); return; } // 1FB588 -> 2A31C0
       if (['game', 'loading', 'pause', 'audio', 'audio-playlist'].includes(name)) return;
       const event = FE_EVENT[name]; if (event === undefined) return;
@@ -751,7 +848,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // charsel, 28F140(1)). The free-ride MCOMM (Messages, Options, Audio, Transport) and the pause menus are overlays on
       // the paused world (289B70 pauses the song; music/runs/mcomm: no 28F140, no charsel until 289BB8 resumes the song).
       if (state.inWorld && !state.lodge) { if (name !== 'ctm-lodge') return; enterLodge(); }
-      if (state.switchCarry && !state.inWorld) state.switchCarry = null; // (pv worldSwitchAudio: the front end after all, e.g. a quit from the map)
+      if (state.switchCarry && !state.inWorld) state.switchCarry = null; // (the front end after all, e.g. a quit from the map)
       if (state.musicId !== 'charsel' || !state.music) { state.raceMusic = false; state.feEvent = event; tl('fe', event); await playSong('charsel', event); return; }
       if (state.feEvent === event) return; // ignored if the state is unchanged
       state.feEvent = event; tl('fe', event); sendEvent(event);
@@ -762,7 +859,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     async loadingStart({ courseCode = null, character = null } = {}) {
       await whenReady();
       if (state.carry) { if (courseCode) api.prepare({ courseCode, character }); return; } // in-world event load: no FE fade, no loading loop
-      if (state.switchCarry === 'map') state.switchCarry = null; // (pv worldSwitchAudio) an event from the results' map: the event load
+      if (state.switchCarry === 'map') state.switchCarry = null; // an event from the results' map: the event load
       else if (state.switchCarry) { if (courseCode) api.prepare({ courseCode, character }); return; } // a carried world switch: no fade, no loop
       fadeOutMusic(1.0); state.feEvent = null;
       if (courseCode) api.prepare({ courseCode, character });
@@ -784,10 +881,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // A streamed peak world starts with no location in memory: gameTick feeds the streaming rows (setResident).
       if (isPeakWorld(courseCode)) world.setResident(state.residentKey ? state.residentKey.split(',').map(Number) : []);
       Promise.resolve(courseCode ? world.load(courseCode) : null).then(() => {
-        // pv sfxWarmFirst (docs/audio-logic.md 9.13): what the intro starts first (the location ambience, the world banks, the crowd loops)
-        // decodes first; the crowd loop decoded at its first play under the intro (97 ms at 4x CPU) when the warm-up had not reached it
-        if (engine.unlocked) return sfx.warm(pv('sfxWarmFirst') ? [SLOT.WORLD9, SLOT.CROWD, SLOT.WORLD8, SLOT.MAIN, SLOT.BOARD, SLOT.SPUBOARD, SLOT.LAND, SLOT.GRUNT, SLOT.GRUNT_AI, SLOT.MOUNTAIN, SLOT.TRANSPORT]
-          : [SLOT.MAIN, SLOT.BOARD, SLOT.SPUBOARD, SLOT.LAND, SLOT.CROWD, SLOT.GRUNT, SLOT.GRUNT_AI, SLOT.WORLD9, SLOT.WORLD8, SLOT.MOUNTAIN, SLOT.TRANSPORT]);
+        if (engine.unlocked) return sfx.warm([SLOT.MAIN, SLOT.BOARD, SLOT.SPUBOARD, SLOT.LAND, SLOT.CROWD, SLOT.GRUNT, SLOT.GRUNT_AI, SLOT.WORLD9, SLOT.WORLD8, SLOT.MOUNTAIN, SLOT.TRANSPORT]);
       }).catch((e) => console.warn('Audio prep failed', e));
     },
     async worldLoaded({ courseIndex = 0, singleEvent = true, courseCode = null, character = null, rounds = 1, freeRide = null } = {}) {
@@ -796,7 +890,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // (freeRide) starts the world; a later load notification for the running world is ignored.
       if (isPeakWorld(courseCode) && !freeRide) { if (!state.free) api.prepare({ courseCode, character }); return; }
       if (freeRide) singleEvent = false; // free ride and the peak runs are Conquer the Mountain (0x535C11 = 0)
-      // pv worldSwitchAudio: a carried Transport / crossWorld (travelSwitch) is no world load on the PS2: no 2867E8 (rider music, pick,
+      // A carried Transport / crossWorld (travelSwitch) is no world load on the PS2: no 2867E8 (rider music, pick,
       // PlayMusic), no 2A4A78 DJ timer, no 579C read; the song, the timers, the MusicTrigger state and the pending DJ flags carry on.
       const carried = !!freeRide && (state.switchCarry === 'travel' || state.switchCarry === 'cross');
       if (state.switchCarry) { tl('carried', carried ? state.switchCarry : 0); state.switchCarry = null; }
@@ -814,7 +908,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       await loadingLoop(false);
       if (carried) { log(`carried world switch: course ${courseIndex}`); state.carriedWorld = courseCode; ws10(courseIndex); return; } // the arrival's world state 10
       if (state.free) { worldLoadFree(intro); return; }
-      if (state.carry && (state.music || state.musicToken || state.musicId || timers.some((t) => t.key === 'request'))) return; // in-world event start: the fly-over's song plays on (until the run starts)
+      // in-world event start: the fly-over's song plays on (until the run starts)
+      if (state.carry && (state.music || state.musicToken || state.musicId || timers.some((t) => t.key === 'request'))) return;
       tl('worldload', courseIndex); // 2867E8 (free ride: worldLoadFree)
       await playWorldMusic(singleEvent ? 36 : 0);
       if (singleEvent) speech.venueIntro(courseIndex); // 286E20 -> 2A39E0
@@ -845,13 +940,13 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       if (state.musicId === 'chartune') { state.songIndex = state.chartuneIndex; await playMusic(36); } // 28F200 / 28F2C0
       else if (state.goSeen) sendEvent(36);
     },
-    // pv ctmWorldAudio (main.js, the load screen closing on a streamed world): the free-ride world load 2867E8 + 234F40 runs when the
+    // ctmWorldAudio (main.js, the load screen closing on a streamed world): the free-ride world load 2867E8 + 234F40 runs when the
     // world is up, before world state 10's arrival list, as on the PS2 (music/runs/newcareer: pktrans s573, loading off and the world
     // load s594, WS10 resumes pktrans s629, the ABC1 movie s650..2325 and the plane NIS under it, 28E8C0(19) at the cinematic's end
     // s3248). The ride start (runStart) then only runs 28E888 (startFree: the cinematic end, held while an arrival list plays).
     async freeWorldLoaded({ courseIndex = 0, courseCode = null, character = null, freeRide = null } = {}) {
       await whenReady(); state.carry = false;
-      // pv worldSwitchAudio: the ride start (runStart) can come first and has already taken the carried world in: no second world load
+      // The ride start (runStart) can come first and has already taken the carried world in: no second world load
       if (state.carriedWorld && state.carriedWorld === courseCode && state.inWorld && state.free && !state.lodge) { state.carriedWorld = null; log('carried world already in'); return; }
       if (character) state.character = character;
       if (state.lodge) { state.lodge = false; fadeOutMusic(1.0); state.feEvent = null; sfx?.pauseAll(false, (v) => v.tag !== 'ui'); }
@@ -896,11 +991,10 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // Big Challenges (web/big-challenges.js; audio +0x5FD4 = challenge music on): 29D6E0 sends 33 / 34 / 38 by the challenge type
     // (table 0x43EE10 row +0x22, jump table 0x482DE0: 1/2/3; 0 and 4 none), 29D8E0 (complete) and 29DBB0 (stop; UI event 14 on a
     // fail) send 39 while it is on.
-    // pv bigChallengeAudio: the three functions as the PS2 runs them (docs/audio-logic.md 3.9). A start attaches the song's loop
+    // The three functions as the PS2 runs them (docs/audio-logic.md 3.9). A start attaches the song's loop
     // bank to the overlay track (2B4620) before the event, so the event's stinger (the loop bank's long ending, Wobble's own
     // third one at bank entry 66) plays; a hub song is replaced by a playlist song instead; completion plays 0x6D + Arcade_Prompts 1.
     challengeStart(type) {
-      if (!pv('bigChallengeAudio')) { const e = { 1: 33, 2: 34, 3: 38 }[type]; state.challengeMusic = e !== undefined && !!state.music; if (state.challengeMusic && musicMode()) sendEvent(e); return; }
       state.challengePrompt = false;                                              // +0x5FD8 = 0
       sfxGame?.challengeStops();                                                  // 296E20 / 297438, 29B3C0
       const loops = state.music?.loops;
@@ -917,14 +1011,12 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     },
     // 29D8E0 (the challenge completed): event 39 while the flag is set, then always sound 0x6D and Arcade_Prompts 1 (2A3C00).
     challengeEnd() {
-      if (!pv('bigChallengeAudio')) { if (!state.challengeMusic) return; state.challengeMusic = false; if (musicMode()) sendEvent(39); return; }
       if (state.challengeMusic) sendEvent(39);
       state.challengeMusic = false; state.challengeType = 0;
       sfxGame?.challengeComplete(); speech?.arcade(EV.ARCADE_PROMPTS, 1);
     },
     // 29DBB0(audio, 0 fail / 1 quit or decline): only while the flag is set: UI event 14 on a fail, the stops, event 39.
     challengeStop(fail = false) {
-      if (!pv('bigChallengeAudio')) { if (!state.challengeMusic) return; if (fail) api.ui(14); state.challengeMusic = false; if (musicMode()) sendEvent(39); return; }
       if (!state.challengeMusic) return;
       if (fail) api.ui(14);
       sfxGame?.challengeStops(); sendEvent(39);
@@ -932,8 +1024,8 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     },
     // 29D6D0 (the prompt's Yes, 1F7548 / 1F7738): +0x5FD8 = 1 until the start.
     challengeAccepted() {
-      if (pv('bigChallengeAudio')) state.challengePrompt = true;
-      if (pv('audioDeclick')) state.music?.warmEvents?.([33, 34, 38]); // the stingers decoded before the start (docs/audio-logic.md 9.13)
+      state.challengePrompt = true;
+      state.music?.warmEvents?.([33, 34, 38]); // the stingers decoded before the start (docs/audio-logic.md 9.13)
     },
     // Pause menu (289B70 / 289BB8): music freezes (pitch 0), SFX voices pause (29CE28); resume cancels queued speech.
     // pv djQueueRules: 289BB8 touches the speech only when +0x5828 is set (28FAE0, an in-game song change, via 0x208CA4): then 2B11B0 stops
@@ -956,7 +1048,13 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       if (runsLeft) { state.goSeen = false; state.resumeGo = 0; } // 286F94
       state.place = place; if (winner) state.winner = winner;
       if (pv('postEventDj') && !state.singleEvent) // 287060: 0x535C11 == 0 -> 2A45C0 (also on a time-out, 0x286FE0)
-        recordEvent({ place: stats?.place ?? place, dnf: timedOut, ko: stats?.ko ?? 0, ubers: stats?.ubers ?? 0, race: state.course < 5 || gameKind() === 0 || gameKind() === 5 || challengeKind === 5 });
+        recordEvent({
+          place: stats?.place ?? place,
+          dnf: timedOut,
+          ko: stats?.ko ?? 0,
+          ubers: stats?.ubers ?? 0,
+          race: state.course < 5 || gameKind() === 0 || gameKind() === 5 || challengeKind === 5
+        });
       if (timedOut) return; // rider+0x480
       const me = { id: charId(state.character) };
       if (state.course < 5 || eventKind(state.course) === 0 || challengeKind === 5) speech.paFinishLine(me, place); // 2A4078 -> 2A3708 (kind 5: time challenges incl. Rival Time)
@@ -973,14 +1071,14 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       playSong('chartune', CHARTUNE_EVENT[id], { intensity: 127 });
     },
     // Leaving the world (286A80): stop (no fade), mix 0, speech off, rider loops and world sounds off.
-    // pv ctmRestartAudio: a Conquer the Mountain Restart is not a world teardown (docs/audio-logic.md 9.13). The pause's Restart
+    // A Conquer the Mountain Restart is not a world teardown (docs/audio-logic.md 9.13). The pause's Restart
     // (0x20D1D8 -> 2302A8: world state 2 directly, 2870A0 -> 2871B0) stops the riders' loops, the Uber voice and the ducks; the song
     // was resumed at the Yes (285D78 / 289BB8) and plays on under the card, no event (PS2 music log pause-restart-audio). The
     // results' Restart runs world state 13 too (28E8C0(20, 1): heat(), from the 'heat' cutscene). The page quits the run around it
     // (career-ui.js restartToCard -> ui.cb.quit -> leaveWorld): that leaveWorld keeps the song and the banks, and the next runStart
     // makes no world load and sends no event 36 (GO's event 0 restarts the song as on the PS2).
     restartRun({ fromResults = false } = {}) {
-      if (!pv('ctmRestartAudio') || !sfxGame || !state.inWorld || state.free) return false;
+      if (!sfxGame || !state.inWorld || state.free) return false;
       log(`restart (${fromResults ? 'results, WS13' : 'pause, 2302A8'})`); tl('restart', fromResults ? 1 : 0);
       if (state.paused) api.pause(false);                   // 285D78 game resume -> 289BB8
       sfxGame.stop(); engine?.release(0.5);                 // 2871B0: 296E20 / 297438, 29B3C0, 2948A0, 287F00
@@ -994,7 +1092,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       // Song files (~5-20 MB each): kept only while in use. A course change stays in the page (main.js navigateCourse), so the
       // byte cache would otherwise keep every song ever played (a playing song holds its own bytes; a replay re-fetches).
       for (const k of [...cache.keys()]) if (k.startsWith('b:music/')) cache.delete(k);
-      if (state.switchCarry && pv('worldSwitchAudio')) { // (travelSwitch / eventMap) the world goes, the director and the song stay
+      if (state.switchCarry) { // (travelSwitch / eventMap) the world goes, the director and the song stay
         tl('leave', state.switchCarry); log(`leave (carry ${state.switchCarry})`);
         state.inWorld = false; state.residentKey = ''; state.lodge = false; state.paused = false; state.freeStart = false; dir.hold = false; dir.heldEnd = false;
         sfxGame?.stop(); world?.unload(); crowd?.reset(); sfx?.stopAll({ fade: 0.25, keep: (v) => v.tag === 'nis' }); // (the Transport ride's voices play on)
@@ -1009,7 +1107,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       }
       tl('leave'); if (state.music || state.musicToken || state.musicId) tl('stop');
       state.lodge = false; dir.hold = false; dir.heldEnd = false; state.paused = false; state.freeStart = false;
-      state.raceMusic = false; state.inWorld = false; state.free = null; state.residentKey = ''; timers.length = 0; stopMusic(); speech?.stop(); engine?.setMix(0); engine?.setScaleMode('FE'); // 285FB0 -> 288D18(0)
+      state.raceMusic = false; state.inWorld = false; state.free = null; state.residentKey = ''; timers.length = 0; stopMusic(); speech?.stop(); engine?.setMix(0);
+      // 285FB0 -> 288D18(0)
+engine?.setScaleMode('FE');
       sfxGame?.stop(); world?.unload(); crowd?.reset(); sfx?.stopAll({ fade: 0.25 });
       for (const s of [SLOT.BOARD, SLOT.SPUBOARD, SLOT.MOUNTAIN, SLOT.CROWD, SLOT.TRANSPORT, SLOT.LAND, SLOT.GRUNT, SLOT.GRUNT_AI, SLOT.WORLD8, SLOT.WORLD9, SLOT.DYNAMIC]) sfx?.unloadBank(s);
       sfx?.loadBank(SLOT.MAIN, 'SSX3Menu');
@@ -1072,10 +1172,9 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       }
       if ((++state.ticks & 63) === 1) { let m = 0; try { m = +(globalThis.localStorage?.getItem('ssx3.soundMode') || 0); } catch {} sfx.setMono(m === 2); } // Sound Mode (web/audio-menu.js)
       world.update(state.listenerCm);
-      if (pv('avalanche')) { // 0x29DEF0 rumble (docs/avalanche.md "Audio"): the human core's avalanches, listener = the human rider +0x110
-        const av = avalancheState(core), me = sfxGame.riders().find((x) => x.human);
-        if (av) world.avalanche(av.loop, av.tumblers, me ? [me.t[12], me.t[13], me.t[14]] : null, takeLoopEvents(core));
-      }
+      // 0x29DEF0 rumble (docs/avalanche.md "Audio"): the human core's avalanches, listener = the human rider +0x110
+      const av = avalancheState(core), me = sfxGame.riders().find((x) => x.human);
+      if (av) world.avalanche(av.loop, av.tumblers, me ? [me.t[12], me.t[13], me.t[14]] : null, takeLoopEvents(core));
       if (!state.paused && state.music && state.raceMusic && musicMode()) { // 28F000: hub songs stay at 127, others ramp
         if (/^Peak\d$/.test(state.musicId)) state.music.setIntensity?.(127);
         else { state.intensityFrames++; state.music.setIntensity?.(raceIntensity(state.intensityFrames)); }
@@ -1088,18 +1187,19 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // backcountry, hub, the first-visit Free_Ride_Intro) and the ambience / painters follow the rider's contact track.
     freeRideCourse(course, { kind } = {}) {
       if (!state.free || !(course >= 0) || course === state.course) return;
-      state.course = course; if (pv('worldSwitchAudio')) ws10(course); else markVisited(course); log(`course ${course}`);
+      state.course = course; ws10(course); log(`course ${course}`);
       Object.assign(sfxGame.G, { courseIndex: course, bigAirEvent: courseFlags(course).bigAir, halfPipeEvent: courseFlags(course).halfPipe, backcountry: courseFlags(course).backcountry });
     },
     // Transport inside the world (28F558 then 27A860 -> 28E8C0(20, 1); the browser reloads the page instead, so this
     // is for an in-world transport): `arrived()` is 28E888 when the arrival cinematic ends.
-    // pv boothDj: the transport booth's trigger (2A49E8): the flag for 30 s of the audio timer queue.
-    booth() { if (!pv('boothDj')) return; state.boothFlag = 1; log('booth flag (2A49E8)'); cancel('booth'); post('booth', 30000, () => { state.boothFlag = 0; }); },
+    // The transport booth's trigger (2A49E8): the flag for 30 s of the audio timer queue.
+    booth() { state.boothFlag = 1; log('booth flag (2A49E8)'); cancel('booth'); post('booth', 30000, () => { state.boothFlag = 0; }); },
     travel(dest) {
       if (!state.free) return;
       // 28F678 map close resumes the game (289BB8) before 27A860's travel: the song plays on under the transport (PS2
       // music/runs/transport: resume, map close, then 28E8C0(20)).
-      if (state.lodge) { if (state.paused) api.pause(false); state.lodge = false; fadeOutMusic(1.0); state.feEvent = null; state.course = dest; dir.dest = NO_DEST; worldLoadFree(); return; } // from the lodge: a world load at dest
+      // from the lodge: a world load at dest
+      if (state.lodge) { if (state.paused) api.pause(false); state.lodge = false; fadeOutMusic(1.0); state.feEvent = null; state.course = dest; dir.dest = NO_DEST; worldLoadFree(); return; }
       if (musicMode() && (state.music || state.musicToken || state.musicId)) { tl('stop'); stopMusic(); } // 28F520 at the Transport confirm (0x202068): Stop in music modes
       if (state.paused) api.pause(false);
       dir.dest = dest;
@@ -1107,7 +1207,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       travel();
     },
     arrived() { cinematicEnd(); },
-    // pv worldSwitchAudio (docs/ctm-decomp-freeride.md ranked 2): a Transport whose destination is in another page world (career-ui.js
+    // docs/ctm-decomp-freeride.md ranked 2: a Transport whose destination is in another page world (career-ui.js
     // goWorld at the confirm: the post-event return, another peak on the per-peak worlds) runs code 20 in the world as the PS2 does (PS2
     // ctm-decomp/audio/postevent2, ticks 15440-15442: 28F520 Stop, 28E8C0(20, 1): pick, Radio BIG intro (0,1) + pool-5 hub chatter (2A4718),
     // the destination song 10 ms later (request kind 2); no loading loop) and carries the audio through the page's switch: leaveWorld keeps
@@ -1116,7 +1216,7 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // confirm) and the results' replay flag goes. `cross`: crossWorld (a riding crossing: no director call on the PS2, 22DF50) carries
     // without code 20.
     travelSwitch(dest, { cross = false } = {}) {
-      if (!pv('worldSwitchAudio') || !sfx || state.lodge) return false;
+      if (!sfx || state.lodge) return false;
       if (cross) { if (!state.free) return false; state.switchCarry = 'cross'; log('carry (crossWorld)'); tl('carry', 'cross'); return true; }
       if (!state.free || state.free.kind !== 4) state.free = { kind: 4, mode: 12 };
       state.replay = false; speech.replay = false; if (sfxGame) sfxGame.G.replay = false;
@@ -1124,15 +1224,15 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       api.travel(dest);
       return true;
     },
-    // pv worldSwitchAudio: the results' Transport (0x20CF80 -> WS14 arg 2) opens the map over the event world with its song playing (PS2
+    // The results' Transport (0x20CF80 -> WS14 arg 2) opens the map over the event world with its song playing (PS2
     // postevent2: song 201, the podium's chartune, stopped only at the confirm); the page quits the run before the map, so that leaveWorld
     // keeps the song. An event picked from the map is an event load (loadingStart ends the carry).
-    eventMap() { if (!pv('worldSwitchAudio') || !sfx) return false; state.switchCarry = 'map'; log('carry (results map)'); return true; },
-    // pv heatSong: world state 13 (a Conquer the Mountain event's Next heat, and the results' Restart: WS13 0x235A18 calls 27A860 at
+    eventMap() { if (!sfx) return false; state.switchCarry = 'map'; log('carry (results map)'); return true; },
+    // World state 13 (a Conquer the Mountain event's Next heat, and the results' Restart: WS13 0x235A18 calls 27A860 at
     // 0x235C44, which calls 28E8C0(20, 1)). Its event branch (0x28EC90..0x28ED18): unless free ride (2A4040), in a race (2A4078) or
     // slope-style (2A40E8) event with the round (*(G+0xC0)+0) >= 2: PickNextSong (28D488) and a forced request kind 3 (PlayMusic 36)
     // after 10 ms (2ADCA0). So heats 2 and 3 each start a new song; the port kept heat 1's song for all three.
-    heat() { if (!pv('heatSong') || !sfx || state.free) return; log('world state 13 (28E8C0 20)'); dir.dest = NO_DEST; travel(); },
+    heat() { if (!sfx || state.free) return; log('world state 13 (28E8C0 20)'); dir.dest = NO_DEST; travel(); },
     // An arrival cinematic the page plays (main.js ui.cb.cutscene kind 'arrival': the Happiness plane, the heli drops):
     // the ride start's 28E888 waits for its end (startFree).
     arrivalCinematic(on) { if (on) { dir.hold = true; return; } dir.hold = false; if (dir.heldEnd) { dir.heldEnd = false; cinematicEnd(); } },
@@ -1158,12 +1258,44 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     // QA: what is playing.
     debug() {
       const c = engine?.context;
-      return { unlocked: !!engine?.unlocked, context: c?.state, time: c ? +c.currentTime.toFixed(2) : 0, music: state.musicId, playing: !!state.music, finished: !!state.music?.finished,
-        position: state.music?.position ?? null, intensity: state.music?.intensity ?? null, loading: !!state.loading, mix: engine?.mixIndex, scale: engine?.scaleMode, characterGain: engine?.busOutput('CHARACTER')?.gain?.value ?? null, speakerGains: engine ? Array.from({ length: 10 }, (_, k) => +(engine.speakerGain(k) ?? 0).toFixed(3)) : null, radioMode: settings.radioMode,
+      return {
+        unlocked: !!engine?.unlocked,
+        context: c?.state,
+        time: c ? +c.currentTime.toFixed(2) : 0,
+        music: state.musicId,
+        playing: !!state.music,
+        finished: !!state.music?.finished,
+        position: state.music?.position ?? null,
+        intensity: state.music?.intensity ?? null,
+        loading: !!state.loading,
+        mix: engine?.mixIndex,
+        scale: engine?.scaleMode,
+        characterGain: engine?.busOutput('CHARACTER')?.gain?.value ?? null,
+        speakerGains: engine ? Array.from({ length: 10 }, (_, k) => +(engine.speakerGain(k) ?? 0).toFixed(3)) : null,
+        radioMode: settings.radioMode,
         challenge: { music: !!state.challengeMusic, type: state.challengeType ?? 0, prompt: !!state.challengePrompt }, // +0x5FD4 / +0x5FD0 / +0x5FD8
-        speech: speech?.debug(), sfx: sfxGame?.debug(), world: world?.debug(), trigger: { ...state.trigger }, track: state.track, voices: sfx?.voiceCount ?? 0, pools: sfx?.pools, byTag: sfx?.byTag(), streams: musStreamStats(),
-        director: { free: state.free, course: state.course, dest: dir.dest, hubFirst: dir.hubFirst, bcIntro: dir.bcIntro, tmVariant: dir.tmVariant, firstVisit: dir.firstVisit.join(''),
-          pending: Object.fromEntries(Object.entries(state.pendingDj).filter(([k, v]) => v && k !== 'sed' && k !== 'region')), timers: timers.map((t) => `${t.key}@${Math.round(t.at - now())}`), trace: trace.slice(-32) } };
+        speech: speech?.debug(),
+        sfx: sfxGame?.debug(),
+        world: world?.debug(),
+        trigger: { ...state.trigger },
+        track: state.track,
+        voices: sfx?.voiceCount ?? 0,
+        pools: sfx?.pools,
+        byTag: sfx?.byTag(),
+        streams: musStreamStats(),
+        director: {
+          free: state.free,
+          course: state.course,
+          dest: dir.dest,
+          hubFirst: dir.hubFirst,
+          bcIntro: dir.bcIntro,
+          tmVariant: dir.tmVariant,
+          firstVisit: dir.firstVisit.join(''),
+          pending: Object.fromEntries(Object.entries(state.pendingDj).filter(([k, v]) => v && k !== 'sed' && k !== 'region')),
+          timers: timers.map((t) => `${t.key}@${Math.round(t.at - now())}`),
+          trace: trace.slice(-32)
+        }
+      };
     },
     // Front-end rider speech (web/rider-speech.js): Post_Selection / Customize through their Events.evt events.
     async speak(bank) { await whenReady(); await speech.init(); return speech.speakBank(bank); },
@@ -1179,7 +1311,14 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
   let worldDocCache = null;
   function worldDoc() {
     if (!state.courseCode) return null;
-    if (worldDocCache?.code !== state.courseCode) { worldDocCache = { code: state.courseCode, doc: null }; json(`world/${state.courseCode}.json`).then((d) => { if (worldDocCache?.code === state.courseCode) worldDocCache.doc = d; }).catch(() => {}); }
+    if (worldDocCache?.code !== state.courseCode) {
+      worldDocCache = { code: state.courseCode, doc: null };
+      json(`world/${state.courseCode}.json`)
+        .then((d) => {
+          if (worldDocCache?.code === state.courseCode) worldDocCache.doc = d;
+        })
+        .catch(() => {});
+    }
     return worldDocCache.doc;
   }
   return api;

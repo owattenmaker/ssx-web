@@ -64,7 +64,13 @@ export function eventTable(career) {
 }
 
 function bucket([rate, burst], at = Date.now()) { return { tokens: burst, rate, burst, at }; }
-function take(b, t = Date.now()) { b.tokens = Math.min(b.burst, b.tokens + Math.max(0, t - b.at) / 1000 * b.rate); b.at = Math.max(b.at, t); if (b.tokens < 1) return false; b.tokens -= 1; return true; }
+function take(b, t = Date.now()) {
+  b.tokens = Math.min(b.burst, b.tokens + (Math.max(0, t - b.at) / 1000) * b.rate);
+  b.at = Math.max(b.at, t);
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
 
 // dir: the state directory (MP_RECORDS_DIR); assets: the game data root (CAREER/career.json, <code>/npc-riders.json).
 export function createRecords({ dir, assets, now = () => Date.now(), clientAddress = (req) => req.socket?.remoteAddress ?? '', log = console } = {}) {
@@ -93,7 +99,19 @@ export function createRecords({ dir, assets, now = () => Date.now(), clientAddre
     value: ev.timed ? d.value * 60 : d.value, default: true, replay: false, verified: null, core: null, at: null, seq: 0 }));
   const better = (ev, a, b) => (ev.timed ? a.value - b.value : b.value - a.value) || a.seq - b.seq;
   const rows = (key) => { const ev = events.get(key); return [...defaults(ev), ...(board.events[key] ?? []).filter((r) => r.verified !== false)].sort((a, b) => better(ev, a, b)); };
-  const pub = (r, rank) => ({ id: r.id, rank, name: r.name, character: r.character, rider: r.rider, value: r.value, ...(r.default ? { default: true } : {}), replay: !!r.replay, verified: r.verified ?? null, core: r.core ?? null, at: r.at ?? null });
+  const pub = (r, rank) => ({
+    id: r.id,
+    rank,
+    name: r.name,
+    character: r.character,
+    rider: r.rider,
+    value: r.value,
+    ...(r.default ? { default: true } : {}),
+    replay: !!r.replay,
+    verified: r.verified ?? null,
+    core: r.core ?? null,
+    at: r.at ?? null
+  });
   const save = () => { const tmp = boardFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(board)); fs.renameSync(tmp, boardFile); };
   const limits = new Map();
   setInterval(() => { const t = now(); for (const [k, v] of limits) if (t - v.minute.at > 3600e3) limits.delete(k); }, 600e3).unref?.();
@@ -158,7 +176,15 @@ export function createRecords({ dir, assets, now = () => Date.now(), clientAddre
       const json = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
       if (!ok) { req.resume(); json(503, { error: 'off' }); return true; }
       if (req.method === 'GET' && p === '/mp/records') { json(200, api.summary()); return true; }
-      if (req.method === 'GET' && p === '/mp/records/board') { const b = api.board(url.searchParams.get('event'), +url.searchParams.get('offset') || 0, +url.searchParams.get('limit') || MAX_LIMIT); json(b ? 200 : 404, b ?? { error: 'event' }); return true; }
+      if (req.method === 'GET' && p === '/mp/records/board') {
+        const b = api.board(
+          url.searchParams.get('event'),
+          +url.searchParams.get('offset') || 0,
+          +url.searchParams.get('limit') || MAX_LIMIT
+        );
+        json(b ? 200 : 404, b ?? { error: 'event' });
+        return true;
+      }
       if (req.method === 'GET' && p === '/mp/records/replay') {
         const f = api.replayPath(url.searchParams.get('id')); if (!f) { json(404, { error: 'replay' }); return true; }
         const bytes = fs.readFileSync(f);

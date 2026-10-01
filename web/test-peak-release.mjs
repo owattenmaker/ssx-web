@@ -5,9 +5,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { locationBatches } from './peak-world-batches.js';
-import { PV_DEFAULTS } from './pv-flags.js';
 
-assert.ok('peakRelease' in PV_DEFAULTS, 'pv peakRelease');
 const createCore = (await import(process.env.CORE || './runtime/core.js')).default;
 const core = await createCore();
 if (!core._peak_world_free_track) { console.log('peak release: skipped (core without peak_world_free_track: web/build-core.sh)'); process.exit(0); }

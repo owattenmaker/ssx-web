@@ -2,10 +2,11 @@
 // request, so the edge can cache the game files and still never hand them to a visitor without a session:
 // - /gate/*, pages and the /mp WebSocket go straight to the origin (its gate shows the login form / answers 401);
 // - every other request needs a valid gate cookie (same HMAC as web/server/gate.mjs, secret GATE_SECRET), else 401;
+//   with no GATE_SECRET set (the public site since 2026-10-01) no session is checked;
 // - /assets/* is then fetched through Cloudflare's cache (the origin marks it shareable only for requests carrying
 //   X-SSX-Edge = EDGE_SECRET), so each file leaves the home server about once per Cloudflare location.
 const COOKIE = 'ssx_gate';
-const CACHE_GEN = 37; // edge cache generation (bump to retire all cached copies)
+const CACHE_GEN = 38; // edge cache generation (bump to retire all cached copies)
 let keyPromise = null;
 
 export default {
@@ -14,7 +15,8 @@ export default {
     const passThrough = request.headers.get('upgrade') || !['GET', 'HEAD'].includes(request.method) ||
       url.pathname.startsWith('/gate/') || url.pathname === '/mp' || url.pathname.startsWith('/mp/') || url.pathname === '/' || url.pathname.endsWith('.html');
     if (passThrough) return fetch(request);
-    if (!(await validSession(request, env.GATE_SECRET))) return new Response('login required', { status: 401, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
+    // Without a GATE_SECRET the site is public (the origin runs without MP_GATE_PASSWORD), so no session is needed.
+    if (env.GATE_SECRET && !(await validSession(request, env.GATE_SECRET))) return new Response('login required', { status: 401, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } });
     if (!url.pathname.startsWith('/assets/')) return fetch(request);
     const headers = new Headers(request.headers); headers.set('x-ssx-edge', env.EDGE_SECRET);
     // CACHE_GEN in the URL: the edge cache keys on the full URL (custom cf.cacheKey is Enterprise-only and ignored),

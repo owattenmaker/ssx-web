@@ -85,14 +85,26 @@ export function createGate({ password = null, passwordFile = null, secretFile = 
   function failed(address) { const e = tries.get(address); if (e && ++e.failures >= ATTEMPTS.lockoutAfter) { e.lockedUntil = Date.now() + ATTEMPTS.lockoutMs; e.failures = 0; } }
   // Only same-site relative paths come back from the form (no open redirect).
   const safeNext = (n) => (typeof n === 'string' && n.startsWith('/') && !n.startsWith('//') && !n.startsWith('/\\') && n.length < 1024 ? n : '/');
-  const page = (next, message = '') => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SSX 3</title><style>${GATE_STYLE}</style></head>
+  const page = (
+    next,
+    message = ''
+  ) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>SSX 3</title><style>${GATE_STYLE}</style></head>
 <body><div class="bg" aria-hidden="true"><svg width="0" height="0"><defs><g id="k" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path id="a" d="M0-46V46M0-30l-12-12M0-30l12-12M0 30l-12 12M0 30l12 12M0-14l-7-6M0-14l7-6M0 14l-7 6M0 14l7 6"/><use href="#a" transform="rotate(60)"/><use href="#a" transform="rotate(120)"/></g></defs></svg>
 <svg class="sw" viewBox="0 0 1000 400" preserveAspectRatio="none" focusable="false"><path fill="#fff" opacity=".22" d="M0 120C330 150 680 270 1000 400H0Z"/><path fill="#fff" opacity=".85" d="M0 178C330 204 640 290 900 392C640 300 330 218 0 192Z"/><path fill="#8a3f05" d="M0 206C330 230 650 310 1000 396V400H0Z"/><path fill="#e27f0e" d="M0 220C330 244 650 322 950 400H0Z"/><path fill="#f7a445" d="M0 238C320 262 600 330 840 400H790C570 338 310 280 0 262Z"/><path fill="#c9670a" d="M0 318C240 328 440 360 560 400H0Z"/></svg>
 ${[1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<svg class="f f${i}" viewBox="-50 -50 100 100"><use href="#k"/></svg>`).join('')}</div>
 <main><header><h1>SSX <span>3</span></h1><p class="sub">Private server</p></header>
 <form method="post" action="/gate/login"><p class="prompt">Enter the password and press START</p><div class="row"><label for="pw">Password</label><input id="pw" type="password" name="password" autocomplete="current-password" autofocus required></div><input type="hidden" name="next" value="${escapeHtml(next)}"><button type="submit" class="go"><span>Press START</span></button><p class="err" role="alert">${escapeHtml(message)}</p></form>
 <p class="legend"><svg viewBox="0 0 30 30" aria-hidden="true" focusable="false"><circle cx="15" cy="15" r="13.5" fill="#2458b4" stroke="#fff" stroke-width="2"/><path d="M10 10l10 10M20 10L10 20" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/></svg>Enter</p></main></body></html>`;
-  const html = (res, status, body) => { res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'content-security-policy': GATE_CSP }); res.end(body); };
+  const html = (res, status, body) => {
+    res.writeHead(status, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'no-referrer',
+      'content-security-policy': GATE_CSP
+    });
+    res.end(body);
+  };
   return {
     valid,
     // Returns true when the request was answered here (login form / login POST / 401); false lets it through.

@@ -4,8 +4,7 @@
 // (87yndialog). web/career-ui.js calls it for the free-ride MCOMM, the career pause and their prompts; without the export
 // it keeps its own drawing.
 import { LuiScreen } from './lui-player.js';
-import { nameHash } from './locale.js';
-import { pv } from './pv-flags.js';   // the LUI widget name hash (tools/sam_ps2/loc_file.py name_hash): "%s group" lookups
+import { nameHash } from './locale.js';   // the LUI widget name hash (tools/sam_ps2/loc_file.py name_hash): "%s group" lookups
 
 const SY = 448 / 480;
 // Row icons (0x1F8448): "<icon> group" of table 0x441C30 by item id, shown at y = 40 x row; the other groups are hidden.
@@ -47,9 +46,9 @@ export class CtmPda {
   // PDATemplate at the time the PDA opened (0x20A778: 39C870(template, 0, 0)), bganim1 looping behind it.
   frame(c, b) {
     const t = this.now() - this.opened, tmpl = this.lui.PDATemplate, snow = this.lui.bganim1; if (!tmpl) return false;
-    // 0x20A854: -10 - (G+0x1C / 3600) % 15, '%d°%C'. pv mcommIcons: set once when the PDA template is built (0x20A778, the PDA
+    // 0x20A854: -10 - (G+0x1C / 3600) % 15, '%d°%C', set once when the PDA template is built (0x20A778, the PDA
     // opening), as the PS2 writes the text there and never again; before, it was worked out every frame.
-    const temperature = pv('mcommIcons') && this.temperature != null ? this.temperature : pdaTemperature(this.now());
+    const temperature = this.temperature != null ? this.temperature : pdaTemperature(this.now());
     const live = (screen, f) => screen.screen.events.filter((ev) => ev.frame <= f).map((ev) => ({ ev, start: ev.frame }));
     b.save(); b.scale(1, SY);
     const last = Math.max(...snow.screen.events.map((ev) => ev.frame)) + 1, sf = t % last;
@@ -64,9 +63,9 @@ export class CtmPda {
   // The MCOMM menu: rows [{label, icon, disabled}], the focused row, the help text of that row, the legend (Select / Previous).
   menu(c, rows, index, help, { legend = true } = {}) {
     const lui = this.lui['31paus_freeride']; if (!lui) return false;
-    // pv mcommIcons: each row icon is one flat colour; filled triangle by triangle, the canvas leaves anti-aliased seams along
+    // Each row icon is one flat colour; filled triangle by triangle, the canvas leaves anti-aliased seams along
     // the internal edges (the hexagon, the arrows), which the GS does not have: fill each flat shape as one path.
-    lui.unionFlat = pv('mcommIcons');
+    lui.unionFlat = true;
     const now = this.now(), t = Math.max(0, now - this.opened);
     if (this.focus.row !== index) this.focus = { row: index, at: now };
     const focusIcon = rows[index]?.icon, g = focusIcon && this.groups[focusIcon], ft = now - this.focus.at;
@@ -74,7 +73,8 @@ export class CtmPda {
     for (const ev of lui.screen.events) {
       if (ev.frame <= INTRO) { if (ev.frame <= t) events.push({ ev, start: ev.frame }); continue; }
       // the focused row's icon plays its focus state (colour + animations) from the focus change on; the others stay at rest
-      if (g && g.set.has(ev.element) && ev.frame >= g.first && ev.frame < g.first + FOCUS_LEN && ev.frame - g.first <= ft) events.push({ ev, start: this.focus.at - this.opened + (ev.frame - g.first) });
+      if (g && g.set.has(ev.element) && ev.frame >= g.first && ev.frame < g.first + FOCUS_LEN && ev.frame - g.first <= ft)
+        events.push({ ev, start: this.focus.at - this.opened + (ev.frame - g.first) });
     }
     const shown = new Map(rows.map((r, i) => [r.icon, i]));
     const override = (e) => {

@@ -659,6 +659,19 @@ const aiCases = [
   // capture's end. Ticks restart at the Continue, so every baseline covers the whole run (exact everywhere).
   { name: 'ctm-events/c0a-ws13-semi', coreExport: '_event_row_enter', args: ['--zoe', '--in-world-ai', '--ctm-full', 'ARA1', '--ws13', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-qual-zoe.json', '--ticks', '16100'],
     humanThrough: 16100, ai: [16100, 16100, 16100, 16100, 16100], rngThrough: 16100, ranks: true, records: true, why: 'a CTM qualifier, WS13 Next heat and the semi in the streamed world, six riders' },
+  // Career race FINALS with the peak rival in slot 1 (docs/career-events.md "The peak rival in career events"; career-rival agent): Ruthless
+  // Ridge and Intimidator, Zoe vs Nate (0x23A3D8: +0x44 = 0x145750), Psymon, Brodi (on Zoe), Griff, Elise, career race level 2. Derived PS2
+  // finals local/reference/pcsx2/characters/career/{CRA3,DRA4}-final-zoe (peak2-arr -> Transport -> the qualifier -> Give Up -> results with
+  // GMM+0x74 = 3 and the race handler +0xC = 0 -> Restart -> WS13 -> the Final Round card), captured from WS3 with --ai-state (tuck / weave
+  // script p2-<course>-full, not isolated): local/ps2-capture/runs/careerrival -> local/career-rival/caps. The riders come from the countdown's
+  // career document (tools/export_lineups.py export-career); web/test-career-rival.mjs shows the page's assembly (pv careerRival +
+  // careerLevel) equals it leaf for leaf.
+  { name: 'careerrival/cra3-final', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/CRA3/lineups-career/CRA3-final-zoe.json', '--in-world-ai', '--node-seed', '../local/career-rival/caps/cra3-final.nodes.json'],
+    humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true, scoreThrough: 1500, why: 'Ruthless Ridge career final, Nate in slot 1: human (score too), five riders, RNG, ranks, pair records exact to the end' },
+  // 229: the human's hard crash (control 8, physics exact) is an ATTACKED bail on the PS2 (119B08 a1 != 0: score +0x12C, popup 0x2D); the
+  // port's enter_crash (web/animation_bridge.cpp originalHardCrashEnter(..., false, ...)) always counts +0x124 (open, not career-specific).
+  { name: 'careerrival/dra4-final', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/DRA4/lineups-career/DRA4-final-zoe.json', '--in-world-ai', '--node-seed', '../local/career-rival/caps/dra4-final.nodes.json'],
+    humanThrough: 1500, ai: [1500, 1500, 1500, 1500, 1500], rngThrough: 1500, ranks: true, records: true, scoreThrough: 228, why: 'Intimidator career final, Nate in slot 1: human physics, five riders, RNG, ranks, pair records exact to the end; human score to 228' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;

@@ -1,6 +1,5 @@
 import {createOriginalRiderSkinning} from './rider-skinning.js';
 import {createRiderLightingMaterial,riderDrawState} from './rider-material.js';import {frameTextureSpace} from './frame-space.js';
-import {pv} from './pv-flags.js';
 import {createControllerLights} from './rider-controller-lights.js';
 import {packageTexture} from './texture-archive.js';
 /*
@@ -110,7 +109,9 @@ async function loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},nam
  if(!Number.isInteger(count)||rig.source_skin.length!==count||colors.length!==count*4)throw Error(`${name}: vertex/skin/colour counts differ`);
  const skin=createOriginalRiderSkinning(rig,vertices,origin),lighting=createRiderLightingMaterial(skin,colors.some((v,i)=>i%4<3&&v!==1));
  const textures={};
- await Promise.all(Object.entries(manifest.textures).map(async([key,t])=>{const texture=await packageTexture(loader,base,t);/* rider texture archive entry (web/texture-archive.js) or PNG file */texture.flipY=false;texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.colorSpace=frameTextureSpace;texture.anisotropy=4;texture.userData.texelDomain=t.texel_domain;textures[key]=texture;}));
+ await Promise.all(Object.entries(manifest.textures).map(async([key,t])=>{const texture=await packageTexture(loader,base,t);
+ // rider texture archive entry (web/texture-archive.js) or PNG file
+texture.flipY=false;texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.colorSpace=frameTextureSpace;texture.anisotropy=4;texture.userData.texelDomain=t.texel_domain;textures[key]=texture;}));
  // Same per-texture batch merge and material setup as main.js asset(..., true).
  const byTexture=new Map();
  for(const b of manifest.batches){if(!byTexture.has(b.texture))byTexture.set(b.texture,[]);byTexture.get(b.texture).push(indices.subarray(b.first_index,b.first_index+b.index_count));}
@@ -120,8 +121,8 @@ async function loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},nam
   const map=textures['9-'+texture];if(!map)throw Error(`${name}: missing texture 9-${texture}`);
   const material=new T.MeshBasicNodeMaterial({map,vertexColors:true,side:T.DoubleSide,alphaTest:.35});
   material.vertexNode=skin.vertexNode;lighting.attach(material);material.fog=sceneFog;
-  // pv riderDrawState (web/rider-material.js): the PS2 draw state of the texture's material ('alph' / 'ea*' blended in two passes)
-  const drawn=pv('riderDrawState')?riderDrawState(material,manifest.batches.find(b=>b.texture===texture)?.material):material;materials.push(...[].concat(drawn));
+  // riderDrawState (web/rider-material.js): the PS2 draw state of the texture's material ('alph' / 'ea*' blended in two passes)
+  const drawn=riderDrawState(material,manifest.batches.find(b=>b.texture===texture)?.material);materials.push(...[].concat(drawn));
   const geometry=new T.BufferGeometry(),merged=new Uint32Array(ranges.reduce((n,r)=>n+r.length,0));let at=0;for(const r of ranges){merged.set(r,at);at+=r.length;}
   geometry.setAttribute('position',new T.InterleavedBufferAttribute(inter,3,0));geometry.setAttribute('normal',new T.InterleavedBufferAttribute(inter,3,3));
   geometry.setAttribute('uv',new T.InterleavedBufferAttribute(inter,2,6));geometry.setAttribute('uv1',new T.InterleavedBufferAttribute(inter,2,8));geometry.setAttribute('color',colorAttribute);
@@ -129,7 +130,9 @@ async function loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},nam
   const mesh=new T.Mesh(geometry,drawn);mesh.frustumCulled=false;mesh.renderOrder=renderOrder;group.add(mesh);
  }
  group.userData.shadowRider={skin,batches:manifest.batches,indices,core:()=>group.userData.shadowCore}; // web/rider-shadow.js
- /* the parsed rider.json (~16k small arrays per rider) is only needed to build the skin: not kept on the entry */return {name,group,skin,lighting,materials,textures,paletteGroups:new Set(rig.source_skin.map(g=>JSON.stringify(g))).size,update:null,updateCore:null,captured:false};
+
+ // the parsed rider.json (~16k small arrays per rider) is only needed to build the skin: not kept on the entry
+return {name,group,skin,lighting,materials,textures,paletteGroups:new Set(rig.source_skin.map(g=>JSON.stringify(g))).size,update:null,updateCore:null,captured:false};
 }
 /*
  createOpponentRiders({T, scene, load, loader, origin, packages, root='/assets/', renderOrder=600,
@@ -142,7 +145,7 @@ async function loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},nam
 */
 export async function createOpponentRiders({T,scene,load,loader,origin,packages,root='/assets/',renderOrder=600,sceneFog=false,lighting=null}){
  const entries=await Promise.all(packages.map(name=>loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},name)));
- for(const entry of entries){entry.group.userData.opponentRider=true;scene.add(entry.group);}   // pv menuRiders: main.js hides them under a menu
+ for(const entry of entries){entry.group.userData.opponentRider=true;scene.add(entry.group);}   // main.js hides them under a menu
  const view=new Float32Array(16);
  return {
   entries,
@@ -162,7 +165,14 @@ export async function createOpponentRiders({T,scene,load,loader,origin,packages,
    entries.forEach((entry,i)=>{const o=opponents[i];entry.group.visible=entry.skin.display(!!o?.core&&o.visible!==false&&entry.captured,alpha);});
   },
   reset(opponents=[]){
-   entries.forEach((entry,i)=>{entry.skin.reset();entry.lighting.reset();entry.captured=false;entry.group.visible=false;const core=opponents[i]?.core;if(core&&entry.update&&entry.updateCore===core)core._reset_rider_lighting();});
+   entries.forEach((entry, i) => {
+     entry.skin.reset();
+     entry.lighting.reset();
+     entry.captured = false;
+     entry.group.visible = false;
+     const core = opponents[i]?.core;
+     if (core && entry.update && entry.updateCore === core) core._reset_rider_lighting();
+   });
   },
   dispose(){
    for(const entry of entries){

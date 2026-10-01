@@ -19,10 +19,23 @@ const URLS = {
 };
 const checks = {
   // A request that fails in the handler (a missing file): the error comes back through the same channel.
-  'peak-world': (g) => g.request({ env: '/assets/__missing__/none' }).then(() => false, (e) => !!e.message),
+  'peak-world': (g) =>
+    g.request({ env: '/assets/__missing__/none' }).then(
+      () => false,
+      (e) => !!e.message
+    ),
   'audio-decode': (g) => g.request({ bnk: new Uint8Array(0), patches: [] }).then((d) => Array.isArray(d) && d.length === 0),
-  'fe-preview': (g) => g.request({ root: '/assets/__missing__/' }).then(() => false, (e) => !!e.message),
-  terrain: (g) => new Promise((resolve) => { g.onmessage = ({ data }) => resolve(data.type === 'cleared' && data.id === 7); g.onerror = () => resolve(false); g.postMessage({ type: 'clear', id: 7 }); }),
+  'fe-preview': (g) =>
+    g.request({ root: '/assets/__missing__/' }).then(
+      () => false,
+      (e) => !!e.message
+    ),
+  terrain: (g) =>
+    new Promise((resolve) => {
+      g.onmessage = ({ data }) => resolve(data.type === 'cleared' && data.id === 7);
+      g.onerror = () => resolve(false);
+      g.postMessage({ type: 'clear', id: 7 });
+    })
 };
 const locals = { 'peak-world': () => preparePeakLocation, 'fe-preview': () => prepareFrontEndPreview, 'audio-decode': () => decodeAudioJob, terrain: (send) => createTerrainWorkerHandler(send) };
 const out = { build: BUILD_ID, ua: navigator.userAgent, workers: {}, events };

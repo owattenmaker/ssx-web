@@ -18,6 +18,7 @@
 // (the original's draws between two loads are per-frame presentation effects the browser does not run). ?presentationSeed=0x182200 replays the reference
 // sessions; ?lineupSeed=0x... fixes the roster seed. A restart keeps the lineup (0x238C80 resets it only when an
 // event is chosen).
+import { pv } from './pv-flags.js';
 
 export const SEED_ADD = [0xF22D0E56, 0x96041893, 0x3DF3B646, 0x40DDE76D, 0x97327AE1, 0xD1A9FBE7];
 export const REFERENCE_PRESENTATION_SEED = 0x182200;   // the reference ARMSX2 sessions' boot seed
@@ -109,7 +110,10 @@ const parseSeed = (text) => { if (text == null || text === '') return null; cons
 // noteEventDraws(ticks) adds the measured average (lineups.json presentation_model) for the race ticks played.
 let presentation = null, pendingDraws = 0;
 const bootPresentation = () => { if (!presentation) { const boot = parseSeed(params().get('presentationSeed')) ?? clockSeed(); presentation = seededWords(boot); nextWord(presentation); } };
-export function noteEventDraws(model, ticks) { if (model && !parseSeed(params().get('lineupSeed'))) pendingDraws += Math.max(0, Math.round(model.after_seed + model.per_tick * Math.max(0, ticks - model.anchor_tick))); }
+export function noteEventDraws(model, ticks) {
+  if (model && !parseSeed(params().get('lineupSeed')))
+    pendingDraws += Math.max(0, Math.round(model.after_seed + model.per_tick * Math.max(0, ticks - model.anchor_tick)));
+}
 // The event just raced on this page (web/ai-race.js start): source() = {model, ticks}, noted at the next roster seed
 // (a race's own prepare, or web/career.js startEvent for a freestyle event, whichever loads next).
 let pendingRace = null;
@@ -249,17 +253,56 @@ export function npcRoundRole(slot, round) {
   if (slot === 4) return round === 1 || round === 2 ? 0 : 1;
   return 0;
 }
+// The computer riders' difficulty words of a career race (cComputer_updateRiderDifficulty 0x10C758 -> 0x10C4F8(rider, slot, level)): level =
+// 147CB8, the human's profile character +0x280 (the race level 0..2, web/career.js level.race); three per-slot jump tables (level 0 0x456AB0,
+// level 1 0x456A90, level 2 0x456AD0; gp-0x7DD4..-0x7D24 floats) give +0xDF8 and +0xDFC, then +0xDFC x 0.01 (gp-0x7D20); 0x10C758 scales
+// +0xDFC by 1.25 on course 4 and 1.1 (gp-0x7D1C) on courses 2 / 3 and caps it at 1.0. The PS2 FPU rounds toward zero. Checked on all 128
+// exported countdowns (Single Event level 1, the career finals CRA3 / DRA4 level 2; local/career-rival/difficulty.py). Not modelled: the
+// options word 0x5308D0 bit 2 (DF8 100, DFC 1.0; 0 in every career state). Leaves: npc.crouch_parameter_df8, npc.driving_state.parameter_df8 / dfc.
+const SLOT_DIFFICULTY = [
+  [[100, 83.89308166503906], [55.80497360229492, 64.6436767578125], [40.250186920166016, 60.00449752807617], [15.542302131652832, 52.00495529174805], [7.954832077026367, 35.020263671875]],
+  [[100, 86.91539764404297], [80.38914489746094, 79.59983825683594], [51.00757598876953, 68.90123748779297], [46.601898193359375, 56.843074798583984], [14.000700950622559, 42.441043853759766]],
+  [[100, 100], [84.99810028076172, 82.68248748779297], [74.99872589111328, 70.82238006591797], [54.99583435058594, 59.94406509399414], [29.981433868408203, 46.99877166748047]]];
+const COURSE_INDEX = { ARA1: 0, BRA2: 1, CRA3: 2, DRA4: 3, ERA5: 4 };
+const towardZero = (x) => {
+  const y = Math.fround(x);
+  if (Math.abs(y) <= Math.abs(x)) return y;
+  const v = new DataView(new ArrayBuffer(4));
+  v.setFloat32(0, y);
+  v.setUint32(0, v.getUint32(0) - 1);
+  return v.getFloat32(0);
+};
+export function npcDifficulty(slot, level, course) {
+  const [df8, base] = SLOT_DIFFICULTY[level][slot - 1];
+  let dfc = towardZero(Math.fround(base) * Math.fround(0.009999999776482582));
+  const k = course === 4 ? 0.25 : course === 2 || course === 3 ? Math.fround(0.10000000149011612) : null;
+  if (k != null) dfc = towardZero(dfc + towardZero(dfc * k));
+  return { df8: Math.fround(df8), dfc: Math.min(dfc, 1) };
+}
+// pv careerRival: the Peak 2 courses' career-only rider parts (lineups.json career_skins: Nate, the final's slot-1 rival) are missing
+// until the switch is on, as before they were exported. (Peak 1's Mac, ARA1 / BRA2, predates the switch.)
+const careerSkinGated = (data, skin) => data.peak === 1 && data.career_skins?.[skin] != null && !pv('careerRival');
 // round (optional): the race round whose roles the riders get (npcRoundRole); omitted, the slot tables' (round 3).
-export function assembleLineup(data, humanBase, values, { moment = data.moment, state = data.state, extra = null, relationships = data.relationships_fresh, round = null } = {}) {
+// level (optional, a career race under pv careerLevel): the human's race level, the riders' 0x10C4F8 words (npcDifficulty); omitted, the
+// slot tables' (level 1).
+export function assembleLineup(data, humanBase, values, { moment = data.moment, state = data.state, extra = null, relationships = data.relationships_fresh, round = null, level = null } = {}) {
   const template = data.template;
   const riders = values.map((v, k) => {
     const slot = String(k + 1), base = v < 10 ? v : humanBase, skin = skinName(data, v);
     const record = clone(template.riders[k]);
     // R&B (one slot, no cheat opponent): every rider-dependent leaf is a skin leaf, no slot/grid/base tables
     const grid = data.grid[slot] ? data.grid[slot][data.skin_scale[skin]] : {};
-    if (!grid || !data.skin[skin] || (Object.keys(data.base).length && !data.base[String(base)])) throw new Error(`No computer-rider data for ${skin} (base ${base}) in slot ${slot}`);
-    for (const part of [data.slot[slot] ?? {}, grid, data.skin[skin], data.base[String(base)] ?? {}, moment[slot] ?? {}, state[slot] ?? {}]) for (const [path, value] of Object.entries(part)) put(record, path, value);
+    if (!grid || !data.skin[skin] || careerSkinGated(data, skin) || (Object.keys(data.base).length && !data.base[String(base)]))
+      throw new Error(`No computer-rider data for ${skin} (base ${base}) in slot ${slot}`);
+    for (const part of [data.slot[slot] ?? {}, grid, data.skin[skin], data.base[String(base)] ?? {}, moment[slot] ?? {}, state[slot] ?? {}])
+      for (const [path, value] of Object.entries(part)) put(record, path, value);
     if (round != null && record.npc?.score_state) { record.npc.score_state.role_e00 = npcRoundRole(k + 1, round); record.npc.score_state.allow_flag0_e04 = k === 0 && round === 3; }
+    if (level != null && record.npc?.driving_state && COURSE_INDEX[data.course] != null) {
+      const d = npcDifficulty(k + 1, level, COURSE_INDEX[data.course]);
+      record.npc.crouch_parameter_df8 = d.df8;
+      record.npc.driving_state.parameter_df8 = d.df8;
+      record.npc.driving_state.parameter_dfc = d.dfc;
+    }
     return record;
   });
   const doc = {};

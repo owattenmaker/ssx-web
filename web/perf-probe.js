@@ -53,7 +53,14 @@
       tsPending++;
       read.mapAsync(GPUMapMode.READ, 0, size).then(() => {
         const v = new BigUint64Array(read.getMappedRange(0, size)); let sum = 0, first = null, last = null;
-        for (let k = 0; k + 1 < n; k += 2) { const b = v[k], e = v[k + 1]; if (b === 0n || e === 0n || e < b) continue; sum += Number(e - b); if (first === null || b < first) first = b; if (last === null || e > last) last = e; }
+        for (let k = 0; k + 1 < n; k += 2) {
+          const b = v[k],
+            e = v[k + 1];
+          if (b === 0n || e === 0n || e < b) continue;
+          sum += Number(e - b);
+          if (first === null || b < first) first = b;
+          if (last === null || e > last) last = e;
+        }
         rec.gpu = sum / 1e6; rec.gpuSpan = first !== null ? Number(last - first) / 1e6 : 0; read.unmap(); tsFree.push(read); resolve.destroy(); tsPending--;
       }).catch((e) => { P.errors.push('map ' + e); resolve.destroy(); tsPending--; });
     } catch (e) { P.errors.push('flush ' + e); P.timestamps = false; }
@@ -83,29 +90,121 @@
   function span(obj, key, label) {
     if (!obj) return; const f = obj[key]; if (typeof f !== 'function' || f.__cps) return;
     let depth = 0;
-    const w = function (...a) { if (!F || depth) return f.apply(this, a); const t0 = now(); depth++; try { return f.apply(this, a); } finally { depth--; if (F) F.js[label] = (F.js[label] || 0) + (now() - t0); } };
+    const w = function (...a) {
+      if (!F || depth) return f.apply(this, a);
+      const t0 = now();
+      depth++;
+      try {
+        return f.apply(this, a);
+      } finally {
+        depth--;
+        if (F) F.js[label] = (F.js[label] || 0) + (now() - t0);
+      }
+    };
     w.__cps = f; obj[key] = w;
   }
   let wrappedRenderer = null, wrappedFr = null, wrappedSp = null, wrappedEsp = null;
   async function wrapModules() {
     try {
       const m = await import('/fixed-step-clock.js'); const C = m.FixedStepClock.prototype, adv = C.advance;
-      if (!adv.__cps) { C.advance = function (sec, cb) { if (!F) return adv.call(this, sec, cb); const t0 = now(); let n = 0; inSim = true; try { return adv.call(this, sec, (...a) => { n++; return cb(...a); }); } finally { inSim = false; F.sim += now() - t0; F.ticks += n; } }; C.advance.__cps = adv; }
+      if (!adv.__cps) {
+        C.advance = function (sec, cb) {
+          if (!F) return adv.call(this, sec, cb);
+          const t0 = now();
+          let n = 0;
+          inSim = true;
+          try {
+            return adv.call(this, sec, (...a) => {
+              n++;
+              return cb(...a);
+            });
+          } finally {
+            inSim = false;
+            F.sim += now() - t0;
+            F.ticks += n;
+          }
+        };
+        C.advance.__cps = adv;
+      }
     } catch (e) { P.errors.push('clock ' + e); }
-    for (const [url, name, methods] of [['/livecomp-animation.js', 'LiveCompAnimation', ['tick', 'nodeDeltas']], ['/flag-animation.js', 'FlagAnimation', ['tick', 'writeWorld']], ['/uv-scroll.js', 'UvScroll', ['tick']]]) {
-      try { const m = await import(url); const C = m[name]?.prototype; if (C) for (const k of methods) span(C, k, name + '.' + k); } catch (e) { P.errors.push(url + ' ' + e); }
+    for (const [url, name, methods] of [
+      ['/livecomp-animation.js', 'LiveCompAnimation', ['tick', 'nodeDeltas']],
+      ['/flag-animation.js', 'FlagAnimation', ['tick', 'writeWorld']],
+      ['/uv-scroll.js', 'UvScroll', ['tick']]
+    ]) {
+      try {
+        const m = await import(url);
+        const C = m[name]?.prototype;
+        if (C) for (const k of methods) span(C, k, name + '.' + k);
+      } catch (e) {
+        P.errors.push(url + ' ' + e);
+      }
     }
   }
   wrapModules();
   // per-location draw attribution (three backend.draw)
-  const locOf = (o) => { if (o.__loc !== undefined) return o.__loc; let loc = null; for (let q = o; q; q = q.parent) { if (q.userData?.peakLocation) { loc = q.userData.peakLocation; break; } if (q.name && q.name !== 'static-cell') { loc = q.name; break; } if (q.userData?.shadowRider) { loc = 'rider'; break; } if (q.parent?.isScene) { loc = 'top:' + q.type + (q.userData?.courseHash ? ':world' : ''); break; } } o.__loc = loc ?? (o.type || '?'); return o.__loc; };
+  const locOf = (o) => {
+    if (o.__loc !== undefined) return o.__loc;
+    let loc = null;
+    for (let q = o; q; q = q.parent) {
+      if (q.userData?.peakLocation) {
+        loc = q.userData.peakLocation;
+        break;
+      }
+      if (q.name && q.name !== 'static-cell') {
+        loc = q.name;
+        break;
+      }
+      if (q.userData?.shadowRider) {
+        loc = 'rider';
+        break;
+      }
+      if (q.parent?.isScene) {
+        loc = 'top:' + q.type + (q.userData?.courseHash ? ':world' : '');
+        break;
+      }
+    }
+    o.__loc = loc ?? (o.type || '?');
+    return o.__loc;
+  };
   function hookRenderer(r) {
     if (!r || r === wrappedRenderer) return; wrappedRenderer = r;
     span(r, 'render', 'render'); span(r, 'compute', 'compute');
     // node-material builds (three NodeManager.nodeBuilderCache insertions) per frame
-    const nbc = r._nodes?.nodeBuilderCache; if (nbc && !nbc.__cp) { const set = nbc.set.bind(nbc); nbc.set = (k, v) => { if (F) F.builds = (F.builds || 0) + 1; else P.buildsOutside = (P.buildsOutside || 0) + 1; return set(k, v); }; nbc.__cp = true; }
+    const nbc = r._nodes?.nodeBuilderCache;
+    if (nbc && !nbc.__cp) {
+      const set = nbc.set.bind(nbc);
+      nbc.set = (k, v) => {
+        if (F) F.builds = (F.builds || 0) + 1;
+        else P.buildsOutside = (P.buildsOutside || 0) + 1;
+        return set(k, v);
+      };
+      nbc.__cp = true;
+    }
     // which materials build during recorded frames (P.buildLog: time, material, object, location, ms)
-    const N = r._nodes, gfr = N?.getForRender; if (gfr && !gfr.__cp) { N.getForRender = function (ro, ...a) { const had = !!this.get(ro)?.nodeBuilderState, t0 = now(); const s = gfr.call(this, ro, ...a); if (!had && F && P.on) { const ms = now() - t0; if (ms > 1) (P.buildLog ??= []).push([Math.round(t0), ro.material?.name || ro.material?.type, ro.material?.userData?.originalWorldCombine || '', ro.object?.name || ro.object?.type, locOf(ro.object), +ms.toFixed(1)]); } return s; }; N.getForRender.__cp = gfr; }
+    const N = r._nodes,
+      gfr = N?.getForRender;
+    if (gfr && !gfr.__cp) {
+      N.getForRender = function (ro, ...a) {
+        const had = !!this.get(ro)?.nodeBuilderState,
+          t0 = now();
+        const s = gfr.call(this, ro, ...a);
+        if (!had && F && P.on) {
+          const ms = now() - t0;
+          if (ms > 1)
+            (P.buildLog ??= []).push([
+              Math.round(t0),
+              ro.material?.name || ro.material?.type,
+              ro.material?.userData?.originalWorldCombine || '',
+              ro.object?.name || ro.object?.type,
+              locOf(ro.object),
+              +ms.toFixed(1)
+            ]);
+        }
+        return s;
+      };
+      N.getForRender.__cp = gfr;
+    }
     const b = r.backend, d = b?.draw;
     if (d && !d.__cps) { b.draw = function (ro, info) { if (F && P.byLoc) { const k = locOf(ro.object); F.loc[k] = (F.loc[k] || 0) + 1; } return d.call(this, ro, info); }; b.draw.__cps = d; }
   }
@@ -120,10 +219,55 @@
   P.press = (i, on) => { buttons[i].pressed = on; buttons[i].value = on ? 1 : 0; pad.timestamp = now(); };
   P.pad = pad;
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-  function nearest(pos) { let best = null; (P.paths || []).forEach((p, pi) => { const pts = p.pts; for (let k = 0; k < pts.length - 1; k++) { const [ax, ay, az] = pts[k], [bx, by, bz] = pts[k + 1], vx = bx - ax, vy = by - ay, vz = bz - az, L2 = vx * vx + vy * vy + vz * vz || 1; const u = Math.max(0, Math.min(1, ((pos[0] - ax) * vx + (pos[1] - ay) * vy + (pos[2] - az) * vz) / L2)); const d = dist(pos, [ax + u * vx, ay + u * vy, az + u * vz]); if (!best || d < best[0]) best = [d, pi, k, u]; } }); return best; }
-  function ahead(pi, k, u, d) { const p = P.paths[pi].pts; const [x0, y0, z0] = p[k], [x1, y1, z1] = p[k + 1]; let cur = [x0 + u * (x1 - x0), y0 + u * (y1 - y0), z0 + u * (z1 - z0)]; const seen = new Set();
-    for (;;) { const nxt = P.paths[pi].pts[k + 1], seg = dist(cur, nxt); if (seg >= d) { const f = seg ? d / seg : 0; return cur.map((c, i) => c + f * (nxt[i] - c)); } d -= seg; cur = nxt; k++;
-      if (k + 1 >= P.paths[pi].pts.length) { seen.add(pi); let cand = null; P.paths.forEach((q, j) => { if (j === pi || seen.has(j) || q.pts[0][2] > cur[2] + 500) return; const dd = dist(cur, q.pts[0]); if (!cand || dd < cand[0]) cand = [dd, j]; }); if (!cand || cand[0] > 20000) return cur; pi = cand[1]; k = 0; cur = P.paths[pi].pts[0]; } } }
+  function nearest(pos) {
+    let best = null;
+    (P.paths || []).forEach((p, pi) => {
+      const pts = p.pts;
+      for (let k = 0; k < pts.length - 1; k++) {
+        const [ax, ay, az] = pts[k],
+          [bx, by, bz] = pts[k + 1],
+          vx = bx - ax,
+          vy = by - ay,
+          vz = bz - az,
+          L2 = vx * vx + vy * vy + vz * vz || 1;
+        const u = Math.max(0, Math.min(1, ((pos[0] - ax) * vx + (pos[1] - ay) * vy + (pos[2] - az) * vz) / L2));
+        const d = dist(pos, [ax + u * vx, ay + u * vy, az + u * vz]);
+        if (!best || d < best[0]) best = [d, pi, k, u];
+      }
+    });
+    return best;
+  }
+  function ahead(pi, k, u, d) {
+    const p = P.paths[pi].pts;
+    const [x0, y0, z0] = p[k],
+      [x1, y1, z1] = p[k + 1];
+    let cur = [x0 + u * (x1 - x0), y0 + u * (y1 - y0), z0 + u * (z1 - z0)];
+    const seen = new Set();
+    for (;;) {
+      const nxt = P.paths[pi].pts[k + 1],
+        seg = dist(cur, nxt);
+      if (seg >= d) {
+        const f = seg ? d / seg : 0;
+        return cur.map((c, i) => c + f * (nxt[i] - c));
+      }
+      d -= seg;
+      cur = nxt;
+      k++;
+      if (k + 1 >= P.paths[pi].pts.length) {
+        seen.add(pi);
+        let cand = null;
+        P.paths.forEach((q, j) => {
+          if (j === pi || seen.has(j) || q.pts[0][2] > cur[2] + 500) return;
+          const dd = dist(cur, q.pts[0]);
+          if (!cand || dd < cand[0]) cand = [dd, j];
+        });
+        if (!cand || cand[0] > 20000) return cur;
+        pi = cand[1];
+        k = 0;
+        cur = P.paths[pi].pts[0];
+      }
+    }
+  }
   function autopilot(core) {
     const m = new Float32Array(core.HEAPF32.buffer, core._reference_motion.__cp ? core._reference_motion.__cp() : core._reference_motion(), 20);
     const pos = [m[0], m[1], m[2]], vel = [m[3], m[4], m[5]]; P.pos = pos;
@@ -150,8 +294,29 @@
     if (fin) { const o = {}; fin.register(o, f.t); }
     if (P.on && drawn) {
       f.label = P.label;
-      try { const fr = window.__freeRide; if (fr) { f.region = fr.region?.(); f.course = fr.course?.(); const vis = []; for (const [c, s] of fr.render) if (s.group?.visible) vis.push(c); f.vis = vis.join(','); f.built = fr.render.size; f.stalled = fr.stalled?.() ? 1 : 0; } } catch {}
-      try { const pc = window.__perfCore?.(); if (pc?.core) { const s = pc.state; f.speed = s?.[7]; f.pos = P.pos ? P.pos.map((x) => Math.round(x)) : null; } const ui = window.__perfUI?.(); f.screen = ui?.screen; f.cs = window.__cutscenes?.active ? 1 : 0; } catch {}
+      try {
+        const fr = window.__freeRide;
+        if (fr) {
+          f.region = fr.region?.();
+          f.course = fr.course?.();
+          const vis = [];
+          for (const [c, s] of fr.render) if (s.group?.visible) vis.push(c);
+          f.vis = vis.join(',');
+          f.built = fr.render.size;
+          f.stalled = fr.stalled?.() ? 1 : 0;
+        }
+      } catch {}
+      try {
+        const pc = window.__perfCore?.();
+        if (pc?.core) {
+          const s = pc.state;
+          f.speed = s?.[7];
+          f.pos = P.pos ? P.pos.map((x) => Math.round(x)) : null;
+        }
+        const ui = window.__perfUI?.();
+        f.screen = ui?.screen;
+        f.cs = window.__cutscenes?.active ? 1 : 0;
+      } catch {}
       delete f.ts; P.frames.push(f);
     }
   }
@@ -159,10 +324,34 @@
     return raf((ts) => {
       if (ts !== frameTs) { if (F) end(); frameTs = ts; begin(ts); }
       // hooks that need the live objects
-      try { const pc = window.__perfCore?.(); if (pc?.core) { wrapCore(pc.core); if (P.auto && P.usePad && window.__perfUI?.()?.screen === 'game') autopilot(pc.core); } } catch (e) { P.errors.push('pc ' + e); }
+      try {
+        const pc = window.__perfCore?.();
+        if (pc?.core) {
+          wrapCore(pc.core);
+          if (P.auto && P.usePad && window.__perfUI?.()?.screen === 'game') autopilot(pc.core);
+        }
+      } catch (e) {
+        P.errors.push('pc ' + e);
+      }
       try { hookRenderer(window.__perfRenderer); } catch (e) { P.errors.push('r ' + e); }
-      try { const fr = window.__freeRide; if (fr && fr !== wrappedFr) { wrappedFr = fr; span(fr, 'update', 'fr.update'); span(fr, 'tick', 'fr.tick'); span(fr.peak, 'pump', 'peak.pump'); }
-        const sp = fr?.setPieces?.(); if (sp && sp !== wrappedSp) { wrappedSp = sp; span(sp, 'update', 'sp.update'); span(sp.particles, 'update', 'sp.particles'); span(sp.halos, 'update', 'sp.halos'); } } catch (e) { P.errors.push('fr ' + e); }
+      try {
+        const fr = window.__freeRide;
+        if (fr && fr !== wrappedFr) {
+          wrappedFr = fr;
+          span(fr, 'update', 'fr.update');
+          span(fr, 'tick', 'fr.tick');
+          span(fr.peak, 'pump', 'peak.pump');
+        }
+        const sp = fr?.setPieces?.();
+        if (sp && sp !== wrappedSp) {
+          wrappedSp = sp;
+          span(sp, 'update', 'sp.update');
+          span(sp.particles, 'update', 'sp.particles');
+          span(sp.halos, 'update', 'sp.halos');
+        }
+      } catch (e) {
+        P.errors.push('fr ' + e);
+      }
       try { const esp = window.ssxQA?.setPieces?.(); if (esp && esp !== wrappedEsp) { wrappedEsp = esp; span(esp, 'update', 'esp.update'); } } catch {}
       const t0 = now();
       try { cb(ts); } finally { if (F) F.cb += now() - t0; }
@@ -173,5 +362,15 @@
   const origRaf = window.requestAnimationFrame;
   window.requestAnimationFrame = function (cb) { const id = origRaf((ts) => { cb(ts); mc.port2.postMessage(0); }); return id; };
   P.summary = () => ({ n: P.frames.length, errors: P.errors.slice(0, 5) });
-  P.take = () => { const f = P.frames; P.frames = []; const gc = P.gc; P.gc = []; const lt = P.longtasks; P.longtasks = []; const bl = P.buildLog || []; P.buildLog = []; return { frames: f, gc, longtasks: lt, buildLog: bl }; };
+  P.take = () => {
+    const f = P.frames;
+    P.frames = [];
+    const gc = P.gc;
+    P.gc = [];
+    const lt = P.longtasks;
+    P.longtasks = [];
+    const bl = P.buildLog || [];
+    P.buildLog = [];
+    return { frames: f, gc, longtasks: lt, buildLog: bl };
+  };
 })();

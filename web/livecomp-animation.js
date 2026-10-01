@@ -159,11 +159,17 @@ export function liveCompCrossed(s, x) {
 // 0x361098: node world matrices (source space, rows), instance transform included.
 // The returned arrays are the state's own and are rewritten by its next recompute (s.matrixVersion counts recomputes).
 export function liveCompMatrices(s) {
-  if (s.dirty) { const chs = s.channels; for (let i = 0; i < chs.length; i++) evaluateChannel(chs[i], s.sampleTime); s.matrices = composeInto(s.inst, chs, s.matrices); s.matrixVersion = (s.matrixVersion ?? 0) + 1; s.dirty = false; }
+  if (s.dirty) {
+    const chs = s.channels;
+    for (let i = 0; i < chs.length; i++) evaluateChannel(chs[i], s.sampleTime);
+    s.matrices = composeInto(s.inst, chs, s.matrices);
+    s.matrixVersion = (s.matrixVersion ?? 0) + 1;
+    s.dirty = false;
+  }
   return s.matrices;
 }
 
-// pv sectionClock: the core's section-player clocks (web/stage_world.inc stage_world_section_clocks: [count, then per entity 10
+// the core's section-player clocks (web/stage_world.inc stage_world_section_clocks: [count, then per entity 10
 // words: resource, mode, enabled, done, delay, rate, low, high, time, sampleTime (floats as bits)]). A section LiveComp with a slot-4 /
 // slot-5 program is a core entity too, and the stage builtins 28 / 54 change its clock (Gravitude's crash billboards play on and
 // fall), which this player cannot see: its state takes the core's after the frame's ticks.

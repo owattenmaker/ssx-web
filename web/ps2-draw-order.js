@@ -1,4 +1,4 @@
-// The PS2 render list's draw order (docs/visual-parity.md 41.9), shared by the world pass and the post-fog effects (pv effectOrder).
+// The PS2 render list's draw order (docs/visual-parity.md 41.9), shared by the world pass and the post-fog effects.
 //
 // Every draw of a frame becomes a render record (128 bytes, render list = renderer +6384). The flush 0x363490 merges records of equal
 // material state and textures into buckets (0x362DE8, hashes 0x394ED0 / 0x395000), keys each bucket with 0x364240 and radix-sorts the
@@ -25,8 +25,18 @@
 //     FX (snow, breath, wake, boost) never do.
 export const FX_HANDLES = Object.freeze({
   // renderer +0xF50 in PS2 RAM: setpieces-abc1/full tick 2000 (every event state), allpeak/apr-full tick 10507 (every CTM state)
-  event: Object.freeze([1525, -1, -1, -1, 1524, 1523, 1522, 1521, 1520, -1, 1519, 1518, -1, 1517, 1516, 1515, 1514, 1513, 1512, 1511, 1510, 1509, 1508, 1507, 1506, 1505, 1565, 1564, 1563, 1562, 1561, 1560, 1559, -1, -1, -1, -1, 1558, 1557, 1556, 1555, 1554, 1553, 1552, 1551, 1550, 1549, -1, -1, -1, -1, 1548, 1547, 1546, 1545, 1544, 1653, 1652, 1651, 1650, 1649, 1648, 1647, 1646, 1645, 1644, 1643, 1642, 1641, -1, 1640, 1639, 1638, 1637, 1636, -1, -1, -1, -1, -1]),
-  ctm: Object.freeze([1531, -1, -1, -1, 1530, 1529, 1528, 1527, 1526, -1, 1525, 1524, -1, 1523, 1522, 1521, 1520, 1519, 1518, 1517, 1516, 1515, 1514, 1513, 1512, 1511, 1510, 1509, 1508, 1507, 1506, 1505, 1565, -1, -1, -1, -1, 1564, 1563, 1562, 1561, 1560, 1559, 1558, 1557, 1556, 1555, -1, -1, -1, -1, 1554, 1553, 1552, 1551, 1550, 1549, 1548, 1547, 1546, 1545, 1544, 1648, 1647, 1646, 1645, 1644, 1643, 1642, -1, 1641, 1640, 1639, 1638, 1637, -1, -1, -1, -1, -1]),
+  event: Object.freeze([
+    1525, -1, -1, -1, 1524, 1523, 1522, 1521, 1520, -1, 1519, 1518, -1, 1517, 1516, 1515, 1514, 1513, 1512, 1511, 1510, 1509, 1508, 1507,
+    1506, 1505, 1565, 1564, 1563, 1562, 1561, 1560, 1559, -1, -1, -1, -1, 1558, 1557, 1556, 1555, 1554, 1553, 1552, 1551, 1550, 1549, -1,
+    -1, -1, -1, 1548, 1547, 1546, 1545, 1544, 1653, 1652, 1651, 1650, 1649, 1648, 1647, 1646, 1645, 1644, 1643, 1642, 1641, -1, 1640, 1639,
+    1638, 1637, 1636, -1, -1, -1, -1, -1
+  ]),
+  ctm: Object.freeze([
+    1531, -1, -1, -1, 1530, 1529, 1528, 1527, 1526, -1, 1525, 1524, -1, 1523, 1522, 1521, 1520, 1519, 1518, 1517, 1516, 1515, 1514, 1513,
+    1512, 1511, 1510, 1509, 1508, 1507, 1506, 1505, 1565, -1, -1, -1, -1, 1564, 1563, 1562, 1561, 1560, 1559, 1558, 1557, 1556, 1555, -1,
+    -1, -1, -1, 1554, 1553, 1552, 1551, 1550, 1549, 1548, 1547, 1546, 1545, 1544, 1648, 1647, 1646, 1645, 1644, 1643, 1642, -1, 1641, 1640,
+    1639, 1638, 1637, -1, -1, -1, -1, -1
+  ])
 });
 export const FX_SPEC = 46; // 'spec': renderer +36, the second texture the world pass leaves in the current material
 export const MODE_RANK = Object.freeze([0, 4, 5, 3, 1, 6, 2, 2, 1]); // 0x492010 over word0 bits 6..9
@@ -48,7 +58,7 @@ export const EFFECT_ORDER_BASE = 660;
 export function drawOrder(spec, submission = 0) {
   return EFFECT_ORDER_BASE + (drawKey(spec) - 0x98000000) / 0x0C000000 * 60 + submission * 1e-8;
 }
-// The world pass (pv sortedClass, docs/visual-parity.md 44): at one priority the opaque states (t0 1023) and the class-1 models
+// The world pass (sortedClass, docs/visual-parity.md 44): at one priority the opaque states (t0 1023) and the class-1 models
 // (1022) draw before the depth-sorted classes 2 / 3 (their word2 depth key, back to front: three's transparent sort). The world's
 // own draws stay at 0; the sorted classes at 0.5; the effects (drawOrder) after them.
 export const WORLD_SORTED_ORDER = 0.5;

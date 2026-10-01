@@ -8,12 +8,12 @@ import { locationBatches, environmentBatches, stageWorldParts, environmentParts,
 import { withTransfer } from './worker-guard-child.js';
 
 export async function preparePeakLocation({ root, env, world, painters = false, cut = null, urls = null, railParts = false, buffers = null }) {
-  // pv sliceLoad (web/load-slices.js): the stage-world documents / an environment.json cut into the core's parts off the main thread
+  // sliceLoad (web/load-slices.js): the stage-world documents / an environment.json cut into the core's parts off the main thread
   if (cut) {
     const text = (u) => (u ? fetch(u).then((r) => { if (!r.ok) throw Error(`${u}: ${r.status}`); return r.text(); }) : Promise.resolve(''));
     if (cut === 'stage') { const [p, l, s] = await Promise.all([text(urls.particles), text(urls.livecomp), text(urls.stage)]); return { parts: stageWorldParts(p, l, s) }; }
     if (cut === 'env') return environmentParts(await text(urls.environment));
-    // pv eventSlices (web/load-slices.js cutEventWorld): an event course's terrain / world collision / rails bytes, cut into the core's parts
+    // eventSlices (web/load-slices.js cutEventWorld): an event course's terrain / world collision / rails bytes, cut into the core's parts
     if (cut === 'event') {
       const bytes = (k) => new Uint8Array(buffers[k]), dec = new TextDecoder(), tb = bytes('terrain'), wb = bytes('world'), rb = bytes('rails');
       const terrain = eventTerrainParts(dec.decode(tb)), worldParts = eventWorldParts(dec.decode(wb)), rails = eventRailParts(dec.decode(rb));
@@ -28,15 +28,16 @@ export async function preparePeakLocation({ root, env, world, painters = false, 
     const batches = environmentBatches(doc, new Uint8Array(bytes));
     return withTransfer({ batches, track: doc.track }, batches.map((b) => b.bytes.buffer));
   }
-  // pv regionTick: the record's painter sections (fetched alongside the collision data)
+  // the record's painter sections (fetched alongside the collision data)
   const text = (f) => fetch(root + f).then((r) => (r.ok ? r.text() : null)).catch(() => null);
   const painterTexts = painters ? Promise.all(['fog-tree.json', 'lighting.json', 'screen-tint.json', 'sun-painter.json', 'glare-painter.json'].map(text)) : Promise.resolve(null);
   const get = async (f) => { const r = await fetch(root + f); if (!r.ok) throw Error(`${root}${f}: ${r.status}`); return r.json(); };
   // weather.json: the location record's Weather section (web/weather.inc weather_location; none for a location without one)
   const [terrain, worldDoc, rails, weather] = await Promise.all([get('terrain.json'), get('world_collision.json'), get('rails.json'),
     fetch(root + 'weather.json').then((r) => (r.ok ? r.text() : null)).catch(() => null)]);
-  const batches = locationBatches(terrain, worldDoc, rails, world ?? /\/(PEAK\d)\//.exec(root)?.[1] ?? 'PEAK1', { railParts }); // railParts: pv sliceLoad (the rail catalog in parts)   // the manifest's world (MOUNTAIN), else the world of /assets/PEAK<N>/<LOC>/
-  // pv regionTick (web/painter-regions.js): the record's other painter sections, in before any of its patches can be touched.
+  // railParts: sliceLoad (the rail catalog in parts) // the manifest's world (MOUNTAIN), else the world of /assets/PEAK<N>/<LOC>/
+  const batches = locationBatches(terrain, worldDoc, rails, world ?? /\/(PEAK\d)\//.exec(root)?.[1] ?? 'PEAK1', { railParts });
+  // regionTick (web/painter-regions.js): the record's other painter sections, in before any of its patches can be touched.
   // fog / lighting as text (the core parses them: fog_location / lighting_location), ScreenTint / Sun / glare parsed (null: none).
   const docs = await painterTexts;
   const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch { return null; } };
@@ -45,5 +46,12 @@ export async function preparePeakLocation({ root, env, world, painters = false, 
   // connector the rider is nearest (instance bounds are no use: A_ASS1 has an instance at the origin)
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (const p of terrain.patches) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.authored_bounds_min[k]); hi[k] = Math.max(hi[k], p.authored_bounds_max[k]); }
-  return { hash: terrain.source_sha256, batches, weather, painters: painterDocs, bounds: terrain.patches.length ? [lo, hi] : null, counts: { patches: terrain.patches.length, instances: worldDoc.instances.length, rails: rails.rails.length } };
+  return {
+    hash: terrain.source_sha256,
+    batches,
+    weather,
+    painters: painterDocs,
+    bounds: terrain.patches.length ? [lo, hi] : null,
+    counts: { patches: terrain.patches.length, instances: worldDoc.instances.length, rails: rails.rails.length }
+  };
 }

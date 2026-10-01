@@ -8,7 +8,7 @@
 //                                          Character speech sliders (12 steps), DJ Speech, Arcade SFX
 //   audio           OV.LUI 142audio_pda    in-game Audio (pause "Audio": the same 0x195FF0 state while in game)
 //   audio-playlist  OV.LUI 143radio_pda    in-game Edit Playlist (the same 0x196B90 state while in game)
-//   pda-options     OV.LUI 37beoptions     in-game Options (pause / MCOMM "Options", pv pdaOptions): HUD Options, Camera 1, Camera 2 (greyed:
+//   pda-options     OV.LUI 37beoptions     in-game Options (pause / MCOMM "Options", pdaOptions): HUD Options, Camera 1, Camera 2 (greyed:
 //                                          one player), Music/MC / SFX / Character speech sliders, DJ Speech, Arcade SFX, Save game
 //                                          (Conquer the Mountain only), then the port's "More options" in the online-only EA Talk row
 //   pda-more        OV.LUI 37beoptions     the port's Widescreen / Keyboard / Display & Touch on the same page's first rows
@@ -127,7 +127,7 @@ export function scrollTop(top, sel, total, rows = ROWS) { if (sel < top) top = s
 function fmt(template, value) { return String(template || '').replace(/%[dS]/, String(value)); }
 
 function loadImage(src) { return new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = reject; im.src = src; }); }
-// pv riderMusic: a rider's radio mode and custom playlist live in its profile record (R+0xF80 / R+0xF78 of 0x4A6CA8 + profile *
+// a rider's radio mode and custom playlist live in its profile record (R+0xF80 / R+0xF78 of 0x4A6CA8 + profile *
 // 0x9B50 + char * 0xF88): the Music screen writes the mode (0x196770 -> 1587F8), Triangle on the Request Line the masks (0x19768C
 // -> 158848 / 158820), and every world load applies the human's (2867E8: 158700 -> SetRadioMode, 158750 -> 28C2D0). PS2
 // local/ps2-capture/lodge/runs: l6 buys two songs (owned 0x3, playlist 0x3 on exit), l7 picks Custom Playlist [DJ] (R+0xF80 = 1), l10
@@ -150,9 +150,9 @@ export class AudioMenus {
   }
   get ready() { return !!this.data; }
   get audio() { const a = this.ui.gameAudio || null; if (a && !a.riderMusic) a.riderMusic = () => this.worldMusic(); return a; }
-  // the human's radio mode / playlist for a world load (web/game-audio.js worldLoaded), null without pv riderMusic or a record
+  // the human's radio mode / playlist for a world load (web/game-audio.js worldLoaded), null without a record
   worldMusic() { const r = this.riderRecord(); return r ? riderMusic(r, this.ui.gameAudio?.getSettings?.() || {}) : null; }
-  riderRecord() { const c = this.career; if (!pv('riderMusic') || !c?.songState || unlockAll()) return null; try { return c.songState(this.riderId); } catch { return null; } }
+  riderRecord() { const c = this.career; if (!c?.songState || unlockAll()) return null; try { return c.songState(this.riderId); } catch { return null; } }
   now() { return performance.now() * FPS / 1000; }
   async load() {
     try {
@@ -161,10 +161,26 @@ export class AudioMenus {
       const snow = this.ui.characterSelect?.data?.screens?.bg_snow_loop;
       for (const [id, s] of Object.entries(SCREENS)) {
         let screen = data.screens[s.key]; if (!screen) continue;
-        if (s.pack === 'FE' && snow) screen = { ...screen, elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))], animations: { ...screen.animations, ...snow.animations } };
+        if (s.pack === 'FE' && snow)
+          screen = {
+            ...screen,
+            elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))],
+            animations: { ...screen.animations, ...snow.animations }
+          };
         this.lui[id] = new LuiScreen(screen, this.images, this.ui);
-        this.models[id] = s.pda ? { items: pdaRows(id).map((r) => r.row), frames: pdaRows(id).map((r) => r.frame), texts: pdaRows(id).map((r) => r.text || (screen.elements.find((e) => e.name === r.label)?.text || '').replace('%d', r.kind === 'camera2' ? '2' : '1')), intro: PDA.intro }
-          : id === 'fe-sound' ? this.rowModel(screen) : menuModel(screen);
+        this.models[id] = s.pda
+          ? {
+              items: pdaRows(id).map((r) => r.row),
+              frames: pdaRows(id).map((r) => r.frame),
+              texts: pdaRows(id).map(
+                (r) =>
+                  r.text || (screen.elements.find((e) => e.name === r.label)?.text || '').replace('%d', r.kind === 'camera2' ? '2' : '1')
+              ),
+              intro: PDA.intro
+            }
+          : id === 'fe-sound'
+            ? this.rowModel(screen)
+            : menuModel(screen);
       }
       Object.assign(this.images, Object.fromEntries(Object.entries(this.ui.characterSelect?.images || {}).filter(([k]) => !this.images[k])));
       this.data = data;
@@ -193,7 +209,13 @@ export class AudioMenus {
     const by = new Map(screen.elements.map((e) => [e.name, e])), menu = screen.elements.find((e) => e.kind === 'menu');
     const rows = menu.children.filter((n) => by.get(n)?.widget === 'row');
     const frames = rows.map((n) => { const label = by.get(n).children[0]; return screen.events.find((ev) => ev.element === label && ev.props?.[14] === 255 && ev.props?.[13] !== 0)?.frame; });
-    return { menu: menu.name, items: rows, frames, texts: rows.map((n) => by.get(by.get(n).children[0])?.text || ''), intro: Math.max(0, ...screen.events.filter((ev) => ev.frame < Math.min(...frames.filter((f) => f != null))).map((ev) => ev.frame)) };
+    return {
+      menu: menu.name,
+      items: rows,
+      frames,
+      texts: rows.map((n) => by.get(by.get(n).children[0])?.text || ''),
+      intro: Math.max(0, ...screen.events.filter((ev) => ev.frame < Math.min(...frames.filter((f) => f != null))).map((ev) => ev.frame))
+    };
   }
   owns(screen) { return this.ready && !!SCREENS[screen] && !!this.lui[screen]; }
   // Another screen of audio-menus.json drawn by its owner (38session: web/career-ui.js drawSessionMap), made once on these images.
@@ -208,14 +230,15 @@ export class AudioMenus {
   }
   set(partial) {
     const r = this.riderRecord();
-    if (r && (partial.radioMode !== undefined || partial.playlist)) {   // pv riderMusic: the rider's record (1587F8 / 158848)
+    if (r && (partial.radioMode !== undefined || partial.playlist)) {   // the rider's record (1587F8 / 158848)
       if (partial.radioMode !== undefined) r.radioMode = partial.radioMode;
       if (partial.playlist) r.playlist = partial.playlist.flatMap((b, i) => (b ? [i] : []));
       try { this.career.persist?.(); } catch {}
     }
     if (this.audio?.setSettings) this.audio.setSettings(partial); else Object.assign(this.fallback ??= this.settings(), partial);
   }
-  sfx(name, screen = this.ui.screen) { try { this.audio?.ui?.(uiEvent(name, this.ingame(screen) || PAUSE_SCREENS.has(screen))); } catch {} }   // a CTM overlay's own call (ctm-quitsave Triangle): the overlay set 9..13
+  // a CTM overlay's own call (ctm-quitsave Triangle): the overlay set 9..13
+  sfx(name, screen = this.ui.screen) { try { this.audio?.ui?.(uiEvent(name, this.ingame(screen) || PAUSE_SCREENS.has(screen))); } catch {} }
   songs() {
     const list = this.audio?.songs?.(); if (list?.length) return list;
     return (this.ui.careerUI?.career?.songs?.() || []).map((s, index) => ({ index, title: s.title, artist: s.artist, album: s.album }));
@@ -247,7 +270,7 @@ export class AudioMenus {
     if (PANELS.has(screen) && from !== screen) { try { this.audio?.ui?.(14); } catch {} }
     if (!this.owns(screen)) return;
     const now = this.now();
-    if (from !== screen) this.enterAt[screen] = this.ui.careerUI?.lodgeFlash?.introStart?.(now) ?? now;   // pv introLead: opened by the lodge's state change (web/lui-flash.js)
+    if (from !== screen) this.enterAt[screen] = this.ui.careerUI?.lodgeFlash?.introStart?.(now) ?? now;   // opened by the lodge's state change (web/lui-flash.js)
     this.focusAt = now;
     // Setup Character -> Music (web/fe-screens.js go('fe-music')): the FE state, CTM flag from the career flow (0x1A181C).
     if (screen === 'fe-music' && from === 'setup') this.ctx = { ctm: !!this.ui.careerMode, back: () => this.ui.set('setup') };
@@ -258,7 +281,10 @@ export class AudioMenus {
         this.playlist = playlistBits(this.settings(), owned); this.previewed = false; this.top = 0; this.pendingIndex = 0;
       }
     }
-    if (screen === 'fe-music' || screen === 'audio') { const m = MENU_MODES.indexOf(this.settings().radioMode ?? 0); if (from !== 'fe-playlist' && from !== 'audio-playlist') this.pendingIndex = Math.max(0, m); }
+    if (screen === 'fe-music' || screen === 'audio') {
+      const m = MENU_MODES.indexOf(this.settings().radioMode ?? 0);
+      if (from !== 'fe-playlist' && from !== 'audio-playlist') this.pendingIndex = Math.max(0, m);
+    }
     if (screen === 'fe-sound' && from !== screen) this.pendingIndex = 0;
     if (screen === 'pda-options' && from !== screen) this.pendingIndex = from === 'pda-more' ? PDA_ROWS.length - 1 : 0;
     if (screen === 'pda-more' && from !== screen) this.pendingIndex = from === 'fe-display' ? 2 : 0;
@@ -288,7 +314,13 @@ export class AudioMenus {
     if (s === 'fe-playlist' || s === 'audio-playlist') { const r = i - this.top; if (r < 0 || r >= ROWS) return [0, -100, 1, 1]; return this.rowRect(SONG_ROWS[r]); }
     const name = model?.items[i]; if (!name || !lui) return [0, -100, 1, 1];
     if (SCREENS[s]?.pda) return this.rowRect(name);
-    if (s === 'fe-sound') { const row = lui.byName.get(name), menu = lui.byName.get(model.menu), p = row.props || {}, mp = menu.props || {}; return [(mp[0] || 0) + (p[0] || 0) + 150, ((mp[1] || 0) + (p[1] || 0)) * SY, 400, 20 * SY]; }
+    if (s === 'fe-sound') {
+      const row = lui.byName.get(name),
+        menu = lui.byName.get(model.menu),
+        p = row.props || {},
+        mp = menu.props || {};
+      return [(mp[0] || 0) + (p[0] || 0) + 150, ((mp[1] || 0) + (p[1] || 0)) * SY, 400, 20 * SY];
+    }
     return this.rowRect(name);
   }
   rowRect(name) {
@@ -388,11 +420,21 @@ export class AudioMenus {
     else { this.soundMode = (this.soundMode + direction + 4) % 4; try { localStorage.setItem('ssx3.soundMode', String(this.soundMode)); } catch {} }
     this.sfx('move');
   }
-  reset() { this.set({ music: 10, effects: 10, speech: 10, dj: true, arcadeAudio: true }); /* the profile defaults 0x14F458 */ this.soundMode = 0; try { localStorage.setItem('ssx3.soundMode', '0'); } catch {} this.sfx('accept'); }
+  reset() { this.set({ music: 10, effects: 10, speech: 10, dj: true, arcadeAudio: true });
+  // the profile defaults 0x14F458
+this.soundMode = 0; try { localStorage.setItem('ssx3.soundMode', '0'); } catch {} this.sfx('accept'); }
   move(direction) {
     const s = this.ui.screen, before = this.ui.index;
     this.ui.index = stepMenu(this.focus(), direction, this.disabledList(s));
-    if (s === 'fe-playlist' || s === 'audio-playlist') { const top = this.top; this.top = scrollTop(this.top, this.ui.index, this.list.length); if (top !== this.top && this.ui.index !== before) { this.onFocus(); this.sfx('move'); return; } }
+    if (s === 'fe-playlist' || s === 'audio-playlist') {
+      const top = this.top;
+      this.top = scrollTop(this.top, this.ui.index, this.list.length);
+      if (top !== this.top && this.ui.index !== before) {
+        this.onFocus();
+        this.sfx('move');
+        return;
+      }
+    }
     if (this.ui.index !== before) { this.onFocus(); this.sfx('move'); }
   }
   onFocus() { this.focusAt = this.now(); }
@@ -427,24 +469,63 @@ export class AudioMenus {
     if (this.watching || typeof addEventListener !== 'function') return; this.watching = true;
     const ui = this.ui;
     // Left/Right values the screens cycle (options, rider, profile page, uber list, gear mode...).
-    const sig = () => { const cs = ui.characterSelect, fe = ui.feScreens, cu = ui.careerUI; try { return JSON.stringify([ui.cameraView, ui.widescreen, ui.keyboardMode, ui.riderIndex, ui.rider?.id, cs?.cheat?.id, cs?.index, fe?.page, fe?.uberIndex, fe?.keyboard?.col, fe?.keyboard?.row, cu?.lodge?.gearMode, cu?.lodge?.category, cu?.goal]); } catch { return ''; } };
+    const sig = () => {
+      const cs = ui.characterSelect,
+        fe = ui.feScreens,
+        cu = ui.careerUI;
+      try {
+        return JSON.stringify([
+          ui.cameraView,
+          ui.widescreen,
+          ui.keyboardMode,
+          ui.riderIndex,
+          ui.rider?.id,
+          cs?.cheat?.id,
+          cs?.index,
+          fe?.page,
+          fe?.uberIndex,
+          fe?.keyboard?.col,
+          fe?.keyboard?.row,
+          cu?.lodge?.gearMode,
+          cu?.lodge?.category,
+          cu?.goal
+        ]);
+      } catch {
+        return '';
+      }
+    };
     const snap = () => ({ screen: ui.screen, index: ui.index, flash: !!(ui.feScreens?.flash || ui.characterSelect?.flash || this.flash), sig: sig() });
     // The state before the key is taken by ui.js's first keydown listener (ui.preKey): a key dispatched on window itself (the pad menus,
     // the touch deck) runs its window listeners in registration order in Chrome, so this capture listener saw ui.js's move already done.
     ui.preKey = (e) => { this.before = { e, snap: snap() }; };
     addEventListener('keydown', (e) => {
       const s = ui.screen;
-      if (!ui.ready || e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code) || this.owns(s) || s === 'game' || s === 'loading' || s === 'title' && (e.code !== 'Enter' || pv('titleStart'))) return;   // pv titleStart: ui.js leaveTitle plays the title's Start
+      if (!ui.ready || e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code) || this.owns(s) || s === 'game' || s === 'loading' || s === 'title') return;   // ui.js leaveTitle plays the title's Start
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape'].includes(e.code)) return;
       const before = this.before?.e === e ? this.before.snap : snap(), ingame = PAUSE_SCREENS.has(s) || (s === 'options' && ui.optionsReturn !== 'fe-options' && !!ui.optionsReturn) || s === 'pause';
       const off = !!ui.nav?.children?.[ui.index]?.disabled, keyboard = !!ui.feScreens?.keyboard;
       setTimeout(() => {
         const after = snap(), changed = after.screen !== before.screen || after.flash !== before.flash;
         const play = (name) => { try { this.audio?.ui?.(uiEvent(name, ingame)); } catch {} };
-        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') { if (after.index !== before.index && !changed) play('move'); else if (!changed && !e.repeat && pv('ps2MenuInput') && PS2_END_ERROR_SCREENS.has(before.screen)) play('error'); }   // pv ps2MenuInput: a non-wrapping CTM list's blocked end (web/menu-rules.js)
-        else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { if (changed || after.index !== before.index || keyboard || after.sig !== before.sig) play('move'); }
-        else if (e.code === 'Enter' || e.code === 'Space') { if (keyboard) play('move'); else play(off ? 'error' : 'accept'); }   // keyboard popup 0x1CE254: typing a key = kind 1
-        else if (e.code === 'Escape') { if (changed && !PANELS.has(before.screen) && !(pv('ps2MenuInput') && (before.screen === 'ctm-bcstart' || before.screen === 'ctm-bcfail'))) play('accept'); }   // pv ps2MenuInput: Triangle on 63bc_start / 90bc_fail is silent (0x1F7590 / 0x1F77F0)
+        // pv ps2MenuInput: Triangle on 63bc_start / 90bc_fail is silent (0x1F7590 / 0x1F77F0)
+        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+          if (after.index !== before.index && !changed) play('move');
+          else if (!changed && !e.repeat && pv('ps2MenuInput') && PS2_END_ERROR_SCREENS.has(before.screen)) play('error');
+        } // pv ps2MenuInput: a non-wrapping CTM list's blocked end (web/menu-rules.js)
+        else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+          if (changed || after.index !== before.index || keyboard || after.sig !== before.sig) play('move');
+        } else if (e.code === 'Enter' || e.code === 'Space') {
+          if (keyboard) play('move');
+          else play(off ? 'error' : 'accept');
+        } // keyboard popup 0x1CE254: typing a key = kind 1
+        else if (e.code === 'Escape') {
+          if (
+            changed &&
+            !PANELS.has(before.screen) &&
+            !(pv('ps2MenuInput') && (before.screen === 'ctm-bcstart' || before.screen === 'ctm-bcfail'))
+          )
+            play('accept');
+        }
       }, 0);
     }, true);
   }
@@ -480,7 +561,7 @@ export class AudioMenus {
     if (this.confirm) this.drawConfirm(c);
     if (this.flash) { c.fillStyle = `rgba(255,255,255,${Math.min(1, (now - this.flash.at) / FLASH)})`; c.fillRect(0, 0, 640, 480); }
     c.restore();
-    this.ui.careerUI?.lodgeFlash?.draw(c);   // pv lodgeFlash (web/lui-flash.js): the fall of the lodge's flash when the lodge opened Music
+    this.ui.careerUI?.lodgeFlash?.draw(c);   // lodgeFlash (web/lui-flash.js): the fall of the lodge's flash when the lodge opened Music
   }
   override(id, events, frame) {
     const ui = this.ui, lui = this.lui[id], dis = this.disabledList(id), model = this.models[id], pack = SCREENS[id].pack;
@@ -509,7 +590,11 @@ export class AudioMenus {
       const r = SONG_ROWS.indexOf(e.name);
       if (r >= 0) { const s = this.list[this.top + r]; return s == null ? { hidden: true } : { text: songs[s]?.title || '' }; }
       const b = BOXES.indexOf(e.name);
-      if (b >= 0) { const s = this.list[this.top + b]; if (s == null) return { hidden: true }; return { sprite: playlist[s] ? spr.checkbox : owned[s] ? spr['empty box'] : spr['yell_dollar sign'], props: { 13: 255 } }; }
+      if (b >= 0) {
+        const s = this.list[this.top + b];
+        if (s == null) return { hidden: true };
+        return { sprite: playlist[s] ? spr.checkbox : owned[s] ? spr['empty box'] : spr['yell_dollar sign'], props: { 13: 255 } };
+      }
       switch (e.name) {
         case N.arrUp: return this.top > 0 ? null : { hidden: true };
         case N.arrDown: return this.top + ROWS < this.list.length ? null : { hidden: true };
@@ -550,7 +635,7 @@ export class AudioMenus {
       return null;
     };
   }
-  // ---- in-game Options (pv pdaOptions) ----
+  // ---- in-game Options ----
   // Save game: Conquer the Mountain only (a Single Event has no profile to save: greyed, PS2 r3-options).
   canSave() { const cu = this.ui.careerUI; return !!cu?.career && (!!cu.active?.career || !!cu.freeRide); }
   word(hash, fallback) { return this.ui.careerUI?.t?.(hash, fallback) || fallback; }
@@ -594,9 +679,21 @@ export class AudioMenus {
   }
   pdaOverride(id, lui, events, frame) {
     const rows = pdaRows(id), more = id === 'pda-more', dis = this.disabledList(id), at = rows[this.ui.index] || rows[0], st = this.settings();
-    const byEl = new Map(); rows.forEach((r, i) => { byEl.set(r.label, { r, i, part: 'label' }); if (r.value) byEl.set(r.value, { r, i, part: 'value' }); if (r.slider) byEl.set(r.slider, { r, i, part: 'slider' }); });
+    const byEl = new Map();
+    rows.forEach((r, i) => {
+      byEl.set(r.label, { r, i, part: 'label' });
+      if (r.value) byEl.set(r.value, { r, i, part: 'value' });
+      if (r.slider) byEl.set(r.slider, { r, i, part: 'slider' });
+    });
     const helps = new Map(rows.map((r, i) => [r.help, i]));
-    const knobs = new Map(rows.filter((r) => r.slider && r.key).map((r) => { const sl = lui.byName.get(r.slider); return [sl.knob, { track: lui.byName.get(sl.track), knob: lui.byName.get(sl.knob), key: r.key }]; }));
+    const knobs = new Map(
+      rows
+        .filter((r) => r.slider && r.key)
+        .map((r) => {
+          const sl = lui.byName.get(r.slider);
+          return [sl.knob, { track: lui.byName.get(sl.track), knob: lui.byName.get(sl.knob), key: r.key }];
+        })
+    );
     const shown = new Set(); for (const r of rows) for (const n of [r.row, r.label, r.value, r.slider, r.help]) if (n) shown.add(n);
     const pageRows = new Set(PDA_ROWS.flatMap((r) => [r.row, r.label, r.value, r.slider].filter(Boolean)));
     const helpNames = new Set(PDA_ROWS.map((r) => r.help).concat(['0346ec30']));
@@ -606,9 +703,19 @@ export class AudioMenus {
       if (more && pageRows.has(n) && !shown.has(n)) return { hidden: true };   // the rows the More page does not use
       if (more && n === PDA_ROWS[2].value) return { hidden: true };           // Display & Touch: no value
       if (helpNames.has(n) && !helps.has(n)) return { alpha: 0 };
-      if (helps.has(n)) { const i = helps.get(n), r = rows[i]; if (rows[this.ui.index]?.help !== n) return { alpha: 0 }; const t = this.pdaHelp(rows[this.ui.index]); return t != null ? { alpha: 255, text: t } : { alpha: 255 }; }
+      if (helps.has(n)) {
+        const i = helps.get(n),
+          r = rows[i];
+        if (rows[this.ui.index]?.help !== n) return { alpha: 0 };
+        const t = this.pdaHelp(rows[this.ui.index]);
+        return t != null ? { alpha: 255, text: t } : { alpha: 255 };
+      }
       const k = knobs.get(n);
-      if (k && !more) { const tp = lui.props(k.track, events, frame), kp = lui.props(k.knob, events, frame); return { props: { 0: (tp[0] || 0) + knobX(st[k.key] ?? 11, tp[6] || 120, kp[6] || 18) } }; }
+      if (k && !more) {
+        const tp = lui.props(k.track, events, frame),
+          kp = lui.props(k.knob, events, frame);
+        return { props: { 0: (tp[0] || 0) + knobX(st[k.key] ?? 11, tp[6] || 120, kp[6] || 18) } };
+      }
       const hit = byEl.get(n);
       if (hit) {
         const o = {};
@@ -635,7 +742,10 @@ export class AudioMenus {
     const ui = this.ui, q = this.t(this.confirm.credit ? 'kT_OVRCMNBuySongCredit' : 'kT_16BuyMusicTrack');
     c.fillStyle = 'rgba(58,108,148,.96)'; c.fillRect(110, 170, 420, 150); c.strokeStyle = '#8fb6cf'; c.lineWidth = 3; c.strokeRect(118, 178, 404, 134);
     ui.text(c, q, 320, 200, 18, '#0c1a26', 'FEFONT', 'center');
-    [this.t('kT_CMNYes'), this.t('kT_CMNNo')].forEach((t, i) => { if (this.confirm.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 272, 245 + i * 26, 16, 16); ui.text(c, t, 296, 245 + i * 26, 18, this.confirm.index === i ? '#eef4f7' : '#0c1a26'); });
+    [this.t('kT_CMNYes'), this.t('kT_CMNNo')].forEach((t, i) => {
+      if (this.confirm.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 272, 245 + i * 26, 16, 16);
+      ui.text(c, t, 296, 245 + i * 26, 18, this.confirm.index === i ? '#eef4f7' : '#0c1a26');
+    });
   }
 }
 const PANELS = new Set(['results', 'ctm-results', 'ctm-objectives', 'ctm-records']);   // ev 14 panels; Triangle silent there

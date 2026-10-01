@@ -1,7 +1,10 @@
 // WebKit QA driver (web/webkit-driver.mjs compiles and runs it): the macOS system WebKit (the engine and WebGPU of
 // Safari) in a WKWebView, driven over stdin/stdout. safaridriver needs Safari's "Allow Remote Automation" and often
 // times out connecting (docs/asset-formats.md "Texture archives"); this needs nothing but the Xcode command line tools.
-//   webkit-driver URL WIDTH HEIGHT [--offscreen]
+//   webkit-driver URL WIDTH HEIGHT [--offscreen] [--store UUID] [--trust-local]
+// --store UUID: a persistent website data store of its own (HTTP cache, cookies), kept across runs with the same UUID:
+// first / repeat visit measurements (docs/first-load.md). Without it: the app's default store.
+// --trust-local: accept the TLS certificate of https://127.0.0.1 (a local HTTP/2 stand-in for the edge); nothing else.
 //   stdin, one JSON command per line: {"js": "<async function body>"} | {"goto": url} | {"shot": path, "rect": [x,y,w,h]} | {"quit": 1}
 //   stdout, one JSON line per command: {"ok": true, "value": <JSON string of the result>} / {"ok": false, "error": ...};
 //   events {"event": "loaded" | "crashed"}.
@@ -14,6 +17,8 @@ let args = CommandLine.arguments
 let startURL = URL(string: args.count > 1 ? args[1] : "about:blank")!
 let W = CGFloat(Double(args.count > 2 ? args[2] : "1280") ?? 1280), H = CGFloat(Double(args.count > 3 ? args[3] : "960") ?? 960)
 let offscreen = args.contains("--offscreen")
+let trustLocal = args.contains("--trust-local")
+let storeID: UUID? = { if let i = args.firstIndex(of: "--store"), i + 1 < args.count { return UUID(uuidString: args[i + 1]) } else { return nil } }()
 
 func emit(_ obj: [String: Any]) {
   if let d = try? JSONSerialization.data(withJSONObject: obj, options: [.fragmentsAllowed]), let s = String(data: d, encoding: .utf8) { print(s); fflush(stdout) }
@@ -25,6 +30,7 @@ final class Driver: NSObject, WKNavigationDelegate {
   init(_ w: CGFloat, _ h: CGFloat) {
     let cfg = WKWebViewConfiguration()
     cfg.mediaTypesRequiringUserActionForPlayback = []
+    if let id = storeID { if #available(macOS 14.0, *) { cfg.websiteDataStore = WKWebsiteDataStore(forIdentifier: id) } }
     // _setPageMuted: silences media elements but not Web Audio: a game page's AudioContext still played (Owen heard a
     // WebKit long-ride run). So, unless WEBKIT_DRIVER_AUDIO=1, every realtime AudioContext's destination is a gain-0 node in
     // front of the real one (timing, analysers and the audio engine's state run as normal; OfflineAudioContext untouched),
@@ -94,6 +100,10 @@ final class Driver: NSObject, WKNavigationDelegate {
     } else { emit(["ok": false, "error": "unknown command"]); done() }
   }
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { emit(["event": "loaded"]) }
+  func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    if trustLocal, challenge.protectionSpace.host == "127.0.0.1", let t = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: t)) }
+    else { completionHandler(.performDefaultHandling, nil) }
+  }
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { emit(["event": "crashed"]) }
 }
 

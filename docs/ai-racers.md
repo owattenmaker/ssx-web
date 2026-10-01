@@ -558,3 +558,23 @@ Open coverage item: no gated capture runs a career heat through the event-load p
 CTM career capture loads a PS2-derived countdown with --document. The evidence for pv heatRoles is test-lineups.mjs's derived-countdown
 check and c0a-ws13's semi through web/event-heat.js. To add: one derived PS2 career qualifier capture scored through the event-load path
 (compare-page-capture / test-rival-page style), when an ARMSX2 slot is free.
+
+## Difficulty by race level (2026-09-30, career-rival agent)
+
+cComputer_updateRiderDifficulty (0x10C758) also sets each computer rider's +0xDF8 / +0xDFC (NPC pacing words; document leaves
+npc.crouch_parameter_df8, npc.driving_state.parameter_df8 / parameter_dfc) through 0x10C4F8(rider, slot, level):
+- level = 0x147CB8(profile, event type == 0): the human's profile character block +0x280 (race level 0..2; +0x284 for freestyle kinds);
+- three per-slot jump tables give (DF8, DFC): level 0 0x456AB0, level 1 0x456A90, level 2 0x456AD0 (gp-0x7DD4..-0x7D24 floats); then
+  DFC x 0.01 (gp-0x7D20);
+- back in 0x10C758: course 4 DFC x 1.25, courses 2 / 3 DFC x 1.1 (gp-0x7D1C), DFC capped at 1.0; the PS2 FPU rounds toward zero;
+- not modelled: the options word 0x5308D0 bit 2 (DF8 100, DFC 1.0; 0 in every career state) and the mode 4 / 5 role overrides.
+
+lineups.json's slot tables hold level 1 (every Single Event countdown; a fresh career is level 1 too). The rule reproduces all 128 exported
+countdown documents (Single Event level 1; ARA1 career qual / semi / final level 1; CRA3 / DRA4 career finals level 2;
+local/career-rival/difficulty.py, web/test-career-rival.mjs). Port: web/lineup.js npcDifficulty, assembleLineup({ level }); web/ai-race.js
+heatLevel passes web/career.js's live level.race.level (ev.raceLevel, not saved) for a career race under **pv careerLevel** (off). Without it
+a career race at level 0 or 2 rides level 1's pacing.
+
+Open (found on careerrival/dra4-final, not career-specific): the human's hard crash at 229 (control 8, physics exact) is an attacked bail on
+the PS2 (119B08 with a1 != 0: score +0x12C and HUD popup 0x2D); the port's enter_crash (web/animation_bridge.cpp) always passes
+attacked = false, so the score object counts +0x124. Which call passes the attacker (10E468's crash attack -> 10EB30) is not traced here.

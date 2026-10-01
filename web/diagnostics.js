@@ -19,7 +19,21 @@ const search = globalThis.location?.search ?? '';
 const enabled = typeof window !== 'undefined' && !/[?&]diag=0\b/.test(search) && (location.protocol === 'https:' || /[?&]diag=1\b/.test(search));
 const session = Math.random().toString(36).slice(2, 10), started = Date.now(), queue = [], ring = [], repeats = new Map();
 // PRIORITY kinds still go out when the budget is nearly spent (the end of a long session is where crashes are).
-const PRIORITY = new Set(['pagehide', 'previous-session-died', 'gpu-device-lost', 'gpu-recovered', 'gpu-recovery-failed', 'gpu-recovery-attempt', 'pipeline-failed', 'shader-over-budget', 'repeat', 'error', 'rejection', 'course-failed', 'download-failed']);
+const PRIORITY = new Set([
+  'pagehide',
+  'previous-session-died',
+  'gpu-device-lost',
+  'gpu-recovered',
+  'gpu-recovery-failed',
+  'gpu-recovery-attempt',
+  'pipeline-failed',
+  'shader-over-budget',
+  'repeat',
+  'error',
+  'rejection',
+  'course-failed',
+  'download-failed'
+]);
 const ERRORS = new Set(['error', 'rejection', 'console.error', 'console.warn', 'gpu-error']);
 let lastMark = '', recentMarks = [], steps = [];
 let sent = 0, currentScreen = '', frames = [], lastFrame = 0, flushing = false, unloading = false, hiddenAt = 0, dropped = 0, diagRenderer = null;
@@ -30,7 +44,15 @@ const clip = (s, n = 600) => String(s ?? '').slice(0, n);
 let liveCourse = '';
 function courseKey() {
   if (liveCourse) return liveCourse;
-  try { const q = new URLSearchParams(location.search), c = q.get('course'); if (!c) return ''; const sub = q.get('peakCourse') ?? q.get('peakMode'); return sub != null ? `${c}/${sub}` : c; } catch { return ''; }
+  try {
+    const q = new URLSearchParams(location.search),
+      c = q.get('course');
+    if (!c) return '';
+    const sub = q.get('peakCourse') ?? q.get('peakMode');
+    return sub != null ? `${c}/${sub}` : c;
+  } catch {
+    return '';
+  }
 }
 // Distance ridden (field stats): the human's position per game tick from game-tick.js (host.rideTick; rider_state 0..2 are
 // browser metres), summed, skipping placements, rescues and teleports (and any step over 30 m, which only a placement makes). Reported as distM per heartbeat
@@ -92,7 +114,24 @@ function memory() {
 // The crash marker: where we are, whether the page is hidden (a background tab the OS may drop), and the event ring.
 function remember(extra = {}) {
   if (unloading) return; // after pagehide: the auto-pause on hide must not overwrite the clean mark (docs/mobile.md)
-  try { localStorage.setItem(MARK, JSON.stringify({ session, screen: currentScreen, course: courseKey(), at: Date.now(), up: now(), clean: false, hidden: document.visibilityState === 'hidden', hiddenAt: hiddenAt || undefined, ...memory(), last: ring.slice(-RING), ...extra })); } catch {}
+  try {
+    localStorage.setItem(
+      MARK,
+      JSON.stringify({
+        session,
+        screen: currentScreen,
+        course: courseKey(),
+        at: Date.now(),
+        up: now(),
+        clean: false,
+        hidden: document.visibilityState === 'hidden',
+        hiddenAt: hiddenAt || undefined,
+        ...memory(),
+        last: ring.slice(-RING),
+        ...extra
+      })
+    );
+  } catch {}
 }
 
 // ---- stall attribution (stall / hitch events): what the page did between two frames ----
@@ -115,7 +154,17 @@ function hookGpuCounters() {
   const wrap = (k, f) => { const g = D[k]; if (typeof g === 'function') D[k] = function (...a) { return f.call(this, g, a); }; };
   const count = (k, field) => wrap(k, function (g, a) { gap[field]++; if (field in total) total[field]++; return g.apply(this, a); });
   wrap('createRenderPipeline', function (g, a) { const t0 = performance.now(); try { return g.apply(this, a); } finally { gap.pipes++; total.pipes++; gap.pipeMs += performance.now() - t0; } });
-  wrap('createRenderPipelineAsync', function (g, a) { gap.apipes++; total.apipes++; pendingPipes++; const p = g.apply(this, a); const done = () => { pendingPipes--; }; p.then(done, done); return p; });
+  wrap('createRenderPipelineAsync', function (g, a) {
+    gap.apipes++;
+    total.apipes++;
+    pendingPipes++;
+    const p = g.apply(this, a);
+    const done = () => {
+      pendingPipes--;
+    };
+    p.then(done, done);
+    return p;
+  });
   count('createShaderModule', 'shaders'); count('createTexture', 'tex'); count('createBuffer', 'bufs'); count('createBindGroup', 'binds');
 }
 
@@ -128,24 +177,66 @@ if (enabled) {
     const last = JSON.parse(localStorage.getItem(MARK) || 'null');
     if (last && !last.clean) {
       const cause = document.wasDiscarded ? 'discarded' : last.frozen ? 'frozen' : last.hidden ? 'background' : 'foreground';
-      push('previous-session-died', { cause, previous: { session: last.session, screen: last.screen, course: last.course, up: last.up, hidden: !!last.hidden, hiddenS: last.hiddenAt ? Math.round((last.at - last.hiddenAt) / 1000) : undefined, heapMB: last.heapMB, texMB: last.texMB, wasmMB: last.wasmMB }, last: last.last, agoS: Math.round((Date.now() - last.at) / 1000) });
+      push('previous-session-died', {
+        cause,
+        previous: {
+          session: last.session,
+          screen: last.screen,
+          course: last.course,
+          up: last.up,
+          hidden: !!last.hidden,
+          hiddenS: last.hiddenAt ? Math.round((last.at - last.hiddenAt) / 1000) : undefined,
+          heapMB: last.heapMB,
+          texMB: last.texMB,
+          wasmMB: last.wasmMB
+        },
+        last: last.last,
+        agoS: Math.round((Date.now() - last.at) / 1000)
+      });
     }
   } catch {}
-  push('hello', { display: { w: window.screen.width, h: window.screen.height, dpr: devicePixelRatio, inner: [innerWidth, innerHeight] }, cores: navigator.hardwareConcurrency, deviceMemory: navigator.deviceMemory ?? null, webgpu: !!navigator.gpu, touch: matchMedia('(pointer:coarse)').matches, url: location.pathname + location.search, discarded: document.wasDiscarded || undefined });
+  push('hello', {
+    display: { w: window.screen.width, h: window.screen.height, dpr: devicePixelRatio, inner: [innerWidth, innerHeight] },
+    cores: navigator.hardwareConcurrency,
+    deviceMemory: navigator.deviceMemory ?? null,
+    webgpu: !!navigator.gpu,
+    touch: matchMedia('(pointer:coarse)').matches,
+    url: location.pathname + location.search,
+    discarded: document.wasDiscarded || undefined
+  });
   remember();
   addEventListener('error', (e) => push('error', { message: clip(e.message), where: `${clip(e.filename, 120)}:${e.lineno}:${e.colno}`, stack: clip(e.error?.stack, 1200) }));
   addEventListener('unhandledrejection', (e) => push('rejection', { message: clip(e.reason?.message ?? e.reason), stack: clip(e.reason?.stack, 1200) }));
   for (const level of ['error', 'warn']) {
     const original = console[level].bind(console);
     console[level] = (...args) => {
-      const message = clip(args.map((a) => (a instanceof Error ? `${a.message}\n${a.stack}` : typeof a === 'object' ? (() => { try { return JSON.stringify(a); } catch { return String(a); } })() : String(a))).join(' '), 1500);
+      const message = clip(
+        args
+          .map((a) =>
+            a instanceof Error
+              ? `${a.message}\n${a.stack}`
+              : typeof a === 'object'
+                ? (() => {
+                    try {
+                      return JSON.stringify(a);
+                    } catch {
+                      return String(a);
+                    }
+                  })()
+                : String(a)
+          )
+          .join(' '),
+        1500
+      );
       push(`console.${level}`, { message });
       const failed = /Render pipeline creation failed \(([^)]+)\)/.exec(message); if (failed) pipelineFailed(failed[1], message);
       original(...args);
     };
   }
   addEventListener('pagehide', (e) => {
-    rideTotalM += rideM; rideM = 0; push('pagehide', { persisted: e.persisted || undefined, ...memory(), audio: audioStatsSnapshot() ?? undefined, distTotalM: rideTotalM >= 1 ? Math.round(rideTotalM) : undefined }); // the session's audio totals
+    rideTotalM += rideM; rideM = 0;
+    // the session's audio totals
+push('pagehide', { persisted: e.persisted || undefined, ...memory(), audio: audioStatsSnapshot() ?? undefined, distTotalM: rideTotalM >= 1 ? Math.round(rideTotalM) : undefined });
     try { const m = JSON.parse(localStorage.getItem(MARK) || '{}'); m.clean = true; localStorage.setItem(MARK, JSON.stringify(m)); } catch {}
     unloading = true; flush(true);
   });
@@ -158,8 +249,19 @@ if (enabled) {
     if (document.visibilityState === 'hidden') flush(true);
   });
   // Screen changes (web/ui.js writes #stage data-screen): the loading -> game timeline.
-  const watch = () => { const stage = document.getElementById('stage'); if (!stage) return;
-    new MutationObserver(() => { const s = stage.dataset.screen || ''; if (s !== currentScreen) { push('screen', { to: s, ...memory() }); bindPoseArm(s, currentScreen); currentScreen = s; remember(); } }).observe(stage, { attributes: true, attributeFilter: ['data-screen'] }); };
+  const watch = () => {
+    const stage = document.getElementById('stage');
+    if (!stage) return;
+    new MutationObserver(() => {
+      const s = stage.dataset.screen || '';
+      if (s !== currentScreen) {
+        push('screen', { to: s, ...memory() });
+        bindPoseArm(s, currentScreen);
+        currentScreen = s;
+        remember();
+      }
+    }).observe(stage, { attributes: true, attributeFilter: ['data-screen'] });
+  };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch, { once: true }); else watch();
   // Frame-time heartbeat: median / p95 / max over the last interval, long frames counted, JS heap / GPU / wasm memory.
   // Every 10 s for the first 10 minutes, then every minute (a long session used to hit the event cap after ~30 min).
@@ -173,7 +275,15 @@ if (enabled) {
   // tasks in the gap (loading work, message handlers); the rest is the browser or a GPU / compositor backlog.
   let stalls = 0, hitches = 0, shownAt = 0, lastBeat = 0, lastAudio = '', busyMs = 0, tickAt = 0;
   document.addEventListener('visibilitychange', () => { shownAt = performance.now(); });
-  const longTasks = []; try { new PerformanceObserver((l) => { for (const e of l.getEntries()) { longTasks.push([e.startTime, e.duration]); if (longTasks.length > 16) longTasks.shift(); } }).observe({ type: 'longtask' }); } catch {}
+  const longTasks = [];
+  try {
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        longTasks.push([e.startTime, e.duration]);
+        if (longTasks.length > 16) longTasks.shift();
+      }
+    }).observe({ type: 'longtask' });
+  } catch {}
   const afterFrame = new MessageChannel(); afterFrame.port1.onmessage = () => { busyMs = performance.now() - tickAt; };
   const tick = (t) => {
     if (lastFrame) {
@@ -192,15 +302,42 @@ if (enabled) {
   requestAnimationFrame(tick);
   // The race warm-up marks (main.js warmupRender: warm:start / slices / gpu / end), relative to the page start; every mark's
   // name also goes to the stall attribution (the marks made during a gap).
-  try { new PerformanceObserver((list) => { for (const e of list.getEntries()) { gapMark(e.name); lastMark = clip(e.name, 60); recentMarks.push(lastMark); if (recentMarks.length > 4) recentMarks.shift(); if (/^warm:/.test(e.name)) push('mark', { name: e.name, at: Math.round(e.startTime) }); } }).observe({ type: 'mark', buffered: true }); } catch {}
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        gapMark(e.name);
+        lastMark = clip(e.name, 60);
+        recentMarks.push(lastMark);
+        if (recentMarks.length > 4) recentMarks.shift();
+        if (/^warm:/.test(e.name)) push('mark', { name: e.name, at: Math.round(e.startTime) });
+      }
+    }).observe({ type: 'mark', buffered: true });
+  } catch {}
   setInterval(() => {
     const t = Date.now(), every = t - started < 600000 ? 10000 : 60000;
     if (t - lastBeat >= every - 500) {
       lastBeat = t;
       // audio field counters (web/audio-stats.js: late / missed music bars, stolen / dropped voices, slow decodes...), when they changed
       const a = audioStatsSnapshot(), aKey = a ? JSON.stringify(a) : ''; const audio = aKey !== lastAudio ? a : undefined; lastAudio = aKey;
-      if (frames.length) { const f = frames.sort((a, b) => a - b), q = (p) => Math.round(f[Math.min(f.length - 1, Math.floor(f.length * p))]); const distM = rideM >= 1 ? Math.round(rideM) : undefined; rideTotalM += rideM; rideM = 0; push('frames', { n: f.length, p50: q(0.5), p95: q(0.95), max: Math.round(f[f.length - 1]), over50: f.filter((x) => x > 50).length, ...memory(), dropped: dropped || undefined, audio, distM }); frames = []; }
-      else push('memory', { ...memory(), audio }); // hidden / no frames: memory only
+      if (frames.length) {
+        const f = frames.sort((a, b) => a - b),
+          q = (p) => Math.round(f[Math.min(f.length - 1, Math.floor(f.length * p))]);
+        const distM = rideM >= 1 ? Math.round(rideM) : undefined;
+        rideTotalM += rideM;
+        rideM = 0;
+        push('frames', {
+          n: f.length,
+          p50: q(0.5),
+          p95: q(0.95),
+          max: Math.round(f[f.length - 1]),
+          over50: f.filter((x) => x > 50).length,
+          ...memory(),
+          dropped: dropped || undefined,
+          audio,
+          distM
+        });
+        frames = [];
+      } else push('memory', { ...memory(), audio }); // hidden / no frames: memory only
     }
     remember();
   }, 10000);
@@ -226,7 +363,19 @@ let tick=0;setInterval(()=>{const now=Date.now();if(tick&&now-tick>3000)lastAt=n
  else if(now-sentAt>=30000){sentAt=now;post({t:T(now),kind:'hang',screen:last.screen,course:last.course,since:T(hangAt),gapMs:gap,lasting:true,last});}},1000);`;
     const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' })), hang = new Worker(url);
     hang.postMessage({ init: { url: new URL(ENDPOINT, location.href).href, session, ua: navigator.userAgent, started } });
-    const ping = () => { const r = steps.at(-1); hang.postMessage({ p: { screen: currentScreen, course: courseKey(), mark: lastMark, step: r ? `${r.kind}${r.to ? ':' + r.to : r.message ? ':' + r.message : ''}` : '', marks: recentMarks, recent: steps } }); };
+    const ping = () => {
+      const r = steps.at(-1);
+      hang.postMessage({
+        p: {
+          screen: currentScreen,
+          course: courseKey(),
+          mark: lastMark,
+          step: r ? `${r.kind}${r.to ? ':' + r.to : r.message ? ':' + r.message : ''}` : '',
+          marks: recentMarks,
+          recent: steps
+        }
+      });
+    };
     ping(); setInterval(ping, 250);
     document.addEventListener('visibilitychange', () => hang.postMessage({ v: document.visibilityState }));
   } catch {}
@@ -295,9 +444,21 @@ function bindPoseReport(mesh, kind, spread, camera) {
   let inView = null; try { const p = mesh.getWorldPosition(mesh.position.clone()).project(camera); inView = p.z > -1 && p.z < 1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1; } catch {}
   const r = diagRenderer, b = r?.backend, adapter = b?.device?.adapterInfo ?? b?.adapter?.info;
   const gl = !b?.device && b?.gl ? clip(b.gl.getParameter(b.gl.RENDERER), 120) : undefined;
-  bindPose.hit = { kind, ...bindPoseName(mesh), spread: +spread.toExponential(2), bones: mesh.skeleton?.bones?.length, inView, armedBy: bindPose.armedBy,
-    frames: bindPose.frame - bindPose.armedFrame, ms: Math.round(performance.now() - bindPose.armedAt), visible: mesh.visible,
-    backend: b?.isWebGPUBackend ? 'webgpu' : b ? 'webgl' : null, adapter: adapter ? `${adapter.vendor ?? ''} ${adapter.architecture ?? ''} ${adapter.device ?? ''} ${adapter.description ?? ''}`.trim() : gl };
+  bindPose.hit = {
+    kind,
+    ...bindPoseName(mesh),
+    spread: +spread.toExponential(2),
+    bones: mesh.skeleton?.bones?.length,
+    inView,
+    armedBy: bindPose.armedBy,
+    frames: bindPose.frame - bindPose.armedFrame,
+    ms: Math.round(performance.now() - bindPose.armedAt),
+    visible: mesh.visible,
+    backend: b?.isWebGPUBackend ? 'webgpu' : b ? 'webgl' : null,
+    adapter: adapter
+      ? `${adapter.vendor ?? ''} ${adapter.architecture ?? ''} ${adapter.device ?? ''} ${adapter.description ?? ''}`.trim()
+      : gl
+  };
   push('bind-pose', bindPose.hit); flush();
 }
 function bindPoseInstall(THREE) {
@@ -341,7 +502,16 @@ function bindPoseLoop() {
 const owners = new Map(), programSizes = new WeakMap(), overBudget = new Set(), devices = new WeakSet();
 function programMemory(program) {
   if (!program?.code) return null;
-  let m = programSizes.get(program); if (!m) { try { m = wgslMemory(program.code); m.chars = program.code.length; } catch { m = { privateBytes: -1, functionBytes: -1 }; } programSizes.set(program, m); }
+  let m = programSizes.get(program);
+  if (!m) {
+    try {
+      m = wgslMemory(program.code);
+      m.chars = program.code.length;
+    } catch {
+      m = { privateBytes: -1, functionBytes: -1 };
+    }
+    programSizes.set(program, m);
+  }
   return m;
 }
 function ownerOf(renderObject) {
@@ -372,9 +542,32 @@ export function diagnoseRenderer(renderer, { recovered = false } = {}) {
   watchPipelines(renderer);
   if (device && !devices.has(device)) {
     devices.add(device);
-    const l = device.limits, pick = ['maxTextureDimension2D', 'maxBufferSize', 'maxStorageBufferBindingSize', 'maxUniformBufferBindingSize', 'maxSampledTexturesPerShaderStage', 'maxSamplersPerShaderStage', 'maxStorageBuffersPerShaderStage', 'maxUniformBuffersPerShaderStage', 'maxBindGroups', 'maxVertexBuffers', 'maxVertexAttributes', 'maxInterStageShaderVariables', 'maxColorAttachmentBytesPerSample', 'maxComputeWorkgroupStorageSize'];
+    const l = device.limits,
+      pick = [
+        'maxTextureDimension2D',
+        'maxBufferSize',
+        'maxStorageBufferBindingSize',
+        'maxUniformBufferBindingSize',
+        'maxSampledTexturesPerShaderStage',
+        'maxSamplersPerShaderStage',
+        'maxStorageBuffersPerShaderStage',
+        'maxUniformBuffersPerShaderStage',
+        'maxBindGroups',
+        'maxVertexBuffers',
+        'maxVertexAttributes',
+        'maxInterStageShaderVariables',
+        'maxColorAttachmentBytesPerSample',
+        'maxComputeWorkgroupStorageSize'
+      ];
     if (!recovered) { info.limits = Object.fromEntries(pick.map((k) => [k, l[k]])); info.features = [...device.features].sort(); }
-    const adapter = device.adapterInfo ?? backend.adapter?.info; if (adapter) info.adapter = { vendor: adapter.vendor, architecture: adapter.architecture, device: adapter.device, description: adapter.description };
+    const adapter = device.adapterInfo ?? backend.adapter?.info;
+    if (adapter)
+      info.adapter = {
+        vendor: adapter.vendor,
+        architecture: adapter.architecture,
+        device: adapter.device,
+        description: adapter.description
+      };
     device.addEventListener?.('uncapturederror', (e) => push('gpu-error', { type: e.error?.constructor?.name, message: clip(e.error?.message, 1500) }));
     device.lost?.then((l) => { push('gpu-device-lost', { reason: l.reason, message: clip(l.message, 800), hidden: document.visibilityState === 'hidden', ...memory() }); remember(); flush(true); });
   } else if (!device) {
@@ -382,7 +575,19 @@ export function diagnoseRenderer(renderer, { recovered = false } = {}) {
   }
   push('renderer', info);
   if (renderer.__ssxDiagProbe) return; renderer.__ssxDiagProbe = true;
-  try { const cache = renderer._nodes?.nodeBuilderCache; if (cache && typeof cache.set === 'function' && !cache.__ssxDiag) { const set = cache.set.bind(cache); cache.set = (k, v) => { gap.builds++; total.builds++; return set(k, v); }; cache.__ssxDiag = true; } } catch {} // node material builds (stall attribution)
+  // node material builds (stall attribution)
+  try {
+    const cache = renderer._nodes?.nodeBuilderCache;
+    if (cache && typeof cache.set === 'function' && !cache.__ssxDiag) {
+      const set = cache.set.bind(cache);
+      cache.set = (k, v) => {
+        gap.builds++;
+        total.builds++;
+        return set(k, v);
+      };
+      cache.__ssxDiag = true;
+    }
+  } catch {}
   // GPU backlog: the frame loop can run while the GPU is seconds behind (pipeline builds queue up in Firefox's GPU
   // process), which shows as a frozen or black canvas. Probe the queue every 2 s and report a completion over a second.
   let probing = false, gpuStalls = 0, probeBase = null;
@@ -393,7 +598,24 @@ export function diagnoseRenderer(renderer, { recovered = false } = {}) {
     // cause: what the page created from 2 s before the probe to its completion (pipelines are built in order on the GPU timeline in
     // Firefox; WebKit and Chrome compile async ones aside), and the async compiles still pending then
     const since = { ...(probeBase || total) }; probeBase = before;
-    d.queue.onSubmittedWorkDone().then(() => { const ms = performance.now() - t0; if (ms > 1000) { gpuStalls++; const cause = {}; for (const k in total) if (total[k] - since[k]) cause[k] = total[k] - since[k]; if (pendingPipes) cause.compiling = pendingPipes; push('gpu-stall', { ms: Math.round(ms), cause }); } }, () => {}).finally(() => { probing = false; });
+    d.queue
+      .onSubmittedWorkDone()
+      .then(
+        () => {
+          const ms = performance.now() - t0;
+          if (ms > 1000) {
+            gpuStalls++;
+            const cause = {};
+            for (const k in total) if (total[k] - since[k]) cause[k] = total[k] - since[k];
+            if (pendingPipes) cause.compiling = pendingPipes;
+            push('gpu-stall', { ms: Math.round(ms), cause });
+          }
+        },
+        () => {}
+      )
+      .finally(() => {
+        probing = false;
+      });
   }, 2000);
 }
 export function diagnose(kind, data) { push(kind, data); }

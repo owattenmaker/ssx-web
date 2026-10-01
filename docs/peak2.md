@@ -52,7 +52,8 @@ Peak 2 = mountain areas **C** and **D** (course table 0x43D950 +0x54 = 1).
 | Ruthless | 50000 / 25000 / 5100 / 2600 | 195 s (time) / 500,000 (points) | Rival Points: posted 0, 300 s |
 
 - Peak rival (0x145750, peak index 1): **Nate** (7), or **Zoe** (4) when the player is Nate. Rival Time / Rival Points
-  (DBC2) and the career slope-style opponent use it.
+  (DBC2) ride him; the career finals of Ruthless Ridge and Intimidator ride him in slot 1; the career freestyle events post him in slot 1
+  (nobody rides a career slope style). docs/career-events.md "The peak rival in career events".
 - Peak 2 Race / Jam (modes 7 / 10, handlers 4 / 7, table 0x440D18): race tiers 1140 / 1075 / 970 s, splits 230 / 530 /
   840 s (tier 1), cash $20,000 / $40,000 / $75,000; jam 350,000 / 600,000 / 850,000 points in 12:00, split 1500 x 100,
   cash $20,000 / $40,000 / $75,000. Start course 15 (Ruthless, grid slot 0). The finish rule 10E5D8 accepts only courses
@@ -170,8 +171,9 @@ the selector rows. `web/test-locations.mjs` loads and starts all six.
   post stage (animation_bridge.cpp `departureClamp`) re-seeds before clamping. DRA4 human, bones and score are now exact to the end
   (ai harness: human 5396, RNG 2639). ARA1 Luther 3799 had the same cause.
 - **Open:** CHP2 3106 bones (one tick) and the 3492 finish boost award (the Snow Jam setpieces/full 12297 gap); computer riders after 1224..3291 on the
-  races (RNG draw count, pair distance); Ruthless human 4436 fixed 2026-09-28 (the detached board's +0x180 frame, docs/crash-motion.md; 3911 was the surface-18 crash of 13F178, fixed 2026-09-27; 2074 the missing wind push, docs/weather.md); the career slope-style opponent (Nate) is not
-  exported. Lineups per human are done (`lineups.json` for CRA3, DRA4 and DSS2; docs/characters.md "Peak 2 lineups"); the connected Peak 2 mountain (section 6).
+  races (RNG draw count, pair distance); Ruthless human 4436 fixed 2026-09-28 (the detached board's +0x180 frame, docs/crash-motion.md; 3911 was the surface-18 crash of 13F178, fixed 2026-09-27; 2074 the missing wind push, docs/weather.md); the career slope-style "opponent" does not exist
+  (Nate is posted, nobody rides: docs/career-events.md "The peak rival in career events"); the career race finals' Nate is exported (CRA3 /
+  DRA4 lineups.json career parts, pv careerRival, 2026-09-30). Lineups per human are done (`lineups.json` for CRA3, DRA4 and DSS2; docs/characters.md "Peak 2 lineups"); the connected Peak 2 mountain (section 6).
 
 ## 6. The connected Peak 2 mountain (streamed world PEAK2)
 

@@ -8,6 +8,7 @@ import { setPv } from './pv-flags.js';
 import { createPauseContexts, CTX, BIT } from './pause-contexts.js';
 import { createScreenPhases, PHASE } from './screen-phases.js';
 import { createBigChallenges, setBigChallengeTable } from './big-challenges.js';
+import { sourceOf } from './test-source.mjs';
 
 setPv('ps2MenuInput', true);
 
@@ -109,7 +110,7 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   assert.match(cs, /else if \(s\.heldSeq === seq\) \{ seq\.fadeT = \(seq\.fadeT \?\? seq\.t\) \+ dt \* TICK_HZ; return lastPose; \}/, 'held: only the fade clock runs');
   assert.match(cs, /const adv = stopTick \? Math\.floor\(seq\.t\) \+ 1 - seq\.t : dt \* TICK_HZ;/, 'the push\'s tick runs to the next whole tick (the idle: t = 1.0)');
   assert.doesNotMatch(cs, /idleFrozen/);
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+  const main = sourceOf('main.js');
   assert.match(main, /nisStopped:\(\)=>contexts\.stops\(CTX_BIT\.NIS\)/, 'main.js gives the cutscenes the NIS bit');
 }
 
@@ -136,7 +137,7 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   p.ui.set('ctm-peaks'); run(p, 40); p.ui.set('ctm-goals'); p.ui.set('ctm-events'); p.ui.set('ctm-confirm');
   p.close();   // main.js transportInWorld: overlay.close() on the held (NIS) path, then ui.set('game') and the ride
   run(p, 3); assert.equal(p.ticks, t0 + 2, 'the world ticks from the frame after the Yes');
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+  const main = sourceOf('main.js');
   assert.match(main, /try\{if\(held\)\{overlay\.close\(\);/, 'transportInWorld pops the MCOMM at the Yes');
   assert.match(main, /simHeld=contexts\.simFrame\(\);/, 'the tick loop reads the stack');
   assert.doesNotMatch(main, /function pause\(|(?<![\w.$])paused=|pv\('pauseContexts'\)/, 'one path: no legacy pause flag or switch');

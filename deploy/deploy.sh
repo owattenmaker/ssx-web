@@ -1,6 +1,8 @@
 #!/bin/sh
-# Build the hosting bundle here (the prep machine holds the extracted assets) and update the host (docs/hosting.md;
-# host, folder and label from deploy/.env.local). Usage: deploy/deploy.sh [--no-assets]
+# First install, sandbox profile or LaunchAgent plist change: build the hosting bundle here (the prep machine holds the extracted
+# assets), sync it, install deploy/ssx-server.sb and the server plist, and restart the agent (docs/hosting.md; host, folder and
+# label from deploy/.env.local). Everyday deploys use deploy/deploy-staged.sh (staged, verified, swapped together; it installs
+# neither the sandbox profile nor the plist). Usage: deploy/deploy.sh [--no-assets]
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$ROOT/deploy/env.sh"

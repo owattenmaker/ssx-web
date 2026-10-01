@@ -10,7 +10,13 @@ import { decodePngTexels } from './png-texels.js';
 
 const out = document.getElementById('result');
 const hex = async (bytes) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
-const unpad = (buf, w, h) => { const src = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), row = Math.ceil((w * 4) / 256) * 256, o = new Uint8Array(w * h * 4); for (let y = 0; y < h; y++) o.set(src.subarray(y * row, y * row + w * 4), y * w * 4); return o; };
+const unpad = (buf, w, h) => {
+  const src = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+    row = Math.ceil((w * 4) / 256) * 256,
+    o = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) o.set(src.subarray(y * row, y * row + w * 4), y * w * 4);
+  return o;
+};
 const loadImg = (src) => new Promise((ok, fail) => { const im = new Image(); im.onload = () => ok(im); im.onerror = fail; im.src = src; });
 
 async function run() {
@@ -20,7 +26,11 @@ async function run() {
   const device = renderer.backend.device, loader = new TextureLoader();
   // the browser's own decoder: straight copyExternalImageToTexture (what three.js did with an <img> / ImageBitmap)
   const external = async (source, w, h) => {
-    const tex = device.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT });
+    const tex = device.createTexture({
+      size: [w, h],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+    });
     device.queue.copyExternalImageToTexture({ source, flipY: false }, { texture: tex, premultipliedAlpha: false }, [w, h]);
     const row = Math.ceil((w * 4) / 256) * 256, buf = device.createBuffer({ size: row * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     const enc = device.createCommandEncoder(); enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: row }, [w, h]); device.queue.submit([enc.finish()]);
@@ -33,7 +43,17 @@ async function run() {
     const chosen = new Set(all.filter((_, i) => i % Math.ceil(all.length / n) === 0));
     for (const e of all.filter((e) => e.colours <= 16).slice(0, 3)) chosen.add(e);
     let translucent = 0;
-    for (const e of all) { if (translucent >= 4) break; if (e.colours > 256) continue; const t = await decodePngTexels(await (await archiveBlob(url, e.id)).arrayBuffer()); let min = 255; for (let i = 3; i < t.data.length; i += 4) min = Math.min(min, t.data[i]); if (min < 255) { chosen.add(e); translucent++; } }
+    for (const e of all) {
+      if (translucent >= 4) break;
+      if (e.colours > 256) continue;
+      const t = await decodePngTexels(await (await archiveBlob(url, e.id)).arrayBuffer());
+      let min = 255;
+      for (let i = 3; i < t.data.length; i += 4) min = Math.min(min, t.data[i]);
+      if (min < 255) {
+        chosen.add(e);
+        translucent++;
+      }
+    }
     return [...chosen].map((e) => [url, e]);
   };
   const entries = [...await pick('/assets/WARDROBE/ZOE/textures.tex'), ...await pick('/assets/WARDROBE/MAC/textures.tex'), ...await pick('/assets/TEXTURES/world.tex', 12)];
@@ -50,7 +70,11 @@ async function run() {
       const blob = await archiveBlob(url, e.id);
       { const u = URL.createObjectURL(blob), im = await loadImg(u); URL.revokeObjectURL(u); row.imgRevoked = (await hex(await external(im, e.width, e.height))) === e.rgba; }
       { const u = URL.createObjectURL(blob), im = await loadImg(u); await im.decode(); row.imgDecoded = (await hex(await external(im, e.width, e.height))) === e.rgba; URL.revokeObjectURL(u); }
-      { const bm = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }); row.imageBitmap = (await hex(await external(bm, e.width, e.height))) === e.rgba; bm.close(); }
+      {
+        const bm = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        row.imageBitmap = (await hex(await external(bm, e.width, e.height))) === e.rgba;
+        bm.close();
+      }
     } catch (err) { row.error = String(err?.stack || err); }
     rows.push(row); out.textContent += '\n' + JSON.stringify(row);
   }

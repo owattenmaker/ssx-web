@@ -55,7 +55,12 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
   let streams = new Map(), keyTick = 0, other = -1, viewed = -1;
   const ghostVelocity = [];
   const reactions = { own: [], predicted: [] }; // QA: this rider's reactions and the ones predicted for the ghosts
-  const stream = (target) => { const k = `${keyTick}:${Math.min(slot, other)}:${Math.max(slot, other)}:${target}`; let w = streams.get(k); if (!w) streams.set(k, (w = contactStream(seed, keyTick, slot, other, target))); return w; };
+  const stream = (target) => {
+    const k = `${keyTick}:${Math.min(slot, other)}:${Math.max(slot, other)}:${target}`;
+    let w = streams.get(k);
+    if (!w) streams.set(k, (w = contactStream(seed, keyTick, slot, other, target)));
+    return w;
+  };
   const history = []; // this rider's [x, y, z, remaining] after each tick (index = tick)
   let lastRankInputs = null, rankState = null, nextRankPass = 0, rankPasses = 0, tick = 0, worldState = null, pending = [], place = -1, placeTimer = -1, glowTimer = -1, disabledMask = 0;
   const rng = () => new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6);
@@ -92,7 +97,9 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
     // A reaction of this rider: its draws (the soft reaction's 0x108388 motion draws, a crash entry's) come from the
     // contact stream, loaded into the core's game RNG for the call and taken back after.
     react(s, kind, animation, attack, eventPtr) {
-      const log = s === slot ? reactions.own : reactions.predicted; log.push({ tick: keyTick, slot: s, other: s === slot ? other : slot, kind, animation, attack: !!attack }); if (log.length > 64) log.shift();
+      const log = s === slot ? reactions.own : reactions.predicted;
+      log.push({ tick: keyTick, slot: s, other: s === slot ? other : slot, kind, animation, attack: !!attack });
+      if (log.length > 64) log.shift();
       if (s !== slot) return;
       const words = rng(), saved = words.slice(), w = stream(slot);
       words.set(w); try { core._pair_react(kind, animation, attack, eventPtr); } finally { const after = rng(); w.set(after); after.set(saved); }

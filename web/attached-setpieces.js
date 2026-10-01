@@ -106,7 +106,7 @@ export class AttachedSetPieces {
       if (!this.resources.has(resource)) continue;
       const delta = this.frameFind(resource, node) ?? this.frameFind(resource, -1);
       if (!delta) continue;
-      mesh.matrixAutoUpdate = false; mesh.userData.lcRest = false;   // a player's matrix (pv liveRest: not the rest draw)
+      mesh.matrixAutoUpdate = false; mesh.userData.lcRest = false;   // a player's matrix (liveRest: not the rest draw)
       const e = mesh.matrix.fromArray(delta).elements, o = mesh.userData.restPosition ??= mesh.position.clone();
       e[12] += o.x; e[13] += o.y; e[14] += o.z; mesh.matrixWorldNeedsUpdate = true; moved++;
     }

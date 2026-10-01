@@ -232,6 +232,13 @@ so they are not restored but reset), camera state words (the cameras are re-deri
   from the countdown snapshot, the Transport's restore, then the return: all six exact to the removal, the human to the end, the RNG
   and ranks everywhere, the pair records from the return.
 
+## 2b. Online records (pv onlineRecords, docs/online-records.md)
+
+A finished run's recording and start state travel as a replay file (web/server/replay-file.mjs: `createRecording().exportBytes()`,
+`importBytes(bytes, ticks, calls)`); `replay.load({recording, snapshot, finishTick, highlights})` puts a downloaded run in place of the
+live one and the full replay plays it (Watch Replay, web/online-replay.js). Checked: a Snow Jam run downloaded and replayed equals the
+live run's `?simtrace` on every tick, also after a course switch and with another rider selected (web/test-online-records.mjs).
+
 ## 3. Verification
 
 - `web/test-replay.mjs` (npm test; CORE_DIR / ASSETS_DIR check a scratch build): the recording (the change stream, analog

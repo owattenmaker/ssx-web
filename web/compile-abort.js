@@ -1,9 +1,9 @@
-// pv compileAbort: pipeline warms that outlive their course.
+// pipeline warms that outlive their course.
 //
 // three r186 Renderer.compileAsync lists the scene's render items synchronously, then builds them one at a time with a
 // yieldToMain() between items, each against the render context captured at the call. The world warms (free-ride.js warmSliced,
 // cutscene host.compile, both through fog-renderer.js compileObject) queue thousands of items; on WebKit they are still being
-// built seconds later. main.js unloadCourse waits for the free-ride warms at most 1.5 s (pv bootChain) and then disposes the course,
+// built seconds later. main.js unloadCourse waits for the free-ride warms at most 1.5 s and then disposes the course,
 // so the remaining items kept building after the dispose:
 // - geometry, bindings and textures of disposed objects were uploaded again, and nothing disposes them a second time;
 // - their pipelines hold usedTimes forever;

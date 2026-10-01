@@ -1,5 +1,5 @@
 // In-race cards and results from the original OV.LUI records (tools/export_results_screens.py -> /assets/UI/results-screens.json;
-// pv luiResults, docs/visual-parity.md section 9). web/career-ui.js draws through it when the export is present and the switch
+// luiResults, docs/visual-parity.md section 9). web/career-ui.js draws through it when the export is present and the switch
 // is on; otherwise it keeps its own drawing.
 //   OV_darkblue        the panel every card / result sits in (cut-corner frame, header bar with the OV_1-6 picture, blinking
 //                      lights): open animation frames 13..60 from the first frame the panel is drawn, then the lights (65..499)
@@ -10,12 +10,9 @@
 // The human's row is 255,204,153 (PS2 ctm-parity/runs/after-final/results.png: 'Zoe' / '03:55' at 203,163,122 = 0.8 x, the
 // LUI text colour factor of web/lui-player.js).
 import { LuiScreen } from './lui-player.js';
-import { pv } from './pv-flags.js';
 
 const SY = 448 / 480;
-const OPEN = 60, LIGHTS = 65, CLOSE = 500;           // OV_darkblue: open done at 60, the lights loop from 65 until the close at 500
-const HEADER_LIGHTS = ['0760d5c2', '0760d5c3'];
-// pv luiLights (docs/visual-parity.md section 9, header lights). OV_darkblue's six header lights, slanted 11 x 7 shapes along
+// luiLights (docs/visual-parity.md section 9, header lights). OV_darkblue's six header lights, slanted 11 x 7 shapes along
 // the header's top edge at y 73: 0760d5c2 / 0760d5c3 in their own groups 06c3ae11 (433, 57) / 06c3ae12 (449, 63) at
 // (13, 16) / (12, 10) -> x 446 / 461, and 0760d5c4..c7 in the panel group 00e91994 (18, 7) at x 480 / 495 / 531 / 546 ->
 // 498 / 513 / 549 / 564. The runtime draws a child at the sum of its groups' x / y (group draw 0x398868 hands its origin plus
@@ -68,12 +65,12 @@ export class ResultsLui {
       await Promise.all(data.pages.filter((p) => !images[p]).map(async (p) => { const im = new Image(); im.src = `/assets/UI/${p}.png`; await im.decode(); images[p] = im; }));
       for (const [key, screen] of Object.entries(data.screens)) {
         this.lui[key] = new LuiScreen(screen, images, this.ui); this.lui[key].shapeScale = true; this.lui[key].unionFlat = true; this.lui[key].keepLead = true;
-        // pv resultsMenu: a text wraps only when its element has flag 0x80 (lui-player flagWrap, 0x3A0528): the menu items (0x24c)
+        // a text wraps only when its element has flag 0x80 (lui-player flagWrap, 0x3A0528): the menu items (0x24c)
         // stay on one line, so 43final_standings' 'Next event' (about 88 px in its 80 px item) no longer breaks onto Restart
         // (PS2 menus/replay/bhp1-neutral, nav/bc/out-jam-finish: 'Next event' on one line, x 461..549)
-        Object.defineProperty(this.lui[key], 'flagWrap', { get: () => pv('resultsMenu') });
-        // pv luiWrap: a wrapping text breaks where 0x3A0D00 does (lui-player ps2Wrap: font advances x scale % against the width)
-        Object.defineProperty(this.lui[key], 'ps2Wrap', { get: () => pv('luiWrap') });
+        Object.defineProperty(this.lui[key], 'flagWrap', { get: () => true });
+        // a wrapping text breaks where 0x3A0D00 does (lui-player ps2Wrap: font advances x scale % against the width)
+        this.lui[key].ps2Wrap = true;
       }
       this.data = data;
     } catch (e) { console.warn('Results panels missing (python3 tools/export_results_screens.py)', e); }
@@ -84,16 +81,8 @@ export class ResultsLui {
   clock() { const now = this.now(); if (now - this.lastDraw > 15) this.openAt = now; this.lastDraw = now; return now - this.openAt; }
   opened() { return this.now() - this.openAt; }
   // OV_darkblue at frame t: the open events up to t, then the light loop 65..499 over the settled panel
-  panelFrame(c, t) {
-    if (pv('luiLights')) return this.panelLights(c, t);
-    const lui = this.lui.OV_darkblue, f = t < LIGHTS ? t : LIGHTS + ((t - LIGHTS) % (CLOSE - LIGHTS));
-    const events = lui.screen.events.filter((ev) => ev.frame < CLOSE && ev.frame <= f).map((ev) => ({ ev, start: ev.frame }));
-    // The two header lights (shapes 0760d5c2 / 0760d5c3, whose events carry their groups' layout: x 12, y 10 / x -280..13) land
-    // in the top-left corner (24, 20) and off screen, where the PS2 shows nothing (they blink at the header's top right, x 448 /
-    // 463, y 73: PS2 race-f95 / peak1-race-objectives); left out until that layout is traced.
-    c.save(); c.scale(1, SY); lui.draw(c, events, f, (e) => (HEADER_LIGHTS.includes(e.name) ? { hidden: true } : null)); c.restore();
-  }
-  // pv luiLights: OV_darkblue on its own timeline (panelTimeline), with the header lights. A light rests dark blue 4,45,74 at
+  panelFrame(c, t) { return this.panelLights(c, t); }
+  // OV_darkblue on its own timeline (panelTimeline), with the header lights. A light rests dark blue 4,45,74 at
   // vertex alpha 125 and ramps to white at 100 over 40 frames and back (0e7d0442 / 0ead0443 ...): 0760d5c2 peaks at t 92 and
   // 172, 0760d5c3 at 140 and 220, then c4 190, c5 240 / 320, c6 290, c7 340 / 420, and again every 436 frames. The shape draw
   // (0x3A39F8) sends the vertex colours alone (x 0.5 to GS alpha): the element's own alpha (prop 13, animated with the vertex
@@ -175,7 +164,15 @@ export class ResultsLui {
       if (n === TOP.help1) return message && timed ? { text: message } : { hidden: true };
       if (n === TOP.help2) return message && !timed ? { text: message } : { hidden: true };
       if (n === TOP.xgroup) return items.length ? { alpha: 255 } : { hidden: true };   // 0x1FE1D8 shows ps2x beside the menu
-      let k = pick(itemNames, n); if (k >= 0) return k < items.length ? { text: items[k], props: colour(k === index ? [255, 255, 255] : [101, 184, 201]), ...(disabled(k) && k !== index ? { alpha: 128 } : {}) } : { hidden: true };
+      let k = pick(itemNames, n);
+      if (k >= 0)
+        return k < items.length
+          ? {
+              text: items[k],
+              props: colour(k === index ? [255, 255, 255] : [101, 184, 201]),
+              ...(disabled(k) && k !== index ? { alpha: 128 } : {})
+            }
+          : { hidden: true };
       for (const [col, field] of [[R.rank, 'rank'], [R.name, 'name'], [R.rider, 'rider'], [R.value, 'value']]) {
         k = pick(col, n); if (k < 0) continue; const row = rows[k];
         if (!row) return { hidden: true };
@@ -196,7 +193,9 @@ export class ResultsLui {
       props: { ...src.props, 1: src.props[1] + PITCH, 7: 15 } });
     menu.children.push(TOP_THIRD);
     const blue = { 14: 101, 15: 184, 16: 201 }, white = { 14: 255, 15: 255, 16: 255 }, added = [];
-    for (const ev of screen.events) if (ev.element === second && (ev.frame === 30 || ev.frame === 40 || ev.frame === 45)) added.push({ ...ev, element: TOP_THIRD, props: { ...ev.props, 1: ev.props[1] + PITCH, 7: 15, ...blue } });
+    for (const ev of screen.events)
+      if (ev.element === second && (ev.frame === 30 || ev.frame === 40 || ev.frame === 45))
+        added.push({ ...ev, element: TOP_THIRD, props: { ...ev.props, 1: ev.props[1] + PITCH, 7: 15, ...blue } });
     for (const ev of screen.events) if (ev.frame === 40 && [first, second, TOP.xgroup].includes(ev.element)) {
       const p = { ...ev.props, ...(ev.element === TOP.xgroup ? { 1: ev.props[1] + 2 * GLYPH } : blue) };
       added.push({ ...ev, frame: 50, props: p });
@@ -204,7 +203,7 @@ export class ResultsLui {
     const third = added.find((ev) => ev.element === TOP_THIRD && ev.frame === 40); if (third) added.push({ ...third, frame: 50, props: { ...third.props, ...white } });
     screen.events.push(...added); screen.labels = [...(screen.labels || []), { frame: 50, name: TOP_THIRD, control: ['10000400'] }];
     const lui = new LuiScreen(screen, this.ui.images, this.ui); lui.shapeScale = true; lui.unionFlat = true; lui.keepLead = true;
-    Object.defineProperty(lui, 'flagWrap', { get: () => pv('resultsMenu') }); Object.defineProperty(lui, 'ps2Wrap', { get: () => pv('luiWrap') });
+    Object.defineProperty(lui, 'flagWrap', { get: () => true }); lui.ps2Wrap = true;
     this.lui['61toptimes+'] = lui; return true;
   }
   // 70peakchal_results: title1 / title2, 'Event Results', the target and the player's value (labels right-aligned), the
@@ -244,7 +243,12 @@ export class ResultsLui {
       if (n === R.record) return record != null ? { text: record } : { hidden: true };
       if (n === R.item) return { text: continueLabel };
       const k = R.rows.indexOf(n);
-      if (k >= 0) { const r = riders[k]; if (!r) return { hidden: true }; return { text: r.name, ...(r.human ? { props: colour(CARD_HUMAN) } : {}), ...(r.note ? { alpha: 128, props: { 6: 400 } } : {}) }; }   // the port's note on one line
+      // the port's note on one line
+      if (k >= 0) {
+        const r = riders[k];
+        if (!r) return { hidden: true };
+        return { text: r.name, ...(r.human ? { props: colour(CARD_HUMAN) } : {}), ...(r.note ? { alpha: 128, props: { 6: 400 } } : {}) };
+      }
       return null;
     });
   }

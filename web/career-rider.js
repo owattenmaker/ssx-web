@@ -1,5 +1,5 @@
 // The human rider's profile-dependent identity: the gear it wears and the ubers it performs (docs/career-events.md "Lodge
-// shops, awards and attributes"; pv careerRider).
+// shops, awards and attributes"; careerRider).
 //
 // The original keeps no copy of either. Every world load assembles the race rider from the profile record's committed gear
 // rows (0x14D068 from 0x22ED5C, then 0x11BBE8 / 0x11C138), and in the air the uber of grab slot c is read live from the

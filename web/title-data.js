@@ -35,9 +35,14 @@ export function titleLuiScreen(data) {
   const { title, snow, meter } = data;
   // The white ramp ends on line 479 of 480: the GS fills that last line (it samples pixel corners), a canvas leaves
   // 1/15 of the bottom row blue (a blue line under the title on large screens); end it on 480.
-  const toEdge = (e) => { if (e.kind !== 'shape' || !e.parent) return e; const up = title.elements.find((x) => x.name === e.parent), y0 = (up?.props?.[1] || 0) + (e.props?.[1] || 0), p = { ...e.props };
+  const toEdge = (e) => {
+    if (e.kind !== 'shape' || !e.parent) return e;
+    const up = title.elements.find((x) => x.name === e.parent),
+      y0 = (up?.props?.[1] || 0) + (e.props?.[1] || 0),
+      p = { ...e.props };
     for (let k = 0; k < (e.shape?.[0] ?? 0); k++) if (y0 + (p[22 + 9 * k] || 0) === 479) p[22 + 9 * k] += 1;
-    return { ...e, props: p }; };
+    return { ...e, props: p };
+  };
   const elements = title.elements.map(toEdge), animations = { ...title.animations }, events = [...(title.events || [])];
   if (snow) { elements.push(...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))); Object.assign(animations, snow.animations); }
   if (meter) {

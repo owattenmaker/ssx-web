@@ -49,8 +49,13 @@ and the course data. Every rule below comes from `SLUS_207.72` or from EE RAM of
 **Roster 0x239938.**
 - GMM+0x18 is the player and +0x1C the peak rival (0x145750).
 - The other characters are shuffled into +0x20...
-- A Single Event (0x535C11 ≠ 0) puts the **last shuffled** character in +0x1C. So a Quick Play opponent is random, while a career opponent is the peak rival (Peak 1: Mac, or Griff for a Mac player).
-- The number of computer riders spawned is GMM+0x10 − GMM+0x14 (144D98 → 0x535C04): race 5, slope style 1, pipe and big air 0.
+- A Single Event (0x535C11 ≠ 0) puts the **last shuffled** character in +0x1C (0x239A78), and slope style rides it. In a career
+  event +0x1C stays the peak rival (0x239A10), but **nobody rides**: 0x238E20's career round-1 path (0x238F7C) sets GMM+0x14 = 5 for
+  every kind, so 0x239AA0 has one live slot (the human) and the rival is **posted** in slot 1 with the leading column (Peak 1 Mac / Griff,
+  Peak 2 Nate / Zoe, Peak 3 Psymon / Elise). PS2: rnbctm/zoe-a (Mac 254500) and the derived career Style Mile heat 1 (Nate 358740 /
+  402400 / 459660; GMM+0x14 = 5, 0x535C04 = 0), docs/career-events.md "The peak rival in career events". The rival never appears in a
+  Single Event slope style.
+- The number of computer riders spawned is GMM+0x10 − GMM+0x14 (→ 0x535C04): race 5, Single Event slope style 1, career slope style, pipe and big air 0.
 
 ### Slope style during the run
 
@@ -173,3 +178,8 @@ Single Event flow then posts exactly what the Peak 2/3 anchors hold. For example
      - Psymon's human score went from its first difference at tick 303 (481/899 exact) to 899/899.
   - **Tools:** `compare-ai-capture.mjs` (per-tick `ground_state_dump` vs the record's `rider_100_b40`, the human owner window `owner_00_40`, the computer rider's `actor_000_b40` +0x22C steer triplet) and the recompiled 12E9B8 / 133308.
 - If the opponent crosses the line after the player but before the race stops, 239230 runs again for slot 1. That quirk is not reproduced.
+
+- **Career slope-style opponent (settled 2026-09-30, career-rival agent):** there is none on any peak. The brief that the career heat rides the
+  peak rival (Nate on Style Mile) does not match the code: see "Posting and roster" above. The port already posts the rival and races the
+  human alone (web/career.js postFreestyleScores, web/ai-race.js prepareFreestyle); web/test-career-rival.mjs replays the derived Peak 2
+  heat's roster and all three rounds' posting exactly. Kick Doubt (ESS3) follows the same code with Psymon / Elise (no Peak 3 career state made).

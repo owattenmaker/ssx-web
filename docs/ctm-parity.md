@@ -128,7 +128,8 @@ Samples are port-0 pad samples (about one per frame). WS = world state `S+0x214`
     - Start -> overlay 2 (the MCOMM menu with Return / Restart Challenge / Messages / Audio / Options / Quit Challenge and their
       icons). A failure opens 90bc_fail (Challenge failed / Retry? / Yes / No / Challenge Info on Info).
     - Success: "MISSION SUCCESS" and the cash ($2,000 / 4,000 / 6,000 by peak), the badge turns into the collectible icon, the
-      status word gets bit 3 (and the next challenge of the chain opens).
+      status word gets bit 3 (and the next challenge of the chain opens). A repeated challenge pays $0 and 1F09D0 skips the cash line
+      (blez +0x3C8); the fallback banner in web/big-challenges.js does the same.
 
 ## Code (SLUS_207.72)
 
@@ -637,6 +638,18 @@ rider held by the cut's rider actor.
   - the actor's per-tick moves 124788 and their velocity (PS2 fr-booth2: (-6046, 6153, -1654) on the first tick, a few cm/s
     after, 0 by the end);
   - the animator's 311A50 + semantic 5 (the pose is not drawn under the cut or the prompt / map);
+  - **Bone 22 from the NIS keys (2026-10-01), pv `nisBoneProbe` (off).**
+    - The NIS record's byte 7 (123640: +0xAFC) is the exported actor's root_motion_velocity.
+    - The cast rider (cutscenes.js poseActors, FrontEndPreview with the board) is posed by the NIS bank's clip, and its board_rootg is
+      the gameplay rig's bone 22, so no clip export is needed. cutscenes.js humanBoard() gives it in PS2 cm.
+    - PS2 fr-booth2 (records 2644 + t against the page's NIS time t, Chrome): equal within 0.09 cm over 235 ticks once the model size
+      (zoe 0.85) is applied. The cast scale comes from model_size / 100; a page started on the bare boot rider draws the cast at 1.0.
+    - main.js nisStart, at each game tick's start: nis_hold_probe(2, the board root) while an afc hold is posed.
+    - Open: the page's cut starts when its actors and bank are loaded, about 18 ticks after the hold on a first booth visit. The PS2's
+      NIS starts on the hold tick, and its first probe (t 0, the riding normal) misses (+0xB00 0, fr-booth2 record 2644). The second
+      hits with 111AA0's snow impact (record 2646). On the page, the hold's +0xB00 = 1 stays with no probe until the pose exists, so
+      no impact is drawn. Either the human cast model and the step's bank are loaded before the hold, or the probe needs a stand-in
+      until the pose exists. Not settled.
   - the hold's pose, and with it bone 22 for +0xAFC holds (2026-09-30). PS2 c0a-ws13, the gondola (records 14017..): channel 2
     plays semantic 432 (0x1B0; sequence clip 0x5A8E00, not semantic 5). 432 has no record in the variant table (*(gp+0xD0C) count
     0), so its clip comes from the NIS's own bank. In the second NIS record, channel 3 plays 411. Bone 22 stays at (-308703.3,
@@ -945,6 +958,11 @@ until now only the Peak 2 Race / All Peak Race / Jam).
     - The four capture gates of the streamed worlds and the node re-feed checks are unchanged (the core is not touched).
     - The old WebKit "300-500 MB after a Transport" is gone: the departure goes at once. In the phone-tier free ride with three
       Transports, the WebContent footprint after each arrival was 975 / 1231 / 1200 MB.
+- **Entities at the unload start** (2026-09-30): 230360 (row -> 7) destroys every group 1 / 8 entity of the location (3551A8 by
+  instance+0x78 track). The crashbag rollers and the avalanche pieces now go there (web/roller_gameplay.inc
+  `browser_rollers_track_teardown`, web/avalanche_gameplay.inc `browser_avalanche_track_reset`, from web/peak_world.inc). Before, a roller
+  outlived peakRelease's free of its collision nodes: the in-world Transport stalls ([course-switch.md](course-switch.md) "In-world
+  Transports that stalled or took the page down").
 - **The post-event Transport freeze** (Owen's Safari session t93ez0j6, 2026-09-29; pv `switchGate`, on): not memory. The Transport's
   held loop drew across the course switch and lit its actors / reset the painters through the NEW course's core while that core was
   still initializing (97-247 calls per Transport in WebKit), and its whole-scene draw ran the new course's render hooks early. WebKit

@@ -1,13 +1,13 @@
-import {attachEncodedSnowComposite} from './snow-composite.js';import {copyFogState} from './fog-shared.js';
+import {attachEncodedSnowComposite} from './snow-composite.js';
+import {trackCompiles} from './compile-abort.js';
 import {depthStencilPassOptions} from './depth-stencil-target.js';
-import {pv} from './pv-flags.js';import {trackCompiles} from './compile-abort.js';
 import {DataTexture,RGBAFormat,UnsignedByteType,NearestFilter,NoColorSpace,RenderPipeline} from 'three/webgpu';
 import {Fn,pass,texture,uniform,vec2,vec4,floor,round,mod,clamp,mix,select,screenUV} from 'three/tsl';import {fromFrame} from './frame-space.js';/* the frame's colour space (pv encodedBlend) */
 
 // Source-derived depth/CLUT/encoded-byte blend. The scene's lighting and GS
 // rasterization are not reproduced by this pass; see fog-painter-recovery.md.
 export function createFogRenderer(renderer,scene,skyScene,camera,stage='',snow=null,tint=null,sun=null,glow=null,glare=null){
- if(pv('compileAbort'))trackCompiles(renderer);/* the warms through compileObject / compileAsync can be stopped at a course unload (web/compile-abort.js) */
+ trackCompiles(renderer);/* the warms through compileObject / compileAsync can be stopped at a course unload (web/compile-abort.js) */
  const palette=new DataTexture(new Uint8Array(1024),256,1,RGBAFormat,UnsignedByteType);
  palette.minFilter=palette.magFilter=NearestFilter;palette.generateMipmaps=false;palette.colorSpace=NoColorSpace;palette.needsUpdate=true;
  const slope=uniform(0),offset=uniform(0),enabled=uniform(0);
@@ -29,7 +29,9 @@ export function createFogRenderer(renderer,scene,skyScene,camera,stage='',snow=n
  const snowComposite=snow?attachEncodedSnowComposite(renderer,worldPass,scene,camera,snow,worldFogged.div(255)):null;
  sun?.attach(renderer,worldPass);
  glow?.attach(renderer,worldPass);
- const pipeline=new RenderPipeline(renderer);pipeline.outputColorTransform=false;if(pipeline._quadMesh?.material)pipeline._quadMesh.material.name='FogComposite';/* pipeline label in field reports (web/diagnostics.js) */
+ const pipeline=new RenderPipeline(renderer);pipeline.outputColorTransform=false;
+ // pipeline label in field reports (web/diagnostics.js)
+if(pipeline._quadMesh?.material)pipeline._quadMesh.material.name='FogComposite';
  pipeline.outputNode=Fn(()=>{
   if(stage==='palette')return vec4(entry.rgb,1);
   if(stage==='color')return vec4(worldEncoded,1);
@@ -73,7 +75,6 @@ export function createFogRenderer(renderer,scene,skyScene,camera,stage='',snow=n
   update(core){
    const info=new Float32Array(core.HEAPF32.buffer,core._fog_palette_info(),9);enabled.value=info[0];slope.value=info[4];offset.value=info[5];
    if(info[0]&&revision!==info[1]){palette.image.data.set(core.HEAPU8.subarray(core._fog_palette_rgba(),core._fog_palette_rgba()+1024));palette.needsUpdate=true;revision=info[1];uploads++;}
-   copyFogState(info,info[0]?core.HEAPU8.subarray(core._fog_palette_rgba(),core._fog_palette_rgba()+1024):null);   // pv byteBlend: the encoded-pass world additives (web/fog-shared.js)
   },
   render(){
    sun?.update(camera);glow?.update(camera);const background=scene.backgroundNode;scene.backgroundNode=skyBackground;
@@ -87,24 +88,31 @@ export function createFogRenderer(renderer,scene,skyScene,camera,stage='',snow=n
   // (MRT, sample count, output type as PassNode.setup sets them) so no pipeline links on a race frame.
   async compileAsync(){
    const background=scene.backgroundNode;scene.backgroundNode=skyBackground;
-   try{for(const p of [worldPass,skyPass]){p.renderTarget.samples=p.options?.samples===undefined?renderer.samples:p.options.samples;p.renderTarget.texture.type=renderer.getOutputBufferType();await p.compileAsync(renderer);}}
-   finally{scene.backgroundNode=background;}
+   try {
+     for (const p of [worldPass, skyPass]) {
+       p.renderTarget.samples = p.options?.samples === undefined ? renderer.samples : p.options.samples;
+       p.renderTarget.texture.type = renderer.getOutputBufferType();
+       await p.compileAsync(renderer);
+     }
+   } finally {
+     scene.backgroundNode = background;
+   }
   },
   // Compile one object for the world pass: its render target (formats, sample count) and MRT, as the race frame draws it
   // (cutscene actors and sets, web/cutscenes.js host.compile). renderer.compileAsync on its own compiles for the canvas,
   // whose pipelines the world pass never uses (docs/firefox-load.md). The context is taken synchronously, so the target is
   // restored before the compile yields.
-  // depth: the render-context depth to compile at (pv rideWarm passes 1, the world pass's own; default: 1 with pv streamWarm, else 0)
+  // depth: the render-context depth to compile at (pv rideWarm passes 1, the world pass's own; default: 1 with streamWarm, else 0)
   compileObject(object,{depth:want=null}={}){
    const target=worldPass.renderTarget,priorTarget=renderer.getRenderTarget(),priorMRT=renderer.getMRT();
    target.samples=worldPass.options?.samples===undefined?renderer.samples:worldPass.options.samples;target.texture.type=renderer.getOutputBufferType();
    // hidden parts shown later (the rider's board, the PDA prop) compile too: the object list is taken synchronously
    const hidden=[];object.traverse(o=>{if(!o.visible){hidden.push(o);o.visible=true;}});
    renderer.setRenderTarget(target);renderer.setMRT(worldPass.getMRT?.()??null);
-   // pv streamWarm: three keys a render context by its call depth too, and the world pass draws nested in the post pipeline (depth 1)
+   // three keys a render context by its call depth too, and the world pass draws nested in the post pipeline (depth 1)
    // while compileAsync takes depth 0: every material compiled here got another context id in its cache key and was built again on
    // its first world-pass draw (the stations of the streamed world, the NIS actors; docs/ctm-flow.md "Start and streaming").
-   const contexts=renderer._renderContexts,get=contexts?.get,d=want??(pv('streamWarm')?1:0),depth=d&&get?d:0;if(depth)contexts.get=function(t,m,d){return get.call(this,t,m,d||depth);};
+   const contexts=renderer._renderContexts,get=contexts?.get,d=want??1,depth=d&&get?d:0;if(depth)contexts.get=function(t,m,d){return get.call(this,t,m,d||depth);};
    try{return renderer.compileAsync(object,camera,scene);}finally{if(depth)delete contexts.get;renderer.setRenderTarget(priorTarget);renderer.setMRT(priorMRT);for(const o of hidden)o.visible=false;}
   },
   setSoftness,get softness(){return soft;},

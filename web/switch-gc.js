@@ -28,12 +28,30 @@ export function createCoreTracker({ Registry = globalThis.FinalizationRegistry, 
   const young = [], aged = [];
   const mark = () => { const t = now(); young.push({ t }); while (young.length && t - young[0].t >= AGE_MS) { aged.push(young.shift()); if (aged.length > AGED_MAX) aged.shift(); } };
   return {
-    track(memory) { if (!ok || !memory) return; if (!started && typeof every === 'function') { started = true; every(mark, MARK_EVERY_MS); } const id = ++seq; live.add(id); reg.register(memory, id); },
-    get live() { return live.size; },
-    get fulls() { return fulls; },
+    track(memory) {
+      if (!ok || !memory) return;
+      if (!started && typeof every === 'function') {
+        started = true;
+        every(mark, MARK_EVERY_MS);
+      }
+      const id = ++seq;
+      live.add(id);
+      reg.register(memory, id);
+    },
+    get live() {
+      return live.size;
+    },
+    get fulls() {
+      return fulls;
+    },
     // drop the aged markers (only a full collection frees them): the count to wait past, or null when none has aged yet
-    release() { if (!aged.length) return null; const at = fulls; for (const m of aged.splice(0)) markers.register(m, 0); return at; },
-    mark,   // (tests)
+    release() {
+      if (!aged.length) return null;
+      const at = fulls;
+      for (const m of aged.splice(0)) markers.register(m, 0);
+      return at;
+    },
+    mark // (tests)
   };
 }
 export const coreTracker = createCoreTracker();

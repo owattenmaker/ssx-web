@@ -6,8 +6,17 @@ export function createTerrainMeshCache(patches,budget=8*1024*1024){
  function validate(plan){
   if(!Array.isArray(plan)||plan.length>40)throw Error('Terrain batch exceeds planned patch limit');
   const byIndex=new Map();
-  for(const item of plan){if(!Number.isInteger(item.index)||!patches[item.index]||patches[item.index].resource!==item.resource||byIndex.has(item.index))throw Error('Invalid terrain patch identity');byIndex.set(item.index,item);
-   if(![8,16,32,64].includes(item.resolution)||item.edges?.length!==4||item.edges.some(n=>![8,16,32,64].includes(n)||n<item.resolution))throw Error('Invalid terrain detail resolution');}
+  for (const item of plan) {
+    if (!Number.isInteger(item.index) || !patches[item.index] || patches[item.index].resource !== item.resource || byIndex.has(item.index))
+      throw Error('Invalid terrain patch identity');
+    byIndex.set(item.index, item);
+    if (
+      ![8, 16, 32, 64].includes(item.resolution) ||
+      item.edges?.length !== 4 ||
+      item.edges.some((n) => ![8, 16, 32, 64].includes(n) || n < item.resolution)
+    )
+      throw Error('Invalid terrain detail resolution');
+  }
   for(const item of plan)for(let edge=0;edge<4;edge++){
    const neighbor=patches[item.index].neighbors[edge];
    if(!neighbor){if(item.edges[edge]!==8)throw Error('Unresolved terrain edge cannot be refined');continue;}
@@ -19,7 +28,16 @@ export function createTerrainMeshCache(patches,budget=8*1024*1024){
   const key=[item.index,item.resolution,...item.edges].join(':');let mesh=cache.get(key);
   if(mesh){hits++;cache.delete(key);cache.set(key,mesh);}else{
    builds++;const generated=buildTerrainPatch(patches[item.index],item.resolution,item.edges);mesh={vertices:generated.vertices,indices:generated.indices,colors:generated.colors};
-   const size=meshBytes(mesh);if(size<=budget){while(bytes+size>budget&&cache.size){const oldest=cache.keys().next().value;bytes-=meshBytes(cache.get(oldest));cache.delete(oldest);}cache.set(key,mesh);bytes+=size;}
+   const size = meshBytes(mesh);
+   if (size <= budget) {
+     while (bytes + size > budget && cache.size) {
+       const oldest = cache.keys().next().value;
+       bytes -= meshBytes(cache.get(oldest));
+       cache.delete(oldest);
+     }
+     cache.set(key, mesh);
+     bytes += size;
+   }
   }
   // Transfer copies, never the cached buffers themselves.
   return {index:item.index,resource:item.resource,resolution:item.resolution,edges:[...item.edges],vertices:mesh.vertices.slice(),indices:mesh.indices.slice(),colors:mesh.colors.slice()};

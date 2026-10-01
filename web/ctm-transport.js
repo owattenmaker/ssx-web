@@ -1,4 +1,4 @@
-// Conquer the Mountain: the transport ride over a world switch (pv heli; docs/presentation.md "Heli ride over a peak
+// Conquer the Mountain: the transport ride over a world switch (heli; docs/presentation.md "Heli ride over a peak
 // change"). PS2 (ctm-parity runs f95-after, peak2-arr): Transport > Select Peak > "Go to this peak now?" Yes (and the
 // post-event Transport to another location) -> WS14: the departure at a station (heli_dep / gond_dep, 0x27A860), the in-air
 // ride heli_inair #149 / gond_inair #150 once, then heli_inair_<char> #113..122 / gond_inair_<char> held (flags 8) with
@@ -11,27 +11,34 @@
 // load screen (loading-screen.js world mode); career-ui.js enterWorld releases it once the new world is in.
 import { playCutscene, COURSE_CODES } from './cutscenes.js';
 import { freeRideHolds } from './free-ride.js';
-import { pv } from './pv-flags.js';
 
 // Whether going to `course` changes the page's world (a peak change, or leaving an event package for the peak world).
 export function switchesWorld(ui, course) {
   const here = ui.course; if (!here) return false;
-  return !here.freeRide || !freeRideHolds(here, course); // as main.js cb.freeRide (pv mountainRide: MOUNTAIN holds every course)
+  return !here.freeRide || !freeRideHolds(here, course); // as main.js cb.freeRide (mountainRide: MOUNTAIN holds every course)
 }
 
 // Whether cu.goWorld(dest) plays the ride: free ride or the post-event map, into another world; after an event the same
 // location again is WS15 (session point 1 and a white fade, ctm-flow.md 4), not a transport.
 export function rideWanted(ui, cu, dest) {
-  if (!pv('heli') || !ui.cutscene || !(cu.freeRide || cu.afterEvent) || !switchesWorld(ui, dest)) return false;
-  // pv stationFlow: world state 15 applies only when the destination is not a backcountry (0x2365CC..0x236640): the same backcountry
+  if (!ui.cutscene || !(cu.freeRide || cu.afterEvent) || !switchesWorld(ui, dest)) return false;
+  // world state 15 applies only when the destination is not a backcountry (0x2365CC..0x236640): the same backcountry
   // after its rival event rides the heli again
-  if (pv('stationFlow') && cu.afterEvent && dest >= 14 && dest <= 16) return true;
+  if (cu.afterEvent && dest >= 14 && dest <= 16) return true;
   return !(cu.afterEvent && (cu.active?.course === dest || (!!ui.course?.code && ui.course.code === COURSE_CODES[dest])));
 }
 
 // Waits (on animation frames, up to `ms`) for cond().
 function until(cond, ms) {
-  return new Promise((resolve) => { const t0 = performance.now(); const f = () => { if (cond()) resolve(true); else if (performance.now() - t0 > ms) resolve(false); else requestAnimationFrame(f); }; f(); });
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    const f = () => {
+      if (cond()) resolve(true);
+      else if (performance.now() - t0 > ms) resolve(false);
+      else requestAnimationFrame(f);
+    };
+    f();
+  });
 }
 
 // cu: CareerUI; dest: the destination course index; go(): the course switch (returns what ui.cb.freeRide returned).
@@ -39,11 +46,11 @@ function until(cond, ms) {
 export async function rideAcrossSwitch({ ui, cu, dest, go }) {
   const cs = ui.cutscene;
   if (!rideWanted(ui, cu, dest) || !cs?.acrossSwitch) return go();
-  // pv heliSky: the departure's sky dome, drawn under the held loop over the switch (cutscenes.js prepareAcrossSky)
+  // the departure's sky dome, drawn under the held loop over the switch (cutscenes.js prepareAcrossSky)
   const sky = cs.prepareAcrossSky?.(ui.course?.sky ?? null) ?? null;
   // the departure (from a station) and the in-air ride, in the world being left
-  // pv stationFlow: after an event the course being left is the event's (a backcountry rival event leaves by heli, 0x2365CC)
-  const from = pv('stationFlow') && cu.afterEvent && cu.active?.course != null ? cu.active.course : undefined;
+  // after an event the course being left is the event's (a backcountry rival event leaves by heli, 0x2365CC)
+  const from = cu.afterEvent && cu.active?.course != null ? cu.active.course : undefined;
   await playCutscene({ kind: 'transport-depart', location: dest, restore: false, from }).catch(() => null);
   let ended = false;
   playCutscene({ kind: 'transport-loop', location: dest, restore: false, from }).catch(() => null).then(() => { ended = true; });

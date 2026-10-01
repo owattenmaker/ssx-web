@@ -28,7 +28,11 @@ function burstRandoms(K, slots) {
   const B = burstBits;
   for (let k = 0; k < 9; k++) {
     let s = K[k < 5 ? 14 + k : 15 + k];
-    for (let slot = 0, q = k; slot < slots; slot++, q += 9) { const t = ((s & 0x7fffff) | 0x3f800000) >>> 0; s = ((((t << 1) ^ ((t >>> 4) & 1) ^ ((t >>> 22) & 1)) & 0x7fffff) | 0x3f800000) >>> 0; B[q] = s; }
+    for (let slot = 0, q = k; slot < slots; slot++, q += 9) {
+      const t = ((s & 0x7fffff) | 0x3f800000) >>> 0;
+      s = ((((t << 1) ^ ((t >>> 4) & 1) ^ ((t >>> 22) & 1)) & 0x7fffff) | 0x3f800000) >>> 0;
+      B[q] = s;
+    }
   }
   return burstDraws;
 }
@@ -40,7 +44,43 @@ export function burstSpritesFast(K, F, out, n, limit) {
   const sizeRange = F[4], lifeRange = F[5], sizeBase = F[6], lifeBase = F[7], sizeDelta = F[8], alphaStep = F[12], blurStep = F[13];
   let age = F[2]; const period = F[3];
   const fx = F[24], fy = F[25], fz = F[26], vbx = F[28], vby = F[29], vbz = F[30];
-  const F32 = F[32], F33 = F[33], F34 = F[34], F36 = F[36], F37 = F[37], F38 = F[38], F40 = F[40], F41 = F[41], F42 = F[42], F44 = F[44], F45 = F[45], F46 = F[46], F48 = F[48], F49 = F[49], F50 = F[50], F52 = F[52], F53 = F[53], F54 = F[54], F56 = F[56], F57 = F[57], F58 = F[58], F60 = F[60], F61 = F[61], F62 = F[62], F63 = F[63], F64 = F[64], F65 = F[65], F66 = F[66], F67 = F[67], F68 = F[68], F69 = F[69], F70 = F[70], F71 = F[71], F72 = F[72], F73 = F[73], F74 = F[74], F75 = F[75];
+  const F32 = F[32],
+    F33 = F[33],
+    F34 = F[34],
+    F36 = F[36],
+    F37 = F[37],
+    F38 = F[38],
+    F40 = F[40],
+    F41 = F[41],
+    F42 = F[42],
+    F44 = F[44],
+    F45 = F[45],
+    F46 = F[46],
+    F48 = F[48],
+    F49 = F[49],
+    F50 = F[50],
+    F52 = F[52],
+    F53 = F[53],
+    F54 = F[54],
+    F56 = F[56],
+    F57 = F[57],
+    F58 = F[58],
+    F60 = F[60],
+    F61 = F[61],
+    F62 = F[62],
+    F63 = F[63],
+    F64 = F[64],
+    F65 = F[65],
+    F66 = F[66],
+    F67 = F[67],
+    F68 = F[68],
+    F69 = F[69],
+    F70 = F[70],
+    F71 = F[71],
+    F72 = F[72],
+    F73 = F[73],
+    F74 = F[74],
+    F75 = F[75];
   const R = burstRandoms(K, slots);
   let slotIndex = 0;
   for (let slot = 0, q = 0; slot < slots; slot++, q += 9) {
@@ -112,10 +152,63 @@ function trailCopies(out, n, limit, blur, age, alphaStep, blurStep, fx, fy, fz, 
 // One ring row of the trail kernel: its per births from age on (the row's age afterwards: trailRowSchedule.end).
 function trailRow(F, blur, out, n, limit, bits, per, age0, px, py, pz, vx, vy, vz, nx, ny, nz, nvx, nvy, nvz, fractionStep) {
   const ageStep = F[3], alphaStep = F[12], blurStep = F[13], sizeRange = F[4], lifeRange = F[5], sizeBase = F[6], lifeBase = F[7], sizeDelta = F[8];
-  const F24 = F[24], F25 = F[25], F26 = F[26], F28 = F[28], F29 = F[29], F30 = F[30], F32 = F[32], F33 = F[33], F34 = F[34], F36 = F[36], F37 = F[37], F38 = F[38], F40 = F[40], F41 = F[41], F42 = F[42], F44 = F[44], F45 = F[45], F46 = F[46], F48 = F[48], F49 = F[49], F50 = F[50], F52 = F[52], F53 = F[53], F54 = F[54], F56 = F[56], F57 = F[57], F58 = F[58], F60 = F[60], F61 = F[61], F62 = F[62], F63 = F[63], F64 = F[64], F65 = F[65], F66 = F[66], F67 = F[67], F68 = F[68], F69 = F[69], F70 = F[70], F71 = F[71], F72 = F[72], F73 = F[73], F74 = F[74], F75 = F[75];
+  const F24 = F[24],
+    F25 = F[25],
+    F26 = F[26],
+    F28 = F[28],
+    F29 = F[29],
+    F30 = F[30],
+    F32 = F[32],
+    F33 = F[33],
+    F34 = F[34],
+    F36 = F[36],
+    F37 = F[37],
+    F38 = F[38],
+    F40 = F[40],
+    F41 = F[41],
+    F42 = F[42],
+    F44 = F[44],
+    F45 = F[45],
+    F46 = F[46],
+    F48 = F[48],
+    F49 = F[49],
+    F50 = F[50],
+    F52 = F[52],
+    F53 = F[53],
+    F54 = F[54],
+    F56 = F[56],
+    F57 = F[57],
+    F58 = F[58],
+    F60 = F[60],
+    F61 = F[61],
+    F62 = F[62],
+    F63 = F[63],
+    F64 = F[64],
+    F65 = F[65],
+    F66 = F[66],
+    F67 = F[67],
+    F68 = F[68],
+    F69 = F[69],
+    F70 = F[70],
+    F71 = F[71],
+    F72 = F[72],
+    F73 = F[73],
+    F74 = F[74],
+    F75 = F[75];
   const V = trailSchedule(bits, per, age0, ageStep, fractionStep, lifeBase, lifeRange);
   for (let o = 0, end = per * 12; o < end; o += 12) {
-    const r0 = V[o], r1 = V[o + 1], r2 = V[o + 2], r3 = V[o + 3], r4 = V[o + 4], r5 = V[o + 5], r6 = V[o + 6], r7 = V[o + 7], age = V[o + 8], fraction = V[o + 9], lifetime = V[o + 10], inverse = V[o + 11];
+    const r0 = V[o],
+      r1 = V[o + 1],
+      r2 = V[o + 2],
+      r3 = V[o + 3],
+      r4 = V[o + 4],
+      r5 = V[o + 5],
+      r6 = V[o + 6],
+      r7 = V[o + 7],
+      age = V[o + 8],
+      fraction = V[o + 9],
+      lifetime = V[o + 10],
+      inverse = V[o + 11];
     const c = 1 - fraction;
     const bvx = vx * c + nvx * fraction, bvy = vy * c + nvy * fraction, bvz = vz * c + nvz * fraction;
     const bpx = px * c + nx * fraction, bpy = py * c + ny * fraction, bpz = pz * c + nz * fraction;
@@ -123,7 +216,9 @@ function trailRow(F, blur, out, n, limit, bits, per, age0, px, py, pz, vx, vy, v
     if (age < lifetime) {
       const wx = bvx + F28 + F32 * r2 + F36 * r3 + F40 * r4, wy = bvy + F29 + F33 * r2 + F37 * r3 + F41 * r4, wz = bvz + F30 + F34 * r2 + F38 * r3 + F42 * r4;
       const ca3 = F63 + F67 * r5 + F75 * age + F71 * r6;
-      const cr = Math.trunc(Math.min(Math.max(F60 + F64 * r5 + F72 * age + F68 * r6, 0), 255)), cg = Math.trunc(Math.min(Math.max(F61 + F65 * r5 + F73 * age + F69 * r6, 0), 255)), cb = Math.trunc(Math.min(Math.max(F62 + F66 * r5 + F74 * age + F70 * r6, 0), 255));
+      const cr = Math.trunc(Math.min(Math.max(F60 + F64 * r5 + F72 * age + F68 * r6, 0), 255)),
+        cg = Math.trunc(Math.min(Math.max(F61 + F65 * r5 + F73 * age + F69 * r6, 0), 255)),
+        cb = Math.trunc(Math.min(Math.max(F62 + F66 * r5 + F74 * age + F70 * r6, 0), 255));
       const fvx = F24 - wx, fvy = F25 - wy, fvz = F26 - wz;
       const size = Math.abs(sizeDelta * age * inverse + sizeBase + sizeRange * r7);
       n = trailCopies(out, n, limit, blur, age, alphaStep, blurStep, F24, F25, F26, p0x, p0y, p0z, fvx, fvy, fvz, size, cr, cg, cb, ca3);
@@ -152,7 +247,21 @@ export function trailSpritesFast(K, F, capacity, cursor, ringA, ringB, ringBits,
       if (vuSub(seed, 1) < 0) { age = vuAdd(age, eeMul(ageStep, per)); continue; }
       const px = ringA[slot * 4], py = ringA[slot * 4 + 1], pz = ringA[slot * 4 + 2];
       const vx = ringB[slot * 4], vy = ringB[slot * 4 + 1], vz = ringB[slot * 4 + 2];
-      let nx, ny, nz; if (!extra) { nx = ringA[nextSlot * 4]; ny = ringA[nextSlot * 4 + 1]; nz = ringA[nextSlot * 4 + 2]; } else if (rows64 === 64) { const s0 = (first) % cap; nx = ringB[s0 * 4]; ny = ringB[s0 * 4 + 1]; nz = ringB[s0 * 4 + 2]; } else { nx = px; ny = py; nz = pz; }
+      let nx, ny, nz;
+      if (!extra) {
+        nx = ringA[nextSlot * 4];
+        ny = ringA[nextSlot * 4 + 1];
+        nz = ringA[nextSlot * 4 + 2];
+      } else if (rows64 === 64) {
+        const s0 = first % cap;
+        nx = ringB[s0 * 4];
+        ny = ringB[s0 * 4 + 1];
+        nz = ringB[s0 * 4 + 2];
+      } else {
+        nx = px;
+        ny = py;
+        nz = pz;
+      }
       const nvx = !extra ? ringB[nextSlot * 4] : vx, nvy = !extra ? ringB[nextSlot * 4 + 1] : vy, nvz = !extra ? ringB[nextSlot * 4 + 2] : vz;
       n = trailRow(F, blur, out, n, limit, seedBitsStart >>> 0, per, age, px, py, pz, vx, vy, vz, nx, ny, nz, nvx, nvy, nvz, fractionStep); age = trailRowSchedule.end;
     }

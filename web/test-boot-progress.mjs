@@ -12,6 +12,7 @@ import fs from 'node:fs'; import path from 'node:path';
 import { createBootProgress, bootKey, BYTES_PER_MS, CREEP_MAX, REQUEST_BYTES as RB } from './boot-progress.js';
 import { titleScreenData, titleLuiScreen, METER, METER_AT, TITLE_PAGES } from './title-data.js';
 import { bootPhase, bootList, BOOT_PHASES, BOOT_STEPS } from './boot-files.mjs';
+import { sourceOf } from './test-source.mjs';
 
 const web = path.dirname(new URL(import.meta.url).pathname), UI = path.join(web, 'public/assets/UI');
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -126,7 +127,7 @@ if (haveData) {
 // ---- the boot script takes the UI canvases first: same context attributes as web/ui.js ----
 {
   const expr = (src, re) => (src.match(re) || [])[1];
-  const ui = expr(fs.readFileSync(path.join(web, 'ui.js'), 'utf8'), /export const UI_CANVAS=(.*?\{willReadFrequently:true\})/);
+  const ui = expr(sourceOf('ui.js'), /export const UI_CANVAS=(.*?\{willReadFrequently:true\})/);
   const boot = expr(fs.readFileSync(path.join(web, 'boot-screen.js'), 'utf8'), /const UI_CANVAS = (.*?\{ willReadFrequently: true \})/);
   assert.ok(ui && boot, 'UI_CANVAS in ui.js and boot-screen.js');
   assert.equal(boot.replace(/\s+/g, ''), ui.replace(/\s+/g, '').replace("globalThis.location?.search??''", 'location.search'));

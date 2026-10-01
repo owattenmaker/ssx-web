@@ -55,7 +55,13 @@ export async function decodePngTexels(input) {
   const data = new Uint8Array(width * height * 4);
   if (colour === 6) { for (let y = 0; y < height; y++) data.set(raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride), y * width * 4); return { width, height, data }; }
   if (colour === 2) {
-    for (let y = 0, d = 0; y < height; y++) for (let x = 0, s = y * (stride + 1) + 1; x < width; x++, s += 3, d += 4) { data[d] = raw[s]; data[d + 1] = raw[s + 1]; data[d + 2] = raw[s + 2]; data[d + 3] = 255; }
+    for (let y = 0, d = 0; y < height; y++)
+      for (let x = 0, s = y * (stride + 1) + 1; x < width; x++, s += 3, d += 4) {
+        data[d] = raw[s];
+        data[d + 1] = raw[s + 1];
+        data[d + 2] = raw[s + 2];
+        data[d + 3] = 255;
+      }
     return { width, height, data };
   }
   if (!plte) throw Error('indexed PNG without PLTE');

@@ -1,4 +1,4 @@
-// Located world-painter records of a streamed world for the page's painters (pv regionTick; docs/weather.md 10, 11).
+// Located world-painter records of a streamed world for the page's painters (regionTick; docs/weather.md 10, 11).
 //
 // PS2: 2C0778 steps every environment wrapper with the painter record of location gp+0x770, the track of the human's last
 // contacted patch, which 2ED490 writes after block 0's wrappers stepped. The camera block (0x15EBCC, after the rider
@@ -29,7 +29,7 @@ export const painterRegions = {
   doc(track, kind) { const d = docs.get(track); return d ? (d[kind] ?? null) : undefined; },
 };
 
-// pv painterWorldLoad (web/environment_bridge.cpp environment_world_load): a world load's location entry leaves every painter
+// painterWorldLoad (web/environment_bridge.cpp environment_world_load): a world load's location entry leaves every painter
 // wrapper at its class defaults with +0 = 0 (the load's steps ran in a region whose record was not loaded), so the start
 // location's record blends in at its rate. True once per world load; call after the painter's own tick resets.
 export function followWorldLoad(state, core) {

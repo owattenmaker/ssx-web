@@ -1,4 +1,29 @@
-import {Vector3,Color,DoubleSide,DataTexture,RGBAFormat,UnsignedByteType,FloatType,HalfFloatType,LinearFilter,NearestFilter,ClampToEdgeWrapping,NoColorSpace,RenderTarget,MeshBasicNodeMaterial,QuadMesh,Mesh,Scene,OrthographicCamera,BufferGeometry,BufferAttribute,DynamicDrawUsage,CustomBlending,AddEquation,OneFactor} from 'three/webgpu';
+import {
+  Vector3,
+  Color,
+  DoubleSide,
+  DataTexture,
+  RGBAFormat,
+  UnsignedByteType,
+  FloatType,
+  HalfFloatType,
+  LinearFilter,
+  NearestFilter,
+  ClampToEdgeWrapping,
+  NoColorSpace,
+  RenderTarget,
+  MeshBasicNodeMaterial,
+  QuadMesh,
+  Mesh,
+  Scene,
+  OrthographicCamera,
+  BufferGeometry,
+  BufferAttribute,
+  DynamicDrawUsage,
+  CustomBlending,
+  AddEquation,
+  OneFactor
+} from 'three/webgpu';
 import {Fn,uniform,texture,uv,attribute,vec2,vec4,float,int,floor,min,max,select,screenUV,Loop,perspectiveDepthToViewZ} from 'three/tsl';
 
 // Original light glow halos (SLUS_207.72), see terrain-render-fidelity.md "Light glow halos".
@@ -58,7 +83,13 @@ export async function createLightGlow(origin,root='/assets/LIGHT_GLOW/'){
  const maps={};
  await Promise.all(Object.entries(pkg.textures).map(async([name,t])=>{
   const bytes=new Uint8Array(await (await fetch(root+t.file)).arrayBuffer());if(bytes.length!==t.width*t.height*4)throw Error('Light glow texture extent');
-  const map=new DataTexture(bytes,t.width,t.height,RGBAFormat,UnsignedByteType);map.minFilter=map.magFilter=LinearFilter;map.wrapS=map.wrapT=ClampToEdgeWrapping;map.colorSpace=NoColorSpace;map.generateMipmaps=false;map.needsUpdate=true;maps[name]=map;
+  const map = new DataTexture(bytes, t.width, t.height, RGBAFormat, UnsignedByteType);
+  map.minFilter = map.magFilter = LinearFilter;
+  map.wrapS = map.wrapT = ClampToEdgeWrapping;
+  map.colorSpace = NoColorSpace;
+  map.generateMipmaps = false;
+  map.needsUpdate = true;
+  maps[name] = map;
  }));
  const c=pkg.constants,[VW,VH]=c.viewport,MAX=pkg.lights.length;
  const lights=pkg.lights.map((l,i)=>{const cls=c.classes[l.flags&0x70];if(!cls)throw Error('Light glow class');
@@ -100,7 +131,20 @@ export async function createLightGlow(origin,root='/assets/LIGHT_GLOW/'){
     return vec4(select(counted.equal(area),open.div(area),max(open.sub(area.mul(.5)).div(area.mul(.5)),0)),0,0,1);
    })();
    queryQuad=new QuadMesh(queryMaterial);
-   glowMaterial=new MeshBasicNodeMaterial({side:DoubleSide,depthTest:false,depthWrite:false,toneMapped:false,fog:false,transparent:true,blending:CustomBlending,blendEquation:AddEquation,blendSrc:OneFactor,blendDst:OneFactor,blendSrcAlpha:OneFactor,blendDstAlpha:OneFactor});
+   glowMaterial = new MeshBasicNodeMaterial({
+     side: DoubleSide,
+     depthTest: false,
+     depthWrite: false,
+     toneMapped: false,
+     fog: false,
+     transparent: true,
+     blending: CustomBlending,
+     blendEquation: AddEquation,
+     blendSrc: OneFactor,
+     blendDst: OneFactor,
+     blendSrcAlpha: OneFactor,
+     blendDstAlpha: OneFactor
+   });
    glowMaterial.fragmentNode=Fn(()=>{
     const info=attribute('glowInfo','vec4'),rgb=attribute('glowRgb','vec3'),st=uv();
     const t=select(info.w.greaterThan(.5),texture(maps.mhal,st),texture(maps.shal,st)).mul(255).round();
@@ -116,10 +160,17 @@ export async function createLightGlow(origin,root='/assets/LIGHT_GLOW/'){
    worldPass.updateBefore=frame=>{
     /* warm (main.js loading-screen warm-up): the query and glow pipelines build even with no glow in view (one degenerate sprite) */
     const warm=api.warm&&!frameState.count;update(frame);if(!frameState.count&&!warm)return;
-    const prior=renderer.getRenderTarget(),priorClear=renderer.autoClear,rt=worldPass.renderTarget,clearAlpha=renderer.getClearAlpha(),range=geometry.drawRange.count;renderer.getClearColor(clearColour);
+    const prior = renderer.getRenderTarget(),
+      priorClear = renderer.autoClear,
+      rt = worldPass.renderTarget,
+      clearAlpha = renderer.getClearAlpha(),
+      range = geometry.drawRange.count;
+    renderer.getClearColor(clearColour);
     try{
      renderer.autoClear=true;renderer.setClearColor(0x000000,0);if(warm)geometry.setDrawRange(0,6);
-     if(frameState.queried||warm||api.warmQuery){renderer.setRenderTarget(visTarget);queryQuad.render(renderer);} /* warmQuery (main.js pv warmPost): with glows counted but none queried the query built on the first queried race / cutscene frame; a texel the glows read is always written the same frame */
+     // warmQuery (main.js warmPost): with glows counted but none queried the query built on the first queried race / cutscene frame; a
+     // texel the glows read is always written the same frame
+     if(frameState.queried||warm||api.warmQuery){renderer.setRenderTarget(visTarget);queryQuad.render(renderer);}
      glowTarget.setSize(rt.width,rt.height);renderer.setRenderTarget(glowTarget);renderer.render(glowScene,glowCamera);
     }finally{if(warm)geometry.setDrawRange(0,range);renderer.setRenderTarget(prior);renderer.autoClear=priorClear;renderer.setClearColor(clearColour,clearAlpha);}
    };
@@ -132,7 +183,14 @@ export async function createLightGlow(origin,root='/assets/LIGHT_GLOW/'){
    eye.setFromMatrixPosition(camera.matrixWorld);right.set(e[0],e[1],e[2]).normalize();up.set(e[4],e[5],e[6]).normalize();
    bandTop.value=vy;bandHeight.value=vh;near.value=camera.near;far.value=camera.far;
    const project=(p,out)=>{ndc.copy(p).project(camera);out[0]=glowPixel((ndc.x+1)*.5*VW);out[1]=glowPixel(vy+(1-ndc.y)*.5*vh);return out;};
-   const P=[0,0],A=[0,0],B=[0,0],pos=geometry.attributes.position.array,uvs=geometry.attributes.uv.array,rgbs=geometry.attributes.glowRgb.array,infos=geometry.attributes.glowInfo.array,q=params.image.data;
+   const P = [0, 0],
+     A = [0, 0],
+     B = [0, 0],
+     pos = geometry.attributes.position.array,
+     uvs = geometry.attributes.uv.array,
+     rgbs = geometry.attributes.glowRgb.array,
+     infos = geometry.attributes.glowInfo.array,
+     q = params.image.data;
    let n=0,queried=0;
    for(const light of lights){
     if(tracks&&!tracks.has(light.track))continue;
@@ -146,7 +204,21 @@ export async function createLightGlow(origin,root='/assets/LIGHT_GLOW/'){
     dir.copy(right).multiplyScalar(cs).addScaledVector(up,sn);project(tmp.copy(light.world).addScaledVector(dir,size),A);
     dir.copy(right).multiplyScalar(-sn).addScaledVector(up,cs);project(tmp.copy(light.world).addScaledVector(dir,size),B);
     const quad=glowQuad(P,[A[0]-P[0],A[1]-P[1]],[B[0]-P[0],B[1]-P[1]]);
-    for(let k=0;k<4;k++){const c=quad[k],v=n*4+k;pos[v*3]=c[0]/VW*2-1;pos[v*3+1]=1-(c[1]-vy)/vh*2;pos[v*3+2]=0;uvs[v*2]=c[2];uvs[v*2+1]=c[3];rgbs.set(light.rgb,v*3);infos[v*4]=light.index;infos[v*4+1]=record.far?1:0;infos[v*4+2]=depth;infos[v*4+3]=light.mhal;} // direct writes (no per-vertex arrays)
+    // direct writes (no per-vertex arrays)
+    for (let k = 0; k < 4; k++) {
+      const c = quad[k],
+        v = n * 4 + k;
+      pos[v * 3] = (c[0] / VW) * 2 - 1;
+      pos[v * 3 + 1] = 1 - ((c[1] - vy) / vh) * 2;
+      pos[v * 3 + 2] = 0;
+      uvs[v * 2] = c[2];
+      uvs[v * 2 + 1] = c[3];
+      rgbs.set(light.rgb, v * 3);
+      infos[v * 4] = light.index;
+      infos[v * 4 + 1] = record.far ? 1 : 0;
+      infos[v * 4 + 2] = depth;
+      infos[v * 4 + 3] = light.mhal;
+    }
     frameState.glows.push({index:light.index,screen:P.slice(),far:record.far,count:record.count,read:record.read,angle:a,depth});n++;
    }
    geometry.setDrawRange(0,n*6);for(const k of ['position','uv','glowRgb','glowInfo'])geometry.attributes[k].needsUpdate=true;

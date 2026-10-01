@@ -17,7 +17,6 @@
 //
 // ?shaderKeys=0 turns both off (A/B checks).
 import { WGSLNodeBuilder, WebGPUBackend, GLSLNodeBuilder, MaterialReferenceNode } from 'three/webgpu';
-import { pv } from './pv-flags.js';
 
 const PATCHED = Symbol.for('ssx3.shaderKeys');
 
@@ -53,7 +52,7 @@ export function morphFreePipelineKeys(Backend = WebGPUBackend) {
   proto[PATCHED] = true;
 }
 
-// pv glslKeys: the same for the WebGL2 backend's GLSL (the fallback: Firefox before WebGPU, older Safari, Chrome without WebGPU). There
+// the same for the WebGL2 backend's GLSL (the fallback: Firefox before WebGPU, older Safari, Chrome without WebGPU). There
 // a buffer is a uniform block named after its node (`uniform NodeBuffer_<id> { mat4 buffer<id>[n]; }`), and the backend binds it
 // by that name (WebGLBackend._setupBindings: getUniformBlockIndex(program, binding.name)), once per program with the first render
 // object's bindings; the render objects sharing a program bind their own buffers at the same binding points (bindings order). So
@@ -96,7 +95,7 @@ export function stableGlslBufferNames(Builder = GLSLNodeBuilder) {
   return true;
 }
 
-// pv refKeys: a material property node (MaterialReferenceNode, e.g. MaterialNode's cached materialReference('map') behind materialColor)
+// a material property node (MaterialReferenceNode, e.g. MaterialNode's cached materialReference('map') behind materialColor)
 // is shared by every material and re-pointed per drawn object (updateReference in its OBJECT update), but ReferenceNode.setup reads the
 // value it had when the build reached its generate stage: often another material's texture, so the uniform dedup against the material's
 // own texture(map) node depended on draw order (two bindings of the map, or one). Generate re-points it at the material being built.
@@ -112,4 +111,4 @@ export function currentMaterialReferences(Node = MaterialReferenceNode) {
   return true;
 }
 
-if (!/[?&]shaderKeys=0\b/.test(globalThis.location?.search ?? '')) { stableBufferNames(); morphFreePipelineKeys(); if (pv('glslKeys')) stableGlslBufferNames(); if (pv('refKeys')) currentMaterialReferences(); }
+if (!/[?&]shaderKeys=0\b/.test(globalThis.location?.search ?? '')) { stableBufferNames(); morphFreePipelineKeys(); stableGlslBufferNames(); currentMaterialReferences(); }

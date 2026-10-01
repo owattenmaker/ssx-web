@@ -12,7 +12,12 @@ export const withTransfer = (reply, transfer = []) => ({ [TRANSFER]: true, reply
 export const unwrapReply = (out) => (out && out[TRANSFER] ? out : { reply: out, transfer: [] });
 
 // Firefox's Error.stack has only the frames, not the message.
-export const errorText = (e) => (e && typeof e === 'object' && 'message' in e ? (String(e.stack ?? '').includes(e.message) ? String(e.stack) : `${e.name ?? 'Error'}: ${e.message}${e.stack ? '\n' + e.stack : ''}`) : String(e));
+export const errorText = (e) =>
+  e && typeof e === 'object' && 'message' in e
+    ? String(e.stack ?? '').includes(e.message)
+      ? String(e.stack)
+      : `${e.name ?? 'Error'}: ${e.message}${e.stack ? '\n' + e.stack : ''}`
+    : String(e);
 
 export function serveWorker(name, handler, { raw = false } = {}) {
   const post = (message, transfer) => self.postMessage(message, transfer ?? []);

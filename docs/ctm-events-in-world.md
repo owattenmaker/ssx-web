@@ -857,13 +857,11 @@ grid placement on the first record without it (14538, WS1's last tick), the card
   308DB8, rider 1 hit the gate at 802.
 - Score (core-hide; gate ctm-events/c0a-ws13-semi, compare-ai-capture --ws13 --ticks 16100): the qualifier, the grid wait and the
   semi to the capture's end (1500 ticks) are all exact: the human, all five riders, the RNG, the ranks and the pair records. Open: the
-  human's +0xAFC holds (the gondola: +0x430 / +0xB00 / +0x370 keep the placement's; the PS2 probes and misses). **Parked
-  (2026-10-01), the NIS clip export:** under the gondola's hold the PS2 plays semantic 432 on channel 2 (sequence clip 0x5A8E00) and
-  then 411 on channel 3, not semantic 5. 432 has no variant record (*(gp+0xD0C) count 0), so its clip comes from the NIS's own bank.
-  Bone 22 sits 43 cm forward of and 18 cm above +0x110. To pick this up: export the NIS rider clips from the cutscene banks (to
-  scratch, then the coordinator copies them in), trace how the NIS selects 432 / 411, and pose them through core nis_hold_board_root
-  (QA only: a copy of the graph at the hold transform). Then verify bone 22 against c0a-ws13 14017.. and fr-booth2 (the booth hits
-  and their 111AA0 impacts), and wire nis_hold_probe on the page behind a switch. ctm-parity.md "Not modelled".
+  human's +0xAFC holds (the gondola: +0x430 / +0xB00 / +0x370 keep the placement's; the PS2 probes and misses). **Bone 22 (2026-10-01):** under the gondola's hold the PS2 plays semantic 432 on channel 2 (sequence clip 0x5A8E00), then 411 on channel
+  3. Both come from the NIS's own bank: 432 has no variant record. The page already poses the cast rider with those clips
+  (cutscenes.js), and its board_rootg at the model size is the PS2's bone 22 (fr-booth2: 0.09 cm), so no clip export is needed. pv
+  nisBoneProbe (off) feeds it to core nis_hold_probe(2). Open: the cut's start lags the hold on the page (ctm-parity.md "Bone 22 from
+  the NIS keys"). The gondola hold in-world needs the page's WS13 path first.
 
 **The race clock's GO: WS3 selects Race (2026-09-30).** Every human finish on the web came out one race tick short of the
 PS2's +0x478: the c0a-ws13 qualifier 11794 vs 11795, the c0a-ret2 Give Up 1519 vs 1520, and the rider contexts 11707 / 11715 vs
@@ -903,6 +901,41 @@ PS2's +0x478: the c0a-ws13 qualifier 11794 vs 11795, the c0a-ret2 Give Up 1519 v
   pause applies on the first resumed tick (off, keyboard: lost until re-pressed); a Cross tap on a restart gives no jump at GO
   (the start's own phase-1 crouch, as off). The gamepad path behaved already with padCarry off (its history was never settled
   mid-run); the menus' own 0x321298 model (web/gamepad-menus.js) is separate and unchanged.
+
+### Rollout checks (2026-10-01, CTM events-in-world agent)
+
+Scripts: local/ctm-events/qa/fxpix.mjs (frames), memevent.mjs (memory; run through local/peak-splines-qa/run.mjs), bcprobe.mjs.
+
+**Trails / icons / beam, in-world vs event-load.** Chrome --mute-audio and WebKit (webkit-driver), ?mute=1. Both paths run the same
+flow: a new career, Snow Jam, the gate, the card, then race ticks 300 / 600 / 900 on a frozen frame clock with a neutral pad. At each
+tick: a full frame and an FX-only frame, with the HUD off.
+- The rendering is the same. The world, lighting, HUD, snow and opponent FX look alike, and the FX probe counts match: five trails,
+  wakes and sprays, plus the icons. In WebKit at tick 300 the frames differ on 8 % of pixels (FX-only: 5 %); in Chrome on 24 % (12 %).
+- The differences come from where the riders are, which is by design. The event-load path holds its riders to the Single Event anchor
+  tick (doc.anchor_tick). The in-world riders ride from the countdown's tick 0, as the PS2's CTM race does (c0a-full-ai, exact). At
+  tick 300 the human and riders 2 and 5 are at the same positions; riders 1, 3 and 4 are not. From 600 on, the human differs too
+  (a rider-pair contact).
+- Each path is deterministic across runs and across browsers: Chrome and WebKit give the same rider positions. The WebKit shots are
+  1920x1080 and Chrome's 960x720, so the two browsers are not compared pixel to pixel.
+- The backcountry beam: there is no in-world backcountry event on the page. A career Transport to a rival event switches course
+  (career-ui.js transport -> cb.course). rideIntoEvent, the only in-world entry, is the CTM gate's. So the beam stays on the event-load
+  path, and there is nothing to compare.
+
+**Memory, phone policy** (WebKit 844x390, quality=low, __XPC_JSC_forceRAMSize 6 GB, the WebContent footprint outside the page). One
+cycle: the gate, the qualifier (25 s), Give Up, the results, the results' Restart (WS13), the heat, Give Up, the results, Transport,
+the map, Snow Jam.
+- In-world, 3 cycles: the cycles peak at 1111 MB, with medians 916 -> 958 -> 980; the lifetime peak is 1323 (at boot). The wasm heap
+  goes 184 -> 221 MB in cycle 3. No world loads (3 course loads, all at boot).
+- Event-load, 3 cycles: the cycles peak at 1400 MB (two worlds at the gate); the lifetime peak is 1477. Two course loads per cycle.
+- In-world, 8 cycles (another run, with a higher baseline): the medians rise 1180 -> 1430 MB, about +35 MB per cycle, and the
+  lifetime peak is 1540. The wasm heap stays flat after cycle 4 (221). So the growth is outside the wasm heap (JS heap or graphics),
+  not flat. This is R8, and it fails the phone gate. Desktop is not affected at this size.
+
+**In-world WS13 on the page is not the PS2's yet.**
+- The results' Restart and Next heat call ui.cb.cutscene({kind: 'heat'}). In a free-ride course that kind is not in the playable
+  list (main.js cb.cutscene), so the gondola never plays: the card opens at once, over the rider where it gave up.
+- event-heat.js heatEnter (the start rows, 1297C8(C, 1), the rider sync) runs only in the comparer.
+- The event-load path plays the gondola.
 
 ### Turning it on
 

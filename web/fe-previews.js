@@ -72,7 +72,13 @@ export class FePreviews {
   lui() {
     if (this.luiScreen) return this.luiScreen;
     const screen = this.data.screens[PREVIEWS_LUI], snow = this.ui.characterSelect?.data?.screens?.bg_snow_loop;
-    const merged = snow ? { ...screen, elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))], animations: { ...screen.animations, ...snow.animations } } : screen;
+    const merged = snow
+      ? {
+          ...screen,
+          elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))],
+          animations: { ...screen.animations, ...snow.animations }
+        }
+      : screen;
     const images = { ...(this.ui.characterSelect?.images || {}), ...this.images };
     const lui = new LuiScreen(merged, images, this.ui);
     if (snow && Object.keys(images).length) this.luiScreen = lui;   // keep it once the shared data is in

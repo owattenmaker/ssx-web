@@ -34,12 +34,28 @@ async function run() {
         row.levels = [];
         for (let level = 0; level < levels; level++) {
           const w = Math.max(1, e.width >> level), h = Math.max(1, e.height >> level), target = new RenderTarget(w, h, { type: UnsignedByteType, depthBuffer: false });
-          const m = new MeshBasicNodeMaterial(); m.colorNode = tslTexture(tex, uv()).level(float(level)); m.opacityNode = null; m.outputNode = tslTexture(tex, uv()).level(float(level)); quad.material = m;
+          const m = new MeshBasicNodeMaterial();
+          m.colorNode = tslTexture(tex, uv()).level(float(level));
+          m.opacityNode = null;
+          m.outputNode = tslTexture(tex, uv()).level(float(level));
+          quad.material = m;
           renderer.setRenderTarget(target); renderer.render(scene, camera); renderer.setRenderTarget(null);
-          const raw = new Uint8Array(await renderer.readRenderTargetPixelsAsync(target, 0, 0, w, h)), stride = raw.length === w * h * 4 ? w * 4 : Math.ceil((w * 4) / 256) * 256;   // WebGPU readback rows are padded to 256 bytes
+          // WebGPU readback rows are padded to 256 bytes
+          const raw = new Uint8Array(await renderer.readRenderTargetPixelsAsync(target, 0, 0, w, h)), stride = raw.length === w * h * 4 ? w * 4 : Math.ceil((w * 4) / 256) * 256;
           const ref = decodeBC(entry.codec, chain[level].data, w, h);
           // rows: the readback is either orientation depending on the backend's target origin; take the one that matches
-          const compare = (flip) => { let max = 0, off = 0; for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 4; c++) { const d = Math.abs(raw[(flip ? h - 1 - y : y) * stride + x * 4 + c] - ref[(y * w + x) * 4 + c]); if (d > max) max = d; if (d > 2) off++; } return { max, off }; };
+          const compare = (flip) => {
+            let max = 0,
+              off = 0;
+            for (let y = 0; y < h; y++)
+              for (let x = 0; x < w; x++)
+                for (let c = 0; c < 4; c++) {
+                  const d = Math.abs(raw[(flip ? h - 1 - y : y) * stride + x * 4 + c] - ref[(y * w + x) * 4 + c]);
+                  if (d > max) max = d;
+                  if (d > 2) off++;
+                }
+            return { max, off };
+          };
           const a = compare(false), f = compare(true), best = f.off < a.off || (f.off === a.off && f.max < a.max) ? f : a;
           row.levels.push({ level, w, h, max: best.max, offShare: +(best.off / (w * h * 4)).toFixed(4) });
           target.dispose(); m.dispose();

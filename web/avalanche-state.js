@@ -1,4 +1,4 @@
-// Avalanche draw and rumble loop (pv avalanche; docs/avalanche.md "Draw" and "Audio"). The core plays the recorded avalanches
+// Avalanche draw and rumble loop (avalanche; docs/avalanche.md "Draw" and "Audio"). The core plays the recorded avalanches
 // (web/avalanche_gameplay.inc) and exports, per playing tumbler, avalanche_pieces() [count, then 22 floats: resource, state (1 following
 // its tumbler, 2 a type-2 piece at rest), AvaSpline follower, emitter, the 0x2D9C00 matrix (16, source rows), alpha, scale; then
 // [n released since the last call, resources...]; then the loop [refcount (audio+0x6040), n changes since the last call, the refcount

@@ -117,6 +117,48 @@ then Final, with 6 riders each; the handler never reads the course.
 - Character indices follow CHARDB.DBL: 0 Moby, 1 Kaori, 2 Allegra, 3 Mac, 4 Zoe, 5 Griff, 6 Elise, 7 Nate,
   8 Psymon, 9 Viggo. The web's Sam uses Mac's slot, as in the Sam PS2 build.
 
+### The peak rival in career events (2026-09-30, career-rival agent)
+
+Settled from SLUS_207.72 and derived ARMSX2 states (`local/career-rival/nav`, scripts there; never an original). Rival = 0x145750:
+peak index = course table 0x43D950 + course*100 + 0x54 (144C78); 0 Mac (Griff for a Mac player), 1 Nate (Zoe), 2 Psymon (Elise), else Mac.
+
+| Event | Where the rival is | Code |
+|---|---|---|
+| Race qualifier / semi (career) | nowhere: 0x23A4F0's ten entries skip him | 0x23A4F0 |
+| Race **final** (career, every peak) | **rides slot 1** | 0x23A108 round 3, career branch 0x23A3D8: handler+0x40 = player, +0x44 = 0x145750, +0x48.. = the previous round's top three (0x536708, human skipped; GMM+0x40 cheat id or GMM+0x18 base per slot), +0x54 entry 9; 0x23A668 copies; WS13 0x235AA0 rebuilds the riders |
+| Race (Single Event) | nowhere | 0x23A384: 0x535C11 != 0 rebuilds heat 1 (0x23A4F0) |
+| Slope style (career, every round, every peak) | **posted** in slot 1 with the leading column; **nobody rides** | 0x238E20 career path (0x535C11 == 0 skips to 0x238F08); round 1 (0x238F7C) sets GMM+0x10 = 5, +0x14 = 5 for every kind; rounds 2 / 3 (0x239118 / 0x23919C) keep +0x14. 0x239AA0: live slots = +0x10 - +0x14 + 1 = 1 (the human), slots 1..5 post columns 0..4 (0x1453D0) for GMM+0x1C.. ; 0x239938 writes +0x1C = rival (0x239A10) |
+| Slope style (Single Event) | nowhere (not even posted) | 0x238E78: +0x14 = 4; 0x239A78: +0x1C = the LAST shuffled character, who rides; the shuffle skips the rival |
+| Pipe / big air (career) | posted in slot 1 | as slope style (posting only) |
+| Rival Time / Rival Points | rides (one round) | docs/backcountry.md |
+| Peak runs | nowhere (solo against 0x440D18) | |
+
+So Peak 2's career finals of Ruthless Ridge and Intimidator have Nate in slot 1, and a career Style Mile posts Nate (358740 in the
+derived heat 1) without anyone riding; Kick Doubt (ESS3, Peak 3) posts Psymon / Elise the same way (same code; no Peak 3 career state was
+made). A lost heat sets the race handler's +0x8 / +0xC (0x23AAE8 / 0x23AAEC: "this round's roster is built"), so the results' Restart
+replays the same riders; a won round leaves them 0 for the next round's build.
+
+**PS2 evidence (derived, local/career-rival/nav; README in each characters/career folder):**
+- Career Style Mile heat 1 (peak2-arr -> MCOMM Transport -> Peak 2 -> Freestyle -> Style Mile -> Yes -> the gate -> the card -> Cross):
+  card "Nate 358740 / Allegra 200600 / Moby 92060"; at the countdown GMM+0x14 = 5, 0x535C04 = 0, 0x535BF8 = 1, roster [Zoe, Nate,
+  Allegra, Moby, Psymon, ...], posted rounds 358740 / 402400 / 459660 for Nate. Two rider objects from the world stay held at the grid
+  (control 6) through race tick 189; the HUD shows the standings rows, no OPPONENT line. Facts: local/career-rival/dss2-career-heat1.json.
+- Career Ruthless Ridge and Intimidator finals (`characters/career/{CRA3,DRA4}-final-zoe`): the qualifier, the pause's Give Up, the
+  results with GMM+0x74 = 3 and handler 0x59FF00 +0xC = 0 poked (round3.patches.json), Restart -> Yes -> WS13 -> "Final Round" card:
+  Zoe, **Nate**, Psymon, Brodi (on Zoe), Griff, Elise. countdown.p2s is game tick 18, ws3.p2s WS3 tick 1/2. The race level is 2
+  (Zoe's career after the Snow Jam gold).
+
+**Port:**
+- Slope style: already as the PS2 (web/career.js postFreestyleScores / lineup.js freestyleSlots, ai-race.js prepareFreestyle: no rider).
+  test-career-rival.mjs replays the derived heat 1's whole posting on the career generator (roster, three rounds, 117 draws) and Career.
+- Race finals: web/lineup.js roundEntries already put the rival in slot 1; the Peak 2 courses had no Nate record ("No computer-rider data
+  for nate (base 7) in slot 1"; ws13Rebuild's heatLineup kept the semi's riders). tools/export_lineups.py now builds CRA3 / DRA4 with
+  Nate's skin part and grid[1][3f7fffff] from those countdowns (additive; scratch local/career-rival/export), behind **pv careerRival**.
+- The career race level (pv **careerLevel**): docs/ai-racers.md "Difficulty by race level".
+- Gates: test-ps2-captures careerrival/cra3-final (human incl. score, five riders, RNG, ranks, pair records exact to 1500) and
+  careerrival/dra4-final (the same; human score to 228: the attacked bail, docs/ai-racers.md); web/test-career-rival.mjs (the page's
+  assembly equals the PS2 countdowns' riders leaf for leaf).
+
 **Rival challenges** (modes 4/5) are one round of player vs. peak rival and must be won. **Peak challenges**
 (modes 6–11) are solo runs against table `0x440D18`.
 

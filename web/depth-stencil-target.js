@@ -12,7 +12,16 @@ function patchDepthStencilSampling(){
  const createView=GPUTexture.prototype.createView;
  GPUTexture.prototype.createView=function(descriptor){
   if(descriptor&&descriptor.dimension&&(descriptor.aspect===undefined||descriptor.aspect==='all')&&/-stencil8$/.test(this.format)&&(this.usage&GPUTextureUsage.TEXTURE_BINDING))
-   descriptor={label:descriptor.label,format:descriptor.format,dimension:descriptor.dimension,aspect:'depth-only',baseMipLevel:descriptor.baseMipLevel,mipLevelCount:descriptor.mipLevelCount,baseArrayLayer:descriptor.baseArrayLayer,arrayLayerCount:descriptor.arrayLayerCount};
+   descriptor = {
+     label: descriptor.label,
+     format: descriptor.format,
+     dimension: descriptor.dimension,
+     aspect: 'depth-only',
+     baseMipLevel: descriptor.baseMipLevel,
+     mipLevelCount: descriptor.mipLevelCount,
+     baseArrayLayer: descriptor.baseArrayLayer,
+     arrayLayerCount: descriptor.arrayLayerCount
+   };
   return createView.call(this,descriptor);
  };
 }

@@ -2,4 +2,35 @@ import {defineConfig} from 'vite';
 import bootPlugin from './boot-plugin.js'; /* the title's first paint + load meter inlined into index.html (docs/first-load.md) */
 import buildIdPlugin from './vite-build-id.js'; /* page / worker build identity + dist/build.json (docs/workers.md) */
 import threePatches from './three-patches.js'; /* three r186 per-draw garbage patches, run with pv threeLean (docs/web-render-performance.md) */
-export default defineConfig({plugins:[threePatches(),bootPlugin(),buildIdPlugin()],optimizeDeps:{rolldownOptions:{plugins:[threePatches()]}},worker:{plugins:()=>[buildIdPlugin({worker:true})]},server:{host:'127.0.0.1',port:5173,strictPort:true,hmr:false,/* online lobbies: web/server/mp-server.mjs on the same origin, so a friend's link needs one address */proxy:{'^/mp(/.*)?$':{target:'ws://127.0.0.1:'+(process.env.MP_PORT||8787),ws:true}}},build:{target:'es2022',rolldownOptions:{input:{main:'index.html','snow-composite-gpu-test':'snow-composite-gpu-test.html','snow-colour-gpu-test':'snow-colour-gpu-test.html','snow-flipbook-gpu-test':'snow-flipbook-gpu-test.html','terrain-worker-test':'terrain-worker-test.html','rider-material-gpu-test':'rider-material-gpu-test.html','rider-position-gpu-test':'rider-position-gpu-test.html','rider-skin-gpu-test':'rider-skin-gpu-test.html','rider-normal-gpu-test':'rider-normal-gpu-test.html','fog-gpu-test':'fog-gpu-test.html','rider-lighting-gpu-test':'rider-lighting-gpu-test.html','irradiance-gpu-test':'irradiance-gpu-test.html'}}}});
+export default defineConfig({
+  plugins: [threePatches(), bootPlugin(), buildIdPlugin()],
+  optimizeDeps: { rolldownOptions: { plugins: [threePatches()] } },
+  worker: { plugins: () => [buildIdPlugin({ worker: true })] },
+  server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    hmr: false,
+    // online lobbies: web/server/mp-server.mjs on the same origin, so a friend's link needs one address
+    proxy: { '^/mp(/.*)?$': { target: 'ws://127.0.0.1:' + (process.env.MP_PORT || 8787), ws: true } }
+  },
+  build: {
+    target: 'es2022',
+    rolldownOptions: {
+      input: {
+        main: 'index.html',
+        'snow-composite-gpu-test': 'snow-composite-gpu-test.html',
+        'snow-colour-gpu-test': 'snow-colour-gpu-test.html',
+        'snow-flipbook-gpu-test': 'snow-flipbook-gpu-test.html',
+        'terrain-worker-test': 'terrain-worker-test.html',
+        'rider-material-gpu-test': 'rider-material-gpu-test.html',
+        'rider-position-gpu-test': 'rider-position-gpu-test.html',
+        'rider-skin-gpu-test': 'rider-skin-gpu-test.html',
+        'rider-normal-gpu-test': 'rider-normal-gpu-test.html',
+        'fog-gpu-test': 'fog-gpu-test.html',
+        'rider-lighting-gpu-test': 'rider-lighting-gpu-test.html',
+        'irradiance-gpu-test': 'irradiance-gpu-test.html'
+      }
+    }
+  }
+});

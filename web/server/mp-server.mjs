@@ -2,11 +2,11 @@
 // SSX 3 online server: lobbies, race control and the rider-state relay, plus (optionally) the built game itself.
 // Dependency-free: node:http and a minimal RFC 6455 WebSocket implementation.
 //
-//   node web/server/mp-server.mjs [--port 8787] [--host 0.0.0.0] [--static web/dist,web/public]
+//   node web/server/mp-server.mjs [--port 8787] [--host 0.0.0.0] [--static web/dist-online,web/public]
 //   env: MP_PORT, MP_HOST, MP_STATIC (comma separated roots), MP_ORIGINS (comma separated allowed page origins)
 //
 // Development: `npm run online` runs this next to the Vite dev server, which proxies /mp here. Hosting: `npm run
-// online:serve` builds the game and serves web/dist (code) + web/public (the extracted game data) and /mp from this
+// online:serve` builds the game and serves web/dist-online (code) + web/public (the extracted game data) and /mp from this
 // one process on one port (docs/multiplayer.md "Hosting"). No COOP/COEP headers are needed (no SharedArrayBuffer).
 //
 // Protocol (JSON text frames, client -> server):
@@ -55,14 +55,29 @@ const TRUST_PROXY = process.env.MP_TRUST_PROXY === '1';
 // The edge worker (deploy/edge-worker.js) checks the gate cookie at Cloudflare and caches game files there; its requests
 // carry X-SSX-Edge = the shared secret (MP_EDGE_SECRET_FILE) and get shared-cacheable headers. Everyone else: private.
 const EDGE_SECRET = process.env.MP_EDGE_SECRET_FILE ? fs.readFileSync(process.env.MP_EDGE_SECRET_FILE, 'utf8').trim() : '';
-const fromEdge = (req) => { if (!EDGE_SECRET) return false; const a = Buffer.from(String(req.headers['x-ssx-edge'] ?? '')), b = Buffer.from(EDGE_SECRET); return a.length === b.length && crypto.timingSafeEqual(a, b); };
+const fromEdge = (req) => {
+  if (!EDGE_SECRET) return false;
+  const a = Buffer.from(String(req.headers['x-ssx-edge'] ?? '')),
+    b = Buffer.from(EDGE_SECRET);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
 const clientAddress = (req) => (TRUST_PROXY && typeof req.headers['cf-connecting-ip'] === 'string' ? req.headers['cf-connecting-ip'] : req.socket.remoteAddress) || '?';
 const GATE = createGate({ password: process.env.MP_GATE_PASSWORD || null, passwordFile: process.env.MP_GATE_PASSWORD_FILE || null, secretFile: process.env.MP_GATE_SECRET_FILE || null,
   secure: process.env.MP_GATE_INSECURE !== '1', clientAddress });
 // Online course records (web/server/records.mjs, docs/online-records.md): MP_RECORDS_DIR = their state directory (the host's
 // ~/ssx-host/state/records); off without it. The disc tables (CAREER/career.json) come from MP_RECORDS_ASSETS or the static roots.
-const RECORDS_ASSETS = (() => { try { return process.env.MP_RECORDS_ASSETS ? path.resolve(process.env.MP_RECORDS_ASSETS)
-  : [...STATIC.map((r) => path.join(r, 'assets')), path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'assets')].find((p) => fs.existsSync(path.join(p, 'CAREER', 'career.json'))) ?? null; } catch { return null; } })();
+const RECORDS_ASSETS = (() => {
+  try {
+    return process.env.MP_RECORDS_ASSETS
+      ? path.resolve(process.env.MP_RECORDS_ASSETS)
+      : ([
+          ...STATIC.map((r) => path.join(r, 'assets')),
+          path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'public', 'assets')
+        ].find((p) => fs.existsSync(path.join(p, 'CAREER', 'career.json'))) ?? null);
+  } catch {
+    return null;
+  }
+})();
 // Loaded only when configured, and never fatal: a missing module, directory or table leaves the records off (503) and the rest running.
 let RECORDS = null;
 if (process.env.MP_RECORDS_DIR) {
@@ -89,7 +104,18 @@ function accept(req, socket) {
   const ws = { socket, open: true, onText: null, onBinary: null, onClose: null };
   let buffer = Buffer.alloc(0), fragments = [], fragmentOp = 0, fragmentBytes = 0;
   const frame = (op, payload) => { const n = payload.length;
-    const head = n < 126 ? Buffer.from([0x80 | op, n]) : n < 65536 ? Buffer.from([0x80 | op, 126, n >> 8, n & 255]) : (() => { const h = Buffer.alloc(10); h[0] = 0x80 | op; h[1] = 127; h.writeBigUInt64BE(BigInt(n), 2); return h; })();
+    const head =
+      n < 126
+        ? Buffer.from([0x80 | op, n])
+        : n < 65536
+          ? Buffer.from([0x80 | op, 126, n >> 8, n & 255])
+          : (() => {
+              const h = Buffer.alloc(10);
+              h[0] = 0x80 | op;
+              h[1] = 127;
+              h.writeBigUInt64BE(BigInt(n), 2);
+              return h;
+            })();
     return Buffer.concat([head, payload]); };
   ws.send = (data) => {
     if (!ws.open) return;
@@ -139,9 +165,24 @@ const clean = (v, n) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').tr
 // A cheat skin's base rider (a riders.json id) and a worn outfit key (web/wardrobe.js outfitKey).
 const cleanBase = (v) => (/^[a-z0-9_]{1,24}$/.test(String(v ?? '')) ? String(v) : null);
 const cleanOutfit = (v) => (/^(w1:\d{1,6}(,\d{1,6}){0,63}|sam:RIDER_[A-Z0-9_]{1,24})$/.test(String(v ?? '')) ? String(v) : null);
-const cleanPair = (p) => (p && [p.weight_attribute, p.collision_stat, p.attack_stat].every((x) => Number.isFinite(+x)) ? { weight_attribute: +p.weight_attribute, collision_stat: +p.collision_stat, attack_stat: +p.attack_stat } : null);
+const cleanPair = (p) =>
+  p && [p.weight_attribute, p.collision_stat, p.attack_stat].every((x) => Number.isFinite(+x))
+    ? { weight_attribute: +p.weight_attribute, collision_stat: +p.collision_stat, attack_stat: +p.attack_stat }
+    : null;
 const summary = (l) => ({ id: l.id, name: l.name, course: l.course, players: l.members.length, maxPlayers: l.maxPlayers, racing: !!l.race, host: clients.get(l.host)?.name ?? '' });
-const member = (c, l) => ({ id: c.id, name: c.name, rider: c.rider, pkg: c.pkg, base: c.base ?? null, outfit: c.outfit ?? null, pair: c.pair, ready: c.ready, slot: c.slot, online: c.ws.open, waiting: !!l?.race && !l.race.slots.has(c.id) });
+const member = (c, l) => ({
+  id: c.id,
+  name: c.name,
+  rider: c.rider,
+  pkg: c.pkg,
+  base: c.base ?? null,
+  outfit: c.outfit ?? null,
+  pair: c.pair,
+  ready: c.ready,
+  slot: c.slot,
+  online: c.ws.open,
+  waiting: !!l?.race && !l.race.slots.has(c.id)
+});
 const detail = (l) => ({ ...summary(l), hostId: l.host, members: l.members.map((m) => member(clients.get(m), l)),
   race: l.race ? { id: l.race.id, goAt: l.race.goAt, finished: [...l.race.finish.entries()].map(([id, f]) => ({ id, ...f })) } : null });
 const broadcastLobbies = () => { const list = [...lobbies.values()].map(summary); for (const c of clients.values()) if (!c.lobby) send(c, { t: 'lobbies', lobbies: list }); };
@@ -182,8 +223,16 @@ function settleClaims(l, force = false) {
     if (!check.run.finishPacket && !force && now() - claim.at < VERDICT_WAIT_MS) continue;
     r.claims.delete(id);
     const verdict = check.verdict(claim.ticks); r.verdicts.set(id, verdict);
-    if (!verdict.ok) console.warn(`mp: implausible finish by ${r.names[id]} (${claim.ticks} ticks, ${l.course}):`, JSON.stringify(verdict.findings), JSON.stringify(verdict.stats));
-    else if (verdict.stats.lead > AHEAD_TICKS) console.log(`mp: finish by ${r.names[id]} (${claim.ticks} ticks, ${l.course}) ran up to ${verdict.stats.lead} ticks ahead of the server clock (accepted)`);
+    if (!verdict.ok)
+      console.warn(
+        `mp: implausible finish by ${r.names[id]} (${claim.ticks} ticks, ${l.course}):`,
+        JSON.stringify(verdict.findings),
+        JSON.stringify(verdict.stats)
+      );
+    else if (verdict.stats.lead > AHEAD_TICKS)
+      console.log(
+        `mp: finish by ${r.names[id]} (${claim.ticks} ticks, ${l.course}) ran up to ${verdict.stats.lead} ticks ahead of the server clock (accepted)`
+      );
     const rejected = !verdict.ok && PLAUSIBILITY === 'reject';
     recordFinish(l, clients.get(id) ?? { id }, rejected ? { dnf: true, reason: 'invalid' } : { ticks: claim.ticks, dnf: false }, verdict);
   }
@@ -230,7 +279,16 @@ function onMessage(c, m) {
   if (m.t !== 'hello' && m.t !== 'ping' && !c.hello) return;
   switch (m.t) {
     case 'hello': {
-      if (m.version !== PROTOCOL) { send(c, { t: 'error', code: 'version', message: `This game (online protocol ${m.version ?? '?'}) and the server (protocol ${PROTOCOL}) differ: reload the page.`, server: PROTOCOL }); setTimeout(() => c.ws.close(4000), 50); return; }
+      if (m.version !== PROTOCOL) {
+        send(c, {
+          t: 'error',
+          code: 'version',
+          message: `This game (online protocol ${m.version ?? '?'}) and the server (protocol ${PROTOCOL}) differ: reload the page.`,
+          server: PROTOCOL
+        });
+        setTimeout(() => c.ws.close(4000), 50);
+        return;
+      }
       const token = clean(m.token, 64);
       const previous = token && [...clients.values()].find((o) => o !== c && o.token === token);
       if (previous) { // resume: adopt the new socket into the old player record (an old still-open socket is replaced)
@@ -242,7 +300,11 @@ function onMessage(c, m) {
       c.name = clean(m.name ?? c.name, 16) || 'Rider'; c.rider = clean(m.rider ?? c.rider, 24) || 'zoe';
       c.pkg = /^RIDER_[A-Z0-9_]{1,24}$/.test(String(m.pkg)) ? String(m.pkg) : c.pkg ?? `RIDER_${c.rider.toUpperCase()}`; c.pair = cleanPair(m.pair) ?? c.pair ?? null;
       if ('base' in m) c.base = cleanBase(m.base); if ('outfit' in m) c.outfit = cleanOutfit(m.outfit);
-      const l2 = lobbies.get(c.lobby), race = l2?.race && l2.race.slots.has(c.id) ? { id: l2.race.id, course: l2.course, slot: l2.race.slots.get(c.id), goAt: l2.race.goAt, finished: l2.race.finish.has(c.id) } : null;
+      const l2 = lobbies.get(c.lobby),
+        race =
+          l2?.race && l2.race.slots.has(c.id)
+            ? { id: l2.race.id, course: l2.course, slot: l2.race.slots.get(c.id), goAt: l2.race.goAt, finished: l2.race.finish.has(c.id) }
+            : null;
       send(c, { t: 'welcome', id: c.id, serverTime: now(), version: PROTOCOL, resumed: !!previous, race });
       if (l2) { if (previous && race) toLobby(l2, { t: 'presence', id: c.id, slot: race.slot, online: true }); broadcastLobby(l2); }
       else send(c, { t: 'lobbies', lobbies: [...lobbies.values()].map(summary) });
@@ -271,8 +333,21 @@ function onMessage(c, m) {
       if (!l || l.host !== c.id || l.race) break;
       const racers = l.members.filter((id) => clients.get(id)?.ws.open);
       racers.forEach((id, slot) => { clients.get(id).slot = slot; });
-      l.race = { id: id6(), startedAt: now(), loaded: new Set(), finish: new Map(), claims: new Map(), checks: new Map(), verdicts: new Map(), goAt: 0, done: false, firstFinishAt: 0,
-        slots: new Map(racers.map((id, slot) => [id, slot])), names: Object.fromEntries(racers.map((id) => [id, clients.get(id).name])), riders: Object.fromEntries(racers.map((id) => [id, clients.get(id).rider])) };
+      l.race = {
+        id: id6(),
+        startedAt: now(),
+        loaded: new Set(),
+        finish: new Map(),
+        claims: new Map(),
+        checks: new Map(),
+        verdicts: new Map(),
+        goAt: 0,
+        done: false,
+        firstFinishAt: 0,
+        slots: new Map(racers.map((id, slot) => [id, slot])),
+        names: Object.fromEntries(racers.map((id) => [id, clients.get(id).name])),
+        riders: Object.fromEntries(racers.map((id) => [id, clients.get(id).rider]))
+      };
       const race = { id: l.race.id, course: l.course, seed: crypto.randomInt(0x7fffffff), players: racers.map((id) => member(clients.get(id), l)) };
       for (const id of racers) send(clients.get(id), { t: 'start', race, you: clients.get(id).slot });
       broadcastLobby(l); break;
@@ -297,14 +372,41 @@ function onBinary(c, data) {
   for (const id of race.slots.keys()) if (id !== c.id) clients.get(id)?.ws.send(out);
   // Finish plausibility (web/server/plausibility.mjs): the run as streamed; a pending claim settles on its finish packet
   // (maybeResults may end the race here).
-  if (data[0] === 2) { let check = race.checks.get(c.id); if (!check) race.checks.set(c.id, (check = createRunCheck({ course: l.course }))); /* its stage teleports (web/server/teleport-beams.mjs) */ check.feed(data, wallTicks(race)); if (race.claims.has(c.id) && check.run.finishPacket) maybeResults(l); }
+  if (data[0] === 2) { let check = race.checks.get(c.id); if (!check) race.checks.set(c.id, (check = createRunCheck({ course: l.course })));
+  // its stage teleports (web/server/teleport-beams.mjs)
+check.feed(data, wallTicks(race)); if (race.claims.has(c.id) && check.run.finishPacket) maybeResults(l); }
 }
 
 // ---- static files (the built game) -------------------------------------------------------------------------------
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-  '.bin': 'application/octet-stream', '.f32': 'application/octet-stream', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json' };
-const realRoots = new Map(), realRoot = (root) => { if (!realRoots.has(root)) { try { realRoots.set(root, fs.realpathSync(root)); } catch { realRoots.set(root, root); } } return realRoots.get(root); };
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.wasm': 'application/wasm',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.bin': 'application/octet-stream',
+  '.f32': 'application/octet-stream',
+  '.ttf': 'font/ttf',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json'
+};
+const realRoots = new Map(),
+  realRoot = (root) => {
+    if (!realRoots.has(root)) {
+      try {
+        realRoots.set(root, fs.realpathSync(root));
+      } catch {
+        realRoots.set(root, root);
+      }
+    }
+    return realRoots.get(root);
+  };
 function serveStatic(req, res) {
   const edge = fromEdge(req);
   if (!STATIC.length || !['GET', 'HEAD'].includes(req.method)) return false;
@@ -329,11 +431,15 @@ function serveStatic(req, res) {
     const ranged = /^bytes=/.test(String(req.headers.range ?? ''));
     if (PRECOMPRESSED && !ranged && /\bbr\b/.test(accepts)) gz = copy('.br', 'br');
     if (PRECOMPRESSED && !ranged && !gz && /\bgzip\b/.test(accepts)) gz = copy('.gz', 'gzip');
-    const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}${gz ? (gz.encoding === 'br' ? '-br' : '-gz') : ''}"`, hashed = /^\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$/.test(pathname); // Vite's content-hashed bundles (8-character hash), top level of /assets only
+    // Vite's content-hashed bundles (8-character hash), top level of /assets only
+    const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}${gz ? (gz.encoding === 'br' ? '-br' : '-gz') : ''}"`,
+      hashed = /^\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$/.test(pathname);
     const headers = { 'content-type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream', etag, 'accept-ranges': 'bytes',
       // Behind the gate every response is `private`: the browser caches it, a shared cache (the Cloudflare edge) must not,
       // or it would serve the cached file to visitors without a session (edge caches key on the URL only).
-      'cache-control': pathname.endsWith('.html') ? (GATE ? 'private, no-cache' : 'no-cache') : pathname === '/build.json' ? 'no-store' /* the deploy check (web/build-check.js) */ : `${GATE && !edge ? 'private' : 'public'}, ${hashed ? 'max-age=31536000, immutable' : 'max-age=3600'}`, 'x-content-type-options': 'nosniff' };
+      'cache-control': pathname.endsWith('.html') ? (GATE ? 'private, no-cache' : 'no-cache') : pathname === '/build.json' ?
+      // the deploy check (web/build-check.js)
+'no-store'   : `${GATE && !edge ? 'private' : 'public'}, ${hashed ? 'max-age=31536000, immutable' : 'max-age=3600'}`, 'x-content-type-options': 'nosniff' };
     // The edge keeps a copy 5 minutes, then revalidates it with the ETag (304, no body when unchanged): unchanged files
     // never leave the host twice. Hashed bundles never change.
     // stale-while-revalidate: an edge copy older than 5 minutes still answers at once while the edge refreshes it from
@@ -379,7 +485,12 @@ function diagPost(req, res) {
   req.on('end', () => {
     if (over) return;
     let parsed; try { parsed = JSON.parse(body); } catch { done(400); return; }
-    try { if ((fs.statSync(DIAG_LOG, { throwIfNoEntry: false })?.size ?? 0) < DIAG_MAX_FILE) fs.appendFileSync(DIAG_LOG, JSON.stringify({ at: new Date().toISOString(), address, ...parsed }) + '\n'); } catch (e) { console.warn('diag: write failed', e?.message); }
+    try {
+      if ((fs.statSync(DIAG_LOG, { throwIfNoEntry: false })?.size ?? 0) < DIAG_MAX_FILE)
+        fs.appendFileSync(DIAG_LOG, JSON.stringify({ at: new Date().toISOString(), address, ...parsed }) + '\n');
+    } catch (e) {
+      console.warn('diag: write failed', e?.message);
+    }
     done(204);
   });
 }
@@ -390,12 +501,50 @@ const server = http.createServer((req, res) => {
   res.setHeader('x-content-type-options', 'nosniff'); res.setHeader('referrer-policy', 'same-origin'); res.setHeader('x-frame-options', 'SAMEORIGIN');
   if (GATE) res.setHeader('cdn-cache-control', 'no-store'); // Cloudflare honours CDN-Cache-Control: never keep a gated response at the edge
   if (GATE && GATE.handle(req, res)) return;
+  // The site is public without a gate: keep it out of search engines.
+  res.setHeader('x-robots-tag', 'noindex, nofollow');
+  if (req.url === '/robots.txt') {
+    res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'public, max-age=3600' });
+    res.end('User-agent: *\nDisallow: /\n');
+    return;
+  }
   if (req.url === '/mp/diag' && req.method === 'POST') { diagPost(req, res); return; } // web/diagnostics.js (gated like everything else)
-  if (req.url.startsWith('/mp/records')) { if (RECORDS?.enabled) { if (RECORDS.handle(req, res)) return; } else { req.resume(); res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"off"}'); return; } } // online records (gated)
+  // online records (gated)
+  if (req.url.startsWith('/mp/records')) {
+    if (RECORDS?.enabled) {
+      if (RECORDS.handle(req, res)) return;
+    } else {
+      req.resume();
+      res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end('{"error":"off"}');
+      return;
+    }
+  }
   if (req.url === '/mp/status') {
     res.writeHead(200, { 'content-type': 'application/json', ...(GATE ? {} : { 'access-control-allow-origin': '*' }), 'cache-control': 'no-store' });
-    res.end(JSON.stringify({ ok: true, protocol: PROTOCOL, binary: binaryStats, clients: clients.size, lobbies: [...lobbies.values()].map((l) => ({ ...summary(l),
-      race: l.race && { loaded: [...l.race.loaded], goAt: l.race.goAt, racers: [...l.race.slots.entries()], finish: [...l.race.finish.entries()], checks: [...l.race.checks.entries()].map(([id, k]) => [id, { packets: k.run.packets, path: Math.round(k.run.path), route: Math.round(k.run.route), findings: k.run.findings.length }]), verdicts: [...l.race.verdicts.entries()], open: l.members.map((m) => clients.get(m)?.ws.open) } })) }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        protocol: PROTOCOL,
+        binary: binaryStats,
+        clients: clients.size,
+        lobbies: [...lobbies.values()].map((l) => ({
+          ...summary(l),
+          race: l.race && {
+            loaded: [...l.race.loaded],
+            goAt: l.race.goAt,
+            racers: [...l.race.slots.entries()],
+            finish: [...l.race.finish.entries()],
+            checks: [...l.race.checks.entries()].map(([id, k]) => [
+              id,
+              { packets: k.run.packets, path: Math.round(k.run.path), route: Math.round(k.run.route), findings: k.run.findings.length }
+            ]),
+            verdicts: [...l.race.verdicts.entries()],
+            open: l.members.map((m) => clients.get(m)?.ws.open)
+          }
+        }))
+      })
+    );
     return;
   }
   let served; try { served = serveStatic(req, res); } catch (e) { // one bad request never takes the server (and its races) down

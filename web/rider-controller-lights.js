@@ -9,7 +9,6 @@
 // the direction in the bank's z-up frame, and the values go in unchanged. Every rider holding a trick boost gets it,
 // the computer riders too (opponent-riders.js). The core keeps the list (web/boost_gameplay.inc rider_controller_lights:
 // [count, ambient RGB, direction XYZ, colour RGB]); an older core without it falls back to boost_info()[4] here.
-import { pv } from './pv-flags.js';
 export const TRICK_BOOST_LIGHT = Object.freeze({ ambient: [0, 0, 0], direction: [0, 0, 1], colour: [2, 2, 2] });
 export const trickBoostActive = (boostInfo) => boostInfo[4] > 0;   // core boost_info()[4] = boostState.modifier (rider+0x2EC)
 
@@ -25,7 +24,7 @@ export function controllerLights(boostInfo, buffer) {
 // Per core (or rider context view): count() -> this tick's light count; `pointer` is the extra block to pass with it
 // (core._shade_rider_lighting(env, view, point, rim, constants, count ? pointer : 0, count)). No allocation per frame.
 export function createControllerLights(core) {
-  const off = !pv('boostLight') || /[?&]boostlight=0\b/.test(globalThis.location?.search ?? '');
+  const off = /[?&]boostlight=0\b/.test(globalThis.location?.search ?? '');
   if (core._rider_controller_lights) {
     const list = core._rider_controller_lights();   // fixed per rider context (RIDER_LOCAL static)
     return { pointer: list + 4, count() { return off ? 0 : Math.round(core.HEAPF32[list >> 2]); }, dispose() {} };

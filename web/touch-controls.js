@@ -26,7 +26,21 @@ export const MENU_KEYS = Object.freeze({
   l1: 'KeyQ', r1: 'KeyE', l2: 'KeyZ', r2: 'KeyX',
   up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', start: 'Enter',
 });
-const KEY_NAMES = { Space: ' ', Escape: 'Escape', ShiftLeft: 'Shift', Backspace: 'Backspace', KeyQ: 'q', KeyE: 'e', KeyZ: 'z', KeyX: 'x', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', Enter: 'Enter' };
+const KEY_NAMES = {
+  Space: ' ',
+  Escape: 'Escape',
+  ShiftLeft: 'Shift',
+  Backspace: 'Backspace',
+  KeyQ: 'q',
+  KeyE: 'e',
+  KeyZ: 'z',
+  KeyX: 'x',
+  ArrowUp: 'ArrowUp',
+  ArrowDown: 'ArrowDown',
+  ArrowLeft: 'ArrowLeft',
+  ArrowRight: 'ArrowRight',
+  Enter: 'Enter'
+};
 const START_BUTTON = 9; // W3C standard gamepad Start (pad-input.js GAMEPAD_BUTTONS[1])
 const DIRECTIONS = ['up', 'down', 'left', 'right'];
 
@@ -208,7 +222,11 @@ export function faceHits(face, x, y) {
 // Centres of the chord zones (the midpoints of neighbouring buttons), for the small markers drawn in the gaps.
 export function faceChords(face) {
   const out = [];
-  for (let i = 0; i < FACE.length; i++) { const [n1, x1, y1] = FACE[i], [n2, x2, y2] = FACE[(i + 1) % FACE.length]; out.push({ pair: [n1, n2], x: face.cx + (x1 + x2) / 2 * face.spread, y: face.cy + (y1 + y2) / 2 * face.spread }); }
+  for (let i = 0; i < FACE.length; i++) {
+    const [n1, x1, y1] = FACE[i],
+      [n2, x2, y2] = FACE[(i + 1) % FACE.length];
+    out.push({ pair: [n1, n2], x: face.cx + ((x1 + x2) / 2) * face.spread, y: face.cy + ((y1 + y2) / 2) * face.spread });
+  }
   return out;
 }
 // D-pad: 8-way from the centre (diagonals press two arms), a small dead centre.
@@ -266,7 +284,11 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
   const analog = el('tc-analog'); analog.innerHTML = '<i></i>ANALOG';
   const face = el('tc-face'); face.dataset.zone = 'face';
   const faceBtns = {};
-  for (const [name] of FACE) { const b = el('tc-face-btn tc-' + name, face); b.innerHTML = `<i class="tc-glyph">${SVG[name]}</i>${FACE_HINT[name] ? `<b>${FACE_HINT[name]}</b>` : ''}`; faceBtns[name] = b; }
+  for (const [name] of FACE) {
+    const b = el('tc-face-btn tc-' + name, face);
+    b.innerHTML = `<i class="tc-glyph">${SVG[name]}</i>${FACE_HINT[name] ? `<b>${FACE_HINT[name]}</b>` : ''}`;
+    faceBtns[name] = b;
+  }
   const chordDots = [0, 1, 2, 3].map(() => el('tc-chord', face)); // gap markers: press here for both neighbours
   doc.body.appendChild(root);
 
@@ -325,7 +347,12 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
   // ---- press / release -----------------------------------------------------------------------------------------------
   // A tap shorter than a frame would press and release between two pad reads (frame() samples the pad once per
   // drawn frame): every press lasts at least MIN_HOLD_MS, so a quick tap on ✕ or Start always reaches the game.
-  const syncChordDots = () => { for (const dot of chordDots) { const [p1, p2] = (dot.dataset.pair || '').split('+'); dot.classList.toggle('on', !!(faceBtns[p1]?.classList.contains('on') && faceBtns[p2]?.classList.contains('on'))); } };
+  const syncChordDots = () => {
+    for (const dot of chordDots) {
+      const [p1, p2] = (dot.dataset.pair || '').split('+');
+      dot.classList.toggle('on', !!(faceBtns[p1]?.classList.contains('on') && faceBtns[p2]?.classList.contains('on')));
+    }
+  };
   const MIN_HOLD_MS = 70, pressedAt = new Map();
   function pressControl(c) {
     pressedAt.set(c, performance.now());
@@ -345,9 +372,29 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
   const stickDirs = new Set();
   function stickMenu(x, y) {
     const want = new Set();
-    if (!menuMode()) { for (const d of stickDirs) { const e = menuKeysDown.get('s' + d); if (e) { clearTimeout(e.timer); menuKeysDown.delete('s' + d); sendKey('keyup', e.code); } } stickDirs.clear(); return; }
+    if (!menuMode()) {
+      for (const d of stickDirs) {
+        const e = menuKeysDown.get('s' + d);
+        if (e) {
+          clearTimeout(e.timer);
+          menuKeysDown.delete('s' + d);
+          sendKey('keyup', e.code);
+        }
+      }
+      stickDirs.clear();
+      return;
+    }
     if (y < -0.5) want.add('up'); if (y > 0.5) want.add('down'); if (x < -0.5) want.add('left'); if (x > 0.5) want.add('right');
-    for (const d of [...stickDirs]) if (!want.has(d)) { stickDirs.delete(d); const e = menuKeysDown.get('s' + d); if (e) { clearTimeout(e.timer); menuKeysDown.delete('s' + d); sendKey('keyup', e.code); } }
+    for (const d of [...stickDirs])
+      if (!want.has(d)) {
+        stickDirs.delete(d);
+        const e = menuKeysDown.get('s' + d);
+        if (e) {
+          clearTimeout(e.timer);
+          menuKeysDown.delete('s' + d);
+          sendKey('keyup', e.code);
+        }
+      }
     for (const d of want) if (!stickDirs.has(d)) {
       stickDirs.add(d); const code = MENU_KEYS[d]; sendKey('keydown', code); const entry = { code, timer: 0 }; menuKeysDown.set('s' + d, entry);
       const again = () => { if (menuKeysDown.get('s' + d) !== entry) return; sendKey('keyup', code); sendKey('keydown', code); entry.timer = setTimeout(again, 130); };
@@ -407,7 +454,13 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
   function up(e) {
     const p = pointers.get(e.pointerId); if (!p) return;
     pointers.delete(e.pointerId);
-    if (p.kind === 'act') { p.el.classList.remove('on'); const r = p.el.getBoundingClientRect(); if (e.type === 'pointerup' && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) action(p.el.dataset.act); return; }
+    if (p.kind === 'act') {
+      p.el.classList.remove('on');
+      const r = p.el.getBoundingClientRect();
+      if (e.type === 'pointerup' && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom)
+        action(p.el.dataset.act);
+      return;
+    }
     if (!p.dead) endPointer(p);
   }
   function endPointer(p) {
@@ -465,7 +518,11 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
     const cs = getComputedStyle(probe), ins = { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
     const aspect = stage?.dataset.widescreen === '2' ? 9 / 16 : 3 / 4;
     layout = computeLayout({ W, H, ins, aspect, layout: settings.layout });
-    if (layout.cramped) { const other = computeLayout({ W: H, H: W, ins, aspect, layout: settings.layout }); layout.cramped = !other.cramped; layout.want = other.landscape ? 'landscape' : 'portrait'; }
+    if (layout.cramped) {
+      const other = computeLayout({ W: H, H: W, ins, aspect, layout: settings.layout });
+      layout.cramped = !other.cramped;
+      layout.want = other.landscape ? 'landscape' : 'portrait';
+    }
     html.dataset.touchOrient = layout.landscape ? 'landscape' : 'portrait';
     const f = layout.frame;
     html.style.setProperty('--fx', f.x + 'px'); html.style.setProperty('--fy', f.y + 'px'); html.style.setProperty('--fw', f.w + 'px'); html.style.setProperty('--fh', f.h + 'px');
@@ -479,7 +536,11 @@ export function createTouchControls({ ui, isRunning = () => false, pause = () =>
     const fc = layout.face, ext = fc.spread * 2 + fc.B;
     place(face, { x: fc.cx - ext / 2, y: fc.cy - ext / 2, w: ext, h: ext });
     for (const [name, fx, fy] of FACE) place(faceBtns[name], { x: ext / 2 + fx * fc.spread - fc.B / 2, y: ext / 2 + fy * fc.spread - fc.B / 2, w: fc.B, h: fc.B });
-    faceChords({ cx: ext / 2, cy: ext / 2, spread: fc.spread }).forEach((c, k) => { const r = fc.B * 0.2; place(chordDots[k], { x: c.x - r, y: c.y - r, w: 2 * r, h: 2 * r }); chordDots[k].dataset.pair = c.pair.join('+'); });
+    faceChords({ cx: ext / 2, cy: ext / 2, spread: fc.spread }).forEach((c, k) => {
+      const r = fc.B * 0.2;
+      place(chordDots[k], { x: c.x - r, y: c.y - r, w: 2 * r, h: 2 * r });
+      chordDots[k].dataset.pair = c.pair.join('+');
+    });
     root.style.setProperty('--B', fc.B + 'px');
     const rs = layout.rstick; rstick.hidden = !rs; if (rs) place(rstick, { x: rs.cx - rs.size / 2, y: rs.cy - rs.size / 2, w: rs.size, h: rs.size });
     analog.hidden = !layout.analog; if (layout.analog) place(analog, layout.analog);

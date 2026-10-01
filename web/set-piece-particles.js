@@ -13,10 +13,10 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec2, vec3, vec4, float, select, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
-import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 import {SPRITE_FLOATS, MAX_HALF_PIXELS, SOURCE_VIEWPORT, burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations} from './set-piece-particle-eval.js';
 import {setUpdateRange} from './heap-views.js';
+import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 export {burstSpritesFast, trailSpritesFast, readParticleEffects, particleCombinations};
 
 async function loadTextures(fetchJson, fetchBytes) {
@@ -32,92 +32,212 @@ async function loadTextures(fetchJson, fetchBytes) {
 }
 
 // origin: the scene origin (main.js: the course start.json position, metres) the world geometry is relative to.
-export async function createSetPieceParticles({core, particlesDoc, origin = [0, 0, 0], fetchJson = (p) => fetch(p).then((r) => r.json()), fetchBytes = (p) => fetch(p).then((r) => r.arrayBuffer())}) {
+export async function createSetPieceParticles({
+  core,
+  particlesDoc,
+  origin = [0, 0, 0],
+  fetchJson = (p) => fetch(p).then((r) => r.json()),
+  fetchBytes = (p) => fetch(p).then((r) => r.arrayBuffer())
+}) {
   const maps = await loadTextures(fetchJson, fetchBytes);
-  const encodedOutput = uniform(false), group = new T.Group(); group.userData.gameplayOnly = true; group.name = 'set-piece particles';
+  const encodedOutput = uniform(false),
+    group = new T.Group();
+  group.userData.gameplayOnly = true;
+  group.name = 'set-piece particles';
   group.position.set(-origin[0], -origin[1], -origin[2]); // sprite centres are course coordinates (source cm / 100, (x, z, -y))
-  const meshes = new Map(); let order = 0;
+  const meshes = new Map();
+  let order = 0;
   // One instanced quad batch per combination; the vertex stage builds the camera-facing sprite (centre, capped half extent).
-  function build({texture: id, blend, kind}, capacity = 1024) {
-    const tex = maps.get(id); if (!tex) throw Error(`Set-piece particle texture ${id} was not exported (tools/export_set_piece_particle_textures.py)`);
+  function build({ texture: id, blend, kind }, capacity = 1024) {
+    const tex = maps.get(id);
+    if (!tex) throw Error(`Set-piece particle texture ${id} was not exported (tools/export_set_piece_particle_textures.py)`);
     const geometry = new T.PlaneGeometry(2, 2);
     for (let v = 0; v < geometry.attributes.uv.count; v++) {
-      const x = geometry.attributes.uv.getX(v), y = geometry.attributes.uv.getY(v);
-      if (kind === 1) geometry.attributes.uv.setXY(v, 1 - x, y); else geometry.attributes.uv.setXY(v, x, 1 - y);
+      const x = geometry.attributes.uv.getX(v),
+        y = geometry.attributes.uv.getY(v);
+      if (kind === 1) geometry.attributes.uv.setXY(v, 1 - x, y);
+      else geometry.attributes.uv.setXY(v, x, 1 - y);
     }
     const centre = new T.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(T.DynamicDrawUsage);
     const colour = new T.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(T.DynamicDrawUsage);
-    geometry.setAttribute('spCentre', centre); geometry.setAttribute('spColour', colour);
-    const material = new T.MeshBasicNodeMaterial({transparent: true, depthWrite: false, depthTest: true, side: T.DoubleSide, forceSinglePass: true, fog: false, toneMapped: false});
+    geometry.setAttribute('spCentre', centre);
+    geometry.setAttribute('spColour', colour);
+    const material = new T.MeshBasicNodeMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      side: T.DoubleSide,
+      forceSinglePass: true,
+      fog: false,
+      toneMapped: false
+    });
     // Vertex: view-space centre, half extent min(r, 64 px * depth / (|P| * viewport / 2)) per axis (MINI 64).
     // In clip space: a view-space half extent h moves clip x by (P (h,0,0,0)).x; 64 source pixels are 64/256 (x) and
     // 64/224 (y) of clip w.
-    const c = attribute('spCentre', 'vec4'), clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(c.xyz, 1)));
-    const dx = cameraProjectionMatrix.mul(vec4(c.w, 0, 0, 0)).x.abs().min(clip.w.mul(MAX_HALF_PIXELS / (SOURCE_VIEWPORT[0] / 2)));
-    const dy = cameraProjectionMatrix.mul(vec4(0, c.w, 0, 0)).y.abs().min(clip.w.mul(MAX_HALF_PIXELS / (SOURCE_VIEWPORT[1] / 2)));
+    const c = attribute('spCentre', 'vec4'),
+      clip = cameraProjectionMatrix.mul(modelViewMatrix.mul(vec4(c.xyz, 1)));
+    const dx = cameraProjectionMatrix
+      .mul(vec4(c.w, 0, 0, 0))
+      .x.abs()
+      .min(clip.w.mul(MAX_HALF_PIXELS / (SOURCE_VIEWPORT[0] / 2)));
+    const dy = cameraProjectionMatrix
+      .mul(vec4(0, c.w, 0, 0))
+      .y.abs()
+      .min(clip.w.mul(MAX_HALF_PIXELS / (SOURCE_VIEWPORT[1] / 2)));
     material.vertexNode = clip.add(vec4(positionGeometry.x.mul(dx), positionGeometry.y.mul(dy), 0, 0));
-    const texel = texture(tex.map, uv()), col = attribute('spColour', 'vec4');
-    const rgb = texel.rgb.mul(col.rgb).clamp(0, 1), As = texel.a.mul(tex.scale).mul(col.a); // As / 128 (may exceed 1: star)
-    if (blend === 1) { // 0x44: Cd + (Cs - Cd) * As
+    const texel = texture(tex.map, uv()),
+      col = attribute('spColour', 'vec4');
+    const rgb = texel.rgb.mul(col.rgb).clamp(0, 1),
+      As = texel.a.mul(tex.scale).mul(col.a); // As / 128 (may exceed 1: star)
+    if (blend === 1) {
+      // 0x44: Cd + (Cs - Cd) * As
       material.fragmentNode = vec4(select(encodedOutput, rgb, toFrame(rgb)), As.clamp(0, 1));
-    } else { // 0x48 Cd + Cs*As (0x42 Cd - Cs*As): premultiplied, saturating like the GS COLCLAMP
+    } else {
+      // 0x48 Cd + Cs*As (0x42 Cd - Cs*As): premultiplied, saturating like the GS COLCLAMP
       const pre = rgb.mul(As).clamp(0, 1);
       material.fragmentNode = vec4(select(encodedOutput, pre, toFrame(pre)), 1);
-      material.blending = T.CustomBlending; material.blendSrc = T.OneFactor; material.blendDst = T.OneFactor;
+      material.blending = T.CustomBlending;
+      material.blendSrc = T.OneFactor;
+      material.blendDst = T.OneFactor;
       material.blendEquation = blend === 2 ? T.ReverseSubtractEquation : T.AddEquation;
-      material.blendSrcAlpha = T.ZeroFactor; material.blendDstAlpha = T.OneFactor; material.blendEquationAlpha = T.AddEquation;
+      material.blendSrcAlpha = T.ZeroFactor;
+      material.blendDstAlpha = T.OneFactor;
+      material.blendEquationAlpha = T.AddEquation;
     }
     const mesh = new T.InstancedMesh(geometry, material, capacity);
-    mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = 685 + (order++ % 5); mesh.visible = false; // count 1 keeps the pipeline warmable
-    if (pv('effectOrder')) mesh.renderOrder = drawOrder(EFFECT.setPieceParticle(id), SUBMIT.setPiece); // 0x364240: rank 1, the texture + the inherited 'spec'
-    mesh.userData.setPieceParticles = {texture: id, blend, kind};
+    mesh.count = 1;
+    mesh.frustumCulled = false;
+    mesh.visible = false; // count 1 keeps the pipeline warmable
+    mesh.renderOrder = drawOrder(EFFECT.setPieceParticle(id), SUBMIT.setPiece); // 0x364240: rank 1, the texture + the inherited 'spec'
+    mesh.userData.setPieceParticles = { texture: id, blend, kind };
     group.add(mesh);
-    return {mesh, centre, colour, capacity, count: 0};
+    return { mesh, centre, colour, capacity, count: 0 };
   }
   for (const combo of particleCombinations(particlesDoc)) meshes.set(`${combo.texture}|${combo.blend}|${combo.kind}`, build(combo));
-  registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => { for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true; return false; }}); // main.js warmupRender shows every mesh (count 1, zero size): the encoded pass pipelines build during loading
+  // main.js warmupRender shows every mesh (count 1, zero size): the encoded pass pipelines build during loading
+  registerEncodedEffect({
+    object: group,
+    setEncodedOutput: (v) => {
+      encodedOutput.value = !!v;
+    },
+    populated: () => {
+      for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true;
+      return false;
+    }
+  });
   let scratch = new Float32Array(4096 * SPRITE_FLOATS);
-  const state = {effects: 0, sprites: 0, dropped: 0, unknown: 0};
+  const state = { effects: 0, sprites: 0, dropped: 0, unknown: 0 };
   // Per-frame garbage (docs/web-render-performance.md): the effect records are pooled (readParticleEffects pool) and the batches'
   // lists kept per key; keysThisFrame holds this frame's keys in first-appearance order, as the per-frame Map iterated them.
-  const pool = {effects: [], buffer: null, U: null, F: null}, lists = new Map(), keysThisFrame = []; let frameNo = 0;
-  const keyOf = (e) => { if (e.keyTexture !== e.textureId || e.keyBlend !== e.blend || e.keyKind !== e.kind) { e.keyTexture = e.textureId; e.keyBlend = e.blend; e.keyKind = e.kind; e.key = `${e.textureId}|${e.blend}|${e.kind}`; } return e.key; };
+  const pool = { effects: [], buffer: null, U: null, F: null },
+    lists = new Map(),
+    keysThisFrame = [];
+  let frameNo = 0;
+  const keyOf = (e) => {
+    if (e.keyTexture !== e.textureId || e.keyBlend !== e.blend || e.keyKind !== e.kind) {
+      e.keyTexture = e.textureId;
+      e.keyBlend = e.blend;
+      e.keyKind = e.kind;
+      e.key = `${e.textureId}|${e.blend}|${e.kind}`;
+    }
+    return e.key;
+  };
   return {
-    group, state, meshes,
+    group,
+    state,
+    meshes,
     // Once per rendered frame after the tick(s): read the core's effects and rebuild the batches.
     update() {
       const effects = readParticleEffects(core, pool);
       for (const m of meshes.values()) m.count = 0;
-      frameNo++; keysThisFrame.length = 0;
+      frameNo++;
+      keysThisFrame.length = 0;
       for (let i = 0; i < effects.length; i++) {
-        const e = effects[i], key = keyOf(e); let list = lists.get(key);
-        if (list === undefined) { list = []; list.frame = 0; lists.set(key, list); }
-        if (list.frame !== frameNo) { list.frame = frameNo; list.length = 0; keysThisFrame.push(key); }
+        const e = effects[i],
+          key = keyOf(e);
+        let list = lists.get(key);
+        if (list === undefined) {
+          list = [];
+          list.frame = 0;
+          lists.set(key, list);
+        }
+        if (list.frame !== frameNo) {
+          list.frame = frameNo;
+          list.length = 0;
+          keysThisFrame.push(key);
+        }
         list.push(e);
       }
-      state.effects = effects.length; state.sprites = 0; state.unknown = 0;
+      state.effects = effects.length;
+      state.sprites = 0;
+      state.unknown = 0;
       for (let b = 0; b < keysThisFrame.length; b++) {
-        const key = keysThisFrame[b], list = lists.get(key);
+        const key = keysThisFrame[b],
+          list = lists.get(key);
         let target = meshes.get(key);
-        if (!target) { const [texture, blend, kind] = key.split('|').map(Number); if (!maps.has(texture)) { state.unknown++; continue; } target = build({texture, blend, kind}); meshes.set(key, target); }
+        if (!target) {
+          const [texture, blend, kind] = key.split('|').map(Number);
+          if (!maps.has(texture)) {
+            state.unknown++;
+            continue;
+          }
+          target = build({ texture, blend, kind });
+          meshes.set(key, target);
+        }
         let n = 0;
         for (let j = 0; j < list.length; j++) {
-          const e = list[j], limit = scratch.length / SPRITE_FLOATS;
-          n = e.kind === 0 ? burstSpritesFast(e.K, e.F, scratch, n, limit) : trailSpritesFast(e.K, e.F, e.capacity, e.cursor, e.ringA, e.ringB, e.ringBits, scratch, n, limit);
-          if (n >= limit) { state.dropped++; const grown = new Float32Array(scratch.length * 2); grown.set(scratch); scratch = grown; }
+          const e = list[j],
+            limit = scratch.length / SPRITE_FLOATS;
+          n =
+            e.kind === 0
+              ? burstSpritesFast(e.K, e.F, scratch, n, limit)
+              : trailSpritesFast(e.K, e.F, e.capacity, e.cursor, e.ringA, e.ringB, e.ringBits, scratch, n, limit);
+          if (n >= limit) {
+            state.dropped++;
+            const grown = new Float32Array(scratch.length * 2);
+            grown.set(scratch);
+            scratch = grown;
+          }
         }
-        if (n > target.capacity) { group.remove(target.mesh); target.mesh.geometry.dispose(); const [texture, blend, kind] = key.split('|').map(Number); const bigger = build({texture, blend, kind}, Math.max(n, target.capacity * 2)); meshes.set(key, bigger); target = bigger; }
-        const cen = target.centre.array, col = target.colour.array;
+        if (n > target.capacity) {
+          group.remove(target.mesh);
+          target.mesh.geometry.dispose();
+          const [texture, blend, kind] = key.split('|').map(Number);
+          const bigger = build({ texture, blend, kind }, Math.max(n, target.capacity * 2));
+          meshes.set(key, bigger);
+          target = bigger;
+        }
+        const cen = target.centre.array,
+          col = target.colour.array;
         for (let i = 0; i < n; i++) {
           const o = i * SPRITE_FLOATS;
-          cen[i * 4] = scratch[o] / 100; cen[i * 4 + 1] = scratch[o + 2] / 100; cen[i * 4 + 2] = -scratch[o + 1] / 100; cen[i * 4 + 3] = scratch[o + 3] / 100;
-          col[i * 4] = scratch[o + 4] / 128; col[i * 4 + 1] = scratch[o + 5] / 128; col[i * 4 + 2] = scratch[o + 6] / 128; col[i * 4 + 3] = scratch[o + 7] / 128;
+          cen[i * 4] = scratch[o] / 100;
+          cen[i * 4 + 1] = scratch[o + 2] / 100;
+          cen[i * 4 + 2] = -scratch[o + 1] / 100;
+          cen[i * 4 + 3] = scratch[o + 3] / 100;
+          col[i * 4] = scratch[o + 4] / 128;
+          col[i * 4 + 1] = scratch[o + 5] / 128;
+          col[i * 4 + 2] = scratch[o + 6] / 128;
+          col[i * 4 + 3] = scratch[o + 7] / 128;
         }
-        target.count = n; state.sprites += n;
-        if (n) { setUpdateRange(target.centre, 0, n * 4); setUpdateRange(target.colour, 0, n * 4); }
+        target.count = n;
+        state.sprites += n;
+        if (n) {
+          setUpdateRange(target.centre, 0, n * 4);
+          setUpdateRange(target.colour, 0, n * 4);
+        }
       }
-      for (const m of meshes.values()) { m.mesh.count = Math.max(m.count, 1); m.mesh.visible = m.count > 0; }
+      for (const m of meshes.values()) {
+        m.mesh.count = Math.max(m.count, 1);
+        m.mesh.visible = m.count > 0;
+      }
     },
-    dispose() { for (const m of meshes.values()) { m.mesh.geometry.dispose(); m.mesh.material.dispose(); } group.removeFromParent(); },
+    dispose() {
+      for (const m of meshes.values()) {
+        m.mesh.geometry.dispose();
+        m.mesh.material.dispose();
+      }
+      group.removeFromParent();
+    }
   };
 }

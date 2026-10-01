@@ -23,7 +23,7 @@ let shared = null;
 export const onlineRecords = () => (shared ??= new OnlineRecords());
 
 export class OnlineRecordsUI {
-  constructor(cu) { this.cu = cu; this.ui = cu.ui; this.run = null; this.board = null; this.note = null; }
+  constructor(cu) { this.cu = cu; this.ui = cu.ui; this.run = null; this.board = null; this.note = null; if (this.on) this.records.load(); }   // the cards and INFO read the boards
   get on() { return pv('onlineRecords'); }
   get records() { return onlineRecords(); }
   codeOf(course) { return this.cu.career?.courses?.[course]?.code ?? this.cu.data?.courses?.[course]?.code ?? null; }
@@ -31,7 +31,8 @@ export class OnlineRecordsUI {
   playerName() { return this.ui.feScreens?.playerName || 'PLAYER 1'; }
   // ctm-records shows the online board for this event: modes 0-5 (a board exists for them), not after an in-world Conquer the
   // Mountain run (main.js onlineRun), which keeps the PS2 table (D1).
-  online(ev) { return this.on && !!this.keyOf(ev) && !this.ui.cb.onlineRun?.()?.inWorld; }
+  // No board loaded at all (offline from the start): the PS2 screen and decision exactly (the local table, Continue / Save Records).
+  online(ev) { return this.on && !!this.keyOf(ev) && this.records.has(this.keyOf(ev)) && !this.ui.cb.onlineRun?.()?.inWorld; }
 
   // ---- the run's finish (career-ui finish): null keeps the PS2 decision (the local table), else whether the top-5 screen opens ----
   finish(result, ev) {
@@ -41,13 +42,15 @@ export class OnlineRecordsUI {
     this.records.load();   // refresh in the background for the screen
     const info = this.ui.cb.onlineRun?.();
     if (info?.inWorld) return null;
-    if (!this.records.has(key)) return this.records.status === 'offline' ? false : null;
+    if (!this.records.has(key)) return null;   // no board (offline, none cached): the PS2's own decision on the local table
     const timed = this.records.timed(key), value = timed ? (result.dnf ? null : result.ticks) : Math.round(result.score || 0);
     if (!info?.available || info.giveUp || result.dnf || !(value > 0)) return false;   // no replay, a Give Up / TIME'S UP / DNF: not submitted
     const rank = this.records.rank(key, value, this.playerName());
     this.run = { key, ev: { mode: ev.mode, course: ev.course }, timed, value, rank, character: info.character, state: 'new', id: null };
     return rank >= 0;
   }
+  // the board's first entry as career.js topRecord shapes it ({value, ticks, name, character}), or null
+  topOf(ev) { const r = this.records.top(this.keyOf(ev))?.[0]; return r ? { ...r, ticks: r.value } : null; }
   topRun(ev) { return this.run && this.run.key === this.keyOf(ev) && this.run.rank >= 0 ? this.run : null; }
 
   // ---- ctm-records ----
@@ -76,11 +79,26 @@ export class OnlineRecordsUI {
     run.state = 'sending'; run.name = text; this.note = TEXT.saving; this.ui.sync();
     let res;
     try {
-      const file = await this.ui.cb.onlineReplayFile?.({ event: run.key, mode: run.ev.mode, course: this.codeOf(run.ev.course), name: text, claim: run.timed ? { ticks: run.value } : { score: run.value } });
+      const file = await this.ui.cb.onlineReplayFile?.({
+        event: run.key,
+        mode: run.ev.mode,
+        course: this.codeOf(run.ev.course),
+        name: text,
+        claim: run.timed ? { ticks: run.value } : { score: run.value }
+      });
       res = file ? await this.records.submit(file.meta, file.pad) : { error: 'replay' };
     } catch (e) { console.warn('Online record upload failed', e); res = { error: 'network' }; }
-    if (res?.ok) { run.state = 'sent'; run.id = res.id; run.rank = res.kept ? res.rank : run.rank; this.note = res.kept ? TEXT.saved(res.rank) : run.timed ? TEXT.notKept : TEXT.notKeptScore; }
-    else { run.state = 'new'; this.note = res?.error === 'network' || res?.error === 'off' ? TEXT.offline : TEXT.failed; }
+    if (res?.ok) {
+      run.state = 'sent';
+      run.id = res.id;
+      run.rank = res.kept ? res.rank : run.rank;
+      this.note = res.kept ? TEXT.saved(res.rank) : run.timed ? TEXT.notKept : TEXT.notKeptScore;
+      if (this.ui.screen === 'ctm-records' && this.ui.index === 1) this.ui.index = 0;
+    } // the greyed Save Records gives the focus to Continue
+    else {
+      run.state = 'new';
+      this.note = res?.error === 'network' || res?.error === 'off' ? TEXT.offline : TEXT.failed;
+    }
     this.ui.sync();
   }
   // rows of the screen: the online top 5; before the upload the finished run sits at its rank in the player's colour (as the PS2
@@ -101,7 +119,12 @@ export class OnlineRecordsUI {
   recordsMessage(ev, topTime) {
     if (this.note) return this.note;
     if (!this.records.summary) return TEXT.offline;
-    if (topTime) { const timed = this.records.timed(this.keyOf(ev)); return timed ? this.cu.t(0x0eea5fd5, "Congratulations, you've got a top time!") : this.cu.t(0x0ea6d945, "Congratulations, you've got a top score!"); }
+    if (topTime) {
+      const timed = this.records.timed(this.keyOf(ev));
+      return timed
+        ? this.cu.t(0x0eea5fd5, "Congratulations, you've got a top time!")
+        : this.cu.t(0x0ea6d945, "Congratulations, you've got a top score!");
+    }
     return this.records.online ? null : TEXT.offline;
   }
   // 61toptimes with the online rows; the keyboard over it while a name is typed. False: draw the PS2 table instead.
@@ -116,7 +139,16 @@ export class OnlineRecordsUI {
   // no board ever loaded (offline from the start): the PS2 table (web/career.js), as the screen looked before
   localRows(ev, timed) {
     const career = this.cu.career, slot = career ? recordSlot(career.rules, ev.mode, ev.course) : 26;
-    return slot < 26 ? career.records(slot, timed).map((r) => ({ name: r.name, rider: this.cu.data?.characters?.[r.character]?.first || '', value: timed ? raceTime(r.ticks, false) : String(r.value), player: !!r.player })) : [];
+    return slot < 26
+      ? career
+          .records(slot, timed)
+          .map((r) => ({
+            name: r.name,
+            rider: this.cu.data?.characters?.[r.character]?.first || '',
+            value: timed ? raceTime(r.ticks, false) : String(r.value),
+            player: !!r.player
+          }))
+      : [];
   }
   drawKeyboard(c) { const fe = this.ui.feScreens; if (fe?.keyboard?.kind !== 'record') return; c.save(); c.scale(1, SY); fe.drawKeyboard(c, fe.now()); c.restore(); }
   keyboardOpen() { return this.ui.feScreens?.keyboard?.kind === 'record'; }
@@ -173,7 +205,16 @@ export class OnlineRecordsUI {
     const start = Math.floor(b.cursor / PAGE) * PAGE, pages = Math.max(1, Math.ceil(b.rows.length / PAGE));
     const rows = b.rows.slice(start, start + PAGE).map((r, k) => this.row(r, b.timed, true, { rank: (r.rank ?? start + k) + 1, focus: start + k === b.cursor, player: this.mine(r) }));
     const message = b.status === 'loading' ? TEXT.loading : b.status === 'error' ? TEXT.offline : TEXT.page(start / PAGE + 1, pages) + (b.status === 'cached' ? `  (${TEXT.offline})` : '');
-    cu.resultsLui.records(c, { title: cu.eventTitle(b.ev), timed: b.timed, subtitle: TEXT.online, rows, message, items: this.boardItems(), index: this.ui.index, disabled: (i) => this.boardDisabled(i) });
+    cu.resultsLui.records(c, {
+      title: cu.eventTitle(b.ev),
+      timed: b.timed,
+      subtitle: TEXT.online,
+      rows,
+      message,
+      items: this.boardItems(),
+      index: this.ui.index,
+      disabled: (i) => this.boardDisabled(i)
+    });
   }
   mine(r) { return !r.default && (r.id === this.run?.id || (!!r.name && r.name.toLowerCase() === this.playerName().toLowerCase())); }
 }

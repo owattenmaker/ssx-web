@@ -12,7 +12,6 @@
 // released when their location has been out of the world for a while (memory on Safari).
 import { createGuardedWorker, workerUrl } from './worker-guard.js';
 import { preparePeakLocation } from './peak-world-prepare.js';
-import { pv } from './pv-flags.js';
 import { painterRegions } from './painter-regions.js';
 // The worker script of this build (content-hashed by Vite); web/worker-guard.js checks its build and falls back to
 // preparePeakLocation on the main thread (docs/workers.md).
@@ -24,9 +23,10 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
   let first = true, feeding = null;
   const queue = []; // locations waiting for core feeding, in request order
   // The world's name travels with the location (the whole mountain's locations live in the per-peak folders, docs/peak3.md).
-  // pv regionTick: every location's painter sections come with its collision data (web/painter-regions.js)
-  const located = pv('regionTick'); painterRegions.reset();
-  const fetchCore = (entry) => worker.request({ root: entry.root, world: manifest.name, painters: located, railParts: pv('sliceLoad') && !!core._rail_load_hash }); // (a core with the rail parts: web/rail_bridge.cpp segment_base / partial)
+  // Every location's painter sections come with its collision data (web/painter-regions.js)
+  const located = true; painterRegions.reset();
+  // (a core with the rail parts: web/rail_bridge.cpp segment_base / partial)
+  const fetchCore = (entry) => worker.request({ root: entry.root, world: manifest.name, painters: located, railParts: !!core._rail_load_hash });
   const fetchEnv = (url) => worker.request({ env: url });
   const put = (text) => { const bytes = new TextEncoder().encode(text + '\0'), p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); return p; };
   let hashPtr = 0;
@@ -47,11 +47,21 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
     const text = entry.weather; if (weatherOff || !core._weather_location || typeof text !== 'string' || !text.trimStart().startsWith('{')) return;
     const p = put(text); try { core._weather_location(entry.track, p); } finally { core._free(p); }
   }
-  // pv regionTick: the record's Fog / Lighting sections to the core (selected by gp+0x770 in its camera / rider block steps),
+  // the record's Fog / Lighting sections to the core (selected by gp+0x770 in its camera / rider block steps),
   // ScreenTint / Sun / glare to the page's painters (web/painter-regions.js).
   function feedPainters(entry) {
     const d = entry.painters; if (!d) return;
-    const give = (fn, text) => { if (!fn || typeof text !== 'string' || !text.trimStart().startsWith('{')) return; const p = put(text); try { fn(entry.track, p); } catch (e) { console.warn(`Painter record ${entry.code}`, e); } finally { core._free(p); } };
+    const give = (fn, text) => {
+      if (!fn || typeof text !== 'string' || !text.trimStart().startsWith('{')) return;
+      const p = put(text);
+      try {
+        fn(entry.track, p);
+      } catch (e) {
+        console.warn(`Painter record ${entry.code}`, e);
+      } finally {
+        core._free(p);
+      }
+    };
     give(core._fog_location, d.fog); give(core._lighting_location, d.lighting);
     painterRegions.set(entry.track, { tint: d.tint, sun: d.sun, glare: d.glare });
   }
@@ -66,10 +76,9 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
   }
   // The first location replaces whatever world the core had (one plain init per system, merged slices), then the
   // streamed world starts: nothing resident, instance/rail storage reserved so held pointers survive later appends.
-  // pv sliceLoad: the first slice of each kind replaces the course world (plain init), the rest of the location is appended slice
+  // the first slice of each kind replaces the course world (plain init), the rest of the location is appended slice
   // by slice like every later location and committed, so no core call on the load screen takes more than a slice's few ms (the merged
   // init was 0.9-1.5 s per call at 4x CPU). Returns false then: pump() feeds the rest.
-  const sliced = pv('sliceLoad');
   function beginSliced(entry) {
     const pick = (k) => entry.batches.find((b) => b.kind === k), w = pick('world'), t = pick('terrain'), r = pick('rails');
     core._peak_world_append(0);
@@ -82,23 +91,7 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
     entry.batches = entry.batches.filter((b) => b !== w && b !== t && b.kind !== 'rails'); entry.cursor = 0;
     return false;
   }
-  function begin(entry) {
-    if (sliced) return beginSliced(entry);
-    const of = (k) => entry.batches.filter((b) => b.kind === k).map((b) => JSON.parse(b.text));
-    const world = of('world').reduce((a, b) => { if (!a) return b;
-      for (const [t, v] of Object.entries(b.bindings)) { a.bindings[t] ??= { descriptors: [] }; const base = a.bindings[t].descriptors.length; a.bindings[t].descriptors.push(...v.descriptors);
-        for (const i of b.instances) if (String(i.track) === t) i.collision_descriptor += base; }
-      a.instances.push(...b.instances); Object.assign(a.collision_meshes, b.collision_meshes); Object.assign(a.render_model_nodes, b.render_model_nodes); return a; }, null);
-    const terrain = JSON.stringify(of('terrain').reduce((a, b) => { if (!a) return b; a.patches.push(...b.patches); return a; }, null));
-    core._peak_world_append(0);
-    call(core._init_terrain, terrain);
-    call(core._init_world_collision, JSON.stringify(world), hashPtr);
-    call(core._init_body_terrain, terrain);
-    call(core._init_rails, entry.batches.find((b) => b.kind === 'rails').text, hashPtr);
-    core._peak_world_begin();
-    core._peak_world_reserve(65536, 4096);
-    return true;
-  }
+  const begin = (entry) => beginSliced(entry);
   async function requestCore(code) {
     const entry = byCode.get(code); if (!entry) throw Error(`Unknown Peak 1 location ${code}`);
     if (entry.core !== 'absent') return entry.ready;
@@ -106,7 +99,13 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
     entry.ready = (async () => {
       const data = await fetchCore(entry);
       if (!hashPtr) { const b = new TextEncoder().encode(data.hash + '\0'); hashPtr = core._malloc(b.length); core.HEAPU8.set(b, hashPtr); }
-      entry.counts = data.counts; entry.bounds = data.bounds ?? null; entry.batches = data.batches; entry.weather = data.weather ?? null; entry.painters = data.painters ?? null; entry.core = 'queued'; queue.push(entry);
+      entry.counts = data.counts;
+      entry.bounds = data.bounds ?? null;
+      entry.batches = data.batches;
+      entry.weather = data.weather ?? null;
+      entry.painters = data.painters ?? null;
+      entry.core = 'queued';
+      queue.push(entry);
       await new Promise((resolve) => { entry.done = resolve; });
     })();
     return entry.ready;
@@ -147,14 +146,14 @@ export async function createPeakWorld({ core, load, manifestUrl = '/assets/PEAK1
     },
     dropEnv(code) { const e = env.get(code); if (!e) return; env.delete(code); if (e.state === 'loaded' || e.state === 'queued') core._environment_drop?.(byCode.get(code).track); },
     envLoaded: (code) => env.get(code)?.state === 'loaded',
-    // pv peakRelease: free a loaded location's collision in the core (web/peak_world.inc peak_world_free_track: refused while it is
+    // free a loaded location's collision in the core (web/peak_world.inc peak_world_free_track: refused while it is
     // collidable or in the section octree); its next requestCore fetches and feeds it again, into the same slots. True when freed.
     releaseCore(code) {
       const e = byCode.get(code); if (!e || e.core !== 'loaded' || !core._peak_world_free_track) return false;
       if (core._peak_world_free_track(e.track) < 0) return false;
       e.core = 'absent'; e.ready = null; e.batches = null; return true;
     },
-    // pv peakRelease: a location fetched and cut but not fed (queued behind a wanted row's feeds) that nothing wants any more: its
+    // a location fetched and cut but not fed (queued behind a wanted row's feeds) that nothing wants any more: its
     // slices are dropped (the next requestCore fetches it again). Never the one being fed.
     dropQueued(code) {
       const e = byCode.get(code); if (!e || e.core !== 'queued' || feeding === e) return false;

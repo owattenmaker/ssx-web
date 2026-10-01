@@ -75,8 +75,16 @@ defineLayout(['054c:0268'], { name: 'dualshock3', buttons: ['b14', 'b13', 'b15',
 // Logitech F310 / F510 / F710 with the switch on D.
 defineLayout(['046d:c216', '046d:c218', '046d:c219'], { name: 'logitech-dinput', buttons: ['b1', 'b2', 'b0', 'b3', ...range(4, 8), ...hat(9), ''], axes: RZ });
 // Xbox Wireless over Bluetooth when read through RawInput (Windows normally uses XInput / Windows.Gaming.Input: standard).
-defineLayout(['045e:0b20', '045e:0b21', '045e:0b22', '045e:0b13', '045e:0b12'], { name: 'xbox-bt-rawinput', buttons: ['b0', 'b1', 'b3', 'b4', 'b6', 'b7', 't3', 't4', 'b10', 'b11', 'b13', 'b14', ...hat(9), 'b12'], axes: RZ });
-defineLayout(['045e:02e0', '045e:02fd'], { name: 'xbox-one-s-bt', buttons: ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 't2', 't5', 'b6', 'b7', 'b8', 'b9', ...hat(9), 'b10'], axes: ['a0', 'a1', 'a3', 'a4'] });
+defineLayout(['045e:0b20', '045e:0b21', '045e:0b22', '045e:0b13', '045e:0b12'], {
+  name: 'xbox-bt-rawinput',
+  buttons: ['b0', 'b1', 'b3', 'b4', 'b6', 'b7', 't3', 't4', 'b10', 'b11', 'b13', 'b14', ...hat(9), 'b12'],
+  axes: RZ
+});
+defineLayout(['045e:02e0', '045e:02fd'], {
+  name: 'xbox-one-s-bt',
+  buttons: ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 't2', 't5', 'b6', 'b7', 'b8', 'b9', ...hat(9), 'b10'],
+  axes: ['a0', 'a1', 'a3', 'a4']
+});
 // 8BitDo over Bluetooth (X-input style order, triggers swapped).
 defineLayout(['2dc8:301b', '2dc8:6012'], { name: '8bitdo-bt', buttons: ['b0', 'b1', 'b3', 'b4', 'b6', 'b7', 't4', 't3', 'b10', 'b11', 'b13', 'b14', ...hat(9), 'b12'], axes: RZ });
 // HORIPAD (Switch).
@@ -183,7 +191,8 @@ export function mapPad(raw, compiled, cal, out = newStandardPad()) {
     let v = 0, p = false;
     for (const t of compiled.bt[i] || []) {
       const x = term(t, raw, cal); if (x > v) v = x;
-      if (t.k === 0) { const b = raw?.buttons?.[t.i]; if (b != null && (typeof b === 'number' ? b > PRESSED : b.pressed)) p = true; }   // a raw button keeps the browser's pressed flag (trigger thresholds)
+      // a raw button keeps the browser's pressed flag (trigger thresholds)
+      if (t.k === 0) { const b = raw?.buttons?.[t.i]; if (b != null && (typeof b === 'number' ? b > PRESSED : b.pressed)) p = true; }
     }
     const o = out.buttons[i]; o.value = Math.min(1, v); o.pressed = p || v > PRESSED; o.touched = v > 0;
   }

@@ -23,10 +23,9 @@ const read = (p) => fs.readFileSync(new URL(p, root));
 const json = (p) => JSON.parse(read(p));
 const core = await createCore();
 if (finishPlace != null) core.finishHost = { place: () => finishPlace };
-// Stage builtin 34, the Metro-City phone booths / water towers (web/stage_teleport.inc): on with pv boothTeleport (web/pv-flags.js),
-// STAGE_TELEPORT=1 / =0 forces it. A capture with booth_injections (the PS2 hook at 0x121818 wrote rider+0xA30 = a booth instance on
+// Stage builtin 34, the Metro-City phone booths / water towers (web/stage_teleport.inc): on;
+// STAGE_TELEPORT=0 turns it off. A capture with booth_injections (the PS2 hook at 0x121818 wrote rider+0xA30 = a booth instance on
 // those ticks) injects the same contact before this tick's race_end.
-const { pv } = await import('./pv-flags.js');
 const boothInjections = new Map(); let boothTick = -1;
 const boothInject = () => { const r = boothInjections.get(boothTick); if (r != null) core._stage_contact_inject(r); };
 process.on('uncaughtException', (e) => { console.error(e instanceof Error ? e.stack : core.getExceptionMessage(e)); process.exit(1); });
@@ -130,7 +129,7 @@ function decode(state, a, b) {
 // ---- capture records ----
 const captureManifest = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8'));
 for (const b of captureManifest.booth_injections || []) if (!Number(b.rider)) boothInjections.set(b.tick, Number(b.resource)); // the human's (a computer rider's: compare-ai-capture.mjs)
-if (process.env.STAGE_TELEPORT === '1' || (process.env.STAGE_TELEPORT !== '0' && (pv('boothTeleport') || boothInjections.size))) core._stage_teleport_enable?.(1);
+if (process.env.STAGE_TELEPORT !== '0') core._stage_teleport_enable?.(1);
 const RECORD = captureManifest.record || 8192;
 let raw = fs.readFileSync(capturePath);
 // --peak-arrival (with --course PEAK1): a location entry capture (free-ride Transport arrival, tools/ps2_capture.py from a
@@ -631,7 +630,7 @@ for (let i = 0; i + 1 < records.length; i++) {
     row.algoEyeErrCm = dist(web.algo.slice(0, 3), ps2.camEye); row.algoLookErrCm = dist(web.algo.slice(3, 6), ps2.camLook); }
   // CAM_INPUT_TRACE=1: camera head input (11E0xx head bone, rider+0x89C) and velocity vs the record, first differing ticks.
   if (process.env.CAM_INPUT_TRACE && web.head) { const rr = (o) => dv.getFloat32((i + 1) * RECORD + 32 + o - 0x100, true); const bone = +(process.env.CAM_HEAD_BONE || 22), bb = (i + 1) * RECORD + 3264 + 32 * bone, ph = [dv.getFloat32(bb, true), dv.getFloat32(bb + 4, true), dv.getFloat32(bb + 8, true)];
-    if (ph.some((x, k) => Math.fround(web.head[k]) !== x) || web.camIn.slice(8, 11).some((x, k) => x !== ps2.velocity[k])) { globalThis.__camIn = (globalThis.__camIn || 0) + 1; if (globalThis.__camIn <= +(process.env.CAM_INPUT_TRACE) ) console.error('camin', ps2.tick, 'head', web.head.join(','), '|', ph.join(','), 'vel', web.camIn.slice(8, 11).join(','), '|', ps2.velocity.join(','), 'mode', web.camIn[28]); } }
+    if (ph.some((x, k) => Math.fround(web.head[k]) !== x) || web.camIn.slice(8, 11).some((x, k) => x !== ps2.velocity[k])) { globalThis.__camIn = (globalThis.__camIn || 0) + 1; if (globalThis.__camIn <= +process.env.CAM_INPUT_TRACE ) console.error('camin', ps2.tick, 'head', web.head.join(','), '|', ph.join(','), 'vel', web.camIn.slice(8, 11).join(','), '|', ps2.velocity.join(','), 'mode', web.camIn[28]); } }
   if (process.env.VISUAL_TRACE && globalThis.__visTrace && globalThis.__visStart) { const [a, b] = process.env.VISUAL_TRACE.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= (b ?? a)) console.error('visual', ps2.tick, 'draws before camera', drawsBetween(globalThis.__visStart, globalThis.__visTrace[0]), 'camera', drawsBetween(globalThis.__visTrace[0], globalThis.__visTrace[1])); }
   if (process.env.TRAIL_TRACE && core._trail_info) { const [a, b] = process.env.TRAIL_TRACE.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= (b ?? a)) console.error('trail', ps2.tick, JSON.stringify(Array.from(f32(core._trail_info(), 16)).map((x) => +x.toFixed(3)))); }
   if (process.env.SNOW_TRACE) { const [a, b] = process.env.SNOW_TRACE.split(':').map(Number); if (ps2.tick >= a && ps2.tick <= (b ?? a)) console.error('snow', ps2.tick, JSON.stringify(Array.from(f32(core._snow_info(), 23)).map((x) => +x.toFixed(2))), 'crashFrame', f32(core._crash_info(), 12)[1], 'phases', JSON.stringify(globalThis.__visPhases)); }

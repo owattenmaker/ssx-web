@@ -137,7 +137,16 @@ export class LuiScreen {
     const [ox, oy] = this.anchor(p, w, h);
     // A PS2 button icon (FE_1-14 legends, prompts) becomes the key cap while the keyboard is in use (web/input-glyphs.js);
     // this.keys: per-screen key overrides (fe-screens.js name-entry keyboard).
-    if (!p[5]) { c.save(); c.globalAlpha = Math.min(1, r.a); const key = drawGlyphAsKey(c, this.ui, sprite.page, sx, sy, sw, sh, r.x + ox, r.y + oy, w, h, { stretch: LUI_STRETCH, keys: this.keys }); c.restore(); if (key) return; }
+    if (!p[5]) {
+      c.save();
+      c.globalAlpha = Math.min(1, r.a);
+      const key = drawGlyphAsKey(c, this.ui, sprite.page, sx, sy, sw, sh, r.x + ox, r.y + oy, w, h, {
+        stretch: LUI_STRETCH,
+        keys: this.keys
+      });
+      c.restore();
+      if (key) return;
+    }
     c.save(); c.globalAlpha = Math.min(1, r.a); c.translate(r.x, r.y);
     if (p[5]) c.rotate(p[5] * Math.PI / 180);
     if (rgb.every((v) => v >= 255)) c.drawImage(this.cut(sprite), 0, 0, sw, sh, ox, oy, w, h);
@@ -155,7 +164,12 @@ export class LuiScreen {
     // icons are authored at 50..160%); the other screens keep the unscaled vertices they were matched with.
     const kx = this.shapeScale ? (p[9] ?? 100) / 100 : 1, ky = this.shapeScale ? (p[10] ?? 100) / 100 : 1;
     const sx = (r.fill ?? 1) * kx;
-    const V = Array.from({ length: nv }, (_, k) => ({ x: (p[21 + 9 * k] || 0) * sx, y: (p[22 + 9 * k] || 0) * ky, a: (p[26 + 9 * k] ?? 255) / 255, rgb: [p[27 + 9 * k] ?? 255, p[28 + 9 * k] ?? 255, p[29 + 9 * k] ?? 255] }));
+    const V = Array.from({ length: nv }, (_, k) => ({
+      x: (p[21 + 9 * k] || 0) * sx,
+      y: (p[22 + 9 * k] || 0) * ky,
+      a: (p[26 + 9 * k] ?? 255) / 255,
+      rgb: [p[27 + 9 * k] ?? 255, p[28 + 9 * k] ?? 255, p[29 + 9 * k] ?? 255]
+    }));
     c.save();
     if (nt === 0) {                                  // no triangles (byte 2 = 2): a closed line loop (e.g. the name bar frame)
       c.strokeStyle = `rgba(${V[0].rgb},${V[0].a * r.a})`; c.lineWidth = 1.5; c.beginPath();
@@ -166,7 +180,9 @@ export class LuiScreen {
     // CoreGraphics draws them as light lines radiating from the fan's corner); the GS has no such seams.
     if (this.unionFlat && V.length && V.every((v) => v.a === V[0].a && v.rgb.every((x, k) => x === V[0].rgb[k]))) {
       c.fillStyle = `rgba(${V[0].rgb},${V[0].a * r.a})`; c.beginPath();
-      for (const tri of tris) { let T = tri.map((i) => V[i]); if (T.some((v) => !v)) continue; if ((T[1].x - T[0].x) * (T[2].y - T[0].y) - (T[2].x - T[0].x) * (T[1].y - T[0].y) < 0) T = [T[0], T[2], T[1]];   // one winding: the nonzero union
+      for (const tri of tris) { let T = tri.map((i) => V[i]); if (T.some((v) => !v)) continue;
+      // one winding: the nonzero union
+if ((T[1].x - T[0].x) * (T[2].y - T[0].y) - (T[2].x - T[0].x) * (T[1].y - T[0].y) < 0) T = [T[0], T[2], T[1]];
         T.forEach((v, i) => c[i ? 'lineTo' : 'moveTo'](r.x + v.x, r.y + v.y)); c.closePath(); }
       c.fill('nonzero'); c.restore(); return;
     }
@@ -196,7 +212,7 @@ export class LuiScreen {
 
   // FEFONT text at scale% * FONT_K PS2 pixels; anchor bits as for sprites; word-wrapped to the element width
   // (an override may give props.pitch, the wrapped line pitch in 480-line pixels, and props.sy, a vertical scale %).
-  // flagWrap (opt-in, web/results-lui.js pv resultsMenu): only a text element whose flags have bit 7 (0x80) wraps, as on the
+  // flagWrap (opt-in, web/results-lui.js resultsMenu): only a text element whose flags have bit 7 (0x80) wraps, as on the
   // PS2 (0x3A0528: element +0x14 bit 7 -> 0x3A0D00 word wrap at the width +0x60 with the scale +0x50; otherwise 0x3A0EB0
   // breaks only at explicit line breaks); `wrap` false keeps the text on its lines. The other screens wrap every text as before.
   text(c, text, x, y, p, alpha = 1, wrap = true) {
@@ -208,7 +224,7 @@ export class LuiScreen {
     const max = (p[6] || 1e6) / PS2_X, lines = []; let line = '';
     if (!wrap) lines.push(...String(text).split(/\r\n|\r|\n/));
     else {
-      // ps2Wrap (opt-in, web/results-lui.js pv luiWrap): 0x3A0D00's measure, the font's advances (392C60) x the element scale +0x50
+      // ps2Wrap (opt-in, web/results-lui.js luiWrap): 0x3A0D00's measure, the font's advances (392C60) x the element scale +0x50
       // (props 9 %) against the width +0x60 (props 6), both in PS2 units: 68rival_pre 'Face off against Nate in a Rival Challenge!'
       // 652 x 0.73 = 476 > 475 breaks after 'Rival', its bullet 742 x 0.6 = 445.2 <= 450 stays on one line (PS2 ruthless-ready).
       const over = this.ps2Wrap ? (str) => [...str].reduce((w, ch) => w + (glyphs[ch]?.advance || 10), 0) * (p[9] ?? 100) / 100 > (p[6] || 1e6) : (str) => advance(str) > max;

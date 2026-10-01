@@ -9,7 +9,21 @@ import { pollPads } from './gamepad.js';
 import { pv } from './pv-flags.js';
 import { startAccepts as startMenu } from './start-rules.js';
 
-const KEY_NAMES = { Space: ' ', Escape: 'Escape', ShiftLeft: 'Shift', Backspace: 'Backspace', KeyQ: 'q', KeyE: 'e', KeyZ: 'z', KeyX: 'x', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', Enter: 'Enter' };
+const KEY_NAMES = {
+  Space: ' ',
+  Escape: 'Escape',
+  ShiftLeft: 'Shift',
+  Backspace: 'Backspace',
+  KeyQ: 'q',
+  KeyE: 'e',
+  KeyZ: 'z',
+  KeyX: 'x',
+  ArrowUp: 'ArrowUp',
+  ArrowDown: 'ArrowDown',
+  ArrowLeft: 'ArrowLeft',
+  ArrowRight: 'ArrowRight',
+  Enter: 'Enter'
+};
 // standard button index -> menu control
 const BUTTON_CONTROLS = [[0, 'cross'], [1, 'circle'], [2, 'square'], [3, 'triangle'], [4, 'l1'], [5, 'r1'], [6, 'l2'], [7, 'r2'], [9, 'start'], [12, 'up'], [13, 'down'], [14, 'left'], [15, 'right']];
 const DIRECTIONS = new Set(['up', 'down', 'left', 'right']);
@@ -30,7 +44,7 @@ export function menuControls(pad) {
 }
 
 // Pure stepper (tested in node): feed it the pad each frame; send(type, code) dispatches.
-// startAccepts(): pv startRules (web/start-rules.js): Start is the menu's accept (UINext = Cross or Start) on every menu screen, also
+// startAccepts(): startRules (web/start-rules.js): Start is the menu's accept (UINext = Cross or Start) on every menu screen, also
 // while a run is going (the pause, MCOMM, results, the lodge); only the ride itself leaves it to main.js.
 export function createPadMenus(options = {}) {
   const port = createPortPadMenus(options), ps2 = createPs2PadMenus(options), pick = () => (pv('ps2MenuInput') ? ps2 : port);
@@ -109,7 +123,7 @@ function createPs2PadMenus({ menu = () => true, running = () => false, send = ()
 
 function createPortPadMenus({ menu = () => true, running = () => false, send = () => {}, startAccepts = () => false } = {}) {
   const held = new Map();         // control -> { code, next }
-  const spent = new Set();        // pv startConsume: controls whose press a menu took, until released (main.js pause: taken('start'))
+  const spent = new Set();        // controls whose press a menu took, until released (main.js pause: taken('start'))
   let prev = new Set();
   function release(c) { const h = held.get(c); if (!h) return; held.delete(c); send('keyup', h.code); }
   return {
@@ -128,7 +142,7 @@ function createPortPadMenus({ menu = () => true, running = () => false, send = (
       prev = controls;
     },
     releaseAll() { for (const c of [...held.keys()]) release(c); },
-    // pv startConsume: this control's current press was a menu key (a card / prompt accept): the game must not also act on it
+    // this control's current press was a menu key (a card / prompt accept): the game must not also act on it
     taken(c) { return spent.has(c); },
   };
 }
@@ -138,13 +152,29 @@ function createPortPadMenus({ menu = () => true, running = () => false, send = (
 // phase; with the port's pad model it advances by time before the pad's keys.
 export function installPadMenus({ screen = () => 'title', isRunning = () => false, phases = null } = {}) {
   if (typeof window === 'undefined' || typeof requestAnimationFrame !== 'function') return null;
-  const send = (type, code) => { try { const e = new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true }); e.ssxPadMenu = true; window.dispatchEvent(e); } catch {} };   // ssxPadMenu: a menu key made from the pad (main.js: never the keyboard's pause)
-  const menus = createPadMenus({ menu: () => screen() !== 'game', running: isRunning, send, startAccepts: () => pv('startRules') && startMenu(screen()) });
+  // ssxPadMenu: a menu key made from the pad (main.js: never the keyboard's pause)
+  const send = (type, code) => {
+    try {
+      const e = new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true });
+      e.ssxPadMenu = true;
+      window.dispatchEvent(e);
+    } catch {}
+  };
+  const menus = createPadMenus({ menu: () => screen() !== 'game', running: isRunning, send, startAccepts: () => startMenu(screen()) });
   // pv ps2MenuInput: a held arrow key repeats like the pad's directions (the PS2 keyboard-less menus repeat UIUp / UIDown at 24 / 12
   // frames); the browser's own auto-repeat keydowns (e.repeat) stay ignored by the screens, these arrive as fresh presses.
   const ARROWS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']), keys = new Map(); // code -> next repeat (ms)
-  const keySend = (type, code) => { try { const e = new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true }); e.ssxKeyRepeat = true; window.dispatchEvent(e); } catch {} };
-  addEventListener('keydown', (e) => { if (!pv('ps2MenuInput') || e.ssxKeyRepeat || e.ssxPadMenu || e.repeat || !ARROWS.has(e.code) || screen() === 'game') return; keys.set(e.code, performance.now() + MENU_REPEAT_PS2.first); });
+  const keySend = (type, code) => {
+    try {
+      const e = new KeyboardEvent(type, { code, key: KEY_NAMES[code] || code, bubbles: true, cancelable: true });
+      e.ssxKeyRepeat = true;
+      window.dispatchEvent(e);
+    } catch {}
+  };
+  addEventListener('keydown', (e) => {
+    if (!pv('ps2MenuInput') || e.ssxKeyRepeat || e.ssxPadMenu || e.repeat || !ARROWS.has(e.code) || screen() === 'game') return;
+    keys.set(e.code, performance.now() + MENU_REPEAT_PS2.first);
+  });
   addEventListener('keyup', (e) => { if (!e.ssxKeyRepeat) keys.delete(e.code); });
   const stepKeys = (t) => {
     if (!keys.size) return; if (screen() === 'game') { keys.clear(); return; }

@@ -49,7 +49,7 @@ export function createRiderLightingUpdate(core,configuration){
  };
 }
 
-// pv riderDrawState (docs/xbox-textures.md section 9): the PS2 rider draw state per material, instead of one alphaTest 0.35 for all.
+// riderDrawState (docs/xbox-textures.md section 9): the PS2 rider draw state per material, instead of one alphaTest 0.35 for all.
 // 37A610 (rider draw) sets the material state 363C20 turns into GS registers (TEST builder 3626D8: word1 bits 12..19 AREF, 20..21 the
 // alpha-test mode, 23..24 the depth mode; bits 2..6 the ALPHA enum):
 //   - a material whose record has flag 0x8000 (set at bind, 0x386920, when the material name is 'alph' or starts 'ea': hair, hats and
@@ -64,7 +64,14 @@ export const RIDER_AREF=92;
 export const blendedRiderMaterial=(name)=>name==='alph'||/^ea/.test(name??'');
 export function riderDrawState(material,name){
  // opaque: the alpha is not used, and the pixel's alpha is 1 (the port composites its canvas: alpha 0 would show what is behind it)
- if(!blendedRiderMaterial(name)){material.alphaTest=0;material.transparent=false;const out=material.outputNode;if(out)material.outputNode=vec4(out.rgb,float(1));material.needsUpdate=true;return material;}
+ if (!blendedRiderMaterial(name)) {
+   material.alphaTest = 0;
+   material.transparent = false;
+   const out = material.outputNode;
+   if (out) material.outputNode = vec4(out.rgb, float(1));
+   material.needsUpdate = true;
+   return material;
+ }
  const high=material,data=high.userData;high.userData={};const low=high.clone();high.userData=data;const limit=float((2*RIDER_AREF+0.5)/255);   // (clone would JSON-copy userData's texture)
  high.transparent=true;high.depthWrite=true;high.alphaTest=(2*RIDER_AREF+1)/255;high.needsUpdate=true;
  const out=high.outputNode;low.alphaTest=0;low.transparent=true;low.depthWrite=false;

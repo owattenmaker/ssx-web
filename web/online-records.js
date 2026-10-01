@@ -61,8 +61,15 @@ export class OnlineRecords {
   // meta + pad (web/server/replay-file.mjs) -> {ok, kept, id, rank, top} or {error}
   async submit(meta, pad) {
     let r;
-    try { r = await timed(this.fetch, this.base + '/mp/records/submit', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: await deflate(encodeReplayFile({ meta, pad })) }); }
-    catch { return { error: 'network' }; }
+    try {
+      r = await timed(this.fetch, this.base + '/mp/records/submit', {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: await deflate(encodeReplayFile({ meta, pad }))
+      });
+    } catch {
+      return { error: 'network' };
+    }
     const body = await r.json().catch(() => ({ error: 'network' }));
     if (r.ok && body.top && this.summary?.events?.[meta.event]) {   // the board as the server has it now
       this.summary.events[meta.event].top = body.top.map((row, i) => ({ ...row, rank: i }));

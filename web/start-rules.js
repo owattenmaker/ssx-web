@@ -1,4 +1,4 @@
-// When Start opens the pause (pv startRules; docs/visual-parity.md section 31). From the PS2 code:
+// When Start opens the pause (startRules; docs/visual-parity.md section 31). From the PS2 code:
 //  - The game update 0x2306B8 opens the pause at 0x230A34 (push overlay 2, 0x20CA10; music pause 0x289B70; snd 0 0x294F48) only
 //    when 0x231840 sees the pause action 0x3C (Start) on a human pad, and
 //      * 0x231840: the object at gp-0x204 does not hold the game (+8 > 0: no pause), no NIS without flag 4 (0x231AB8);

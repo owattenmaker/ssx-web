@@ -171,11 +171,9 @@ const is = (v) => (e) => e.v === v;
   compare('single-event', ga.timeline(), is('fade 1'), { loading: true });
   ga.leaveWorld();
 }
-// ---- 7. pv boothDj: the booth's flag (2A49E8, 30 s) with the DJ speaking keeps the travel from queuing the radio big intro (2A4A38) --
+// ---- 7. The booth's flag (2A49E8, 30 s) with the DJ speaking keeps the travel from queuing the radio big intro (2A4A38) --
 {
-  const { setPv } = await import('./pv-flags.js');
-  setPv('boothDj', true);
-  try {
+  {
     const travelSpeech = async (booth, waitMs = 0) => {
       const ga = await make({ career: true, visited: (1 << 14) | (1 << 17) });
       await ga.runStart({ courseIndex: 17, freeRide: FREE, courseCode: 'PEAK1', character: 'zoe' });
@@ -190,6 +188,6 @@ const is = (v) => (e) => e.v === v;
     assert.ok((await travelSpeech(false)).includes('20e5'), 'no booth: the travel queues the radio big intro (2A26F0)');
     assert.ok(!(await travelSpeech(true)).includes('20e5'), 'the booth flag with the DJ speaking: no radio big intro (2A4A38)');
     assert.ok((await travelSpeech(true, 31000)).includes('20e5'), 'after 30 s (the 2ADCA0 timer, 2A4A68) the flag is gone');
-  } finally { setPv('boothDj', null); }
+  }
 }
 console.log('audio timeline: new career, MCOMM, Transport map, lodge, Transport, song change, spoke arrival and Single Event start match the PS2 logs');

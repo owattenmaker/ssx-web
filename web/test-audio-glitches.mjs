@@ -1,8 +1,8 @@
 // Audio glitch fixes and field counters (docs/audio-logic.md 9.13), node, against Web Audio stand-ins:
-//   pv audioDeclick       the music player's pause / resume / cut / Stop ramp over 5 ms instead of stepping to / from 0
-//   pv musicWorkerDecode  every stream bar decodes off the main thread; a 6-channel bar folds to the same floats in the worker
-//   pv audioInterrupt     a context that stopped takes no new voices, holds (movie, hidden page) are counted, resume is retried
-//   pv sfxStartAfterDecode a sound's layers decode before its start time is read (no late start / skipped attack)
+//   declick               the music player's pause / resume / cut / Stop ramp over 5 ms instead of stepping to / from 0
+//   worker decode         every stream bar decodes off the main thread; a 6-channel bar folds to the same floats in the worker
+//   interrupts            a context that stopped takes no new voices, holds (movie, hidden page) are counted, resume is retried
+//   start after decode    a sound's layers decode before its start time is read (no late start / skipped attack)
 //   web/audio-stats.js    late / missed bars, stolen / dropped voices, slow decodes
 //   node lifetime         finished / stopped voices, bars and songs disconnect their whole chain; the streamed .mus keeps a bounded set of bars
 import fs from 'node:fs';
@@ -326,12 +326,10 @@ test('sfx: layers decode before the start time is read (switch on); voice counte
 });
 
 test('bankEvict: a bank no slot holds drops its decoded patches after the grace period; loaded again within it, nothing is decoded again', async () => {
-  const { setPv } = await import('./pv-flags.js');
   const bytesOf = (p) => new Uint8Array(fs.readFileSync(path.join(AUDIO, p)));
   const make = (evictMs) => createSfx({ engine: { unlocked: false, live: true, context: null, bus: () => ({}) }, fetchJson: async (p) => JSON.parse(fs.readFileSync(path.join(AUDIO, p))), fetchBytes: async (p) => bytesOf(p), evictMs });
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  setPv('bankEvict', true);
-  try {
+  {
     const sfx = make(1500);
     await sfx.loadBank(SLOT.WORLD9, 'A_slot9');
     const a0 = sfx.cacheStats().by.A_slot9; assert.ok(a0 > 0, 'A decoded');
@@ -343,16 +341,12 @@ test('bankEvict: a bank no slot holds drops its decoded patches after the grace 
     assert.equal(c.by.ARA1_slot9, undefined, 'ARA1 (no slot) evicted after the grace'); assert.equal(c.by.A_slot9, a0, 'A (held by slot 9) kept');
     assert.deepEqual(c.evicted, ['ARA1_slot9']);
     sfx.unloadBank(SLOT.WORLD9); await wait(1700);
-    assert.equal(sfx.cacheStats().decoded, 0, 'unloaded: evicted'); 
-    setPv('bankEvict', false);
-    const off = make(50); await off.loadBank(SLOT.WORLD9, 'A_slot9'); await off.loadBank(SLOT.WORLD9, 'ARA1_slot9'); await wait(120);
-    assert.ok(off.cacheStats().by.A_slot9 > 0, 'switch off: every bank stays decoded');
-  } finally { setPv('bankEvict', null); }
+    assert.equal(sfx.cacheStats().decoded, 0, 'unloaded: evicted');
+  }
 });
 
 test('heatSong: a CTM race event Next heat (WS13 -> 28E8C0(20, 1)) picks a new song from round 2 on (PS2 0x28EC90..0x28ED18)', async () => {
   const { createGameAudio } = await import('./game-audio.js');
-  const { setPv } = await import('./pv-flags.js');
   const root = path.join(HERE, 'public');
   let T = 1000; const ctx = { career: true, round: 1, mode: 0 };
   const ga = createGameAudio({ now: () => T, fetchJson: async (p) => JSON.parse(fs.readFileSync(root + p, 'utf8')), fetchBytes: async (p) => new Uint8Array(fs.readFileSync(root + p)) });
@@ -360,8 +354,7 @@ test('heatSong: a CTM race event Next heat (WS13 -> 28E8C0(20, 1)) picks a new s
   await ga.worldLoaded({ courseIndex: 0, singleEvent: false, courseCode: 'ARA1' });
   const since = (n) => ga.timeline().slice(n).map((e) => e.slice(1).join(' '));
   const pump = async (ms) => { for (const end = T + ms; T < end;) { T += 1000 / 60; ga._director.pump(); await new Promise((r) => setImmediate(r)); } };
-  setPv('heatSong', true);
-  try {
+  {
     let n = ga.timeline().length; ga.heat(); await pump(100);
     assert.ok(!since(n).some((e) => /^(pick|request)/.test(e)), `round 1 keeps its song: ${since(n)}`);
     ctx.round = 2; n = ga.timeline().length; ga.heat(); await pump(100);
@@ -371,9 +364,7 @@ test('heatSong: a CTM race event Next heat (WS13 -> 28E8C0(20, 1)) picks a new s
     assert.deepEqual(ev, ['code 20', 'pick', 'request 3', 'play 36'], `round 2: ${since(n)}`);
     ctx.round = 3; n = ga.timeline().length; ga.heat(); await pump(100);
     assert.ok(since(n).some((e) => e === 'request 3'), 'the final too');
-    setPv('heatSong', false); n = ga.timeline().length; ga.heat(); await pump(100);
-    assert.deepEqual(since(n), [], 'switch off: nothing');
-  } finally { setPv('heatSong', null); }
+  }
 });
 
 // The director with a (fake) running context, so songs really play: the CTM restarts and the 29C420 countdown rule against the
@@ -391,8 +382,6 @@ async function liveDirector(context) {
   return { ga, ctx, pump, since, done: () => { delete globalThis.AudioContext; } };
 }
 test('ctmRestartAudio: the pause Restart keeps the song (resumed at the Yes, event 0 at GO); the results Restart of a finished heat gets a new song at "1"', async () => {
-  const { setPv } = await import('./pv-flags.js');
-  setPv('ctmRestartAudio', true);
   const ctxInfo = { career: true, round: 1, mode: 0 };
   const L = await liveDirector(ctxInfo);
   try {
@@ -414,7 +403,7 @@ test('ctmRestartAudio: the pause Restart keeps the song (resumed at the Yes, eve
     ga.finish({ place: 0 }); await pump(30000);
     assert.ok(ga._music().finished, 'the ending has played out');
     n = ga.timeline().length;
-    ga.restartRun({ fromResults: true }); ga.leaveWorld(); setPv('heatSong', true); ga.heat(); setPv('heatSong', null);
+    ga.restartRun({ fromResults: true }); ga.leaveWorld(); ga.heat();
     await ga.runStart({ courseIndex: 0, singleEvent: false, courseCode: 'ARA1' });
     if (process.env.DBG) console.log('dbg', ga._music()?.finished, ga.debug().music, JSON.stringify(ga.debug().director.timers));
     for (const d of [3, 2, 1]) { ga._countdown?.(d); await pump(1000); }
@@ -422,7 +411,7 @@ test('ctmRestartAudio: the pause Restart keeps the song (resumed at the Yes, eve
     const ev = since(n).map((e) => e.replace(/^pick .*/, 'pick').replace(/^play .* 0$/, 'play 0'));
     assert.deepEqual(ev, ['restart 1', 'code 20', 'pick', 'play 0', 'event 0'], 'results Restart');
     assert.ok(ga._music() && !ga._music().finished);
-  } finally { setPv('ctmRestartAudio', null); L.done(); }
+  } finally { L.done(); }
 });
 
 // Node lifetime (docs/audio-logic.md 9.15): a connected node stays alive (Chrome) and processed (WebKit) for the session.

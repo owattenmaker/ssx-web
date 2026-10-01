@@ -305,6 +305,7 @@ bound (a simulated run); only a server-side simulation of each rider would.
 | `web/net/pickup-arbiter.js` | Boost pickup arbitration (first take keeps it). |
 | `web/net/grid-seed.js`, `tools/export_grid_scales.py` | An online racer's countdown state for its slot, body scale and stance (recorded PS2 spots). |
 | `web/server/plausibility.mjs` | Server checks of claimed finish times against the streamed run. |
+| `web/server/records.mjs`, `web/server/replay-file.mjs` | Online course records and their replays (pv onlineRecords, docs/online-records.md); off without `MP_RECORDS_DIR`. |
 | `web/net/remote-fx.js`, `web/fx_puppet.inc` | Remote riders' effects: FX records, puppet cores, effect renderers. |
 | `web/net/mp-game.js` | Game glue (main.js hooks), results rows, hidden-tab ticker, race clock pace. |
 | `web/mp-ui.js` | Lobby screens and the online Single Event Results. |

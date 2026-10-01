@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { Career, MODE, PLAYER_NAME, recordSlot } from './career.js';
 import { CareerScreens } from './career-ui.js';
+import { setPv } from './pv-flags.js';
+import { onlineRecords } from './online-records-ui.js';
 import { scorePoll } from './stage-collect.js';
 import { TrickHud } from './trick-hud.js';
 import { sessionPlacement } from './free-ride.js';
@@ -74,7 +76,7 @@ const pokeSlow = (c, slot) => { c.save.records[slot].forEach((e, k) => { e.value
   console.log('records: whole seconds, a tie goes above (0x154D58)');
 }
 // the results flow: a new record opens Top 5 Record Times first, then the rewards / results (20A8F8 overlay 0xF)
-async function flow(round, ticks) {
+async function flow(round, ticks, { items = ['Continue', 'Save Records'] } = {}) {
   const log = [], ui = {
     screen: 'game', index: 0, ready: true, careerMode: true, log, riders: [{ id: 'zoe', name: 'Zoe' }], rider: { id: 'zoe', name: 'Zoe', kind: 'rider' },
     courses: data.courses.map((c) => ({ code: c.code, ready: true })), loading: {}, cutscene: { fadeFrom() {}, drawCover() {}, preFade: async () => {}, clearOverlay() {} },
@@ -85,11 +87,27 @@ async function flow(round, ticks) {
   cs.enter(); cs.resume(); await tick(); await tick();
   pokeSlow(cs.career, 12); cs.freeRide = { course: 0 }; cs.begin(MODE.RACE, 0, true); cs.career.active.ev.round = round;
   cs.finish({ ticks, raceTicks: ticks, standings: field(ticks) }); await tick(); await tick();
-  const first = ui.screen; assert.deepEqual(cs.items('ctm-records'), ['Continue', 'Save Records']);
+  const first = ui.screen; assert.deepEqual(cs.items('ctm-records'), items);
+  if (first !== 'ctm-records') return [first, null];
   cs.choose(0); return [first, ui.screen];
 }
-assert.deepEqual(await flow(1, 225 * 60), ['ctm-records', 'ctm-results'], 'qualifier: Top 5 Record Times, then the Qualifier Results (PS2 qual-top)');
-assert.deepEqual(await flow(3, 235 * 60), ['ctm-records', 'ctm-award'], 'final: Top 5 Record Times, then the Rewards (PS2 final-top), then the results');
+// the PS2 flow (local table), with pv onlineRecords off and on: with no online board loaded (here: no server) the records screen and
+// its decision are the PS2's exactly (docs/online-records.md "The records screen")
+for (const on of [false, true]) {
+  setPv('onlineRecords', on);
+  assert.deepEqual(await flow(1, 225 * 60), ['ctm-records', 'ctm-results'], `qualifier: Top 5 Record Times, then the Qualifier Results (PS2 qual-top; onlineRecords ${on})`);
+  assert.deepEqual(await flow(3, 235 * 60), ['ctm-records', 'ctm-award'], `final: Top 5 Record Times, then the Rewards (PS2 final-top), then the results (onlineRecords ${on})`);
+}
+// pv onlineRecords with the event's board loaded: the board decides; a run without a replay to upload (this harness has none) is
+// not submitted, so the results open directly and the records screen (the results' Records) reads Return / Online Records
+{
+  setPv('onlineRecords', true);
+  const r = onlineRecords(), keep = { summary: r.summary, status: r.status };
+  r.summary = { version: 1, events: { '0:ARA1': { timed: true, top: [0, 1, 2, 3, 4].map((k) => ({ id: 'd' + k, name: 'D' + k, character: k, value: (900 + k) * 60, default: true })) } } }; r.status = 'online';
+  assert.deepEqual(await flow(1, 225 * 60, { items: ['Return', 'Online Records'] }), ['ctm-results', null], 'online board, no replay: no upload, the results first');
+  Object.assign(r, keep);
+}
+setPv('onlineRecords', null);
 console.log('results flow: a top time opens the records first in the standard events (qualifier -> results, final -> rewards)');
 
 // ---- 4. the big HUD messages and the CTM combo cash popup -------------------------------------------------------------------

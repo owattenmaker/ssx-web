@@ -27,7 +27,16 @@ export const SLIDER_DEFAULT = 10;
 export const MASTER_GAIN = Math.trunc((10 / 11) * 127) / 127;
 // Tests and agents drive the game in automated browsers on the user's Mac: stay silent there. navigator.webdriver is set
 // by Playwright / Puppeteer / safaridriver; ?mute=1 for other harnesses (web/webkit-driver.mjs); ?mute=0 forces sound.
-export const testMuted = (() => { try { const q = new URL(globalThis.location?.href ?? '').searchParams.get('mute'); if (q === '0') return false; if (q === '1') return true; return globalThis.navigator?.webdriver === true; } catch { return false; } })();
+export const testMuted = (() => {
+  try {
+    const q = new URL(globalThis.location?.href ?? '').searchParams.get('mute');
+    if (q === '0') return false;
+    if (q === '1') return true;
+    return globalThis.navigator?.webdriver === true;
+  } catch {
+    return false;
+  }
+})();
 
 // MIX.INF text -> [{index, levels: {BUS: 0..1 | undefined (-1 = keep)}, timeMs}] (parser 287FC8: defaults 100, TIME 0).
 export function parseMixInf(text) {
@@ -57,7 +66,7 @@ export const CHANNEL_SCALE = Object.freeze({
 });
 const f32 = Math.fround;
 
-// interruptGate (pv audioInterrupt, docs/audio-logic.md 9.13): once the context has run, a context that stopped (iOS 'interrupted', a
+// interruptGate (audioInterrupt, docs/audio-logic.md 9.13): once the context has run, a context that stopped (iOS 'interrupted', a
 // suspend) takes no new voices (engine.live false: sfx / speech requests are dropped instead of piling up at the frozen clock and
 // all starting together on resume), it is resumed again on focus / pageshow / a retry timer as well as on input, and the holds
 // (a movie, the hidden page) are counted: showing the page during a movie no longer resumes the game audio under it.
@@ -66,7 +75,7 @@ export function createAudioEngine({ mixes = [], sliders = { music: SLIDER_DEFAUL
   let ctx = null, master = null, unlocked = false, mixIndex = 0, scaleMode = 'FE', hasRun = false, retry = 0, retryMs = 500;
   const holds = new Set(); // suspend(reason) holds: 'hold' (a movie, web/fe-movie.js), 'hidden' (the page)
   const gate = !!interruptGate;
-  // declickMs (pv audioDeclick, docs/audio-logic.md 9.13): a gain before the master fades everything out before the context suspends
+  // declickMs (audioDeclick, docs/audio-logic.md 9.13): a gain before the master fades everything out before the context suspends
   // (a hidden page, a movie) and in again when it runs (also after an OS interruption): the device no longer stops mid-waveform.
   const DK = Math.max(0, +declickMs || 0) / 1000;
   let fader = null, pendingSuspend = 0;
@@ -81,7 +90,16 @@ export function createAudioEngine({ mixes = [], sliders = { music: SLIDER_DEFAUL
   const tryResume = () => { if (!ctx || !unlocked || ctx.state === 'running' || (gate && holds.size)) return; ctx.resume().catch(refused); };
   const retryLater = () => { // the context stopped on its own: try again (backing off to 5 s) while the page is visible
     if (!gate || retry) return;
-    retry = setTimeout(() => { retry = 0; if (!ctx || ctx.state === 'running' || holds.size) { retryMs = 500; return; } if (!globalThis.document?.hidden) tryResume(); retryMs = Math.min(retryMs * 2, 5000); retryLater(); }, retryMs);
+    retry = setTimeout(() => {
+      retry = 0;
+      if (!ctx || ctx.state === 'running' || holds.size) {
+        retryMs = 500;
+        return;
+      }
+      if (!globalThis.document?.hidden) tryResume();
+      retryMs = Math.min(retryMs * 2, 5000);
+      retryLater();
+    }, retryMs);
   };
   const speakerNodes = [];
   const mixLevels = {}; // current MIX.INF target per bus (-1 levels keep the previous one)
@@ -126,7 +144,7 @@ export function createAudioEngine({ mixes = [], sliders = { music: SLIDER_DEFAUL
   return {
     get context() { return ctx; },
     get unlocked() { return unlocked; },
-    // Voices may start (pv audioInterrupt): false while a context that has run is stopped (interrupted, suspended, a movie).
+    // Voices may start: false while a context that has run is stopped (interrupted, suspended, a movie).
     get live() { return !gate || !ctx || !hasRun || ctx.state === 'running'; },
     get mixIndex() { return mixIndex; },
     get master() { return master; }, // QA: the final gain stage (level measurements)
@@ -209,5 +227,11 @@ export function installAudioUnlock(engine, target = globalThis) {
   globalThis.document?.addEventListener?.('visibilitychange', visibility);
   const again = () => { if (engine.gated) engine.retryResume(); };
   for (const e of ['focus', 'pageshow']) globalThis.addEventListener?.(e, again);
-  return () => { polling = false; offPads(); for (const e of events) target.removeEventListener?.(e, unlock, { capture: true }); globalThis.document?.removeEventListener?.('visibilitychange', visibility); for (const e of ['focus', 'pageshow']) globalThis.removeEventListener?.(e, again); };
+  return () => {
+    polling = false;
+    offPads();
+    for (const e of events) target.removeEventListener?.(e, unlock, { capture: true });
+    globalThis.document?.removeEventListener?.('visibilitychange', visibility);
+    for (const e of ['focus', 'pageshow']) globalThis.removeEventListener?.(e, again);
+  };
 }

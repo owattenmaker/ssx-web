@@ -559,6 +559,9 @@ def discover(memory):
                if (u(a), u(a + 0x28)) in (HUMAN_VTABLES, COMPUTER_VTABLES)}
     if scanned != set(roster): raise ValueError('Rider objects outside the roster')
     cams = [a - 0x10 for a in _word_hits(memory, DEFAULT3_VTABLE)]
+    if len(cams) > 2:   # a dead camera left in freed heap (the career Intimidator final after WS13, docs/career-events.md): no word
+        # references it or the outer camera it would be the compositor copy of
+        cams = [c for c in cams if any(a < 0x1FF0000 for a in _word_hits(memory, c) + _word_hits(memory, c - 0xC0))]
     if len(cams) != 2: raise ValueError(f'Expected two DEFAULT_3 cameras, found {len(cams)}')
     # a stale word on the EE stack (top of RAM, e.g. 0x1FFF990 in the Ruthless ready states, docs/peak2.md) is no reference
     referenced = [c for c in cams if any(a < 0x1FF0000 for a in _word_hits(memory, c))]

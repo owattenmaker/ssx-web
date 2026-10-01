@@ -15,7 +15,7 @@
 import { FrontEndPreview, clipSample, channelValue, previewRoot } from './fe-preview.js';
 import { inputDevice, keyFor, keyCapWidth, drawKeyCap, LUI_STRETCH, CAP_HEIGHT } from './input-glyphs.js';
 import { texture as tslTexture, attribute, vec4, positionGeometry, normalWorld, varying, floor, clamp, round } from 'three/tsl';
-import { toFrame, linearToFrame, linearTextureSpace } from './frame-space.js';
+import { toFrame } from './frame-space.js';
 import { packageTexture } from './texture-archive.js';
 import { activePad } from './gamepad.js';
 import { pv } from './pv-flags.js';
@@ -50,7 +50,12 @@ export function curveAt(k, t) {
 const rz = (a) => { const c = Math.cos(a), s = Math.sin(a); return [c, -s, 0, s, c, 0, 0, 0, 1]; };
 const ry = (a) => { const c = Math.cos(a), s = Math.sin(a); return [c, 0, s, 0, 1, 0, -s, 0, c]; };
 const rx = (a) => { const c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, c, -s, 0, s, c]; };
-const mul3 = (a, b) => { const o = new Array(9); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j]; return o; };
+const mul3 = (a, b) => {
+  const o = new Array(9);
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
+  return o;
+};
 const app3 = (m, p) => [m[0] * p[0] + m[1] * p[1] + m[2] * p[2], m[3] * p[0] + m[4] * p[1] + m[5] * p[2], m[6] * p[0] + m[7] * p[1] + m[8] * p[2]];
 
 // Object frame (camera 0x27D970, actor 0x27F9F8): p_world = Rz(yaw)Ry(-pitch)[Rz(e.yaw)Ry(-e.pitch)Rx(-e.roll)p + e.t] + pos.
@@ -101,14 +106,14 @@ export function actorRootAt(object, frame, t) {
 // Live-actor anchor 40 + subject (0x27A0D8 -> 279F18 -> 27B948) of an actor at tick t: position = rider+0x110 through the rider
 // interface (vt+0x2C 0x1408F0), which the NIS actor update writes with its root (0x1237E4: frame matrix x the curve position);
 // yaw / pitch = heading / elevation of the physical forward rider+0x1B0 (11E098 of the root quaternion: +Y), roll 0.
-// pv nisProjection: the view tangents (half width, half height of the page's 3D area) of a NIS camera with half-angle tangent
+// the view tangents (half width, half height of the page's 3D area) of a NIS camera with half-angle tangent
 // t. 376C58 builds the GS scales X = 0.5 w / t x (+0x6BA0), Y = X x 1.3333 h / w x (+0x6BA4) from the render context's block
 // (+0x6B94 mode, +0x6B98 top, +0x6B9C height, +0x6BA0 / +0x6BA4 scales; the player's Widescreen mode, web/widescreen.js). A NIS
 // letterbox (2EAA28) saves that block and targets {mode 1, top 0.125, height 0.75, 0.75, 0.63} (Anamorphic: {mode 2, 0, 1,
 // 0.75, 0.63}); 2EA900 slides the four floats linearly with the bars (f 0..1) and 2EA820 restores the block. So a letterboxed
 // step has P11 / P00 = 0.84 / 0.75 = 1.12 (PS2 states cam5a, nis153, peak2-arr: 0.75 / 0.63; slide states in between), an idle
 // step the player's own block (state-round-objectives: 1 / 1). The page draws the player's band (448 lines, 16:9: 336).
-// pv heliLight: a lit static-model instance (instance flag 0x4000; tools/export_cutscene_sets.py lighting_bank). 2F5400 gives the
+// a lit static-model instance (instance flag 0x4000; tools/export_cutscene_sets.py lighting_bank). 2F5400 gives the
 // instance ten irradiance rows (here the location's object bank; no local light within 10 m of the helipads), VU1 program 3
 // scales them by 128 at 0x2170 (w: 128 on the constant row) and at 0x8B8 evaluates per vertex, on the ITOF15 normal through
 // the node's rotation, L = FTOI0(clamp(r0 + r1 x^2 + r2 y^2 + r3 z^2 + r4 xy + r5 zx + r6 yz + r7 x + r8 y + r9 z, 0, 255)) in
@@ -116,11 +121,14 @@ export function actorRootAt(object, frame, t) {
 // The same per-vertex L on the CPU (tests, QA): n = the transformed normal in source axes -> [r, g, b, a] bytes (FTOI0).
 export function litVertexColour(lighting, [x, y, z]) {
   const w = [1, x * x, y * y, z * z, x * y, z * x, y * z, x, y, z], out = [0, 0, 0, 128];
-  for (let lane = 0; lane < 3; lane++) { let v = 0; for (let i = 0; i < 10; i++) v += Math.fround(lighting.rows[i][lane] * lighting.scale) * w[i]; out[lane] = Math.floor(Math.min(255, Math.max(0, v))); }
+  for (let lane = 0; lane < 3; lane++) {
+    let v = 0;
+    for (let i = 0; i < 10; i++) v += Math.fround(lighting.rows[i][lane] * lighting.scale) * w[i];
+    out[lane] = Math.floor(Math.min(255, Math.max(0, v)));
+  }
   return out;
 }
-// pv cutsceneBytes: the static-model MODULATE on GS bytes (web/world-material.js modelColour): Cs = T x (c5 << 3) >> 7, c5 = colour x 31.
-const cutsceneBytes = pv('cutsceneBytes');
+// The static-model MODULATE on GS bytes (web/world-material.js modelColour): Cs = T x (c5 << 3) >> 7, c5 = colour x 31.
 const modulateBytes = (tex, col) => toFrame(clamp(floor(round(tex.rgb.mul(255)).mul(round(col.rgb.mul(31)).mul(8)).div(128)), 0, 255).div(255));
 export function litInstanceColour(tex, lighting) {
   const rows = lighting.rows.map((r) => vec4(...r.slice(0, 3).map((x) => Math.fround(x * lighting.scale)), 0));   // 0x2170: MULi.xyz, w = 0
@@ -272,7 +280,7 @@ export const COURSE_CODES = Object.freeze(['ARA1', 'BRA2', 'CRA3', 'DRA4', 'ERA5
 export const toScene = (p, origin) => [p[0] / 100 - origin.x, p[2] / 100 - origin.y, -p[1] / 100 - origin.z];
 
 // A last full-screen draw that sets the frame's alpha to 1 and keeps its colour (blend Zero / One on RGB, One / Zero on alpha):
-// pv acrossLoop, see acrossSwitch.
+// acrossLoop, see acrossSwitch.
 export function opaqueAlphaFill(T) {
   const g = new T.BufferGeometry(); g.setAttribute('position', new T.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
   const m = new T.MeshBasicNodeMaterial({ transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false, side: T.DoubleSide });
@@ -311,7 +319,17 @@ class Sequence {
     this.cameras = this.objects.filter((o) => o.kind <= 3);
     this.cuts = this.objects.find((o) => o.kind === 4) || null;
     this.control = this.objects.find((o) => o.kind === 7) || null;
-    this.actors = this.objects.filter((o) => o.kind === 5).map((o) => ({ object: o, rider: bindingRider(cast, o.ext.binding), model: null, frame: null, root: null, fired: new Set(), voices: new Map() }));
+    this.actors = this.objects
+      .filter((o) => o.kind === 5)
+      .map((o) => ({
+        object: o,
+        rider: bindingRider(cast, o.ext.binding),
+        model: null,
+        frame: null,
+        root: null,
+        fired: new Set(),
+        voices: new Map()
+      }));
     this.fired = new Set(); this.voices = new Map();
   }
 }
@@ -320,7 +338,7 @@ class Sequence {
 // fades in with its own fade-in record; a later step with the previous step's fade-out record's in ticks (PS2: the CTM
 // approach is bright at t3 after the fly-over, whose fade-out in = 0). The fade-out's out ticks run before the end of a
 // step that plays once (a looping script played one cycle too), or before a held step's known release.
-// loops: the number of times a looping step (idle, flag 8) wrapped; its fade-in belongs to the step's first pass only (pv loopFadeOnce:
+// loops: the number of times a looping step (idle, flag 8) wrapped; its fade-in belongs to the step's first pass only (loopFadeOnce:
 // the start-gate idle under a heat's card faded back in from black on every loop, PS2 menus/race/r3-rr-dense: a steady picture).
 export function fadeAt({ script, t, duration, prevFadeOut = null, step = null, held = 0, loops = 0 }) {
   const fo = script.fade_out, fi = prevFadeOut ? (prevFadeOut.type === 1 ? { type: 1, colour: prevFadeOut.colour, in_ticks: prevFadeOut.in_ticks } : null) : script.fade_in;
@@ -377,7 +395,16 @@ export function createCutscenes(host) {
     }
   }
   function releaseActors(seq) {
-    for (const a of seq.actors) { if (a.model?.model?.pda) a.model.model.pda.visible = false; if (a.model) { a.model.show(false); a.model.model?.group.parent?.remove(a.model.model.group); a.model.busy = false; } a.model = null; stopVoices(a.voices); }
+    for (const a of seq.actors) {
+      if (a.model?.model?.pda) a.model.model.pda.visible = false;
+      if (a.model) {
+        a.model.show(false);
+        a.model.model?.group.parent?.remove(a.model.model.group);
+        a.model.busy = false;
+      }
+      a.model = null;
+      stopVoices(a.voices);
+    }
     stopVoices(seq.voices);
   }
 
@@ -389,18 +416,26 @@ export function createCutscenes(host) {
       const base = `${ROOT}PROPS/pda/`, d = await fetchJson(base + 'prop.json');
       const [vb, ib, mb] = await Promise.all([fetchBuffer(base + 'vertices.bin'), fetchBuffer(base + 'indices.bin'), fetchBuffer(base + 'morphs.bin').catch(() => new ArrayBuffer(0))]);
       const map = await new T.TextureLoader().loadAsync(base + d.texture.path);
-      map.flipY = false; map.colorSpace = cutsceneBytes ? T.NoColorSpace : linearTextureSpace;
+      map.flipY = false; map.colorSpace = T.NoColorSpace;
       const inter = new T.InterleavedBuffer(new Float32Array(vb), 10), g = new T.BufferGeometry(), n = d.vertex_count;
       g.setAttribute('position', new T.InterleavedBufferAttribute(inter, 3, 0)); g.setAttribute('normal', new T.InterleavedBufferAttribute(inter, 3, 3));
       g.setAttribute('uv', new T.InterleavedBufferAttribute(inter, 2, 6)); g.setIndex(new T.BufferAttribute(new Uint32Array(ib), 1));
-      if (d.morphs?.length && mb.byteLength) { g.morphAttributes.position = d.morphs.map((x) => new T.BufferAttribute(new Float32Array(mb.slice(x.offset, x.offset + n * 12)), 3)); g.morphTargetsRelative = true; }
+      if (d.morphs?.length && mb.byteLength) {
+        g.morphAttributes.position = d.morphs.map((x) => new T.BufferAttribute(new Float32Array(mb.slice(x.offset, x.offset + n * 12)), 3));
+        g.morphTargetsRelative = true;
+      }
       const m = new T.MeshBasicNodeMaterial({ side: T.DoubleSide, alphaTest: 0.35, fog: false });
-      const tex = tslTexture(map); m.colorNode = cutsceneBytes ? vec4(toFrame(clamp(round(tex.rgb.mul(255)).mul(2), 0, 255).div(255)), tex.a) : vec4(linearToFrame(tex.rgb.mul(2).min(1)), tex.a);   // PS2 texels (128 = 1.0) x 2: bytes (pv cutsceneBytes) or linear light
+      const tex = tslTexture(map); m.colorNode = vec4(toFrame(clamp(round(tex.rgb.mul(255)).mul(2), 0, 255).div(255)), tex.a);   // PS2 texels (128 = 1.0) x 2: bytes or linear light
       return { d, g, m, n };
     })().catch((e) => { console.warn('Cutscene PDA prop unavailable (python3 tools/export_cutscene_props.py)', e); return null; });
     return pdaJob;
   }
-  function pdaEvents(clip) { const ev = clip?.events || []; const show = ev.find((e) => e[1] === 0), hide = ev.find((e) => e[1] === 1); return show ? { show: show[0], hide: hide ? hide[0] : -1 } : null; }
+  function pdaEvents(clip) {
+    const ev = clip?.events || [];
+    const show = ev.find((e) => e[1] === 0),
+      hide = ev.find((e) => e[1] === 1);
+    return show ? { show: show[0], hide: hide ? hide[0] : -1 } : null;
+  }
   async function attachPda(a) {
     const fp = a.model, model = fp?.model; if (!model || model.pda) return;
     const asset = await pdaAsset(); if (!asset || model.pda) return;
@@ -423,17 +458,17 @@ export function createCutscenes(host) {
       const [vb, ib, cb] = await Promise.all(['vertices.bin', 'indices.bin', 'colors.bin'].map((f) => fetchBuffer(base + f)));
       const inter = new T.InterleavedBuffer(new Float32Array(vb), 10), colors = new T.BufferAttribute(new Float32Array(cb), 4), indices = new Uint32Array(ib);
       const loader = new T.TextureLoader(), group = new T.Group(); group.name = `cutscene set ${code}`; group.visible = false;
-      const staged = !!d.livecomp && (d.anchor === 29 ? pv('bcHeli') : pv('plane')), meshes = [];   // a set with a LiveComp record (the midway plane, a backcountry heli): web/cutscene-stage-sets.js
+      const staged = !!d.livecomp, meshes = [];   // a set with a LiveComp record (the midway plane, a backcountry heli): web/cutscene-stage-sets.js
       for (const b of d.batches) {
         const t = d.textures[`9-${b.texture}`]; const map = await packageTexture(loader, base, t); // world texture library entry (or an older PNG export)
-        map.flipY = false; map.wrapS = map.wrapT = T.RepeatWrapping; map.colorSpace = cutsceneBytes ? T.NoColorSpace : linearTextureSpace;
+        map.flipY = false; map.wrapS = map.wrapT = T.RepeatWrapping; map.colorSpace = T.NoColorSpace;
         const g = new T.BufferGeometry();
         g.setAttribute('position', new T.InterleavedBufferAttribute(inter, 3, 0)); g.setAttribute('normal', new T.InterleavedBufferAttribute(inter, 3, 3));
         g.setAttribute('uv', new T.InterleavedBufferAttribute(inter, 2, 6)); g.setAttribute('color', colors);
         g.setIndex(new T.BufferAttribute(indices.slice(b.first_index, b.first_index + b.index_count), 1));
         const m = new T.MeshBasicNodeMaterial({ side: T.DoubleSide, transparent: !!b.has_alpha, alphaTest: b.has_alpha ? 0.02 : 0, fog: false, depthWrite: !b.has_alpha });
-        if (d.lighting && staged && pv('heliLight')) { map.colorSpace = T.NoColorSpace; m.colorNode = litInstanceColour(tslTexture(map), d.lighting); }   // a lit instance (the backcountry heli)
-        else { const tex = tslTexture(map), col = attribute('color', 'vec4'); m.colorNode = vec4(cutsceneBytes ? modulateBytes(tex, col) : linearToFrame(tex.rgb.mul(col.rgb).mul(31 / 16)), tex.a.mul(col.a)); }
+        if (d.lighting && staged) { map.colorSpace = T.NoColorSpace; m.colorNode = litInstanceColour(tslTexture(map), d.lighting); }   // a lit instance (the backcountry heli)
+        else { const tex = tslTexture(map), col = attribute('color', 'vec4'); m.colorNode = vec4(modulateBytes(tex, col), tex.a.mul(col.a)); }
         const mesh = new T.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = 500; group.add(mesh);
         if (staged && b.livecomp_resource !== undefined) { mesh.userData.liveComp = [b.livecomp_resource, b.livecomp_node]; meshes.push(mesh); }
       }
@@ -462,7 +497,7 @@ export function createCutscenes(host) {
     });
   }
   const stage = () => stageShown?.userData.stage ?? null;
-  // pv planeFx: the plane's engine loop and snow spray (web/cutscene-plane-fx.js)
+  // the plane's engine loop and snow spray (web/cutscene-plane-fx.js)
   const planeFx = createPlaneFx(host), stagedSet = () => (stageShown?.userData.stage ? { meta: stageShown.userData.meta, stage: stageShown.userData.stage } : null);
   // pv departCalls: a kind-7 channel-0 call (0x2808E8) that no staged set owns runs on the step's hub location, the script's scdat
   // container (27C070 -> 22E098 -> 309E50: that track's stage globals): gond_dep #126 / heli_dep #147 call the station's functions
@@ -475,15 +510,25 @@ export function createCutscenes(host) {
     if (!(track >= 0) || !c?._stage_global_call) return;
     if (c._stage_global_call(track, symbol >>> 0, NaN, NaN, NaN) && cleanup != null && (cleanup >>> 0) !== NOSCRIPT) hubCleanups.set(cleanup >>> 0, track);
   }
-  function hubStepEnd() { const c = host.core; for (const [k, t] of hubCleanups) { try { c?._stage_global_call?.(t, k, NaN, NaN, NaN); } catch (e) { console.warn('Cutscene hub cleanup', e); } } hubCleanups.clear(); }
-  // pv heliHover: after a backcountry arrival the PS2 heli hovers on at the helipad (its cleanup 0x0AE69AB4 started frames 551..677
+  function hubStepEnd() {
+    const c = host.core;
+    for (const [k, t] of hubCleanups) {
+      try {
+        c?._stage_global_call?.(t, k, NaN, NaN, NaN);
+      } catch (e) {
+        console.warn('Cutscene hub cleanup', e);
+      }
+    }
+    hubCleanups.clear();
+  }
+  // after a backcountry arrival the PS2 heli hovers on at the helipad (its cleanup 0x0AE69AB4 started frames 551..677
   // in loop mode, engine sound 201 looping at the heli); the set stays in for the world's frame-0 copy, advanced once per game tick
   // (api.linger from main.js while no cutscene plays), until the next cutscene, a course change or the camera is 3 km away.
   let linger = null;
   const LINGER_RANGE = 3000;   // metres
   function startLinger() {
     const g = stageShown, st = g?.userData.stage;
-    if (!pv('heliHover') || g?.userData.meta?.anchor !== 29 || !st?.anim.active.size) return false;
+    if (g?.userData.meta?.anchor !== 29 || !st?.anim.active.size) return false;
     linger = { group: g, t: 0 }; planeFx.call(stagedSet(), 0x0AE69AB4, NOSCRIPT, true);   // the cleanup's engine loop (owned: the voice)
     return true;
   }
@@ -500,11 +545,11 @@ export function createCutscenes(host) {
     l.t += dt * TICK_HZ; set.stage.sync(l.t); set.stage.apply(); planeFx.frame(set);
   }
   // anchor 37 = ABC1 locator 15, the midway plane (#153 abc1_heli_arr_midway, #154-163 heli_arrb_<char>_midwayabc1)
-  // pv bcHeli: anchor 29 outside a loop = the location's locator 5, the backcountry heli (#123 / #124 / #127 <bc>_heli_arr,
+  // anchor 29 outside a loop = the location's locator 5, the backcountry heli (#123 / #124 / #127 <bc>_heli_arr,
   // #128-137 heli_arrb_<char>; tools/export_cutscene_sets.py --helis -> SETS/<LOC>HELI, docs/presentation.md 16)
   const setOf = (seq) => (seq.loop && seq.objects.some((o) => o.ext?.anchor === 29 || o.ext?.anchor === 30) ? 'TRANSP'
-    : pv('plane') && seq.objects.some((o) => o.ext?.anchor === 37) ? 'ABC1PLANE'
-    : pv('bcHeli') && !seq.loop && HELI_SETS.has(active?.location) && seq.objects.some((o) => o.ext?.anchor === 29) ? `${active.location}HELI` : null);
+    : seq.objects.some((o) => o.ext?.anchor === 37) ? 'ABC1PLANE'
+    : !seq.loop && HELI_SETS.has(active?.location) && seq.objects.some((o) => o.ext?.anchor === 29) ? `${active.location}HELI` : null);
 
   // ---- audio (web/sfx.js through web/game-audio.js; the script's load-group bank on its own slot) ----
   const NIS_SLOT = 0x11;
@@ -525,10 +570,23 @@ export function createCutscenes(host) {
   let locators = null;
   function anchorFrame(id, seq) {
     const cast = active?.cast || {};
-    const f = host.anchor?.(id, { location: active?.location, loop: seq.loop, cast }) || anchorFor(id, {
-      locations: locators?.locations, location: active?.location, loop: seq.loop,
-      subjectSlot: (subject) => { const r = subjectRider(cast, subject); return r?.slot ?? (subject >= 15 ? subject - 15 : subject === 3 ? 0 : null); },
-      snap: host.snap, liveActor: (i) => { const a = seq.actors.find((x) => x.object.ext.binding === i + 1) ?? null; return a?.frame ? { pos: a.frame.T, yaw: a.frame.yaw, pitch: a.frame.pitch } : null; } });   // anchor 40 + subject = the actor bound to subject + 1 (the heli_arrb_* subject cameras: anchor 43 = binding 4, the human)
+    // anchor 40 + subject = the actor bound to subject + 1 (the heli_arrb_* subject cameras: anchor 43 = binding 4, the human)
+    const f =
+      host.anchor?.(id, { location: active?.location, loop: seq.loop, cast }) ||
+      anchorFor(id, {
+        locations: locators?.locations,
+        location: active?.location,
+        loop: seq.loop,
+        subjectSlot: (subject) => {
+          const r = subjectRider(cast, subject);
+          return r?.slot ?? (subject >= 15 ? subject - 15 : subject === 3 ? 0 : null);
+        },
+        snap: host.snap,
+        liveActor: (i) => {
+          const a = seq.actors.find((x) => x.object.ext.binding === i + 1) ?? null;
+          return a?.frame ? { pos: a.frame.T, yaw: a.frame.yaw, pitch: a.frame.pitch } : null;
+        }
+      });
     if (!f) console.warn(`Cutscene anchor ${id} unavailable at ${active?.location}`);
     return f || { pos: [0, 0, 0], yaw: 0, pitch: 0 };
   }
@@ -567,7 +625,13 @@ export function createCutscenes(host) {
     if (ctl) {
       // ch0 stage-script calls (0x2808E8; the plane's LiveComp, web/cutscene-stage-sets.js), ch1 music codes (0x28E8C0),
       // ch2 PA/DJ cues (0x2A19D8), ch3 non-positional sounds (CHARACTER bus).
-      for (const it of ctl.ch[0]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('p' + it.t + ':' + it.w[0])) { seq.fired.add('p' + it.t + ':' + it.w[0]); const owned = stage()?.call(it.w[0], it.w[1], it.t); if (!stagedSet() && pv('departCalls') && TRANSPORT_KINDS.has(active?.kind)) hubCall(seq, it.w[0], it.w[1]); else planeFx.call(stagedSet(), it.w[0], it.w[1], owned); }
+      for (const it of ctl.ch[0]?.i || [])
+        if (it.t >= t0 && it.t < t1 && !seq.fired.has('p' + it.t + ':' + it.w[0])) {
+          seq.fired.add('p' + it.t + ':' + it.w[0]);
+          const owned = stage()?.call(it.w[0], it.w[1], it.t);
+          if (!stagedSet() && pv('departCalls') && TRANSPORT_KINDS.has(active?.kind)) hubCall(seq, it.w[0], it.w[1]);
+          else planeFx.call(stagedSet(), it.w[0], it.w[1], owned);
+        }
       for (const it of ctl.ch[1]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('m' + it.t)) { seq.fired.add('m' + it.t); music(it.w[0]); }
       for (const it of ctl.ch[2]?.i || []) if (it.t >= t0 && it.t < t1 && !seq.fired.has('c' + it.t)) { seq.fired.add('c' + it.t); cue(it.w[0]); }
       for (const it of ctl.ch[3]?.i || []) {
@@ -625,6 +689,22 @@ export function createCutscenes(host) {
         m.apply(T, A, B, w, seq.loaded.samples, { board: true });
       }
       g.updateMatrixWorld(true);
+      // The human's rider actor (binding 4): its posed board root (board_rootg, the gameplay rig's bone 22 = rider+0x8A0) in PS2 cm, and
+      // the record's root-motion flag (123640: +0xAFC = record byte 7), for 120F20's re-probe from the board root (core nis_hold_probe 2,
+      // main.js pv nisBoneProbe; docs/ctm-parity.md "120F20's re-probe under the hold")
+      if (a.object.ext?.binding === 4) {
+        const k = m.model.rig.bones.findIndex((b) => b.name === 'board_rootg'),
+          bone = k >= 0 ? m.model.bones[k] : null;
+        if (bone) {
+          const w = new T.Vector3();
+          bone.getWorldPosition(w);
+          seq.humanBoard = {
+            pos: [(w.x + origin.x) * 100, -(w.z + origin.z) * 100, (w.y + origin.y) * 100],
+            afc: a.object.ext.root_motion_velocity ? 1 : 0,
+            t
+          };
+        }
+      }
       if (host.core) m.light(T, host.core, seq.view || null);
       m.show(true);
     }
@@ -636,14 +716,22 @@ export function createCutscenes(host) {
     const id = cut ? cut.cam : seq.cameras[0]?.ext.camera_id;
     const cam = seq.cameras.find((c) => c.ext.camera_id === id) || seq.cameras[0];
     if (!cam) return null;
-    // pv planeCam: a camera on a live actor (anchors 40..60) is framed when it is cut to (27D850 -> 27D970, the camera's
+    // a camera on a live actor (anchors 40..60) is framed when it is cut to (27D850 -> 27D970, the camera's
     // activation) on its rider as it is then (liveActorAnchor), not on the actor's object frame: #154-163 / #128-137 camera 5
     // sits 1.5 m behind the rider at the door (PS2 new-career s3050..3250), not 1.5 m behind the plane's locator.
-    if (seq.liveCut !== cam && pv('planeCam')) { seq.liveCut = cam; const f = liveCutFrame(cam, seq.actors, t); if (f) cam.frame = f; }
+    if (seq.liveCut !== cam) { seq.liveCut = cam; const f = liveCutFrame(cam, seq.actors, t); if (f) cam.frame = f; }
     let subject = null;
     if (cam.kind === 2) {
       const a = seq.actors.find((x) => x.object.ext.binding === (cam.ext.subject ?? -1) + 1) || seq.actors[0];
-      if (a?.frame) { const r = actorRootAt(a.object, a.frame, t); subject = { pos: r.pos, forward: [Math.cos(r.yaw + Math.PI / 2), Math.sin(r.yaw + Math.PI / 2), 0], up: [0, 0, 1], scale: a.rider?.scale ?? 1 }; }
+      if (a?.frame) {
+        const r = actorRootAt(a.object, a.frame, t);
+        subject = {
+          pos: r.pos,
+          forward: [Math.cos(r.yaw + Math.PI / 2), Math.sin(r.yaw + Math.PI / 2), 0],
+          up: [0, 0, 1],
+          scale: a.rider?.scale ?? 1
+        };
+      }
     }
     const pose = cameraAt(cam, cam.frame, t, subject);
     seq.view = viewMatrix(pose, host.origin);
@@ -662,8 +750,25 @@ export function createCutscenes(host) {
   const FADE_RESET = Math.fround(0.93), fadePainterReset = (alpha) => { if (alpha >= FADE_RESET) host.core?._weather_fade_reset?.(); };
   function fadeAlpha(state) {
     if (!state.seq) return state.black ? 1 : 0;
-    const seq = state.seq, r = fadeAt({ script: seq.script, t: seq.fadeT ?? seq.t, duration: seq.duration, prevFadeOut: state.prevFadeOut, step: state.steps[state.at], held: seq.held || 0, loops: pv('loopFadeOnce') ? seq.loops || 0 : 0 });
-    if (state.releaseT != null) { const fo = seq.script.fade_out, a = Math.min(1, (state.releaseT + 1) / Math.max(1, fo?.out_ticks || 30)); if (a > r.alpha) { r.alpha = a; r.colour = fo?.colour === 'white' ? '#fff' : '#000'; } }   // 277980 -> 2E4370: the release's fade-out, n / 30 on list tick n
+    const seq = state.seq,
+      r = fadeAt({
+        script: seq.script,
+        t: seq.fadeT ?? seq.t,
+        duration: seq.duration,
+        prevFadeOut: state.prevFadeOut,
+        step: state.steps[state.at],
+        held: seq.held || 0,
+        loops: seq.loops || 0
+      });
+    // 277980 -> 2E4370: the release's fade-out, n / 30 on list tick n
+    if (state.releaseT != null) {
+      const fo = seq.script.fade_out,
+        a = Math.min(1, (state.releaseT + 1) / Math.max(1, fo?.out_ticks || 30));
+      if (a > r.alpha) {
+        r.alpha = a;
+        r.colour = fo?.colour === 'white' ? '#fff' : '#000';
+      }
+    }
     state.fadeColour = r.colour; fadePainterReset(r.alpha); return r.alpha;
   }
 
@@ -689,7 +794,13 @@ export function createCutscenes(host) {
     poseActors(seq, 0);
     // The human's rider actor (binding 4) of this step at its first tick: 123640 runs at each step's actor start (host.onHumanActor:
     // main.js holds the rider there under a Transport's ride, pv nisTick)
-    { const h = seq.actors.find((a) => a.object.ext?.binding === 4 && a.frame); if (h) { const r = actorRootAt(h.object, h.frame, 0); host.onHumanActor?.({ pos: r.pos, quat: r.quat, yaw: r.yaw + Math.PI / 2, kind: state.kind, script: loaded.number }); } }
+    {
+      const h = seq.actors.find((a) => a.object.ext?.binding === 4 && a.frame);
+      if (h) {
+        const r = actorRootAt(h.object, h.frame, 0);
+        host.onHumanActor?.({ pos: r.pos, quat: r.quat, yaw: r.yaw + Math.PI / 2, kind: state.kind, script: loaded.number });
+      }
+    }
     try { state.onStep?.(step, state.at); } catch (e) { console.warn('Cutscene onStep', e); }   // pv transportFade: the Transport's held loop start requests the destination (0x2366C4)
     if (step.idle) state.onIdle?.();   // the idle loop runs on under the next screen (objectives card) until stop(); the card's context 1 holds it still (update)
   }
@@ -734,9 +845,26 @@ export function createCutscenes(host) {
     if (ui && back !== 'cutscene') ui.set('cutscene');
     const done = (r) => { if (ui && restore !== false && back && back !== 'cutscene' && ui.screen === 'cutscene') ui.set(back); return r; };
     return new Promise((resolveDone0) => { const resolveDone = (r) => resolveDone0(done(r));
-      const state = { kind, steps: resolved, loaded, cast, location, at: 0, seq: null, skipped: false, resolve: resolveDone, onIdle, place, prevFadeOut, barsFull: barsFull || !!overlay, skipLock, onStep, releaseT: null };
+      const state = {
+        kind,
+        steps: resolved,
+        loaded,
+        cast,
+        location,
+        at: 0,
+        seq: null,
+        skipped: false,
+        resolve: resolveDone,
+        onIdle,
+        place,
+        prevFadeOut,
+        barsFull: barsFull || !!overlay,
+        skipLock,
+        onStep,
+        releaseT: null
+      };
       active = state; overlay = null; host.onActive?.(true); host.audio?.cutscene?.(true);
-      if (kind === 'heat') host.audio?.heat?.(); // world state 13 -> 27A860 -> 28E8C0(20, 1): heats 2 / 3 get a new song (pv heatSong, web/game-audio.js)
+      if (kind === 'heat') host.audio?.heat?.(); // world state 13 -> 27A860 -> 28E8C0(20, 1): heats 2 / 3 get a new song (heatSong, web/game-audio.js)
       state.stepping = startStep(state);
     });
   }
@@ -799,7 +927,15 @@ export function createCutscenes(host) {
   // previous tick's camera; this gives the last update's pose).
   let sectionSeq = null;
   const sectionEnd = () => { if (sectionSeq) { sectionSeq = null; host.sectionPoint?.(null); } };
-  const sectionFeed = (seq, pose) => { if (!pose || !host.sectionPoint) return pose; if (sectionSeq !== seq) { if (sectionSeq) host.sectionPoint(null); sectionSeq = seq; } host.sectionPoint(pose.eye); return pose; };
+  const sectionFeed = (seq, pose) => {
+    if (!pose || !host.sectionPoint) return pose;
+    if (sectionSeq !== seq) {
+      if (sectionSeq) host.sectionPoint(null);
+      sectionSeq = seq;
+    }
+    host.sectionPoint(pose.eye);
+    return pose;
+  };
   function update(dt, self = false) {
     if (!self) mainAt = performance.now();
     const s = active; if (!s) { lastPose = null; return null; }
@@ -820,7 +956,8 @@ export function createCutscenes(host) {
     const adv = stopTick ? Math.floor(seq.t) + 1 - seq.t : dt * TICK_HZ;   // this update's NIS ticks
     // NISSkip (Cross) on skippable steps: a hard cut to the next step without flag 2 (0x276F48).
     const cross = crossDown();
-    if (!stopTick && cross && !skipLatch && (step.flags & FLAG.SKIP) && seq.t > 0 && !(s.skipLock > 0)) { skipLatch = true; skip(s); return update(0); }   // the skip lock: 0x278828 skips the Cross test
+    // the skip lock: 0x278828 skips the Cross test
+    if (!stopTick && cross && !skipLatch && (step.flags & FLAG.SKIP) && seq.t > 0 && !(s.skipLock > 0)) { skipLatch = true; skip(s); return update(0); }
     skipLatch = cross;
     const t0 = seq.t; let t1 = t0 + adv;
     if (s.releaseT != null) {   // pv transportFade: the released held step plays on under its fade-out; the list stops (or moves on) when +0xB8 reaches 0 (276CC8 @0x276D74, R+29)
@@ -853,7 +990,7 @@ export function createCutscenes(host) {
     camera.position.set(e[0], e[1], e[2]); camera.up.set(0, 1, 0); camera.lookAt(g[0], g[1], g[2]);
     if (pose.roll) camera.rotateZ(-pose.roll);
     camera.near = pose.near / 100; camera.far = pose.far / 100;
-    if (pv('nisProjection') && api.qaFovAspect == null) {
+    if (api.qaFovAspect == null) {
       // The horizontal tangent through a view offset: camera.aspect stays the stage's (main.js clears the offset every frame).
       const [tx, ty] = nisTangents(Math.tan(pose.fov), host.ui?.widescreen ?? 0, letterbox()), A = camera.aspect, k = tx / (A * ty);
       camera.fov = 2 * Math.atan(ty) / DEG;
@@ -893,13 +1030,22 @@ export function createCutscenes(host) {
   }
   // A fade from white over the running world (WS15 same-course return from the post-event map: 2E4CE8 white fade, PS2
   // ctm/caps sj-return: near-white at the course start, clear after ~58 ticks).
-  // hud: the fade covers the world only and the HUD draws over it (pv arrivalFade: a transport arrival fades in from black over
+  // hud: the fade covers the world only and the HUD draws over it (arrivalFade: a transport arrival fades in from black over
   // 30 ticks under the HUD, PS2 menus/fr-courses/aba1-screen10 arrival: black at the placement, clear ~30 ticks later).
   // bars (pv transportFade): the list stop's letterbox slide-out 2EA780 over the fade's remaining time, 60 lines -> 0 (PS2 to-c-fade 1470..1502).
   function fadeFrom({ ticks = 58, colour = 'white', hud = false, bars = false } = {}) {
     const o = overlay = { t: 0, ticks, hold: 0, colour: colour === 'white' ? '#fff' : '#000', loading: false, reverse: true, hud, bars };
     let last = performance.now();
-    const step = (now) => { if (overlay !== o) return; if (!qa.frozen) o.t += Math.min(Math.max(0, now - last), 250) * TICK_HZ / 1000; last = now; if (o.t >= o.ticks) { overlay = null; return; } requestAnimationFrame(step); };
+    const step = (now) => {
+      if (overlay !== o) return;
+      if (!qa.frozen) o.t += (Math.min(Math.max(0, now - last), 250) * TICK_HZ) / 1000;
+      last = now;
+      if (o.t >= o.ticks) {
+        overlay = null;
+        return;
+      }
+      requestAnimationFrame(step);
+    };
     requestAnimationFrame(step);
   }
   function drawOverlay(c, ui) {
@@ -967,19 +1113,20 @@ export function createCutscenes(host) {
     if (a > 0) { c.globalAlpha = Math.min(1, a); c.fillStyle = s.fadeColour || '#000'; c.fillRect(0, 0, 640, 480); c.globalAlpha = 1; }
     // Over the script's fades (PS2 s770: bright over the fly-over's fade-in); it goes when the riders are loaded (PS2
     // t~258-262, 12A180), which in the browser happens after the fly-over, behind the course-switch cover.
-    if (seq && s.releaseT == null && ((step?.flags & FLAG.HOLD) || seq.loop || step?.loading)) loadingCaption(c, ui, seq && !step?.idle ? 396 : 440);   // released: WS10 enter clears the caption bit (R+1)
+    // released: WS10 enter clears the caption bit (R+1)
+    if (seq && s.releaseT == null && ((step?.flags & FLAG.HOLD) || seq.loop || step?.loading)) loadingCaption(c, ui, seq && !step?.idle ? 396 : 440);
     c.restore();
   }
   function measure(ui, text, size) { const g = ui.fonts?.FEFONT; if (!g) return text.length * size * 0.5; let w = 0; for (const ch of text) w += (g[ch]?.advance || 10) * size / 22; return w; }
 
-  // ---- a held step across the page's course switch (pv heli; docs/presentation.md "Heli ride over a peak change") ----
+  // ---- a held step across the page's course switch (heli; docs/presentation.md "Heli ride over a peak change") ----
   // PS2 (ctm-parity f95-after / peak2-arr): Yes to "Go to this peak now?" -> WS14 heli_inair #149 -> WS11 heli_inair_<char>
   // #122 held (flags 8) with "Loading..." while the destination streams in -> WS10 at the new peak. The browser's course
   // switch draws no world (main.js idleFrame) and stops the cutscene (stopRun): acrossSwitch() keeps the list alive and draws
   // it itself (host.render: the TRANSP set and the actors, which stay in the scene; `background` behind them) whenever
   // the main loop has not updated it for 100 ms, until release() lets the held step go.
   let across = null;
-  // pv heliSky: the PS2 draws the world's sky dome (22DE98, camera-anchored, depth off, before the world; 382AF0 clears to
+  // the PS2 draws the world's sky dome (22DE98, camera-anchored, depth off, before the world; 382AF0 clears to
   // black) under the held loop too: the transport rows stream the destination while the departure's sky row stays until a
   // skybox trigger switches it. The page's switch unloads its sky, so the list keeps its own copy of the departure dome
   // (the course package's SKY world.json, 9 batches) and draws it first: the gondola's 58 %-opaque windows (TRANSP 9-10)
@@ -1001,7 +1148,7 @@ export function createCutscenes(host) {
       const loader = new T.TextureLoader(), group = new T.Group(); group.name = `cutscene sky ${root}`; group.visible = false;
       for (const b of d.batches) {
         const t = d.textures[`9-${b.texture}`]; if (!t) continue;
-        const map = await packageTexture(loader, root, t); map.flipY = false; map.wrapS = map.wrapT = T.RepeatWrapping; map.colorSpace = cutsceneBytes ? T.NoColorSpace : linearTextureSpace;
+        const map = await packageTexture(loader, root, t); map.flipY = false; map.wrapS = map.wrapT = T.RepeatWrapping; map.colorSpace = T.NoColorSpace;
         const g = new T.BufferGeometry();
         g.setAttribute('position', new T.InterleavedBufferAttribute(inter, 3, 0)); g.setAttribute('uv', new T.InterleavedBufferAttribute(inter, 2, 6)); g.setAttribute('color', colors);
         g.setIndex(new T.BufferAttribute(indices.slice(b.first_index, b.first_index + b.index_count), 1));
@@ -1009,7 +1156,7 @@ export function createCutscenes(host) {
         const m = new T.MeshBasicNodeMaterial({ side: T.DoubleSide, transparent: false, fog: false, depthTest: false, depthWrite: false });
         if (b.has_alpha) { m.blending = T.CustomBlending; m.blendSrc = T.SrcAlphaFactor; m.blendDst = T.OneMinusSrcAlphaFactor; m.blendEquation = T.AddEquation; }
         const tex = tslTexture(map), col = attribute('color', 'vec4');
-        m.colorNode = vec4(cutsceneBytes ? modulateBytes(tex, col) : linearToFrame(tex.rgb.mul(col.rgb).mul(31 / 16)), b.has_alpha ? tex.a.mul(col.a) : 1);   // texture x colour: bytes (pv cutsceneBytes) or linear light
+        m.colorNode = vec4(modulateBytes(tex, col), b.has_alpha ? tex.a.mul(col.a) : 1);   // texture x colour: bytes or linear light
         const mesh = new T.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = b.has_alpha ? -10 : -11; group.add(mesh);
       }
       host.scene.add(group);
@@ -1018,8 +1165,8 @@ export function createCutscenes(host) {
     skies.set(root, job); return job;
   }
   // The departure's sky, loaded while the ride's first steps play (web/ctm-transport.js).
-  function prepareAcrossSky(fallback) { if (!pv('heliSky')) return null; const root = skyRootNow(fallback); if (root) ensureSky(root); return root; }
-  // pv acrossLoop: the list's own draw over the switch (renderer.render straight to the canvas, not the page's fog pipeline, whose
+  function prepareAcrossSky(fallback) { const root = skyRootNow(fallback); if (root) ensureSky(root); return root; }
+  // the list's own draw over the switch (renderer.render straight to the canvas, not the page's fog pipeline, whose
   // last pass writes alpha 1) left the canvas alpha below 1 where the sky dome's blended batches (alpha = As^2 + Ad(1 - As)) or,
   // without heliSky, the gondola's 58 %-opaque windows over the transparent clear were drawn. three's output pass treats the frame as
   // premultiplied (rgb / a -> sRGB -> x a) and the page composites the canvas premultiplied over black: those pixels showed
@@ -1032,7 +1179,7 @@ export function createCutscenes(host) {
     const s = active; if (!s || !host.render) return false;
     s.persist = true; if (across) return true;
     const me = across = { background, sky: null }; let prev = performance.now();
-    if (sky && pv('heliSky')) { me.background ??= new T.Color(0, 0, 0); ensureSky(sky).then((g) => { if (across === me) me.sky = g; }); }
+    if (sky) { me.background ??= new T.Color(0, 0, 0); ensureSky(sky).then((g) => { if (across === me) me.sky = g; }); }
     const tick = (now) => {
       if (across !== me || active !== s) return;
       if (now - mainAt > 100) {
@@ -1041,8 +1188,8 @@ export function createCutscenes(host) {
         if (pose) { host.camera.clearViewOffset?.(); applyCamera(host.camera, pose); }
         const scene = host.scene, bg = scene.background; if (me.background) scene.background = me.background;
         if (me.sky) { me.sky.visible = true; me.sky.position.copy(host.camera.position); }
-        const fill = pv('acrossLoop') ? opaqueAlpha() : null; if (fill) scene.add(fill);
-        try { host.render(); } catch (e) { console.warn('Cutscene draw across the course switch', e); } finally { scene.background = bg; if (me.sky) me.sky.visible = false; if (fill) scene.remove(fill); }
+        const fill = opaqueAlpha(); scene.add(fill);
+        try { host.render(); } catch (e) { console.warn('Cutscene draw across the course switch', e); } finally { scene.background = bg; if (me.sky) me.sky.visible = false; scene.remove(fill); }
       }
       prev = now; requestAnimationFrame(tick);
     };
@@ -1058,46 +1205,140 @@ export function createCutscenes(host) {
   }
 
   const api = {
-    acrossSwitch, release, planeFx, prepareAcrossSky,
+    acrossSwitch,
+    release,
+    planeFx,
+    prepareAcrossSky,
+    // the human actor's posed board root this frame (PS2 cm), its +0xAFC (root_motion_velocity) and the NIS time: null when no binding-4 actor is posed
+    humanBoard() {
+      return active?.seq?.humanBoard ?? null;
+    },
+    // QA: the active step's actors (binding, model ready / visible, clip items)
+    actorsInfo() {
+      return (active?.seq?.actors || []).map((a) => ({
+        binding: a.object.ext?.binding ?? null,
+        rider: !!a.rider,
+        model: !!a.model,
+        ready: !!a.model?.ready,
+        items: a.object.ch?.[0]?.i?.length ?? 0,
+        rmv: a.object.ext?.root_motion_velocity ?? null
+      }));
+    },
     // main.js, per frame while no cutscene plays (dt: game time, 0 while paused): the heli hovering on after its arrival
-    linger(dt) { if (linger) lingerFrame(dt); },
-    endLinger, get lingering() { return !!linger; },
-    get held() { return !!active?.persist; },
-    get active() { return !!active; },
-    get state() { return active ? { kind: active.kind, step: active.at, script: active.steps[active.at]?.script, t: active.seq?.t ?? 0, duration: active.seq?.duration ?? 0, skippable: !!(active.steps[active.at]?.flags & FLAG.SKIP) } : null; },
-    ensureIndex, play, stop, update, applyCamera, draw, introSteps, preFade, drawCover, fadeFrom,
+    linger(dt) {
+      if (linger) lingerFrame(dt);
+    },
+    endLinger,
+    get lingering() {
+      return !!linger;
+    },
+    get held() {
+      return !!active?.persist;
+    },
+    get active() {
+      return !!active;
+    },
+    get state() {
+      return active
+        ? {
+            kind: active.kind,
+            step: active.at,
+            script: active.steps[active.at]?.script,
+            t: active.seq?.t ?? 0,
+            duration: active.seq?.duration ?? 0,
+            skippable: !!(active.steps[active.at]?.flags & FLAG.SKIP)
+          }
+        : null;
+    },
+    ensureIndex,
+    play,
+    stop,
+    update,
+    applyCamera,
+    draw,
+    introSteps,
+    preFade,
+    drawCover,
+    fadeFrom,
     // The idle step's fade under another screen (the round card opens while the start-gate idle fades in: PS2
     // metro-intro s722..746, the approach's fade-out in 30).
-    drawFade(c) { const s = active; if (!s?.seq) return; const a = fadeAlpha(s); if (a > 0) { c.save(); c.globalAlpha = Math.min(1, a); c.fillStyle = s.fadeColour || '#000'; c.fillRect(0, 0, 640, 448); c.restore(); } },
-    get overlay() { return !!overlay; },
-    get overlayUnderHud() { return !!overlay?.hud; },
-    clearOverlay() { overlay = null; },
+    drawFade(c) {
+      const s = active;
+      if (!s?.seq) return;
+      const a = fadeAlpha(s);
+      if (a > 0) {
+        c.save();
+        c.globalAlpha = Math.min(1, a);
+        c.fillStyle = s.fadeColour || '#000';
+        c.fillRect(0, 0, 640, 448);
+        c.restore();
+      }
+    },
+    get overlay() {
+      return !!overlay;
+    },
+    get overlayUnderHud() {
+      return !!overlay?.hud;
+    },
+    clearOverlay() {
+      overlay = null;
+    },
     // pv transportFade: the release as 0x236AA8 -> 27A9F0 -> 2766D0(list, 1, 1) -> 277980 does it: the held step plays on for its
     // fade_out record's out ticks (#122: black, 30) and the list moves on at full black. Refused while a step transition fade runs
     // (279298: list +0xB0, the loop's own fade-in); the caller retries.
-    releaseFade() { const s = active; if (s?.releaseT != null) return true; if (!(s?.seq?.ready && (s.steps[s.at].flags & FLAG.HOLD))) return false; if (fadeAlpha(s) > 0) return false; s.releaseT = 0; return true; },
-    get releasing() { return active?.releaseT != null; },
+    releaseFade() {
+      const s = active;
+      if (s?.releaseT != null) return true;
+      if (!(s?.seq?.ready && s.steps[s.at].flags & FLAG.HOLD)) return false;
+      if (fadeAlpha(s) > 0) return false;
+      s.releaseT = 0;
+      return true;
+    },
+    get releasing() {
+      return active?.releaseT != null;
+    },
     // The HUD inside the letterboxed picture area while the bars slide out (the render block 2EAA28 / 2EA900: top 0.125, height 0.75):
     // the bar fraction (ui.js squeezes the HUD by it).
-    hudSqueeze() { const o = overlay; return o?.bars && o.hud ? Math.max(0, 1 - o.t / o.ticks) : 0; },
+    hudSqueeze() {
+      const o = overlay;
+      return o?.bars && o.hud ? Math.max(0, 1 - o.t / o.ticks) : 0;
+    },
     // The host's "loaded" signal for a flag-8 step (transport in-air loop): the list moves on (0x279070).
-    advance() { const s = active; if (s?.seq && (s.steps[s.at].flags & FLAG.HOLD)) { nextStep(s); return true; } return false; },
+    advance() {
+      const s = active;
+      if (s?.seq && s.steps[s.at].flags & FLAG.HOLD) {
+        nextStep(s);
+        return true;
+      }
+      return false;
+    },
     // Event intro (world state 10 -> 1 -> 2): onIdle when the start-gate idle loop begins (the objectives card
     // then opens over it); resolves {played:false} when the location has no intro lists (free ride, backcountry).
     playEventIntro({ mode = 'single', cast, location, onIdle = null }) {
       // the fly-over already played in free ride; the approach continues its list: its fade-in comes from the fly-over's
       // fade-out record (every sga fly-over: in 0), so it starts bright (PS2 s1045)
-      if (mode === 'career' && host.ui?.careerUI?.active?.rideIn) return play({ steps: introSteps('career-ridein'), cast, location, kind: 'intro', onIdle, prevFadeOut: { type: 1, colour: 'black', in_ticks: 0 }, barsFull: true });
+      if (mode === 'career' && host.ui?.careerUI?.active?.rideIn)
+        return play({
+          steps: introSteps('career-ridein'),
+          cast,
+          location,
+          kind: 'intro',
+          onIdle,
+          prevFadeOut: { type: 1, colour: 'black', in_ticks: 0 },
+          barsFull: true
+        });
       return play({ steps: introSteps(mode), cast, location, kind: 'intro', onIdle });
     },
-    // The scripts and animation banks of a list (fetched once per page, like prepare's): pv riderPrefetch loads the event intro's
+    // The scripts and animation banks of a list (fetched once per page, like prepare's): riderPrefetch loads the event intro's
     // under the warm-up, before prepare() (its actors) runs.
     async prepareData({ steps, cast, location, hub = null }) {
       await ensureIndex();
-      const words = castWords(cast), nums = new Set();
+      const words = castWords(cast),
+        nums = new Set();
       for (const st of steps) {
         if (st.script != null) nums.add(st.script);
-        else for (const e of filterList(location, st.group) || []) if (e.masks.every((m, k) => !m || (m & (words[k] || 0)))) nums.add(e.script);
+        else
+          for (const e of filterList(location, st.group) || []) if (e.masks.every((m, k) => !m || m & (words[k] || 0))) nums.add(e.script);
       }
       await Promise.all([...nums].map((n) => loadScript(index, n, location, hub).catch(() => null)));
     },
@@ -1105,42 +1346,88 @@ export function createCutscenes(host) {
     async prepare({ steps, cast, location, hub = null }) {
       await this.prepareData({ steps, cast, location, hub });
       const riders = [...(cast.race || []), ...(cast.humans || []), ...(cast.roles || [])].filter(Boolean);
-      await Promise.all([...new Set(riders.map((r) => previewRoot(r.entry)).filter(Boolean))].map(async (root) => {
-        if (pool.some((p) => p.root === root)) return;
-        const fp = new FrontEndPreview(); fp.compile = host.compile || null; pool.push(fp);
-        try { const m = await fp.fetch(T, root); fp.root = root; fp.swap(m); } catch { fp.root = null; }
-      }));
+      await Promise.all(
+        [...new Set(riders.map((r) => previewRoot(r.entry)).filter(Boolean))].map(async (root) => {
+          if (pool.some((p) => p.root === root)) return;
+          const fp = new FrontEndPreview();
+          fp.compile = host.compile || null;
+          pool.push(fp);
+          try {
+            const m = await fp.fetch(T, root);
+            fp.root = root;
+            fp.swap(m);
+          } catch {
+            fp.root = null;
+          }
+        })
+      );
     },
-    listen(f) { listeners.add(f); return () => listeners.delete(f); },
+    listen(f) {
+      listeners.add(f);
+      return () => listeners.delete(f);
+    },
     // QA (PS2 frame comparisons): freeze the clock and seek the current step to tick t.
-    freeze(on = true) { qa.frozen = !!on; },
-    seekOverlay(t) { if (!overlay) return false; overlay.t = t; return true; },
-    seek(t) { const seq = active?.seq; if (!seq) return false; seq.t = Math.max(0, Math.min(t, seq.duration - 1e-3)); return true; },
-    get seq() { return active?.seq || null; },
-    get ui() { return host.ui; },
-    freeRideCourse() { return host.freeRideCourse?.() ?? -1; },
-    location() { return host.location?.() ?? null; },
+    freeze(on = true) {
+      qa.frozen = !!on;
+    },
+    seekOverlay(t) {
+      if (!overlay) return false;
+      overlay.t = t;
+      return true;
+    },
+    seek(t) {
+      const seq = active?.seq;
+      if (!seq) return false;
+      seq.t = Math.max(0, Math.min(t, seq.duration - 1e-3));
+      return true;
+    },
+    get seq() {
+      return active?.seq || null;
+    },
+    get ui() {
+      return host.ui;
+    },
+    freeRideCourse() {
+      return host.freeRideCourse?.() ?? -1;
+    },
+    location() {
+      return host.location?.() ?? null;
+    },
     // An anchor frame now (0x27A0D8), for the rider hold under a station cut (main.js, pv nisTick: 123640 places the rider at
     // the actor's anchor, 19 = NIS_Lodge / 28 = NIS_Transport, ground-snapped); null until locators.json is in.
-    anchorOf(id, location) { return locators ? anchorFor(id, { locations: locators.locations, location, snap: host.snap }) : null; },
+    anchorOf(id, location) {
+      return locators ? anchorFor(id, { locations: locators.locations, location, snap: host.snap }) : null;
+    },
     // The human's rider actor (kind 5, binding 4) of a script at its first tick, as 123640 places the rider: +0x110 = M(+0x700) . key 0
     // (the anchor frame x the actor's offset, 27F9F8; key 0 of its x / y / z channels, 27C9B0) and the root rotation of 0x1241C0.
     // Every station copy of lodge_arr3 (#148) and hub_trans_arr (#166) has key 0 = (0, 0, -15): the PS2 rider stands 15 cm under the
     // snapped NIS_Lodge / NIS_Transport locator (ctm-parity door-no pre.p2s, fr-booth2 record 2644). prefetchActor(number, location)
     // fetches the script copy (a few KB); actorStart returns null until it and locators.json are in.
     prefetchActor(number, location) {
-      const key = `${number}@${location}`; if (actorScripts.has(key)) return;
+      const key = `${number}@${location}`;
+      if (actorScripts.has(key)) return;
       actorScripts.set(key, null);
-      ensureIndex().then(() => { const entry = index.scripts[number]; if (!entry) return null; return fetchJson(`${ROOT}scripts/${scriptContainer(entry, location)}.${String(number).padStart(3, '0')}.json`); })
-        .then((s) => { if (s) actorScripts.set(key, s); }).catch(() => actorScripts.delete(key));
+      ensureIndex()
+        .then(() => {
+          const entry = index.scripts[number];
+          if (!entry) return null;
+          return fetchJson(`${ROOT}scripts/${scriptContainer(entry, location)}.${String(number).padStart(3, '0')}.json`);
+        })
+        .then((s) => {
+          if (s) actorScripts.set(key, s);
+        })
+        .catch(() => actorScripts.delete(key));
     },
     actorStart(number, location) {
-      const s = actorScripts.get(`${number}@${location}`); if (!s || !locators) return null;
-      const obj = s.tracks.map((t) => t?.[0]).find((o) => o?.kind === 5 && o.ext?.binding === 4); if (!obj) return null;
-      const a = anchorFor(obj.ext.anchor, { locations: locators.locations, location, snap: host.snap }); if (!a) return null;
+      const s = actorScripts.get(`${number}@${location}`);
+      if (!s || !locators) return null;
+      const obj = s.tracks.map((t) => t?.[0]).find((o) => o?.kind === 5 && o.ext?.binding === 4);
+      if (!obj) return null;
+      const a = anchorFor(obj.ext.anchor, { locations: locators.locations, location, snap: host.snap });
+      if (!a) return null;
       const root = actorRootAt(obj, objectFrame(a, obj.ext.offset), 0);
-      return { pos: root.pos, quat: root.quat, yaw: root.yaw + Math.PI / 2 };   // yaw: the forward's heading (actorRootAt's is minus 90 degrees)
-    },
+      return { pos: root.pos, quat: root.quat, yaw: root.yaw + Math.PI / 2 }; // yaw: the forward's heading (actorRootAt's is minus 90 degrees)
+    }
   };
   const actorScripts = new Map();
   singleton = api;
@@ -1216,7 +1503,8 @@ export async function playCutscene(opts = {}) {
   // Peak 1 free ride (web/free-ride.js): location is a course index; the departure and the in-air loop belong to the
   // location being left (its scdat/scfilter), `until` releases the held loop when the destination rows are in.
   const code = (n) => (typeof n === 'number' ? COURSE_CODES[n] ?? null : n);
-  const here = opts.from ?? cs.freeRideCourse?.() ?? -1, dest = typeof location === 'number' ? location : -1, bc = (n) => n >= 14 && n <= 16;   // opts.from: the event's course after an event (web/ctm-transport.js, pv stationFlow)
+  // opts.from: the event's course after an event (web/ctm-transport.js, stationFlow)
+  const here = opts.from ?? cs.freeRideCourse?.() ?? -1, dest = typeof location === 'number' ? location : -1, bc = (n) => n >= 14 && n <= 16;
   let where = code(location);
   let steps;
   switch (kind) {
@@ -1253,5 +1541,16 @@ export async function playCutscene(opts = {}) {
   }
   if (opts.steps) steps = opts.steps;
   if (!steps.length) return { played: false, skipped: false, scripts: [] };
-  return cs.play({ steps, cast, location: where || cs.location?.() || 'ARA1', hub: opts.hub ?? null, kind, place, onIdle: opts.onIdle ?? null, restore: opts.restore, skipLock: opts.skipLock ?? 0, onStep: opts.onStep ?? null });
+  return cs.play({
+    steps,
+    cast,
+    location: where || cs.location?.() || 'ARA1',
+    hub: opts.hub ?? null,
+    kind,
+    place,
+    onIdle: opts.onIdle ?? null,
+    restore: opts.restore,
+    skipLock: opts.skipLock ?? 0,
+    onStep: opts.onStep ?? null
+  });
 }

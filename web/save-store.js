@@ -107,7 +107,10 @@ export function importSave(file, s = storage(), { migrateCareer = null } = {}) {
   if (out['ssx3.career.v2']) removeKey('ssx3.career.v1', s);
   return { ok: true, keys: written };
 }
-export function saveFileName(now = new Date()) { const p = (n) => String(n).padStart(2, '0'); return `ssx3-save-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.json`; }
+export function saveFileName(now = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `ssx3-save-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.json`;
+}
 // Browser helpers: download the save file / pick one to import (resolves the parsed object or null).
 export function downloadSave(s = storage()) {
   const blob = new Blob([JSON.stringify(exportSave(s), null, 1)], { type: 'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a');

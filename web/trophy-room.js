@@ -1,4 +1,4 @@
-// The lodge's Trophies (Rider Details > Trophies, pv trophyLui): the three FE.LUI screens the PS2 plays for it, drawn for
+// The lodge's Trophies (Rider Details > Trophies, trophyLui): the three FE.LUI screens the PS2 plays for it, drawn for
 // web/lodge-ui.js with the rules of their states (PS2 captures local/ps2-capture/menus/trophy-tour, trophy-medals,
 // trophy-stats, trophy-earn, trophy-locked, trophy-pop*):
 //  'ctm-trophies'    125mountainroom (vtable 0x46987C: enter 0x1D2990, bind 0x1D2AD0, input 0x1D2F68, markers 0x1D3340): Peak 1..3 and
@@ -13,7 +13,6 @@ import { LuiScreen } from './lui-player.js';
 import { menuModel, stepMenu } from './fe-screens.js';
 import { MEDAL, RIDER_CHARACTER, eventKey, isTimed } from './career.js';
 import { format } from './locale.js';
-import { pv } from './pv-flags.js';
 import { FOCUS_LAG } from './lui-flash.js';
 
 const SY = 448 / 480;
@@ -79,7 +78,11 @@ export class TrophyRoom {
     if (row.stat === 'collect') return format(this.t('collect_num', 'Collectibles: %d/%d'), c.peakCollected(this.id, peak), c.peakCollectTotal(peak));
     if (row.stat === 'challenge') return format(this.t('chal_num', 'Challenges Complete: %d/%d'), c.challengesDone(this.id, peak), c.peakChallengeTotal(peak));
     const best = r.best?.[eventKey(row.mode, row.course)];
-    if (row.stat === 'time') { const s = best == null ? 0 : Math.floor(best / 60), two = (n) => String(n).padStart(2, '0'); return format(this.t('best_time', 'Your best time: %S'), `${two(Math.floor(s / 60))}:${two(s % 60)}`); }
+    if (row.stat === 'time') {
+      const s = best == null ? 0 : Math.floor(best / 60),
+        two = (n) => String(n).padStart(2, '0');
+      return format(this.t('best_time', 'Your best time: %S'), `${two(Math.floor(s / 60))}:${two(s % 60)}`);
+    }
     return format(this.t('best_score', 'Your best score: %d'), best ?? 0);
   }
   reward(section, index) { return this.c.rewardItems(section)[index] || null; }
@@ -107,7 +110,8 @@ export class TrophyRoom {
     const s = this.ui.screen;
     if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
       e.preventDefault();
-      if (!e.repeat && !this.popup) { const n = this.items(s).length; this.ui.index = stepMenu(this.ui.index, e.code === 'ArrowUp' ? -1 : 1, Array(n).fill(false)); this.ui.sync(); }   // the LUI menus wrap (PS2 trophy-locked, trophy-stats)
+      // the LUI menus wrap (PS2 trophy-locked, trophy-stats)
+      if (!e.repeat && !this.popup) { const n = this.items(s).length; this.ui.index = stepMenu(this.ui.index, e.code === 'ArrowUp' ? -1 : 1, Array(n).fill(false)); this.ui.sync(); }
       return true;
     }
     return false;
@@ -129,7 +133,7 @@ export class TrophyRoom {
     if (s === 'ctm-trophy-peak') { this.go(() => { ui.set('ctm-trophies'); ui.index = this.peak - 1; ui.sync(); }); return; }
     if (s === 'ctm-trophy-room') this.go(() => { ui.set('ctm-trophy-peak'); ui.index = this.goal; ui.sync(); });
   }
-  // pv lodgeFlash: each room change is a state change (0x39F400; 125mountainroom's Triangle 0x1D4698): the TransitionOut flash (web/lui-flash.js)
+  // each room change is a state change (0x39F400; 125mountainroom's Triangle 0x1D4698): the TransitionOut flash (web/lui-flash.js)
   go(to) { const cs = this.lodge.cs; if (cs?.lodgeGo) cs.lodgeGo(to); else to(); }
 
   // ---- drawing ----
@@ -139,9 +143,9 @@ export class TrophyRoom {
     if (st.screen !== s || !(now - st.drawn <= 15)) { st.screen = s; st.enter = this.lodge.cs?.lodgeFlash?.introStart?.(now) ?? now; st.index = null; this.popup = null; }
     st.drawn = now;
     if (st.index !== index) { st.index = index; st.focus = now; }
-    // pv introLead: the mountain room's focus plays from its intro's 0x42 label (frame 25), when its activation (0x1D2A90 -> 0x186518)
+    // the mountain room's focus plays from its intro's 0x42 label (frame 25), when its activation (0x1D2A90 -> 0x186518)
     // sets the cursor; the peak / trophy rooms' activations (0x1D3C60 / 0x1D43D0) set none
-    const frame = now - st.enter, out = [], intro = s === 'ctm-trophies' && pv('introLead') ? (lui.screen.labels?.find((l) => l.control?.some((c) => c.startsWith('42')))?.frame ?? 0) + FOCUS_LAG : 0;
+    const frame = now - st.enter, out = [], intro = s === 'ctm-trophies' ? (lui.screen.labels?.find((l) => l.control?.some((c) => c.startsWith('42')))?.frame ?? 0) + FOCUS_LAG : 0;
     const focusStart = Math.max(st.focus - st.enter, intro);
     for (const ev of lui.screen.events) {
       if (ev.frame <= model.intro && ev.frame <= frame) out.push({ ev, start: ev.frame });
@@ -176,7 +180,12 @@ export class TrophyRoom {
       const kind = MARKER[e.mode], k = count[kind] = (count[kind] ?? -1) + 1;
       marks.set(`mrk_${kind}_${k}`, e.medal !== MEDAL.NONE);
     }
-    const help = [this.t('help_view_trophies'), passes >= 1 ? this.t('help_view_trophies') : this.t('locked_peak2'), passes >= 2 ? this.t('help_view_trophies') : this.t('locked_peak3'), this.t('help_view_pass')][i];
+    const help = [
+      this.t('help_view_trophies'),
+      passes >= 1 ? this.t('help_view_trophies') : this.t('locked_peak2'),
+      passes >= 2 ? this.t('help_view_trophies') : this.t('locked_peak3'),
+      this.t('help_view_pass')
+    ][i];
     const character = RIDER_CHARACTER[this.id] ?? 3, pass = this.reward('peak_pass', character * 3 + passes), passSprite = pass && this.picture(pass.picture);
     return (e) => {
       const label = e.label;

@@ -64,7 +64,8 @@ const DPAD_INDEX = Object.freeze({ right: 4, left: 5, up: 6, down: 7 });
 // steering: direction -> { role: 'stick' | 'dpad', order } for every held Simple-mode direction.
 export function createKeyboardContext(mode = 'Classic') { return { mode, air: false, steering: new Map(), serial: 0 }; }
 const KEYBOARD_KEY = 'ssx3.keyboard';
-export function loadKeyboardMode() { try { const v = localStorage.getItem(KEYBOARD_KEY); return KEYBOARD_MODES.includes(v) ? v : 'Classic'; } catch { return 'Classic'; } } // Classic (the fixed layout) is the default
+// Classic (the fixed layout) is the default
+export function loadKeyboardMode() { try { const v = localStorage.getItem(KEYBOARD_KEY); return KEYBOARD_MODES.includes(v) ? v : 'Classic'; } catch { return 'Classic'; } }
 export function saveKeyboardMode(mode) { try { localStorage.setItem(KEYBOARD_KEY, mode); } catch {} }
 
 // down(code) -> bool for keyboard/touch; pad is a standard-mapping Gamepad or null; keyboard is an optional

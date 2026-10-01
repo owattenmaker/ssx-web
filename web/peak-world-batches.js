@@ -35,7 +35,7 @@ export function worldBatches(w, location = 'PEAK1') {
   return out;
 }
 
-// pv sliceLoad: a location's rail catalog in parts of about `bytes` of text (one whole catalog was 20-55 ms of core time at 1x, 80-220 ms
+// a location's rail catalog in parts of about `bytes` of text (one whole catalog was 20-55 ms of core time at 1x, 80-220 ms
 // on a phone, on a riding frame). Each part is the catalog's header with its own rails and counts, the location's segment count per
 // track before it (segment_base: the core's +0x60/+0x64 indices go on across the parts) and `partial` on all but the last (the core's
 // teeter / static-record pass runs after the last); the rails' text is the whole catalog's (JSON.stringify of the same values).
@@ -44,9 +44,20 @@ export function railBatches(rails, bytes = 24576) {
   const texts = rails.rails.map((r) => JSON.stringify(r)), out = [], seen = {};
   for (let i = 0; i < texts.length;) {
     const segment_base = { ...seen }; let size = 0, j = i, segs = 0;
-    while (j < texts.length && (j === i || size + texts[j].length <= bytes)) { size += texts[j].length; const r = rails.rails[j], t = r.packed_id & 255; seen[t] = (seen[t] ?? 0) + r.segments.length; segs += r.segments.length; j++; }
+    while (j < texts.length && (j === i || size + texts[j].length <= bytes)) {
+      size += texts[j].length;
+      const r = rails.rails[j],
+        t = r.packed_id & 255;
+      seen[t] = (seen[t] ?? 0) + r.segments.length;
+      segs += r.segments.length;
+      j++;
+    }
     const last = j >= texts.length;
-    out.push(`{${Object.entries({ ...head, rail_count: j - i, segment_count: segs, segment_base, ...(last ? {} : { partial: true }) }).map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`).join(',')},"rails":[${texts.slice(i, j).join(',')}]}`);
+    out.push(
+      `{${Object.entries({ ...head, rail_count: j - i, segment_count: segs, segment_base, ...(last ? {} : { partial: true }) })
+        .map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`)
+        .join(',')},"rails":[${texts.slice(i, j).join(',')}]}`
+    );
     i = j;
   }
   return out;
@@ -79,7 +90,7 @@ export function environmentBatches(doc, bytes) {
   return out;
 }
 
-// pv sliceLoad (web/load-slices.js, core stage_world_part): the three stage-world documents (particles.json, livecomp.json,
+// sliceLoad (web/load-slices.js, core stage_world_part): the three stage-world documents (particles.json, livecomp.json,
 // stage-world.json) cut into parts the core loads one per call, in the documents' order: [kind, text] with kind 0 begin ('1' when a
 // stage-world document is given), 1 stage-world parts, 2 particles parts (the head: location, initial, crowd, boosts, halos, magnets,
 // multi; then the instances and carriers maps in chunks), 3 livecomp chunks (after every particles part), 4 end.
@@ -91,7 +102,14 @@ function spans(text, start, end) {
   const out = []; let i = start; while (i < end && text.charCodeAt(i) !== 123 && text.charCodeAt(i) !== 91) i++;
   const isObject = text.charCodeAt(i) === 123; i++;
   let depth = 0, memberStart = -1, keyStart = -1, keyEnd = -1, afterColon = !isObject;
-  const push = (at) => { let e = at; while (e > memberStart && text.charCodeAt(e - 1) <= 32) e--; out.push({ s: memberStart, e, key: keyStart >= 0 ? JSON.parse(text.slice(keyStart, keyEnd)) : null }); memberStart = -1; keyStart = -1; afterColon = !isObject; };
+  const push = (at) => {
+    let e = at;
+    while (e > memberStart && text.charCodeAt(e - 1) <= 32) e--;
+    out.push({ s: memberStart, e, key: keyStart >= 0 ? JSON.parse(text.slice(keyStart, keyEnd)) : null });
+    memberStart = -1;
+    keyStart = -1;
+    afterColon = !isObject;
+  };
   for (; i < end; i++) {
     const c = text.charCodeAt(i);
     if (c === 34) { // a string: skipped whole (escapes included)
@@ -113,7 +131,7 @@ function spans(text, start, end) {
 }
 // the value text of an object member
 const valueText = (text, m) => { let v = text.indexOf(':', m.s + JSON.stringify(m.key).length - 1) + 1; return text.slice(v, m.e).trim(); };
-// pv sliceLoad (web/load-slices.js): an environment.json cut from its own text: the document without its textures and patches (marked
+// sliceLoad (web/load-slices.js): an environment.json cut from its own text: the document without its textures and patches (marked
 // streamed: environment_add keeps the textures by id), then the textures (2 a part) and the patches (400 a part); the texture offsets stay
 // those of the whole environment.bin, which the caller puts in the core once.
 export function environmentParts(text, { textures = 2, patches = 400 } = {}) { // 2 textures a part: 8 were up to ~90 ms at 4x CPU (PEAK1)
@@ -140,7 +158,13 @@ export function stageWorldParts(particlesText, liveText, stageText, { instances 
     if (t.has('script')) for (const c of chunks(members(stageText, t.get('script')), script)) out.push([1, `{"script":[${join(stageText, c)}]}`]);
   }
   const t = top(particlesText);
-  out.push([2, `{${['location', 'initial', 'crowd', 'boosts', 'halos', 'magnets', 'multi'].filter((k) => t.has(k)).map((k) => `${JSON.stringify(k)}:${valueText(particlesText, t.get(k))}`).join(',')}}`]);
+  out.push([
+    2,
+    `{${['location', 'initial', 'crowd', 'boosts', 'halos', 'magnets', 'multi']
+      .filter((k) => t.has(k))
+      .map((k) => `${JSON.stringify(k)}:${valueText(particlesText, t.get(k))}`)
+      .join(',')}}`
+  ]);
   for (const c of chunks(members(particlesText, t.get('instances')), instances)) out.push([2, `{"instances":{${join(particlesText, c)}}}`]);
   if (t.has('carriers')) for (const c of chunks(members(particlesText, t.get('carriers')), instances)) out.push([2, `{"carriers":{${join(particlesText, c)}}}`]);
   if (liveText) { const l = top(liveText); for (const c of chunks(members(liveText, l.get('instances')), live)) out.push([3, `{"instances":[${join(liveText, c)}]}`]); }
@@ -148,7 +172,7 @@ export function stageWorldParts(particlesText, liveText, stageText, { instances 
   return out;
 }
 
-// ---- pv eventSlices (web/load-slices.js initEventWorldSliced): an event course's terrain.json / world_collision.json / rails.json cut
+// ---- eventSlices (web/load-slices.js initEventWorldSliced): an event course's terrain.json / world_collision.json / rails.json cut
 // into the core's parts from their own text (the numbers as written: the loaded state is the whole documents', core body_load_hash /
 // world_load_hash / rail_load_hash, web/test-event-slices.mjs) ----
 // parse_key of web/world_bridge.cpp over a text's UTF-8 bytes: "salt:bytes:FNV-1a" (the key of the core's course parse caches).
@@ -165,7 +189,13 @@ export function eventTerrainParts(text, { patches = 12 } = {}) {
   const top = topMembers(text), keep = [...top.values()].filter((m) => m.key !== 'patches').map((m) => memberText(text, m));
   const head = `{${[...keep, '"patches":[]'].join(',')}}`, list = memberList(text, top.get('patches')), parts = [];
   const hash = JSON.parse(valueText(text, top.get('source_sha256'))), version = valueText(text, top.get('version')), location = valueText(text, top.get('location'));
-  for (let i = 0; i < list.length; i += patches) parts.push(`{"version":${version},"location":${location},"source_sha256":${JSON.stringify(hash)},"patches":[${list.slice(i, i + patches).map((m) => memberText(text, m)).join(',')}]}`);
+  for (let i = 0; i < list.length; i += patches)
+    parts.push(
+      `{"version":${version},"location":${location},"source_sha256":${JSON.stringify(hash)},"patches":[${list
+        .slice(i, i + patches)
+        .map((m) => memberText(text, m))
+        .join(',')}]}`
+    );
   return { head, parts, hash };
 }
 // world_collision.json: the head (no instances: the course selection and track locations) and parts of whole instances up to about
@@ -193,7 +223,11 @@ export function eventWorldParts(text, { bytes = 49152 } = {}) {
     const dspan = descriptors.get(track)?.[index];
     if (dspan && !descriptorInfo.has(dkey)) { const d = JSON.parse(memberText(text, dspan)); descriptorInfo.set(dkey, d.collision_resource); }
     const mesh = descriptorInfo.get(dkey) !== undefined ? rkey(descriptorInfo.get(dkey)) : null, model = rkey(o.model_resource);
-    const size = it.length + (dspan ? dspan.e - dspan.s : 0) + (mesh && meshes.has(mesh) ? meshes.get(mesh).e - meshes.get(mesh).s : 0) + (models.has(model) ? models.get(model).e - models.get(model).s : 0);
+    const size =
+      it.length +
+      (dspan ? dspan.e - dspan.s : 0) +
+      (mesh && meshes.has(mesh) ? meshes.get(mesh).e - meshes.get(mesh).s : 0) +
+      (models.has(model) ? models.get(model).e - models.get(model).s : 0);
     if (cur && cur.size + size > bytes) flush();
     cur ??= { size: 0, instances: [], bindings: new Map(), remap: new Map(), meshes: new Set(), models: new Set() };
     let at = cur.remap.get(dkey);

@@ -17,9 +17,9 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec3, vec4, float, uniform, select, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv, clamp} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
-import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 import {lfsrNext} from './set-piece-particle-sprites.js';
 import {heapU32, setUpdateRange} from './heap-views.js';
+import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 export const LAYER_WORDS = 25;
 const F32 = new Float32Array(1), U32 = new Uint32Array(F32.buffer);
@@ -45,7 +45,12 @@ export function flakeSeeds(seeds, count) {
 // 0x2E55D8: the normalized layer offset as the program receives it (row 6 = offset - 1.5 after the box pre-wrap) and the box.
 export function layerBox(offset, extent, forward) {
   const q = Math.fround(1 / extent), lower = forward.map((d) => Math.fround(Math.fround(d * 0.6) - 0.5)), upper = lower.map((l) => Math.fround(l + 1));
-  const base = offset.map((o, a) => { let v = Math.fround(o * q); if (v < Math.fround(lower[a] - 0.5)) v = Math.fround(v + 1); if (Math.fround(upper[a] + 0.5) < v) v = Math.fround(v - 1); return Math.fround(v - 1.5); });
+  const base = offset.map((o, a) => {
+    let v = Math.fround(o * q);
+    if (v < Math.fround(lower[a] - 0.5)) v = Math.fround(v + 1);
+    if (Math.fround(upper[a] + 0.5) < v) v = Math.fround(v - 1);
+    return Math.fround(v - 1.5);
+  });
   return {base, lower, upper};
 }
 // The CPU model of one flake (tests): the program's wrap, camera-relative source cm.
@@ -95,7 +100,9 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
       alpha = alpha.mul(fade);
     }
     material.fragmentNode = out(texel.rgb.mul(u.colour.xyz).clamp(0, 1), alpha.clamp(0, 1));
-    const mesh = new T.InstancedMesh(geometry, material, cap); mesh.count = 1; mesh.visible = false; mesh.frustumCulled = false; mesh.renderOrder = pv('effectOrder') ? drawOrder(EFFECT.snowfall, SUBMIT.weather + kind) : 695 + kind; // pv effectOrder: 0x364240 (sfal, rank 6: first after the fog puffs)
+    const mesh = new T.InstancedMesh(geometry, material, cap); mesh.count = 1; mesh.visible = false; mesh.frustumCulled = false;
+    // 0x364240 (sfal, rank 6: first after the fog puffs)
+mesh.renderOrder = drawOrder(EFFECT.snowfall, SUBMIT.weather + kind);
     mesh.name = kind === 0 ? 'snowfall flakes' : 'snowfall fluff';
     group.add(mesh);
     return {kind, cap, mesh, seed, u, seeds: null};
@@ -103,7 +110,9 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
   // Camera splash: 640x480 screen sprites straight to clip space.
   const makeSplash = (map, cap, order) => {
     const geometry = quadGeometry();
-    const pos = new T.InstancedBufferAttribute(new Float32Array(cap * 4), 4).setUsage(T.DynamicDrawUsage), rot = new T.InstancedBufferAttribute(new Float32Array(cap * 2), 2).setUsage(T.DynamicDrawUsage), col = new T.InstancedBufferAttribute(new Float32Array(cap * 4), 4).setUsage(T.DynamicDrawUsage);
+    const pos = new T.InstancedBufferAttribute(new Float32Array(cap * 4), 4).setUsage(T.DynamicDrawUsage),
+      rot = new T.InstancedBufferAttribute(new Float32Array(cap * 2), 2).setUsage(T.DynamicDrawUsage),
+      col = new T.InstancedBufferAttribute(new Float32Array(cap * 4), 4).setUsage(T.DynamicDrawUsage);
     geometry.setAttribute('splashPos', pos); geometry.setAttribute('splashRot', rot); geometry.setAttribute('splashColour', col);
     const P = attribute('splashPos', 'vec4'), R = attribute('splashRot', 'vec2'), C = attribute('splashColour', 'vec4');
     const x = positionGeometry.x.mul(P.z), y = positionGeometry.y.negate().mul(P.w); // screen y grows downward
@@ -118,7 +127,7 @@ export async function createWeatherRenderer({core, origin, capacity = {flakes: 3
   };
   // 0x2E5920 builds 4 flake layers and 2 fluff layers per camera: all six materials exist before the race (loading warm-up).
   for (const kind of [0, 0, 0, 0, 1, 1]) layers.push(makeLayer(kind));
-  const drops = makeSplash(ices, 30, pv('effectOrder') ? drawOrder(EFFECT.splash(66), SUBMIT.weather) : 900), crystals = makeSplash(icel, 24, pv('effectOrder') ? drawOrder(EFFECT.splash(67), SUBMIT.weather) : 901);
+  const drops = makeSplash(ices, 30, drawOrder(EFFECT.splash(66), SUBMIT.weather)), crystals = makeSplash(icel, 24, drawOrder(EFFECT.splash(67), SUBMIT.weather));
   registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => group.children.some((m) => m.visible && m.count > 0)});
   const state = {layers: 0, flakes: 0, fluff: 0, drops: 0, crystals: 0, snowfall: 0};
   const forward = new T.Vector3(), eye = new T.Vector3();

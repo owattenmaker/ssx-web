@@ -23,7 +23,7 @@ async function make(context = {}) {
 async function run(ga, ms) { for (const end = T + ms; T < end;) { T += FRAME; ga._director.pump(); ga.speechEngine.update(); await new Promise((r) => setImmediate(r)); } }
 const kinds = (ga, from = 0) => ga.timeline().slice(from).map(([, k, a, b]) => [k, a, b].filter((x) => x !== undefined).join(' '));
 const trace = (ga) => ga.debug().director.trace.map((l) => l.replace(/^\d+ /, ''));
-const SWITCHES = ['worldSwitchAudio', 'postEventDj', 'djVisited', 'djQueueRules', 'mailFreeze'];
+const SWITCHES = ['postEventDj', 'djVisited', 'djQueueRules', 'mailFreeze'];
 
 // ---- switches off: the shipped path (load-screen loop, world-load song, DJ kind 4, no commentary) -------------------------
 {
@@ -32,7 +32,6 @@ const SWITCHES = ['worldSwitchAudio', 'postEventDj', 'djVisited', 'djQueueRules'
   await ga.worldLoaded({ courseIndex: 0, singleEvent: false, courseCode: 'ARA1', character: 'zoe' });
   await ga.runStart({ courseIndex: 0, singleEvent: false, courseCode: 'ARA1', character: 'zoe' });
   ga.finish({ place: 0, stats: { ko: 9, ubers: 40 } });
-  assert.equal(ga.travelSwitch(1), false); assert.equal(ga.eventMap(), false);
   ga.leaveWorld(); ga.timelineReset();
   await ga.loadingStart({ courseCode: 'PEAK1', character: 'zoe' });
   await ga.freeWorldLoaded({ courseIndex: 1, courseCode: 'PEAK1', character: 'zoe', freeRide: FREE });
@@ -40,7 +39,7 @@ const SWITCHES = ['worldSwitchAudio', 'postEventDj', 'djVisited', 'djQueueRules'
   assert.ok(k.includes('loading 1') && k.includes('worldload 1'), `off: the load path (${k.join(', ')})`);
 }
 
-// ---- pv worldSwitchAudio + postEventDj: the post-event Transport (postevent2) -------------------------------------------------
+// ---- The world switch + pv postEventDj: the post-event Transport (postevent2) -------------------------------------------------
 for (const k of SWITCHES) setPv(k, true);
 {
   const ctx = { career: true, round: 3, mode: 0 };

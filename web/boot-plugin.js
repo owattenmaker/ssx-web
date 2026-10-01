@@ -15,8 +15,9 @@ const web = path.dirname(new URL(import.meta.url).pathname), pub = path.join(web
 const SKIP = new Set(['.png', '.jpg', '.jpeg', '.mp4', '.mus', '.gz', '.br', '.woff2']), MIN_GZ = 16 * 1024, MAX_RATIO = 0.9;   // = server/precompress.mjs
 const CACHE = path.join(web, 'node_modules/.cache/ssx-boot/wire.json');
 const STUBS = {
-  'input-glyphs.js': 'export const LUI_STRETCH=(640/512)/(480/448);export function inputDevice(){return "gamepad"}export function drawGlyphAsKey(){return false}export function glyphButton(){return false}export function drawKeyCap(){}',
-  'downloads.js': 'export function downloadProgress(){return {active:false,fraction:1,expected:0,received:0,files:0,busyMs:0}}',
+  'input-glyphs.js':
+    'export const LUI_STRETCH=(640/512)/(480/448);export function inputDevice(){return "gamepad"}export function drawGlyphAsKey(){return false}export function glyphButton(){return false}export function drawKeyCap(){}',
+  'downloads.js': 'export function downloadProgress(){return {active:false,fraction:1,expected:0,received:0,files:0,busyMs:0}}'
 };
 
 // Bytes on the wire of a file of the game data: its gzip copy when the host keeps one, else the file.
@@ -30,7 +31,14 @@ export function wireSize(file, rel) {
   if (wireCache[key] == null) { const gz = zlib.gzipSync(fs.readFileSync(file), { level: 6 }).length; wireCache[key] = gz <= st.size * MAX_RATIO ? gz : st.size; wireCache.dirty = true; }
   return { size: st.size, wire: wireCache[key] };
 }
-function saveWireCache() { if (!wireCache?.dirty) return; delete wireCache.dirty; try { fs.mkdirSync(path.dirname(CACHE), { recursive: true }); fs.writeFileSync(CACHE, JSON.stringify(wireCache)); } catch {} }
+function saveWireCache() {
+  if (!wireCache?.dirty) return;
+  delete wireCache.dirty;
+  try {
+    fs.mkdirSync(path.dirname(CACHE), { recursive: true });
+    fs.writeFileSync(CACHE, JSON.stringify(wireCache));
+  } catch {}
+}
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 
 // The inline data (without the code bundle entries, which only a build knows).
@@ -52,8 +60,20 @@ async function bootScript() {
   if (bundled && stampOf(bundled.files) === bundled.stamp) return bundled.code;   // rebuilt when any bundled module changes
   const { rolldown } = await import('rolldown');
   const bundle = await rolldown({
-    input: path.join(web, 'boot-screen.js'), logLevel: 'silent',
-    plugins: [{ name: 'ssx-boot-stubs', resolveId(id) { const f = path.basename(id); return STUBS[f] && id.startsWith('./') ? `\0boot-stub:${f}` : null; }, load(id) { return id.startsWith('\0boot-stub:') ? STUBS[id.slice(11)] : null; } }],
+    input: path.join(web, 'boot-screen.js'),
+    logLevel: 'silent',
+    plugins: [
+      {
+        name: 'ssx-boot-stubs',
+        resolveId(id) {
+          const f = path.basename(id);
+          return STUBS[f] && id.startsWith('./') ? `\0boot-stub:${f}` : null;
+        },
+        load(id) {
+          return id.startsWith('\0boot-stub:') ? STUBS[id.slice(11)] : null;
+        }
+      }
+    ]
   });
   const { output } = await bundle.generate({ format: 'iife', minify: true });
   await bundle.close();
@@ -75,9 +95,10 @@ export default function bootPlugin() {
         if (ctx.bundle) {   // build: the code bundle and the core are part of the first load
           for (const out of Object.values(ctx.bundle)) {
             const p = '/assets/' + path.basename(out.fileName), src = out.type === 'chunk' ? Buffer.from(out.code) : Buffer.from(out.source);
+            // the edge compresses it (else its bytes still stream through downloads.js)
             if (out.type === 'chunk' && out.isEntry) { data.mainScript = p; data.manifest.files.unshift([p, gz(src), src.length, 'code']); }
             else if (/\.css$/.test(out.fileName) || (out.type === 'chunk' && /rolldown-runtime/.test(out.fileName))) data.manifest.files.unshift([p, gz(src), src.length, 'code']);
-            else if (/^assets\/core-[^/]+\.wasm$/.test(out.fileName)) data.manifest.files.push([p, gz(src), src.length, 'core']);   // the edge compresses it (else its bytes still stream through downloads.js)
+            else if (/^assets\/core-[^/]+\.wasm$/.test(out.fileName)) data.manifest.files.push([p, gz(src), src.length, 'core']);
           }
         }
         const code = await bootScript();

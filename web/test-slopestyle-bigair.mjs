@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {Career,MODE,aiFreestyleScore,rankEntries} from './career.js';
 import {freestyleRoster,freestyleSlots,nextWord,seededWords,REFERENCE_PRESENTATION_SEED,REFERENCE_ROSTER_SEED,SEED_DRAW} from './lineup.js';
-import {setPv} from './pv-flags.js';
 
 const read = (p) => JSON.parse(fs.readFileSync(new URL('public/assets/' + p, import.meta.url)));
 const data = read('CAREER/career.json'), rules = data.rules;
@@ -106,7 +105,6 @@ assert.deepEqual(card(MODE.HALFPIPE, 11, true).rows, ['Mac 162880', 'Nate 95980'
   // vt+0x1C 0x238C80 (GMM +0x84 = 1 fresh, +0x70 = +0x74 = 0): entering The Junction again posts a fresh heat 1 whose roster
   // draws on from the generator (another 65 draws), not the started event (PS2 ctm-parity/fresh: the Snow Jam final given up,
   // re-entered -> "Qualifier")
-  setPv('freshEvent', true);
   const drawn = (k) => { const x = seededWords(REFERENCE_ROSTER_SEED); for (let i = 0; i < k; i++) nextWord(x); return x; };
   assert.deepEqual(c.save.roster, drawn(130), 'two fresh events: 65 + 65 draws');
   const again = c.startEvent('zoe', MODE.HALFPIPE, 11, true), e2 = freestyleRoster(drawn(130), 4, 3);
@@ -114,12 +112,6 @@ assert.deepEqual(card(MODE.HALFPIPE, 11, true).rows, ['Mac 162880', 'Nate 95980'
   assert.equal(again.round, 1, 'fresh: heat 1 (GMM +0x70 = 0)');
   assert.deepEqual(again.ai.map((a) => a.character), [3, ...e2.slice(0, 4)], 'the re-entry draws on from the generator');
   assert.deepEqual(c.save.roster, drawn(195), 'the re-entry drew another 65 words');
-  // switch off (the port before freshEvent): the started event is resumed, nothing drawn
-  setPv('freshEvent', false);
-  const held = c.save.roster.slice(), resumed = c.startEvent('zoe', MODE.HALFPIPE, 11, true);
-  assert.equal(resumed, again, 'pv freshEvent off: a started career event is not posted again');
-  assert.deepEqual(c.save.roster, held, 'pv freshEvent off: no draws');
-  setPv('freshEvent', null);
   const race = c.startEvent('zoe', MODE.RACE, 0, true); assert.equal(race.roster.entries.length, 10, 'a fresh career race builds its roster (0x23A4F0) on the same generator');
 }
 console.log(`Freestyle rosters: ${fsStates} PS2 savestates (roster, opponent, ${fsScores} posted scores, generator draws) and the objectives cards exact`);

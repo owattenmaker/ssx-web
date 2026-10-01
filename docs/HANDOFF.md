@@ -1,3 +1,92 @@
+> **Live 2026-10-01 (coordinator): onlineRecords, careerRival + careerLevel ON; the password gate removed.** Online records: host plist has MP_RECORDS_DIR=~/ssx-host/state/records (backup state/server.plist.bak-20260930; repo template updated). Career rival: CRA3 / DRA4 lineups.json from local/career-rival/export (sha256 2a51d488… / f9502428…) copied in, new inodes. **Public site:** the user chose to remove the gate. Origin: MP_GATE_PASSWORD removed from the host plist (createGate returns null), every response carries `x-robots-tag: noindex, nofollow` and /robots.txt disallows all (web/server/mp-server.mjs). Edge: deploy/edge-worker.js checks a session only while GATE_SECRET is set; the GATE_SECRET worker secret is deleted. To restore the gate: put MP_GATE_PASSWORD back in the plist, `wrangler secret put GATE_SECRET` from ~/ssx-host/state/gate-secret, reload.
+
+> **Cleanup: 176 switches retired, minified files reformatted, a line-length guard (2026-09-30, cleanup agent):**
+> - **Switches:** PV_DEFAULTS 216 -> 40 (17 on, 23 off). Each retired switch's off path is deleted (pv('x') folded to its on branch; dead branches, helpers and imports removed). Every name was grepped across web, tools, tests and engine first; tests that forced an off path lost that half.
+>   - Deleted with their code (off, superseded): byteBlend (with `web/fog-shared.js` and world-material's `registerWorldAdditive`: moot with encodedBlend), softSprites (softGlyphs replaced it), sfxWarmFirst (inconclusive since 09-27).
+>   - Kept on purpose (their off path is used): rideWarm, worldWarm (test-ride-warm / test-world-warm compare both), encodedBlend (test-frame-space), lazyCourse (boot-files.mjs record), the field kill switches bindPoseProbe, hangWatch, gcWatchdog, and threeLean. Owners' switches untouched (nisTick, nisAfterScan, nisBoneProbe, gameTickKeep, padCarry, heatRoles, ws13Rebuild, onlineRecords, careerRival, careerLevel, versionedAssets, the eventInWorld* family); the pending off ones stay. ps2MenuInput (on since 09-29) stays for a separate batch: retiring it removes the port pad-menu model.
+>   - `web/pv-flags.js` is rewritten (688 -> 205 lines): the syntax header, one paragraph per remaining switch, **PV_DEFAULTS one key per line** (add a switch as its own line). In code comments `pv <retired name>` became just the name.
+> - **Formatting (behaviour-free, each file proven AST-equal to the file it replaced: rolldown's parser, positions / comments / raw literals / parentheses ignored, &&-|| chains normalised):** main.js (765 -> 5911 lines), career-ui.js (1214 -> 3914), ui.js, lodge-ui.js and 8 minified renderers fully reformatted (prettier 140 columns, single quotes); every other file had only its statements on lines over 200 characters reformatted. Comments sit on their own `//` lines above the code they describe, text and addresses kept. Lines over 200 characters in web/*.js, net/*.js, server/*.mjs: 881 -> 0 (outside string / template literals).
+> - **New guard `web/test-line-length.mjs`** (first in test:all): fails on a line over 200 characters outside literals; generated files are listed in it (three-patches.js).
+> - **Source-text checks:** tests that match a module's text use `web/test-source.mjs` `sourceOf('file.js')` (comments and whitespace removed, `(o)=>` -> `o=>`, a space kept between a word and a quote), so formatting does not break them. Use it for new checks.
+> - **Old files:** `deploy/deploy.sh` stays, documented (its header, docs/hosting.md) as the first-install / sandbox profile / plist path; deploy-staged.sh is the everyday deploy. Moved out of the tree (agent scratch, recoverable): `web/.{bc-replay,cmp-bones,p2-longrun,p2-stage-probe,p2-trace-hook,p2-trace-hook2,p2-trace-hook3}.mjs`, the stale `web/dist` build (09-22, 95 MB), `gi.txt`.
+> - **Checks:** the full `npm test` 210/210 at the end (the new guard included); full ps2-captures 270 clean after each simulation-touching batch (main.js, cutscenes / free-ride, career-ui + ai-race + compare-ps2-capture); the targeted tests of every batch; Chrome and WebKit smoke (?mute=1): Snow Jam from the event pick to its results by riding, and a CTM free ride from Green Base Station with an in-world Transport to Snow Jam (14 s), no page errors. One regression during the work (an import line removed with its neighbours in minified files: fog-renderer's trackCompiles, the effects' drawOrder) was fixed within the batch window; every batch now runs an import diff against the pre-edit file and an undeclared-identifier scan.
+> - **Not done / for later:** ps2MenuInput's retirement; the test and tool .mjs files keep their long lines (not in the guard's scope); about 30 exports are used nowhere (listed in the inventory) and were left; 10 passing tests are not in test:all (test-attached-core, test-attached-setpieces, test-boost-gauge, test-boost-letters, test-boost-orb, test-rails, test-boost-coil-glow, test-boost-orb-glow, test-title-start, test-ps2-menu-input).
+
+> **The peak rival in career events: Nate rides the Peak 2 race finals, nobody rides a career slope style; pv careerRival + careerLevel (off, proposed on) (2026-09-30, career-rival agent):** see [career-events.md](career-events.md) "The peak rival in career events", [ai-racers.md](ai-racers.md) "Difficulty by race level".
+> - **Decomp:**
+>   - Career slope style posts the rival (0x145750) in slot 1 with the leading column, and **no computer rider rides** on any peak. 0x238E20's career round-1 path 0x238F7C sets GMM+0x14 = 5, so 0x239AA0 has one live slot. Only a Single Event rides its last shuffled character (0x239A78), and there the rival never appears. The brief's "career opponent = Nate rides Style Mile" is not the PS2; the port already did this right, so there is no code change for slope style.
+>   - Every career race final rides the rival in slot 1: 0x23A108 round 3, career branch 0x23A3D8 (+0x44 = 0x145750). Qualifiers, semis and Single Events never do. A lost heat sets the handler's +0x8 / +0xC (0x23AAE8) so that a Restart reuses the roster.
+>   - Separately: the race level sets the riders' +0xDF8 / +0xDFC (0x10C4F8 by slot and level, then 0x10C758's course factor). Checked on all 128 exported countdowns.
+> - **PS2 evidence** (derived from ctm-parity peak2-arr, local/career-rival/nav):
+>   - career Style Mile heat 1 (Nate posted 358740 / 402400 / 459660; GMM+0x14 = 5, 0x535C04 = 0): characters/career-freestyle/DSS2-heat1-zoe;
+>   - career Ruthless Ridge and Intimidator finals, Zoe / Nate / Psymon / Brodi / Griff / Elise at race level 2: characters/career/{CRA3,DRA4}-final-zoe. Path: Give Up, then GMM+0x74 = 3 and handler +0xC = 0 at the results, then Restart.
+>   - --ai-state captures (1500 records): local/ps2-capture/runs/careerrival -> local/career-rival/caps.
+> - **Gates:**
+>   - test-ps2-captures careerrival/cra3-final: human (score too), Nate and the other four, RNG, ranks and pair records all exact to the end.
+>   - careerrival/dra4-final: the same, with the human score only to 228. The human's crash there is an attacked bail on the PS2 (+0x12C); the port's enter_crash always passes attacked = false. That is open, not career-specific; a task chip was spawned for it.
+>   - Full ps2-captures: 270 clean.
+>   - New web/test-career-rival.mjs (in test:all): 0x10C4F8 on 128 documents; the page's assembly of both finals equals the PS2 riders leaf for leaf; the career Style Mile posting replayed exactly.
+> - **Code:**
+>   - tools/export_lineups.py: export-career records the round and race level; build checks the round / level leaves by rule and prefers same-course provenance; the shared-RNG search bound is raised.
+>   - tools/ps2_capture.py: drops an unreferenced dead DEFAULT_3 camera.
+>   - web/lineup.js: npcDifficulty, assembleLineup({ level }), careerSkinGated.
+>   - web/ai-race.js: heatLevel. web/career.js: ev.raceLevel, a non-saved getter.
+>   - web/pv-flags.js: careerRival and careerLevel, both off.
+> - **For the coordinator to copy** into web/public/assets (scratch local/career-rival/export, additive: skin nate, skin_scale, grid[1][3f7fffff], career_skins, coverage):
+>   - CRA3/lineups.json sha256 2a51d4882f805617...
+>   - DRA4/lineups.json sha256 f9502428bee34c69...
+>   - Then CAREER_RIVAL_DATA is no longer needed for test-career-rival's final checks.
+> - **Page checks** (local/career-rival/qa: server.mjs serves the scratch files; final.mjs runs qualifier -> semi -> final):
+>   - Chrome, Ruthless Ridge with the switches on: the final card shows Zoe, Nate, Luther, Viggo, Moby, Mac, and Nate races; at level 2 the riders' DFC are 1 / 0.9095 / 0.7790 / 0.6594 / 0.5170.
+>   - WebKit, Intimidator: Zoe, Nate, Psymon, Elise, Viggo, Moby, the same.
+> - **Seen on the way, not changed:** the port's final card says "Final" where the PS2 says "Final Round", and it shows the record time 02:13 on both Peak 2 races where the PS2 shows 02:59 on Ruthless Ridge. The tree's set-piece-particles.js / weather-renderer.js threw "drawOrder is not defined" during the QA runs (another agent's edit in progress?).
+
+> **CTM events: nisAfterScan (off, proposed on) and the rollout checks (2026-10-01, CTM events-in-world agent):** see [ctm-parity.md](ctm-parity.md) "The NIS teleport after the section scan" and [ctm-events-in-world.md](ctm-events-in-world.md) "Rollout checks".
+> - **pv nisAfterScan:** the lodge door / booth cut fired inside simulate and held the rider before that tick's _section_pass. The PS2 places it at the next update's NIS tick, after the scan. main.js nisHoldAt / nisStart and game-tick.js s.nisStart now defer it to the next tick's start. Chrome and WebKit at the Green lodge door: off, the hold lands before the scan; on, after it. test-nis-after-scan passes; compare-ps2-capture --station-hold (STATION_HOLD_EARLY, SECTION_TRACE). No PS2 capture has the firing tick on a scan tick.
+> - **Rollout checks:** in-world vs event-load frames render the same; the remaining differences are rider positions, by design (the Single Event anchor tick). There is no in-world backcountry event, so no beam to compare. Phone memory: in-world peaks lower than event-load (1111 vs 1400 MB in the cycles) but grows about 35 MB per cycle over 8 cycles, outside the wasm heap (R8). In-world WS13 on the page has no gondola and no heatEnter (the card opens at once).
+> - **Proposal sent:** desktop first with worldUnderCuts + eventWorldData + eventInWorld + eventInWorldAi + nisSectionPoint; eventReturnInWorld waits for the page's WS13; phones wait for the memory growth.
+> - **Bone 22 (pv nisBoneProbe, off):** derived from the NIS keys without a clip export. The cast rider's board_rootg, posed by cutscenes.js from the NIS bank's clip at the rider's model size, is the PS2's bone 22: fr-booth2, within 0.09 cm over 235 ticks. cutscenes.js humanBoard() feeds main.js nisStart -> core nis_hold_probe(2). Open: the page's cut starts about 18 ticks after the hold on a first visit, so the PS2's first miss and the following hit's 111AA0 snow impact are not reproduced. Proposed fix: load the human's cast model and the step before the hold (ctm-parity.md "Bone 22 from the NIS keys").
+
+> **In-world Transport stalls: a crashbag roller on freed collision (core) and the boot rider's dropped held loop (page); the Start block, the avalanche teardown order, the 'loading' hang on a failed init (2026-09-30, Transport-stall agent):** see [course-switch.md](course-switch.md) "In-world Transports that stalled or took the page down".
+> - **Core (core2 then core3, both installed by the coordinator; core3 wasm c22ef974…, full suite 268 clean):**
+>   - web/roller_gameplay.inc `browser_rollers_track_teardown`: a crashbag roller (raw pointer to its node's sphere tree) outlived the location; pv peakRelease freed the nodes, so the game tick threw "Original roller collider has no sphere tree", then bad_alloc and out-of-bounds traps ("Transport failed").
+>   - Now the track's rollers go at the unload start, as on the PS2: web/peak_world.inc set_state(->7) mirrors 230360 -> 3551A8(gp+0x2898, 1 / 8, track) -> 361038 -> 3553C0 -> 34FBF0 flags.
+>   - `browser_avalanche_track_reset` moved there too (it ran at 7 -> 0, a tick after the free; no freed read, but 6 ticks late), with 34FBF0's flags.
+> - **Page (main.js, no switch):**
+>   - `cutsceneRider` takes the character from ui.riders by id. The boot rider object has none, so every rider-masked cut step was dropped, the Transport's held loop among them: the game screen showed while the rows loaded, and a Transport asked for then was dropped.
+>   - Start opens no pause while `transporting`. PS2 ARMSX2 run local/transport-stall/ps2/run1: Start in WS14 / WS11 / WS10 does nothing, in WS4 it pauses.
+>   - `init().catch` guards getExceptionMessage: a dev server's stale core.js beside a new core.wasm left the page at 'loading' with no error (the "MOUNTAIN autostart sits at loading" report). Fresh servers load MOUNTAIN in 8.9-9.6 s.
+> - **Repro (before / after, 18 runs, Chrome + WebKit desktop / phone policy, QA and normal):**
+>   - before: R&B's roller outlived R&B every time; the trap came in 1 of 9 runs; Throne -> BRA2 was dropped in 8 of 8.
+>   - after: 45 of 45 Transports arrive, 0 core errors; no WebContent crash or reload anywhere.
+> - **Also checked:** core-clock in WebKit (phone and desktop): 9 of 9 Transports, remaining steady through the NIS hold.
+> - **Tests:** new web/test-crashbag-release.mjs (in test:all); test-ctm-flow / ctm-stream / peak-release / ride-warm / world-warm / lazy-course / presentation / cutscenes / start-rules / avalanche-collision pass.
+> - **Open:**
+>   - the lodge door cut was not driven;
+>   - transportInWorld still returns 'transport' for a dropped request (unreachable now);
+>   - the computer-rider contexts (eventInWorldAi) keep their own rollers.
+> - **Tools:** scratchpad `tq/` (tq.mjs, nis.mjs, lanes.sh, summ.py, loadcheck.mjs), local/transport-stall/ (builds, capture logs, ps2/).
+
+> **Online course records: the online top 5, Save Records' name entry and upload, the boards, main-menu Leaderboards, Watch Replay (2026-09-30, online records agent):** see [online-records.md](online-records.md). **pv `onlineRecords` ON** (2026-09-30, after the coordinator applied `MP_RECORDS_DIR` on the host: [hosting.md](hosting.md) "Online records"); npm test 208/208 with it on. Without a loaded board (offline from the start) the records screen is the PS2's exactly (test-ctm-left, both switch states).
+> - **Decomp:** the records table is 26 slots x 5 at 0x535C18 (defaults 0x43FB28). 0x238358 (each finish, from 125108) calls 0x154AB8 for human players, not during a replay, without Single Event rules (0x14F810 on 0x5308B8), in CTM and Single Event alike, every heat. Times are whole seconds (`cvt.w.s(f32(ticks) x 0x3C888889)`, gp-0x6DEC), and a tie ranks the new run above the old (0x154D58). The record stores the base rider (setup +0x11). There is **no name entry on the PS2**: the record takes the Player Name (0x147170).
+> - **Fixed, on for everyone:** career.js `addRecord` used ticks and a strict compare; it now follows 0x154D58 on whole seconds (test-ctm-left: 02:57.50 ties BOMBER's 177 s and goes first).
+> - **Built (behind the switch):**
+>   - web/online-records.js (data, cache, rank rule);
+>   - web/online-records-ui.js (61toptimes online rows, Save Records -> the game keyboard -> upload, the `ctm-board` screen);
+>   - web/online-replay.js (the run's replay file, Watch Replay);
+>   - web/server/records.mjs + web/server/replay-file.mjs (API, storage, tier-0 checks, rate limits);
+>   - hooks in career-ui.js, results-lui.js (third item / rank text / focus row), fe-screens.js (keyboard kind 'record'), fe-main-menu.js + ui.js (sixth row Leaderboards), fe-event-select.js (Leaderboards mode, online top time on INFO), main.js (install, riderStale, replay exit / allowed / afterSwitch 'replay', REPLAY_SCREENS + ctm-board), ai-race.js (`fixedNext` / `prepareFixed`, lineup tables), replay.js (`exportBytes` / `importBytes` / `load`), replay-ui.js (D7 note).
+> - **Checked:**
+>   - Chrome, web/test-online-records.mjs (in npm test): a Single Event Snow Jam run uploaded through the keyboard; Watch Replay equal to the live run's `?simtrace` on all 15,000+ ticks, after a course switch (1200 ticks) and with another rider selected (600 ticks); the boards; Leaderboards; the offline fallback.
+>   - WebKit (web/webkit-driver.mjs, scratch `web/.online-records-webkit.mjs`): the same flow, Watch Replay 2000 ticks exact; screens match Chrome.
+>   - Server: web/test-records-server.mjs (in npm test), including a standalone start of web/server/.
+>   - Switch off: test-replay, ai-racers, lineups, career, career-rider, ctm-left, fe-screens, fe-attract, mp-gate pass; `vite build --config server/vite.online.config.js` clean.
+> - **Open:**
+>   - The verifier (D5, second pass) is not built; entries are listed after tier-0 checks only.
+>   - In-world CTM events and peak runs keep the local table (D1).
+>   - A Give Up's PS2 record entry is not confirmed (online: never submitted).
+>   - Single Event keeps the last career run's attribute bytes (existing port rule; the replay carries the bytes, so playback is exact).
+
 > **Outage and guard (2026-09-30, coordinator):** the core3 deploy took the site down (502) for a few minutes: web/server/records.mjs imported ../net/replay-file.js, and the host runs web/server/ on its own, so mp-server.mjs died with ERR_MODULE_NOT_FOUND. Rolled back, the records agent moved the code into web/server/replay-file.mjs and made the records mount lazy and never fatal, then redeployed (core3 live, site 200). **Guard:** deploy/deploy-staged.sh now copies web/server/ alone into a temp dir and starts mp-server.mjs on a free loopback port before staging; if it does not print its 'multiplayer server on' line, nothing deploys. Rule for agents: web/server/* imports only from web/server/ and node:.
 
 > **Live core installed: core3, the avalanche teardown at 5 -> 7 (2026-09-30, coordinator):** web/runtime core.js `7734196ec197ac76…`, core.wasm `c22ef97470deec76…`, from local/transport-stall/core3 (built after core-clock; no core source changed after). browser_avalanche_track_reset runs in peak_world set_state(->7) beside the roller teardown, with 34FBF0's flags on collidable pieces (PS2 230360 -> 3551A8(gp+0x2898, 1, track)); browser_stage_track_reset no longer runs it at 7 -> 0. Full ps2-captures 268 clean; test-crashbag-release passes on the live core.

@@ -1,4 +1,4 @@
-// Terrain snow sparkle (pv sparkle; docs/presentation.md 14): the glints the PS2 scatters over the snow near the camera.
+// Terrain snow sparkle (sparkle; docs/presentation.md 14): the glints the PS2 scatters over the snow near the camera.
 //
 // Original (SLUS_207.72): the terrain pass 0x38B370 ends with 0x38D968, which runs 0x38D690 for every patch of two render
 // lists: +0x4A60 (all four edges at tessellation level 8) and +0x4D84 (mixed edges, those with a level-8 edge). A patch
@@ -20,8 +20,6 @@
 import {mul, vuAdd as add, vuSub as sub, div as eeDiv, add as eeAdd, sub as eeSub, bitsOf, fromBits} from './ee-scalar-float.js';
 import {lfsrNext} from './set-piece-particle-sprites.js';
 import {attribute, texture, vec4, float, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';
-import {registerEncodedEffect} from './snow-composite.js';
-import {pv} from './pv-flags.js';
 import {painterRegions} from './painter-regions.js';
 import {setUpdateRange} from './heap-views.js';
 
@@ -45,7 +43,12 @@ export function hasLevel8Edge(corners, at, eye) {
 // 38D6CC..38D734: the sprite count of a patch from its record bbox (lo, hi: source cm) and the density renderer+0xC4 (the Surface
 // painter's current value: 1.0 on most courses, e.g. ABC1 1.8 / 4.0 by region, CRA3 1.5 / 3.0). The count is halved for a
 // mixed-list entry with +8 < 2, but the drawn mixed entries have +8 = 2 (0 is skipped; 1 was not seen in 20 PS2 states).
-const countBase = (lo, hi) => { const x = eeSub(lo[0], hi[0]), y = eeSub(lo[1], hi[1]), z = eeSub(lo[2], hi[2]); return mul(eeAdd(eeAdd(mul(x, x), mul(y, y)), mul(z, z)), mul(COUNT_GAIN, COUNT_SCALE)); };
+const countBase = (lo, hi) => {
+  const x = eeSub(lo[0], hi[0]),
+    y = eeSub(lo[1], hi[1]),
+    z = eeSub(lo[2], hi[2]);
+  return mul(eeAdd(eeAdd(mul(x, x), mul(y, y)), mul(z, z)), mul(COUNT_GAIN, COUNT_SCALE));
+};
 const countAt = (base, density) => Math.max(0, Math.trunc(mul(base, density)));
 export function sparkleCount(lo, hi, density = 1) { return countAt(countBase(lo, hi), density); }
 // The four record corners from the rows (row q = coefficient 15 - q; P(u, v) = sum c[i + 4j] u^i v^j).
@@ -204,7 +207,8 @@ export async function createTerrainSparkle({T, origin, capacity = 4096, fetchByt
   map.minFilter = map.magFilter = T.LinearFilter; map.wrapS = map.wrapT = T.ClampToEdgeWrapping; map.colorSpace = T.NoColorSpace; map.needsUpdate = true;
   const sets = new Map(), cache = new Map(), group = new T.Group(); group.name = 'terrain sparkle'; group.userData.gameplayOnly = true;
   const geometry = new T.PlaneGeometry(2, 2);
-  for (let v = 0; v < geometry.attributes.uv.count; v++) geometry.attributes.uv.setXY(v, (1 - geometry.attributes.position.getX(v)) / 2, (1 + geometry.attributes.position.getY(v)) / 2);   // GS ST (0,0) at centre + half
+  // GS ST (0,0) at centre + half
+  for (let v = 0; v < geometry.attributes.uv.count; v++) geometry.attributes.uv.setXY(v, (1 - geometry.attributes.position.getX(v)) / 2, (1 + geometry.attributes.position.getY(v)) / 2);
   const centre = new T.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(T.DynamicDrawUsage);   // xyz scene metres, w alpha / 128
   geometry.setAttribute('sparkle', centre);
   const size = uniform(new T.Vector2()), maxHalf = uniform(new T.Vector2(...MAX_HALF));
@@ -221,10 +225,9 @@ export async function createTerrainSparkle({T, origin, capacity = 4096, fetchByt
   material.blendSrcAlpha = T.ZeroFactor; material.blendDstAlpha = T.OneFactor; material.blendEquationAlpha = T.AddEquation;
   const mesh = new T.InstancedMesh(geometry, material, capacity); mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = 640; mesh.visible = false; mesh.name = 'terrain sparkle';
   group.add(mesh);
-  // pv sparkleWorld (docs/visual-parity.md 41.9): the PS2 draws the sparkle at priority 4 (0x38DA40: word2 |= 0x80), in the world
-  // layer before the fog composite 36AC00, so it is fogged with the terrain; off: the encoded pass after the fog (640). The blend
-  // (Cd + Cd x As) scales the destination bytes either way (the world targets hold encoded bytes, pv encodedBlend).
-  if (!pv('sparkleWorld')) registerEncodedEffect({object: group, setEncodedOutput: () => {}, populated: () => mesh.visible && mesh.count > 0});
+  // docs/visual-parity.md 41.9: the PS2 draws the sparkle at priority 4 (0x38DA40: word2 |= 0x80), in the world layer before the fog
+  // composite 36AC00, so it is fogged with the terrain. The blend (Cd + Cd x As) scales the destination bytes (the world targets hold
+  // encoded bytes, pv encodedBlend).
   const eye = [0, 0, 0];   // the camera in source cm (the 22C410 / twinkle eye)
   const state = {sets: 0, patches: 0, selected: 0, sprites: 0, drawn: 0, cached: 0, density: 1, ms: 0, frames: 0, totalMs: 0, maxMs: 0, eye};   // QA: cost of update()
   const right = new T.Vector3(), up = new T.Vector3(), fwd = new T.Vector3();
@@ -275,57 +278,118 @@ export async function createTerrainSparkle({T, origin, capacity = 4096, fetchByt
     if (painter.current !== density) { density = painter.current; for (const set of sets.values()) if (!(set instanceof Promise)) setDensity(set, density); }
   }
   const api = {
-    group, state, sets,
+    group,
+    state,
+    sets,
     // A terrain package's sparkle patches (key: 'course' or a streamed location code; root: its asset directory; track: its
     // bam.sdb location index, the painter region's key in a streamed world).
     async attach(key, root, track = null) {
       if (sets.has(key)) return sets.get(key);
-      const job = fetchBytes(root + 'terrain-sparkle.bin').then((b) => (b ? sparkleSet(b) : null)).catch(() => null);
-      sets.set(key, job); const set = await job;
+      const job = fetchBytes(root + 'terrain-sparkle.bin')
+        .then((b) => (b ? sparkleSet(b) : null))
+        .catch(() => null);
+      sets.set(key, job);
+      const set = await job;
       if (sets.get(key) !== job) return null;
-      if (!set) { sets.delete(key); return null; }
-      set.track = track; setDensity(set, density); sets.set(key, set); return set;
+      if (!set) {
+        sets.delete(key);
+        return null;
+      }
+      set.track = track;
+      setDensity(set, density);
+      sets.set(key, set);
+      return set;
     },
-    detach(key) { sets.delete(key); for (const k of [...cache.keys()]) if (k.startsWith(key + ':')) cache.delete(k); },
-    setVisible(key, on) { const s = sets.get(key); if (s && !(s instanceof Promise)) s.visible = !!on; },
+    detach(key) {
+      sets.delete(key);
+      for (const k of [...cache.keys()]) if (k.startsWith(key + ':')) cache.delete(k);
+    },
+    setVisible(key, on) {
+      const s = sets.get(key);
+      if (s && !(s instanceof Promise)) s.visible = !!on;
+    },
     // Per drawn frame (after the camera is final); core: the game core (the painter's camera ticks), null in a bare scene.
     update(camera, core = null) {
       const t0 = performance.now();
       camera.updateMatrixWorld();
       const p = camera.getWorldPosition(new T.Vector3());
-      eye[0] = Math.fround((p.x + origin.x) * 100); eye[1] = Math.fround(-(p.z + origin.z) * 100); eye[2] = Math.fround((p.y + origin.y) * 100);
-      camera.matrixWorld.extractBasis(right, up, fwd); fwd.negate();
+      eye[0] = Math.fround((p.x + origin.x) * 100);
+      eye[1] = Math.fround(-(p.z + origin.z) * 100);
+      eye[2] = Math.fround((p.y + origin.y) * 100);
+      camera.matrixWorld.extractBasis(right, up, fwd);
+      fwd.negate();
       stepDensity(core);
-      const P = camera.projectionMatrix.elements, sx = 0.25 * P[0], sy = 0.21875 * P[5];
+      const P = camera.projectionMatrix.elements,
+        sx = 0.25 * P[0],
+        sy = 0.21875 * P[5];
       const s = glintVector(twinkleRotation(eye), [sx * right.y, sy * up.y, fwd.y, fwd.y]);
       size.value.set(0.1 * P[0], 0.1 * P[5]);
-      const arr = centre.array; let n = 0, selected = 0, patches = 0, spr = 0; built = 0;
+      const arr = centre.array;
+      let n = 0,
+        selected = 0,
+        patches = 0,
+        spr = 0;
+      built = 0;
       const lim = R0 * R0 * 1.001;
       for (const [key, set] of sets) {
         if (set instanceof Promise || !set.visible) continue;
         patches += set.n;
         const C = set.corners;
         for (let i = 0; i < set.n; i++) {
-          const o = i * 12; let near = false;
-          for (let q = 0; q < 12 && !near; q += 3) { const dx = eye[0] - C[o + q], dy = eye[1] - C[o + q + 1], dz = eye[2] - C[o + q + 2]; if (dx * dx + dy * dy + dz * dz <= lim) near = true; }
+          const o = i * 12;
+          let near = false;
+          for (let q = 0; q < 12 && !near; q += 3) {
+            const dx = eye[0] - C[o + q],
+              dy = eye[1] - C[o + q + 1],
+              dz = eye[2] - C[o + q + 2];
+            if (dx * dx + dy * dy + dz * dz <= lim) near = true;
+          }
           if (!near || set.counts[i] <= 0 || !hasLevel8Edge(C, o, eye)) continue;
           selected++;
-          const S = spritesOf(key, set, i); if (!S) continue;
+          const S = spritesOf(key, set, i);
+          if (!S) continue;
           for (let k = 0, end = Math.min(S.length, set.counts[i] * 6); k < end; k += 6) {
             spr++;
             const dot = S[k + 3] * s[0] + S[k + 4] * s[1] + S[k + 5] * s[2];
             if (dot < 0 || n >= capacity) continue;
-            const a = Math.trunc(Math.min(dot, 1) * 128); if (a <= 0) continue;
-            const j = n * 4; arr[j] = S[k] / 100 - origin.x; arr[j + 1] = S[k + 2] / 100 - origin.y; arr[j + 2] = -S[k + 1] / 100 - origin.z; arr[j + 3] = a / 128; n++;
+            const a = Math.trunc(Math.min(dot, 1) * 128);
+            if (a <= 0) continue;
+            const j = n * 4;
+            arr[j] = S[k] / 100 - origin.x;
+            arr[j + 1] = S[k + 2] / 100 - origin.y;
+            arr[j + 2] = -S[k + 1] / 100 - origin.z;
+            arr[j + 3] = a / 128;
+            n++;
           }
         }
       }
       if (n) setUpdateRange(centre, 0, n * 4);
-      mesh.count = Math.max(n, 1); mesh.visible = n > 0;
+      mesh.count = Math.max(n, 1);
+      mesh.visible = n > 0;
       const ms = performance.now() - t0;
-      Object.assign(state, {sets: sets.size, patches, selected, sprites: spr, drawn: n, cached: cache.size, density, ms, frames: state.frames + 1, totalMs: state.totalMs + ms, maxMs: Math.max(state.maxMs, ms)});
+      Object.assign(state, {
+        sets: sets.size,
+        patches,
+        selected,
+        sprites: spr,
+        drawn: n,
+        cached: cache.size,
+        density,
+        ms,
+        frames: state.frames + 1,
+        totalMs: state.totalMs + ms,
+        maxMs: Math.max(state.maxMs, ms)
+      });
     },
-    dispose() { sets.clear(); cache.clear(); geometry.dispose(); material.dispose(); map.dispose(); group.removeFromParent(); if (globalThis.ssxEffects?.sparkle === api) delete globalThis.ssxEffects.sparkle; },
+    dispose() {
+      sets.clear();
+      cache.clear();
+      geometry.dispose();
+      material.dispose();
+      map.dispose();
+      group.removeFromParent();
+      if (globalThis.ssxEffects?.sparkle === api) delete globalThis.ssxEffects.sparkle;
+    }
   };
   (globalThis.ssxEffects ??= {}).sparkle = api;   // QA handle
   return api;

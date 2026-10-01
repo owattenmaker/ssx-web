@@ -91,12 +91,22 @@ export function buildGraph(json) {
 // song = { id, inf, graph, mus, loops, decodeSegment(seg) }. `mus` / `loops` are the original .mus files.
 // decodeAsync(bytes, sample) -> Promise<decoded> (optional, e.g. musicDecodeWorker()): MicroTalk stream bars ("Screw Up",
 // ~40 ms of EE-exact decoding each) then decode off the main thread when the player asks for them ahead of time.
-// asyncAll (pv musicWorkerDecode, docs/audio-logic.md 9.13): every stream bar (EA-XA too, 3-25 ms each on the main thread, a
+// asyncAll (musicWorkerDecode, docs/audio-logic.md 9.13): every stream bar (EA-XA too, 3-25 ms each on the main thread, a
 // 6-channel menu bar the most) is decoded by decodeAsync ahead of its time, not only the MicroTalk ones.
 export function prepareSong(json, { mus = null, loops = null, decodeAsync = null, asyncAll = false } = {}) {
   const viaWorker = (sample) => !!decodeAsync && sample?.kind === 'stream' && (asyncAll || sample.codec === 'microtalk');
   // (asyncAll: at most 12 decoded bars wait to be handed out, oldest dropped: bars a re-simulation no longer plays would pile up)
-  const prune = () => { let n = 0; for (const v of pending.values()) if (!(v instanceof Promise)) n++; for (const [k, v] of pending) { if (n < 12) break; if (!(v instanceof Promise)) { pending.delete(k); n--; } } };
+  const prune = () => {
+    let n = 0;
+    for (const v of pending.values()) if (!(v instanceof Promise)) n++;
+    for (const [k, v] of pending) {
+      if (n < 12) break;
+      if (!(v instanceof Promise)) {
+        pending.delete(k);
+        n--;
+      }
+    }
+  };
   const graph = buildGraph(json);
   let bank = null;
   const pending = new Map(); // stream sample index -> Promise (in flight) | decoded (ready, handed out once)
@@ -104,12 +114,31 @@ export function prepareSong(json, { mus = null, loops = null, decodeAsync = null
   const streamed = !!mus?.stream;
   const barIn = (sample) => !streamed || sample.kind !== 'stream' || mus.has(sample.offset, sample.size);
   const loadBar = (sample, priority) => (barIn(sample) ? Promise.resolve(true) : mus.load(sample.offset, sample.size, priority));
-  const readAhead = (node) => { if (!streamed || node == null) return; for (const n of nextAudioNodes(graph, node, mus.busy() ? 1 : 2)) { const smp = graph.samples[graph.nodes[n].sample - 1]; if (smp?.kind === 'stream') loadBar(smp, 'low'); } };
+  const readAhead = (node) => {
+    if (!streamed || node == null) return;
+    for (const n of nextAudioNodes(graph, node, mus.busy() ? 1 : 2)) {
+      const smp = graph.samples[graph.nodes[n].sample - 1];
+      if (smp?.kind === 'stream') loadBar(smp, 'low');
+    }
+  };
   const request = (index) => {
     const sample = graph.samples[index - 1];
     const decode = () => decodeAsync(mus.subarray(sample.offset, sample.offset + sample.size), { ...sample, offset: 0 });   // (at once when the bar is in)
-    const job = (barIn(sample) ? decode() : loadBar(sample, 'high').then((ok) => (ok ? decode() : Promise.reject(new Error('music bar not loaded')))))
-      .then((d) => { if (pending.get(index) !== job) return; if (asyncAll) { pending.delete(index); prune(); } pending.set(index, d); }, () => { if (pending.get(index) === job) pending.delete(index); });
+    const job = (
+      barIn(sample) ? decode() : loadBar(sample, 'high').then((ok) => (ok ? decode() : Promise.reject(new Error('music bar not loaded'))))
+    ).then(
+      (d) => {
+        if (pending.get(index) !== job) return;
+        if (asyncAll) {
+          pending.delete(index);
+          prune();
+        }
+        pending.set(index, d);
+      },
+      () => {
+        if (pending.get(index) === job) pending.delete(index);
+      }
+    );
     pending.set(index, job);
     return job;
   };
@@ -122,7 +151,8 @@ export function prepareSong(json, { mus = null, loops = null, decodeAsync = null
     // are committed ~500 ms ahead); anything needed sooner decodes here.
     decodeSegment(seg, { aheadMs = 0 } = {}) {
       const sample = graph.samples[seg.sample - 1];
-      if (streamed && sample.kind === 'stream') { readAhead(seg.node); if (!barIn(sample)) { if (aheadMs <= 0) (mus.late ??= new Set()).add(seg.sample); loadBar(sample, 'high'); return null; } }   // not in yet: asked again on the next pump (late: due and not in)
+      // not in yet: asked again on the next pump (late: due and not in)
+      if (streamed && sample.kind === 'stream') { readAhead(seg.node); if (!barIn(sample)) { if (aheadMs <= 0) (mus.late ??= new Set()).add(seg.sample); loadBar(sample, 'high'); return null; } }
       if (viaWorker(sample)) {
         const got = pending.get(seg.sample);
         if (got && !(got instanceof Promise)) { pending.delete(seg.sample); return got; }
@@ -166,7 +196,7 @@ export async function prefetchSongStart(song, event, { intensity = 0 } = {}) {
 
 const ASYNC_AHEAD_MS = 150, SYNC_MARGIN_MS = 80, SHIFT_MAX_S = 0.012;
 
-// ---- streamed .mus (pv musicStream, docs/audio-logic.md "Music streaming") ------------------------------------------------------
+// ---- streamed .mus (musicStream, docs/audio-logic.md "Music streaming") ------------------------------------------------------
 // The PS2 streams a song's MUSDATA from the disc; the browser downloaded the whole file first (charsel.mus 44 MB, ~60 s at
 // 6 Mbit/s, before the menu song could play, sharing the link with the course). A streamed .mus holds only the bars asked for:
 // each stream sample is its own byte range (graph.samples offset / size), fetched with fetchRange(start, end, priority) ->
@@ -196,8 +226,24 @@ export function createMusStream(fetchRange, { busy = () => false, budgetBytes = 
       if (s.has(offset, size)) return Promise.resolve(true);
       const key = `${offset}:${size}`; if (pending.has(key)) return pending.get(key);
       if (performance.now() - (failed.get(key) ?? -1e9) < 2000) return Promise.resolve(false);
-      const job = fetchRange(offset, offset + size, priority).then((r) => { if (r?.bytes) { chunks.push({ start: r.start ?? 0, bytes: r.bytes, used: clock(), played: 0, whole: r.bytes.length !== size }); bytes += r.bytes.length; trim(); } return s.has(offset, size); }, () => false)
-        .then((ok) => { if (ok) failed.delete(key); else failed.set(key, performance.now()); return ok; }).finally(() => pending.delete(key));
+      const job = fetchRange(offset, offset + size, priority)
+        .then(
+          (r) => {
+            if (r?.bytes) {
+              chunks.push({ start: r.start ?? 0, bytes: r.bytes, used: clock(), played: 0, whole: r.bytes.length !== size });
+              bytes += r.bytes.length;
+              trim();
+            }
+            return s.has(offset, size);
+          },
+          () => false
+        )
+        .then((ok) => {
+          if (ok) failed.delete(key);
+          else failed.set(key, performance.now());
+          return ok;
+        })
+        .finally(() => pending.delete(key));
       pending.set(key, job); return job;
     },
     subarray(a, b) { const c = find(a, b); if (!c) throw new Error(`music bytes ${a}..${b} not loaded`); c.played = 1; return c.bytes.subarray(a - c.start, b - c.start); },
@@ -247,7 +293,7 @@ export async function streamSongStart(song, event, { intensity = 0, aheadMs = 40
   core.sendEvent(event, 0);
   core.advanceTo(aheadMs);
   const queue = core.state.voices[0]?.queue ?? [], opening = queue.filter((s) => s.start < startMs);
-  // A player whose random nodes follow the audio clock (pv bigChallengeAudio, 0x3D3B08: (clock / 23) & 0x7F) may open with
+  // A player whose random nodes follow the audio clock (bigChallengeAudio, 0x3D3B08: (clock / 23) & 0x7F) may open with
   // other bars: the dry run again for every clock value; their opening bars too, when they add up to little.
   const alt = new Map();
   for (let v = 0; v < 128; v++) {
@@ -275,9 +321,9 @@ export function musicDecodeWorker({ fold = false } = {}) {
 }
 
 // Catalog song id (e.g. 'Go') -> song. fetchJson/fetchBytes take paths relative to the AUDIO asset root.
-// fetchRange(path, start, end, priority) -> {start, bytes} (optional, pv musicStream): the stream track streams bar by bar
+// fetchRange(path, start, end, priority) -> {start, bytes} (optional, musicStream): the stream track streams bar by bar
 // (createMusStream); busy() -> the game's own downloads are running (the read-ahead holds back).
-// workerDecode (pv musicWorkerDecode): every stream bar decodes in the worker (prepareSong asyncAll), 6-channel bars folded to stereo there.
+// workerDecode: every stream bar decodes in the worker (prepareSong asyncAll), 6-channel bars folded to stereo there.
 // role ('play' | 'next', with fetchRange): which of the songs the streamed .mus cache keeps it as (musStreamFor).
 export async function loadSong(id, { fetchJson, fetchBytes, fetchRange = null, busy = undefined, workerDecode = false, role = null }) {
   const json = await fetchJson(`music/${id}.json`);
@@ -705,7 +751,7 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
   lookahead = 1.0, interval = 0.05, autoPump = true, cacheSize = 48, ambience = false, loopDestination = null, clockRandom = false,
   declickMs = 0, eventFirst = false } = {}) {
   let clockMs = 0; // audio-clock ms at song time 0 (moves on with a pause, like the EE clock)
-  // declickMs (pv audioDeclick, docs/audio-logic.md 9.13): a source that has to stop or start mid-waveform (pause, resume, an
+  // declickMs (audioDeclick, docs/audio-logic.md 9.13): a source that has to stop or start mid-waveform (pause, resume, an
   // event's cut, Stop, a late bar) ramps over this many ms instead of jumping to / from 0 (a click). The PS2's pause is pitch 0
   // (2B2018: the stream holds its sample, no step) and its resume continues from it; the song timing is unchanged.
   const DK = Math.max(0, +declickMs || 0) / 1000;
@@ -722,7 +768,8 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     return { ramp, level, rampsApplied: 0 };
   });
   let lowpass = null, lowpassValue = 0xffff;
-  const letGoChains = () => { for (const ch of chains) for (const n of [ch.ramp, ch.level]) try { n.disconnect(); } catch {} if (lowpass) try { lowpass.disconnect(); } catch {} }; // (a stopped song's gains)
+  // (a stopped song's gains)
+  const letGoChains = () => { for (const ch of chains) for (const n of [ch.ramp, ch.level]) try { n.disconnect(); } catch {} if (lowpass) try { lowpass.disconnect(); } catch {} };
   let base = 0, started = false, paused = false, pausedAt = 0, stopped = false, timer = null, fading = false;
   let lastEvent = -1, pending = null, snap = null, level = 127, loopsPct = 100, requested = false;
   const scheduled = new Map(); // seg id -> { src, seg, stopAt }
@@ -753,7 +800,18 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     const main = Math.min(Math.max(level * pathLevelPct / 100, 0), 127) / 127;
     // (declick: a level write moves there over DK: the big-air duck's per-frame writes and its jump back at the landing, 20 -> 127,
     // no longer step the playing waveform)
-    const put = (g, v) => { if (!DK || !started) { g.setValueAtTime(v, t); return; } if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); } g.linearRampToValueAtTime(v, t + DK); };
+    const put = (g, v) => {
+      if (!DK || !started) {
+        g.setValueAtTime(v, t);
+        return;
+      }
+      if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
+      else {
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(g.value, t);
+      }
+      g.linearRampToValueAtTime(v, t + DK);
+    };
     put(chains[0].level.gain, main);
     if (!chains[1]) return;
     put(chains[1].level.gain, ambience ? loopsPct / 100 : 1);
@@ -787,7 +845,7 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     const buf = buffer(seg, now); if (!buf) return null;
     const src = ctx.createBufferSource(); src.buffer = buf;
     let gain = null;
-    const fade = DK ? ctx.createGain() : null, head = fade ?? src; if (fade) src.connect(fade); // declick gain (pv audioDeclick)
+    const fade = DK ? ctx.createGain() : null, head = fade ?? src; if (fade) src.connect(fade); // declick gain
     if (seg.voice === 1 && !ambience) {
       gain = ctx.createGain(); gain.gain.value = sliceGain(seg);
       head.connect(gain); gain.connect(chains[1].ramp);
@@ -852,7 +910,7 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
 
   // Deterministic look-ahead: decisions up to `now` are final (snapshot), later ones are provisional and are
   // recomputed (same random draws) whenever an input arrives, so late events still act exactly at their time.
-  // eventFirst (pv musicLookahead): the audio an input makes due at once (a Big Challenge's stinger) starts right after the input,
+  // eventFirst: the audio an input makes due at once (a Big Challenge's stinger) starts right after the input,
   // before the look-ahead re-simulation and the reconcile (a few ms more with 2.5 s ahead: it started 2.7-5.3 ms late, skipped).
   function startDue(now) {
     for (const v of core.state.voices) for (const s of v.queue) {
@@ -951,7 +1009,15 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
       if (timer) clearInterval(timer);
       if (DK) { // declick: both outputs ramp to 0 over DK, then everything stops and lets go
         const t = ctx.currentTime;
-        for (const g of [out.gain, loopOut?.gain]) { if (!g) continue; if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); } g.linearRampToValueAtTime(0, t + DK); }
+        for (const g of [out.gain, loopOut?.gain]) {
+          if (!g) continue;
+          if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
+          else {
+            g.cancelScheduledValues(t);
+            g.setValueAtTime(g.value, t);
+          }
+          g.linearRampToValueAtTime(0, t + DK);
+        }
         const recs = [...scheduled.values()];
         for (const rec of recs) try { rec.src.stop(t + DK); } catch {}
         scheduled.clear();
@@ -997,7 +1063,7 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
     },
     pump,
     // The overlay (track 1) entries these events can jump to, decoded into the buffer cache ahead, one per task: the Big Challenge
-    // stingers of 33 / 34 / 38 (game-audio.js challengeAccepted, pv audioDeclick). The event's stinger then starts at the event, not
+    // stingers of 33 / 34 / 38 (game-audio.js challengeAccepted, audioDeclick). The event's stinger then starts at the event, not
     // after its decode on the main thread (5 ms of its attack skipped at 4x CPU). The stream bars they jump to are fetched too (a
     // part due at the cut started 100 ms late at 4x CPU). Returns how many overlay entries it warms.
     warmEvents(list) {
@@ -1006,7 +1072,18 @@ export function createPathfinderPlayer({ context, destination, song, random = Ma
         if (a.op !== 0x04 || !(a.mask & 3)) continue;
         let target = a.value; const sec = a.arg;
         if (target < 0 || target > g.nodes.length) continue;
-        if (sec >= 0) { let k = target, found = -1; for (let i = 0; i < g.nodes.length; i++) { if (g.nodes[i].section !== sec || g.nodes[i].sample !== 0) continue; if (--k === 0) { found = i; break; } } target = found; }
+        if (sec >= 0) {
+          let k = target,
+            found = -1;
+          for (let i = 0; i < g.nodes.length; i++) {
+            if (g.nodes[i].section !== sec || g.nodes[i].sample !== 0) continue;
+            if (--k === 0) {
+              found = i;
+              break;
+            }
+          }
+          target = found;
+        }
         if (!(target >= 0)) continue;
         for (const n of g.nodes[target]?.sample > 0 ? [target] : nextAudioNodes(g, target, 1)) {
           const smp = g.samples[g.nodes[n].sample - 1];

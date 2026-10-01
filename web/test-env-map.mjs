@@ -51,8 +51,8 @@ for (const dir of fs.readdirSync(path.join(web, 'public/assets'))) {
 }
 console.log(`packages: ${packages} checked, ${envBatches} env batches${envBatches ? '' : ' (not re-exported yet)'}`);
 
-// ---- 3. the material (pv envMap on, a fresh process: the switch is read at module load) ----
-const code = `globalThis.location={search:'?pv=envMap',href:'http://x/?pv=envMap'};
+// ---- 3. the material (a fresh process) ----
+const code = `globalThis.location={search:'',href:'http://x/'};
   const T=await import('three/webgpu'),W=await import('./world-material.js'),tsl=await import('three/tsl');
   const tex=()=>{const t=new T.DataTexture(new Uint8Array(4),1,1);t.needsUpdate=true;return t;};const textures={'9-50':tex()},map=tex();
   const add=W.envPassMaterial({instance:true,env:[50,0x200000]},map,textures,tsl.uv()),ad=W.envPassMaterial({instance:true,env:[50,0x600000]},map,textures,tsl.uv());

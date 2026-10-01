@@ -15,7 +15,11 @@ export const cashText = (n) => '$ ' + Math.max(0, Math.trunc(n)).toString().repl
 // cash green 0x4C8528 and pulsing like the race total (slot case 0x19 0x1EF850 with 0x1ECBC8's f25).
 export function collectFeedback(ui) {
   const slots = ui.lastState?.trickSlots, hud = ui.trickHud; let collect = 1, flash = -1;
-  if (slots) { for (const s of slots) if (s && s.type === 0x31) collect = Math.fround(s.value / s.maximum); const s18 = slots[0x18]; if (s18 && s18.type !== 0x34) flash = Math.fround(s18.value / s18.maximum); }
+  if (slots) {
+    for (const s of slots) if (s && s.type === 0x31) collect = Math.fround(s.value / s.maximum);
+    const s18 = slots[0x18];
+    if (s18 && s18.type !== 0x34) flash = Math.fround(s18.value / s18.maximum);
+  }
   const f = Math.fround, pulse = (t, amplitude) => (hud?.pulse ? hud.pulse(t, amplitude) : 1);
   return { counterScale: collect < f(0.439954281) ? pulse(f(collect * f(2.27296352)), f(0.19996199)) : 1, counterGreen: !(f(0.439954281) < collect),
     cashScale: flash >= 0 ? pulse(flash) : 1, cashGreen: flash >= 0 };
@@ -51,7 +55,15 @@ export function drawPeakRunHud(ui, c, { setup, raceTicks, split }) {
     if (!setup.time) ui.text(c, `GOAL: ${setup.target}`, 23, 20, 21, '#eef5ee', 'HUDFONT', 'left');
   }
   if (split && performance.now() < split.until) {
-    const value = setup?.time ? (() => { const a = Math.abs(split.value); return (split.value <= 0 ? '-' : '+') + `${String(Math.floor(a / 3600)).padStart(2, '0')}:${String(Math.floor(a / 60) % 60).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`; })() : `+${split.value}`;
+    const value = setup?.time
+      ? (() => {
+          const a = Math.abs(split.value);
+          return (
+            (split.value <= 0 ? '-' : '+') +
+            `${String(Math.floor(a / 3600)).padStart(2, '0')}:${String(Math.floor(a / 60) % 60).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`
+          );
+        })()
+      : `+${split.value}`;
     ui.text(c, value, 320, 46, 18, split.ahead ? '#88c8ff' : '#ff8888', 'HUDFONT', 'center'); // 0x4C88C8 ahead, 0x4C8888 behind
   }
 }

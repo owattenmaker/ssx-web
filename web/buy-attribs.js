@@ -1,4 +1,4 @@
-// The career lodge's Buy Attributes (cFEStateBuyAttrib, state 0x29, vtable 0x473908; FE.LUI 33buyattribs), pv buyAttribs.
+// The career lodge's Buy Attributes (cFEStateBuyAttrib, state 0x29, vtable 0x473908; FE.LUI 33buyattribs), buyAttribs.
 // docs/career-events.md "Buy Attributes (cFEStateBuyAttrib)" has the spec with its addresses and the PS2 runs that confirm it.
 //
 // The screen keeps its own copy of the rider (constructor 0x1F4728): raw[7] (+0x4C, the profile bytes read through 0x148158),
@@ -12,7 +12,6 @@ import { menuModel } from './fe-screens.js';
 import { money } from './trick-hud.js';
 import { originalAttributeBytes } from './career.js';
 import { LuiFlash, FLASH_IN, FLASH_OUT, flashAlpha } from './lui-flash.js';   // the lodge's shared TransitionOut flash
-import { pv } from './pv-flags.js';
 
 export const RAW_MAX = 55, LEVEL_MAX = 11;
 export const BAR_UNIT = Math.fround(37 / 11);            // gp-0x554C (3.3636): bar pixels per raw point, 185 px at raw 55
@@ -64,7 +63,7 @@ export class BuyAttribSession {
 // 0x150C20 on the port's career record (web/career.js buyAttributePoint): the byte's own level prices the point.
 export function buyPoint(career, id, row) { return career.buyAttributePoint(id, row); }
 
-// The attribute bytes of the run about to start (main.js startRun, pv buyAttribs): the runtime bank 0x535538 always holds the
+// The attribute bytes of the run about to start (main.js startRun, buyAttribs): the runtime bank 0x535538 always holds the
 // profile's bytes (0x148098 after every purchase and load), and the stat getters (0x1494C0 ..) read it live as int(raw / 5) / 11,
 // so free rides and events alike ride with the bought levels. Online: the defaults every client simulates. Else null (unchanged).
 export function runAttributes(ui, riderId) {
@@ -99,7 +98,13 @@ export class BuyAttribs {
     const cs = this.ui.characterSelect, data = cs?.data, screen = data?.screens?.['33buyattribs'];
     if (!screen) return false;
     const snow = data.screens.bg_snow_loop;
-    const merged = snow ? { ...screen, elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))], animations: { ...screen.animations, ...snow.animations } } : screen;
+    const merged = snow
+      ? {
+          ...screen,
+          elements: [...screen.elements, ...snow.elements.map((e) => ({ ...e, index: e.index + 1000 }))],
+          animations: { ...screen.animations, ...snow.animations }
+        }
+      : screen;
     this.lui = new LuiScreen(merged, cs.images || {}, this.ui); this.model = menuModel(screen);
     this.lui.unionFlat = true;  // the flat bars (Vector / under / background) as one path: no diagonal seam between their two triangles
     this.lui.flagWrap = true;   // only flag-0x80 texts wrap (the row help); 'You have:', the costs and the money stay on one line as on the PS2
@@ -117,10 +122,10 @@ export class BuyAttribs {
   leave() { this.transition(() => { this.session = null; this.popup = null; const ui = this.ui; ui.set('ctm-lodge'); ui.index = 3; ui.sync(); }); }
   // The lodge's Buy Attributes item: the lodge's TransitionOut (28lodge frame 85), then this screen from its intro (PS2 ba5 Cross)
   enter() { this.transition(() => { this.open(); this.ui.set('ctm-attributes'); }); }
-  // pv lodgeFlash: the lodge's shared flash (web/career-ui.js lodgeGo: cursor memory, the other lodge screens' changes); without the
+  // the lodge's shared flash (web/career-ui.js lodgeGo: cursor memory, the other lodge screens' changes); without the
   // career UI (tests) its own LuiFlash on this clock
   get flash() { return this.cu.lodgeFlash?.flash ?? this.ownFlash?.flash ?? null; }
-  transition(to) { if (this.flash) return; if (pv('lodgeFlash') && this.cu.lodgeGo) { this.cu.lodgeGo(to); return; } (this.ownFlash ??= new LuiFlash(() => this.now())).go(to); }
+  transition(to) { if (this.flash) return; if (this.cu.lodgeGo) { this.cu.lodgeGo(to); return; } (this.ownFlash ??= new LuiFlash(() => this.now())).go(to); }
   // Drawn after the lodge / this screen (web/career-ui.js draw): the switch happens at full white (the shared flash is career-ui's own draw)
   drawFlash(c) { this.ownFlash?.draw(c); }
 
@@ -160,7 +165,7 @@ export class BuyAttribs {
   }
   items(rows) { return this.popup ? [this.cu.t('kT_CMNYes', 'Yes'), this.cu.t('kT_CMNNo', 'No')] : rows; }
   // Nav buttons (ui.js sync): the rows of AttribMenu (text at menu (50,120) + (153, 27 + 20 i), 20 high, in 480 lines)
-  layout(i) { return this.popup ? [360, (283 + 20 * i), 110, 20] : [24, (147 + 20 * i) * SY, 440, 20 * SY]; }   // popup: Yes / No (448 lines)
+  layout(i) { return this.popup ? [360, 283 + 20 * i, 110, 20] : [24, (147 + 20 * i) * SY, 440, 20 * SY]; }   // popup: Yes / No (448 lines)
   events(frame, row) {
     const lui = this.lui, model = this.model, ui = this.ui, out = [];
     if (this.focusRow !== row) { this.focusRow = row; this.focusAt = this.now(); if (this.hl?.row !== row) this.hl = null; }

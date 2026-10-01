@@ -1,4 +1,4 @@
-// pv staticWorld (docs/sim-performance.md "Free-roam steady state"): the static world batches of a streamed location, as three.js
+// staticWorld (docs/sim-performance.md "Free-roam steady state"): the static world batches of a streamed location, as three.js
 // objects that cost less per render, with the same pixels.
 //
 // three.js (r186) spends most of a phone frame on per-object work: every render of the scene recomposes the matrix of every
@@ -16,24 +16,25 @@
 // Draw order is unchanged: three sorts by group order (0 for every group here), render order, projected bounding-sphere depth and
 // object id, none of which a cell changes. Meshes that anything moves or shows per frame by other means (LiveComp players,
 // MeshAnim pieces, magnets and script / pickup / moving / event-dead instances, flag cloth) stay where they are.
-// pv staticRefresh (on, 2026-09-27): three refreshes every node-material render object FULL on every draw (NodeMaterialObserver: a
+// staticRefresh: three refreshes every node-material render object FULL on every draw (NodeMaterialObserver: a
 // material with any node property): node, geometry and every binding update. A frozen static batch of a cell drawn with a shared
 // world material (web/world-material.js sharedWorldMaterials) without a UV-scroll uniform changes nothing per object after its first
 // draw: its object uniforms (world matrix, alpha test) are fixed, its textures are bound at the first (FULL) draw, and the only
 // per-frame values it reads (camera; the rider-shadow receiver's rows and count, moved to the shared render group under the switch,
 // web/rider-shadow.js) sit in shared groups. So those render objects take three's own static path: the shared refresh (RenderObjectRefreshType.SHARED) once
-// per render and material observer, else none (until 2026-09-27 the first one per observer took FULL: a wrong constant, same pixels). Event terrain (terrain refinement edits its index) is not marked. staticRefreshEnabled: QA A/B in one page.
+// per render and material observer, else none (until 2026-09-27 the first one per observer took FULL: a wrong constant, same pixels). Event
+// terrain (terrain refinement edits its index) is not marked. staticRefreshEnabled: QA A/B in one page.
 import { Group, Box3, Sphere, Frustum, Matrix4, NodeMaterial, RenderObjectRefreshType } from 'three/webgpu';
-import { pv } from './pv-flags.js';
 const { SHARED = 1, NONE = 0, FULL = 2 } = RenderObjectRefreshType ?? {}; // three's own static path: the shared refresh once per render, else none
-// pv staticRefreshWide (on, 2026-09-28): the static path for every render object drawn with a shared world material without a UV-scroll uniform
+// staticRefresh.wide: the static path for every render object drawn with a shared world material without a UV-scroll uniform
 // (marked or not: blended batches, event terrain, LiveComp / MeshAnim / script-shown / flag batches), each one taking a full refresh whenever
 // something the static path skips has changed since its last full refresh (unchanged below). What it skips, per render object: the object
 // group (world matrix; material opacity and alpha test: the only object uniforms of these graphs besides the UV-scroll offset), its texture
 // bindings (a texture whose version moved re-uploads only through a full refresh: crowd-2d.js swaps world texture 9-161's image every few
 // frames, the stadium crowd; this, not blending, is why marked transparent batches drew differently), and the geometry upload (terrain
 // refinement edits the coarse terrain index; flag cloth writes its positions).
-export const staticRefresh = { enabled: pv('staticRefresh'), wide: pv('staticRefresh') && pv('staticRefreshWide'), installed: false };
+// enabled / wide can be switched off in a page (QA comparisons)
+export const staticRefresh = { enabled: true, wide: true, installed: false };
 const wideStatic = (m) => { const t = m?.userData?.ps2Textures; return t !== undefined && t.shape?.scroll === undefined; };
 const version = (a) => (a === undefined || a === null ? 0 : a.isInterleavedBufferAttribute ? a.data.version : a.version);
 function unchanged(ro) { // records what the next check compares against
@@ -125,7 +126,18 @@ export function organizeStaticWorld(group) {
   if (group.userData.staticCells) return group.userData.staticCells;
   let root = group; while (root.parent) root = root.parent;
   // the group and its ancestors up to the scene: identity transforms the page never moves
-  for (let p = group; p && !p.isScene; p = p.parent) if (p.matrixAutoUpdate && p.position.lengthSq() === 0 && p.quaternion.w === 1 && p.scale.x === 1 && p.scale.y === 1 && p.scale.z === 1) { p.updateMatrix(); p.matrixAutoUpdate = false; }
+  for (let p = group; p && !p.isScene; p = p.parent)
+    if (
+      p.matrixAutoUpdate &&
+      p.position.lengthSq() === 0 &&
+      p.quaternion.w === 1 &&
+      p.scale.x === 1 &&
+      p.scale.y === 1 &&
+      p.scale.z === 1
+    ) {
+      p.updateMatrix();
+      p.matrixAutoUpdate = false;
+    }
   group.updateWorldMatrix(true, false);
   const byKey = new Map();
   for (const o of [...group.children]) {

@@ -2,7 +2,6 @@
 // 0x535C11 (0 career, 1 single event, 2 multiplayer) and the course's collect mask go to the core before every race
 // start (set_stage_collect_state: 30C4A8 makes single-event and already-collected ones DeadNodes); each collect of this
 // race (stage_collect_events: list index + award) marks the career bit and adds the cash (30C3E0 / 119EF8).
-import { pv } from './pv-flags.js';
 import {COURSE_INDEX} from './game-audio.js';
 
 // Streamed Peak 1 world (docs/peak-mountain.md "Collectibles"): each location's stage opens the ONE collectible slot (ctx+0x2C0,
@@ -53,9 +52,18 @@ export function collectPoll(core, {careerMode, career, riderId, courseCode}) {
     const events = []; for (let k = 0; k < n; k++) events.push([U[at + 1 + 2 * k], U[at + 2 + 2 * k]]); // copy first: markCollected may grow the heap
     // 153B00: the career bit (saved at once, web/career.js) - what collectStart gives the core after a page reload, a new run or
     // a peak change; within the session the core's own row takes the bit at the award (stage_collectible_award).
-    // pv unlistedPickup: 30B9A0 pays a pickup whose resource is not in the stage's list too (30C3E0 finds no index, so no bit; 151178 ->
+    // 30B9A0 pays a pickup whose resource is not in the stage's list too (30C3E0 finds no index, so no bit; 151178 ->
     // 10F338 -> 119EF8 kind 3 -> 150A90 still adds the cash): the core queues it with index 0xFFFFFFFF (the next core build).
-    for (const [index, amount] of events) { if (index === 0xFFFFFFFF && pv('unlistedPickup')) { if (amount > 0) { career.earnCash ? career.earnCash(riderId, amount) : (career.rider(riderId).cash += amount); career.persist?.(); } continue; } career.markCollected(riderId, course, index, amount); }
+    for (const [index, amount] of events) {
+      if (index === 0xffffffff) {
+        if (amount > 0) {
+          career.earnCash ? career.earnCash(riderId, amount) : (career.rider(riderId).cash += amount);
+          career.persist?.();
+        }
+        continue;
+      }
+      career.markCollected(riderId, course, index, amount);
+    }
   }
   return n;
 }

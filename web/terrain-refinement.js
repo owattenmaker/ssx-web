@@ -1,7 +1,10 @@
 import {planTerrainDetail} from './terrain-detail.js';
 import {createTerrainOverlays} from './terrain-overlays.js';
 import {createGuardedWorker,workerUrl} from './worker-guard.js';import {createTerrainWorkerHandler} from './terrain-worker-core.js';
-/* the worker script of this build (web/worker-guard.js: build handshake; the same handler on the main thread if it cannot start, docs/workers.md) */const TERRAIN_WORKER=workerUrl(Worker=>new Worker(new URL('./terrain-worker.js',import.meta.url),{type:'module'}));
+
+// the worker script of this build (web/worker-guard.js: build handshake; the same handler on the main thread if it cannot start,
+// docs/workers.md)
+const TERRAIN_WORKER=workerUrl(Worker=>new Worker(new URL('./terrain-worker.js',import.meta.url),{type:'module'}));
 export async function createTerrainRefinement(parent,origin,root='/assets/ARA1/'){
  const response=await fetch(root+'terrain-render.json');if(!response.ok)throw Error('Missing terrain render package');const data=await response.json();
  if(data.version!==1||data.source_sha256!==parent.userData.courseHash)throw Error('Terrain render package/source mismatch');
@@ -31,21 +34,77 @@ export async function createTerrainRefinementClient({patches,worker,overlays,onS
  worker.postMessage({type:'init',id:0,patches});
  try{await ready;}catch(error){worker.terminate();overlays.dispose();throw error;}
  return {
-  update(position,focusResource,seconds){
-   if(disposed||failed||(seconds-lastTime<.1&&focusResource===lastFocus))return;lastTime=seconds;lastFocus=focusResource;
-   const detail=planTerrainDetail(patches,position,{focusResource,previousRefined}),next=JSON.stringify(detail.plan);
-   if(next===key)return;key=next;requestedPlan=detail.plan;current=++serial;pending=null;
-   worker.postMessage({type:'build',id:current,plan:detail.plan});
-  },
-  commit(){
-   if(!pending||disposed||failed)return;const result=pending;pending=null;if(result.id!==current)return;
-   try{
-    if(result.meshes.length!==requestedPlan.length||result.meshes.some((mesh,i)=>{const expected=requestedPlan[i];return mesh.index!==expected.index||mesh.resource!==expected.resource||mesh.resolution!==expected.resolution||mesh.edges?.length!==4||mesh.edges.some((n,j)=>n!==expected.edges[j]);}))throw Error('Terrain worker returned an incomplete or mismatched plan');
-    overlays.commit(result.meshes);previousRefined=result.meshes.filter(m=>m.resolution>8).map(m=>m.index);stats.refined=result.meshes.filter(m=>m.resolution>8).length;stats.affected=overlays.count;stats.commits++;stats.cacheBytes=result.stats.bytes;onState({count:overlays.count,resources:result.meshes.filter(m=>m.resolution>8).map(m=>m.resource)});}catch(error){fail(error);}
-  },
-  reset(){if(disposed)return;current=++serial;key='';requestedPlan=[];previousRefined=[];pending=null;lastTime=-Infinity;lastFocus=-1;overlays.clear();stats.affected=stats.refined=0;onState({count:0,resources:[]});worker.postMessage({type:'build',id:current,plan:[]});},
-  warmProxies(){return overlays.warmProxies?.()??[];},
-  get stats(){return {...stats,error:failed};},
-  dispose(){if(disposed)return;disposed=true;current=++serial;pending=null;worker.terminate();overlays.dispose();}
+   update(position, focusResource, seconds) {
+     if (disposed || failed || (seconds - lastTime < 0.1 && focusResource === lastFocus)) return;
+     lastTime = seconds;
+     lastFocus = focusResource;
+     const detail = planTerrainDetail(patches, position, { focusResource, previousRefined }),
+       next = JSON.stringify(detail.plan);
+     if (next === key) return;
+     key = next;
+     requestedPlan = detail.plan;
+     current = ++serial;
+     pending = null;
+     worker.postMessage({ type: 'build', id: current, plan: detail.plan });
+   },
+   commit() {
+     if (!pending || disposed || failed) return;
+     const result = pending;
+     pending = null;
+     if (result.id !== current) return;
+     try {
+       if (
+         result.meshes.length !== requestedPlan.length ||
+         result.meshes.some((mesh, i) => {
+           const expected = requestedPlan[i];
+           return (
+             mesh.index !== expected.index ||
+             mesh.resource !== expected.resource ||
+             mesh.resolution !== expected.resolution ||
+             mesh.edges?.length !== 4 ||
+             mesh.edges.some((n, j) => n !== expected.edges[j])
+           );
+         })
+       )
+         throw Error('Terrain worker returned an incomplete or mismatched plan');
+       overlays.commit(result.meshes);
+       previousRefined = result.meshes.filter((m) => m.resolution > 8).map((m) => m.index);
+       stats.refined = result.meshes.filter((m) => m.resolution > 8).length;
+       stats.affected = overlays.count;
+       stats.commits++;
+       stats.cacheBytes = result.stats.bytes;
+       onState({ count: overlays.count, resources: result.meshes.filter((m) => m.resolution > 8).map((m) => m.resource) });
+     } catch (error) {
+       fail(error);
+     }
+   },
+   reset() {
+     if (disposed) return;
+     current = ++serial;
+     key = '';
+     requestedPlan = [];
+     previousRefined = [];
+     pending = null;
+     lastTime = -Infinity;
+     lastFocus = -1;
+     overlays.clear();
+     stats.affected = stats.refined = 0;
+     onState({ count: 0, resources: [] });
+     worker.postMessage({ type: 'build', id: current, plan: [] });
+   },
+   warmProxies() {
+     return overlays.warmProxies?.() ?? [];
+   },
+   get stats() {
+     return { ...stats, error: failed };
+   },
+   dispose() {
+     if (disposed) return;
+     disposed = true;
+     current = ++serial;
+     pending = null;
+     worker.terminate();
+     overlays.dispose();
+   }
  };
 }

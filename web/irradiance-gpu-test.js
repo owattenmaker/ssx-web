@@ -1,7 +1,15 @@
 import * as T from 'three/webgpu';
 import {Fn,ivec2,floor,screenCoordinate,textureLoad,vec4,float} from 'three/tsl';
 import {riderIrradianceNode,chopAdd,chopMul} from './rider-lighting-nodes.js';
-const result=document.querySelector('#result');const shaderErrors=[];const originalConsoleError=console.error;console.error=(...args)=>{shaderErrors.push(args.map(String).join(' '));result.textContent='FAILED shader: '+shaderErrors.join('\n');originalConsoleError(...args);};let renderer,pipeline,target,inputs;
+const result = document.querySelector('#result');
+const shaderErrors = [];
+const originalConsoleError = console.error;
+console.error = (...args) => {
+  shaderErrors.push(args.map(String).join(' '));
+  result.textContent = 'FAILED shader: ' + shaderErrors.join('\n');
+  originalConsoleError(...args);
+};
+let renderer, pipeline, target, inputs;
 try{
  const response=await fetch('/test-data/irradiance-reference.bin');if(!response.ok)throw Error('Missing original VU reference');
  const records=new Float32Array(await response.arrayBuffer()),count=12000,width=256,height=Math.ceil(count/width);
@@ -22,7 +30,12 @@ try{
   target=new T.RenderTarget(width,height,{type:T.FloatType,depthBuffer:false});renderer.setRenderTarget(target);pipeline.render();
   const values=await renderer.readRenderTargetPixelsAsync(target,0,0,1,1);
   const expected=[0.9999999403953552,-0.9999999403953552,0.009999999776482582,1];if(Array.from(values).some((v,i)=>v!==expected[i]))throw Error('GPU rounding primitive differs: '+Array.from(values));
-  if(shaderErrors.length)throw Error(shaderErrors.join('\n'));result.textContent=JSON.stringify({passed:true,diagnostic:Array.from(values),backend:renderer.backend.isWebGPUBackend?'WebGPU':'WebGL2'}); 
+  if (shaderErrors.length) throw Error(shaderErrors.join('\n'));
+  result.textContent = JSON.stringify({
+    passed: true,
+    diagnostic: Array.from(values),
+    backend: renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2'
+  });
  }else{
  target=new T.RenderTarget(width,height,{type:T.UnsignedByteType,depthBuffer:false});renderer.setRenderTarget(target);pipeline.render();
  const pixels=await renderer.readRenderTargetPixelsAsync(target,0,0,width,height);
@@ -37,7 +50,21 @@ try{
   }
   mismatchedPixels+=+mismatch;
  }
- if(shaderErrors.length)throw Error(shaderErrors.join('\n'));result.textContent=JSON.stringify({passed:mismatchedLanes===0,backend:renderer.backend.isWebGPUBackend?'WebGPU':'WebGL2',cases:count,mismatchedPixels,mismatchedLanes,maxByteError,examples,scope:'Coefficient evaluation and quantization from original transformed normals; no material or full-image parity claim'},null,2);
+ if (shaderErrors.length) throw Error(shaderErrors.join('\n'));
+ result.textContent = JSON.stringify(
+   {
+     passed: mismatchedLanes === 0,
+     backend: renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2',
+     cases: count,
+     mismatchedPixels,
+     mismatchedLanes,
+     maxByteError,
+     examples,
+     scope: 'Coefficient evaluation and quantization from original transformed normals; no material or full-image parity claim'
+   },
+   null,
+   2
+ );
 }
 }catch(error){result.textContent='FAILED: '+error.stack;}
 finally{pipeline?.dispose();target?.dispose();inputs?.dispose();renderer?.dispose();}

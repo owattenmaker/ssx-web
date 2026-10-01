@@ -123,7 +123,15 @@ export class LoadingScreen {
       // World mode (`this.world` = a draw function, set by web/ctm-event.js for the in-world Conquer the Mountain event
       // load): the PS2 has no load screen there (ps2b/intro: the fly-over with "Loading..."), so the session only
       // covers the in-page course switch with the world's caption, without the 7 s minimum or the fades.
-      this.session = { start: performance.now(), pending: 0, next: null, doneAt: 0, hint: this.data.hints.find((h) => h.index === hint), minMs: this.world ? 0 : this.params().minMs, world: this.world || null };
+      this.session = {
+        start: performance.now(),
+        pending: 0,
+        next: null,
+        doneAt: 0,
+        hint: this.data.hints.find((h) => h.index === hint),
+        minMs: this.world ? 0 : this.params().minMs,
+        world: this.world || null
+      };
       // The race canvas is hidden under the load screen (style.css), except in world mode where the world shows: the warm-up
       // frames drawn there never reach the compositor (Firefox held its frames behind every pipeline build, docs/firefox-load.md).
       if (this.ui.stage) this.ui.stage.dataset.loadWorld = this.session.world ? '1' : '';
@@ -131,7 +139,15 @@ export class LoadingScreen {
       // Own frame loop while main.js is still loading (its render loop starts at the end of init); a screen change
       // away from 'loading' (e.g. a load error) abandons the session.
       const session = this.session;
-      const tick = () => { if (this.session !== session) return; if (this.ui.screen !== 'loading') { this.session = null; return; } if (performance.now() - this.lastDraw > 40) this.ui.draw(this.ui.lastState || {}); requestAnimationFrame(tick); };
+      const tick = () => {
+        if (this.session !== session) return;
+        if (this.ui.screen !== 'loading') {
+          this.session = null;
+          return;
+        }
+        if (performance.now() - this.lastDraw > 40) this.ui.draw(this.ui.lastState || {});
+        requestAnimationFrame(tick);
+      };
       requestAnimationFrame(tick);
     }
     for (const w of work) this.wait(w);

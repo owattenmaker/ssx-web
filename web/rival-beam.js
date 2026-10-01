@@ -11,9 +11,8 @@
 // strip (0 on the -right edge, 1 on the +right edge). Modulated by the vertex colour (x2 in the GS 128 = 1.0 scale) and
 // blended additively: red over the sky reads pink, as in the PS2 frames (bc-race-idle.tick401.png).
 import { texture as tslTexture, attribute, vec4, select, uniform } from 'three/tsl';
-import { toFrame, frameTextureSpace, linearOutput, linearTextureSpace } from './frame-space.js';
+import { toFrame } from './frame-space.js';
 import { registerEncodedEffect } from './snow-composite.js';
-import { pv } from './pv-flags.js';
 import { drawOrder, EFFECT, SUBMIT } from './ps2-draw-order.js';
 const LEVELS = [0, 130, 20130, 20260], ALPHA = [0, 1, 1, 0], HALF_WIDTH = 85;
 export const BEAM_BONE = 5;
@@ -28,7 +27,7 @@ export function beamVertices(base, right, up, colour = BEAM_COLOUR) {   // sourc
   return out;
 }
 
-// pv beamEncoded (docs/visual-parity.md 41.9): the beam is a priority-7 draw (0x2E3AF8: word2 priority 7, strips rank 3, 'beam'),
+// beamEncoded (docs/visual-parity.md 41.9): the beam is a priority-7 draw (0x2E3AF8: word2 priority 7, strips rank 3, 'beam'),
 // so the PS2 draws it after the fog composite, unfogged, in the encoded pass: GS MODULATE (texel x vertex, vertex rgb x 2 in the
 // 128 = 1.0 scale, clamped) and ALPHA 0x48 (Cd + Cs x As) on the bytes.
 function byteBeamMaterial(T, texture) {
@@ -39,23 +38,17 @@ function byteBeamMaterial(T, texture) {
   if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = T.NoColorSpace; texel.value = t; material.needsUpdate = true; });
   return { material, encodedOutput };
 }
-export function createRivalBeam({ T, scene, origin, renderOrder = 650, texture = null }) {
+export function createRivalBeam({ T, scene, origin, texture = null }) {
   const geometry = new T.BufferGeometry();
   const position = new T.BufferAttribute(new Float32Array(8 * 3), 3), color = new T.BufferAttribute(new Float32Array(8 * 4), 4);
   const uv = new T.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 0.33, 1, 0.33, 0, 0.66, 1, 0.66, 0, 1, 1, 1]), 2);
   geometry.setAttribute('position', position); geometry.setAttribute('color', color); geometry.setAttribute('uv', uv);
   geometry.setIndex([0, 1, 2, 2, 1, 3, 2, 3, 4, 4, 3, 5, 4, 5, 6, 6, 5, 7]);
-  const encoded = pv('beamEncoded');
-  let material, encodedOutput = null;
-  if (encoded) ({ material, encodedOutput } = byteBeamMaterial(T, texture));
-  else {
-    material = new T.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: T.DoubleSide, fog: false, blending: T.AdditiveBlending });
-    if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = frameTextureSpace; material.map = t; material.needsUpdate = true; });
-  }
+  const { material, encodedOutput } = byteBeamMaterial(T, texture);
   const mesh = new T.Mesh(geometry, material); mesh.frustumCulled = false; mesh.visible = false;
-  mesh.renderOrder = encoded && pv('effectOrder') ? drawOrder(EFFECT.beam, SUBMIT.beam) : renderOrder;
+  mesh.renderOrder = drawOrder(EFFECT.beam, SUBMIT.beam);
   scene.add(mesh);
-  if (encoded) registerEncodedEffect({ object: mesh, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => mesh.visible });
+  registerEncodedEffect({ object: mesh, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => mesh.visible });
   const right = new T.Vector3(), up = new T.Vector3();
   return {
     mesh,
@@ -87,20 +80,29 @@ export function createRivalBeam({ T, scene, origin, renderOrder = 650, texture =
 // Draw: bottom edge at bone rider+0x8A8 (5) + camera up x 35 cm, top edge 18 x (sy + 0.003 z) cm above it, half width
 // 9 x (sx + 0.003 z) along the camera right, z = view depth in cm, drawn for 0 < z < 2000, alpha x (2000 - z) x 0.002 beyond 1500. Alpha blended (unlike
 // the additive beam: the GS packet keeps the default blend).
-const POP41_Y = [1.0, 0.785, 0.513, 0.269, 0.142, 0.217, 0.534, 1.025, 1.617, 2.236, 2.811, 3.268, 3.444, 3.212, 2.585, 1.766, 1.021, 0.621, 0.666, 0.976, 1.398, 1.777, 1.958, 1.877, 1.638, 1.335, 1.067, 0.93, 1.017, 1.258, 1.502, 1.597, 1.492, 1.281, 1.028, 0.802, 0.667, 0.682, 0.8, 0.936, 1.0];
-const POP41_X = [1.0, 0.746, 0.432, 0.237, 0.342, 1.463, 3.487, 5.347, 5.977, 5.506, 4.838, 4.082, 3.343, 2.727, 2.247, 1.848, 1.533, 1.308, 1.176, 1.121, 1.112, 1.119, 1.113, 1.096, 1.088, 1.085, 1.083, 1.081, 1.077, 1.075, 1.073, 1.071, 1.068, 1.063, 1.055, 1.044, 1.032, 1.02, 1.01, 1.003, 1.0];
-const LOOP31_Y = [1.0, 0.862, 0.702, 0.542, 0.404, 0.312, 0.289, 0.394, 0.619, 0.883, 1.104, 1.204, 0.953, 0.511, 0.378, 0.761, 1.39, 2.048, 2.519, 2.679, 2.636, 2.519, 2.384, 2.211, 2.018, 1.821, 1.64, 1.475, 1.315, 1.158, 1.0];
-const LOOP31_X = [1.0, 1.022, 1.021, 1.02, 1.041, 1.108, 1.243, 1.663, 2.322, 2.845, 3.053, 2.895, 1.917, 1.236, 1.657, 2.391, 3.213, 3.901, 4.231, 3.734, 2.656, 1.846, 1.531, 1.341, 1.233, 1.163, 1.087, 1.024, 1.007, 1.008, 1.0];
+const POP41_Y = [
+  1.0, 0.785, 0.513, 0.269, 0.142, 0.217, 0.534, 1.025, 1.617, 2.236, 2.811, 3.268, 3.444, 3.212, 2.585, 1.766, 1.021, 0.621, 0.666, 0.976,
+  1.398, 1.777, 1.958, 1.877, 1.638, 1.335, 1.067, 0.93, 1.017, 1.258, 1.502, 1.597, 1.492, 1.281, 1.028, 0.802, 0.667, 0.682, 0.8, 0.936,
+  1.0
+];
+const POP41_X = [
+  1.0, 0.746, 0.432, 0.237, 0.342, 1.463, 3.487, 5.347, 5.977, 5.506, 4.838, 4.082, 3.343, 2.727, 2.247, 1.848, 1.533, 1.308, 1.176, 1.121,
+  1.112, 1.119, 1.113, 1.096, 1.088, 1.085, 1.083, 1.081, 1.077, 1.075, 1.073, 1.071, 1.068, 1.063, 1.055, 1.044, 1.032, 1.02, 1.01, 1.003,
+  1.0
+];
+const LOOP31_Y = [
+  1.0, 0.862, 0.702, 0.542, 0.404, 0.312, 0.289, 0.394, 0.619, 0.883, 1.104, 1.204, 0.953, 0.511, 0.378, 0.761, 1.39, 2.048, 2.519, 2.679,
+  2.636, 2.519, 2.384, 2.211, 2.018, 1.821, 1.64, 1.475, 1.315, 1.158, 1.0
+];
+const LOOP31_X = [
+  1.0, 1.022, 1.021, 1.02, 1.041, 1.108, 1.243, 1.663, 2.322, 2.845, 3.053, 2.895, 1.917, 1.236, 1.657, 2.391, 3.213, 3.901, 4.231, 3.734,
+  2.656, 1.846, 1.531, 1.341, 1.233, 1.163, 1.087, 1.024, 1.007, 1.008, 1.0
+];
 const RISE24_X = [1.0, 0.52, 0.206, 0.162, 0.147, 0.145, 0.149, 0.156, 0.162, 0.162, 0.155, 0.145, 0.134, 0.127, 0.128, 0.14, 0.167, 0.212, 0.291, 0.408, 0.55, 0.704, 0.858, 1.0];
 const RISE24_Y = [1.0, 0.6, 0.292, 0.176, 0.319, 0.913, 1.657, 2.037, 1.956, 1.708, 1.37, 1.016, 0.723, 0.565, 0.521, 0.513, 0.536, 0.583, 0.647, 0.722, 0.801, 0.878, 0.947, 1.0];
 const LEVEL_COLOUR = (level) => (level >= 4 ? [1, 1, 0, 0] : level === 3 ? [1, 1, 0.5, 0] : level === 2 ? [1, 1, 1, 0] : [1, 1, 1, 1]);
 const f = Math.fround;
 
-// GS modulate (texel x vertex / 128, in the 8-bit display space; vertex = c x 255) for the mid-grey 'exlm' body (0x80): the
-// displayed colour is min(1, c). three.js decodes the sRGB texture to linear (0.5 -> 0.214) and encodes the product again,
-// so the vertex colour carries linear(min(1, c)) and the material colour 1 / linear(0.5).
-const srgbToLinear = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-const TINT_SCALE = 1 / srgbToLinear(0.5), gsTint = (c) => srgbToLinear(Math.min(1, c));   // x TINT_SCALE in material.color (vertex colours stay <= 1)
 export function iconEntry() { return { vis: 0, level: 0, i20: 0, i24: 0, i28: 0, colour: [1, 1, 1, 1], sx: 0, sy: 0 }; }
 // 0x2D4C08 for one (rider, viewer) entry; hidden: +0xAC4 or replay (entry +0 = 0 and nothing else changes).
 export function iconStep(e, level, hidden = false) {
@@ -119,7 +121,7 @@ export function iconStep(e, level, hidden = false) {
   return e;
 }
 
-// pv rivalIcon (docs/presentation.md "Rival marker"): the GS draw in its own byte space. 2D5048 sends the colour as
+// rivalIcon (docs/presentation.md "Rival marker"): the GS draw in its own byte space. 2D5048 sends the colour as
 // r, g, b x 255 and a x 128 (0x437F0000 / 0x43000000), MODULATE with the exlm texel (body 0x80, outline 0x00, alpha 0x80):
 // Cs = T x V / 128 (orange 255,127,0 at level 3), As = Ta x Va / 128 = 0.8, blended (Cs - Cd) x As + Cd on the encoded
 // frame (the encoded post-rider pass, web/snow-composite.js). three's linear-space blend of the old material showed a
@@ -133,26 +135,18 @@ function byteIconMaterial(T, texture) {
   if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = T.NoColorSpace; texel.value = t; material.needsUpdate = true; });
   return { material, encodedOutput };
 }
-export function createRiderIcons({ T, scene, origin, count, texture = null, renderOrder = 651 }) {
-  const bytesMode = pv('rivalIcon');
-  let material, encodedOutput = null;
-  if (bytesMode) ({ material, encodedOutput } = byteIconMaterial(T, texture));
-  else {
-    // the old linear-light icon (pv rivalIcon off): texel x vertex colour x TINT_SCALE on linear light, written through frame-space.js
-    material = new T.MeshBasicNodeMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: T.DoubleSide, fog: false });
-    material.color.setRGB(TINT_SCALE, TINT_SCALE, TINT_SCALE, T.LinearSRGBColorSpace); material.outputNode = linearOutput();
-    if (texture) new T.TextureLoader().load(texture, (t) => { t.colorSpace = linearTextureSpace; material.map = t; material.needsUpdate = true; });
-  }
+export function createRiderIcons({ T, scene, origin, count, texture = null }) {
+  const { material, encodedOutput } = byteIconMaterial(T, texture);
   const group = new T.Group(); scene.add(group);
-  const tint = bytesMode ? (c) => Math.min(1, c) : gsTint;
+  const tint = (c) => Math.min(1, c);
   const items = Array.from({ length: count }, () => {
     const g = new T.BufferGeometry(), p = new T.BufferAttribute(new Float32Array(12), 3), c = new T.BufferAttribute(new Float32Array(16), 4);
     g.setAttribute('position', p); g.setAttribute('color', c); g.setAttribute('uv', new T.BufferAttribute(new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]), 2)); g.setIndex([0, 1, 2, 2, 1, 3]);
     const mesh = new T.Mesh(g, material); mesh.frustumCulled = false; mesh.visible = false; group.add(mesh);
-    mesh.renderOrder = bytesMode && pv('effectOrder') ? drawOrder(EFFECT.icon, SUBMIT.icon) : renderOrder; // pv effectOrder: 0x364240 (exlm, rank 3)
+    mesh.renderOrder = drawOrder(EFFECT.icon, SUBMIT.icon); // 0x364240 (exlm, rank 3)
     return { entry: iconEntry(), mesh, p, c };
   });
-  if (bytesMode) registerEncodedEffect({ object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => items.some((it) => it.mesh.visible) });
+  registerEncodedEffect({ object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => items.some((it) => it.mesh.visible) });
   const right = new T.Vector3(), up = new T.Vector3(), eye = new T.Vector3(), fwd = new T.Vector3();
   return {
     reset() { for (const it of items) { it.entry = iconEntry(); it.mesh.visible = false; } },

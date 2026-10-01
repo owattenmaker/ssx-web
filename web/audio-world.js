@@ -11,7 +11,7 @@
 //   script sounds stage builtins 30/31/73 (2974A0 / 297950 / 297EB8): id 1-99 Mtn.bnk, 100-149 slot 8, 150-199
 //                 slot 9, >= 200 TRANSPORT; bus 5, positional at the instance, distance parameter 300 (2A9988).
 //   thunder       291438: bank 8 sound 16 after a lightning flash, delayed by distance / 332 m/s (no weather in the port).
-//   avalanche     0x29DEF0 (pv avalanche, docs/avalanche.md "Audio"): the rumble loop, bank 8 sound 2, bus 5, positional at the
+//   avalanche     0x29DEF0 (avalanche, docs/avalanche.md "Audio"): the rumble loop, bank 8 sound 2, bus 5, positional at the
 //                 tumblers' centroid (vanish 100 m, 2A9988(100, -1)), volume 0x29E438 per update (0x29E4A0), 2 s fade out.
 import { SLOT, CURVES, curve } from './sfx.js';
 import { avalancheRumble } from './avalanche-state.js';
@@ -123,16 +123,26 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
   }
 
   const api = {
-    load, stopAll, unload,
-    get loaded() { return !!doc; },
+    load,
+    stopAll,
+    unload,
+    get loaded() {
+      return !!doc;
+    },
     // Streamed world: the tracks whose location data is in memory (null = all). Newly arrived courses / hubs load
     // their banks; emitters, contacts and painters of the other locations are ignored.
     setResident(tracks) {
-      const next = tracks ? new Set(tracks) : null, before = resident;
+      const next = tracks ? new Set(tracks) : null,
+        before = resident;
       resident = next;
-      if (doc) for (const [name, loc] of Object.entries(doc.locations)) if ((!next || next.has(loc.track)) && before && !before.has(loc.track)) loadBanks(name, loc);
+      if (doc)
+        for (const [name, loc] of Object.entries(doc.locations))
+          if ((!next || next.has(loc.track)) && before && !before.has(loc.track)) loadBanks(name, loc);
     },
-    locationOf(t) { const l = locationByTrack.get(t); return l && isResident(l) ? l : null; },
+    locationOf(t) {
+      const l = locationByTrack.get(t);
+      return l && isResident(l) ? l : null;
+    },
     // Per frame: L = listener position (source cm), primary = the primary listener's side.
     update(L) {
       if (!doc || !L) return;
@@ -140,30 +150,54 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
       for (const [name, loc] of Object.entries(doc.locations)) {
         if (!isResident(loc)) continue;
         loc.emitters.forEach((e, index) => {
-          const v = emitterVolume(e, L); if (!(v > 0)) return;
-          const key = `${e.resource}:${index}`, w = doc.watrig[e.adl]; if (!w) return;
+          const v = emitterVolume(e, L);
+          if (!(v > 0)) return;
+          const key = `${e.resource}:${index}`,
+            w = doc.watrig[e.adl];
+          if (!w) return;
           touched.add(key);
           let inst = instances.get(key);
-          if (!inst) { inst = { adl: e.adl, voice: null, crowd: false, special: false }; instances.set(key, inst); }
-          if (w.type === 1 && w.bank === SLOT.CROWD) { inst.crowd = true; crowd.emitter(key, { patch: w.snd, position: e.pos, volume: v }); return; } // 2B5838
-          if (w.type === 4) { if (!inst.special) { inst.special = true; onSpecial?.(e.adl); } return; } // 2B6550 (id 77)
-          const vol = Math.min(Math.max(Math.trunc(v * 127), 0), 127);
-          let slot = w.bank, sound = w.snd;
-          if (w.type === 3) { // 2B4C38 named-bank gate: first claim wins while it is in range
-            if (named.owner && named.owner !== key && instances.has(named.owner)) return;
-            const ready = namedBank(w.bank); named.owner = key;
-            if (!ready) return;
-            slot = SLOT.DYNAMIC; sound = 0;
+          if (!inst) {
+            inst = { adl: e.adl, voice: null, crowd: false, special: false };
+            instances.set(key, inst);
           }
-          if (inst.voice?.playing()) inst.voice.setVolume(vol); // 2B4C38: running voice, volume refreshed
+          if (w.type === 1 && w.bank === SLOT.CROWD) {
+            inst.crowd = true;
+            crowd.emitter(key, { patch: w.snd, position: e.pos, volume: v });
+            return;
+          } // 2B5838
+          if (w.type === 4) {
+            if (!inst.special) {
+              inst.special = true;
+              onSpecial?.(e.adl);
+            }
+            return;
+          } // 2B6550 (id 77)
+          const vol = Math.min(Math.max(Math.trunc(v * 127), 0), 127);
+          let slot = w.bank,
+            sound = w.snd;
+          if (w.type === 3) {
+            // 2B4C38 named-bank gate: first claim wins while it is in range
+            if (named.owner && named.owner !== key && instances.has(named.owner)) return;
+            const ready = namedBank(w.bank);
+            named.owner = key;
+            if (!ready) return;
+            slot = SLOT.DYNAMIC;
+            sound = 0;
+          }
+          if (inst.voice?.playing())
+            inst.voice.setVolume(vol); // 2B4C38: running voice, volume refreshed
           else inst.voice = sfx.play({ slot, sound, bus: 'UI', volume: vol, position: e.pos, posStatic: true, tag: 'world' });
         });
       }
-      for (const [key, inst] of instances) if (!touched.has(key)) { // 2B5D78 -> 2B5758 / 2A72D8: 0.25 s fade
-        if (inst.crowd) crowd.removeEmitter(key); else inst.voice?.stop(0.25);
-        if (named.owner === key) named.owner = null;
-        instances.delete(key);
-      }
+      for (const [key, inst] of instances)
+        if (!touched.has(key)) {
+          // 2B5D78 -> 2B5758 / 2A72D8: 0.25 s fade
+          if (inst.crowd) crowd.removeEmitter(key);
+          else inst.voice?.stop(0.25);
+          if (named.owner === key) named.owner = null;
+          instances.delete(key);
+        }
       if (ambience && !ambience.playing() && ambience.keep) api.ambienceStart(); // 29D610 keep-alive
     },
     // 29D290: the focus rider's contact track (terrain_contact_info()[0] & 0xFF; -1 keeps the previous one).
@@ -172,69 +206,157 @@ export function createWorldAudio({ sfx, crowd, json, onSpecial = null }) {
       track = t;
       const loc = locationByTrack.get(t);
       const id = loc?.locationId ?? 99;
-      if (id < 22) { ambienceWanted = true; api.ambienceStart(); } // (a streamed location's bank 9 may still be loading)
-      else { // 29D678: connector
+      if (id < 22) {
+        ambienceWanted = true;
+        api.ambienceStart();
+      } // (a streamed location's bank 9 may still be loading)
+      else {
+        // 29D678: connector
         ambienceWanted = false;
-        ambience?.stop(5.03); if (ambience) ambience.keep = false; ambience = null;
-        sfx.stopAll({ slot: SLOT.WORLD8, fade: 5.03 }); sfx.stopAll({ slot: SLOT.WORLD9, fade: 5.03 });
+        ambience?.stop(5.03);
+        if (ambience) ambience.keep = false;
+        ambience = null;
+        sfx.stopAll({ slot: SLOT.WORLD8, fade: 5.03 });
+        sfx.stopAll({ slot: SLOT.WORLD9, fade: 5.03 });
       }
     },
-    ambienceStop(fade = 5.03) { ambienceWanted = false; ambience?.stop(fade); if (ambience) ambience.keep = false; ambience = null; }, // 29D678
-    ambienceStart() { // 29D370: bank 9 sound 0, 2D, volume 127, bus 5
+    ambienceStop(fade = 5.03) {
+      ambienceWanted = false;
+      ambience?.stop(fade);
+      if (ambience) ambience.keep = false;
+      ambience = null;
+    }, // 29D678
+    ambienceStart() {
+      // 29D370: bank 9 sound 0, 2D, volume 127, bus 5
       if (!sfx.bankOf(SLOT.WORLD9)?.bnk) return;
       const v = sfx.play({ slot: SLOT.WORLD9, sound: 0, bus: 'UI', volume: 127, tag: 'ambience' });
-      if (v) { v.keep = true; ambience = v; }
+      if (v) {
+        v.keep = true;
+        ambience = v;
+      }
     },
     // 296088: instance contact (resource, node index, |v| cm/s) at the rider position (source cm).
     contact(resource, node, speed, position, inRange = true) {
       if (!doc || !inRange) return;
       let list = null;
-      for (const loc of Object.values(doc.locations)) if (isResident(loc) && loc.contacts[resource]) { list = loc.contacts[resource]; break; }
+      for (const loc of Object.values(doc.locations))
+        if (isResident(loc) && loc.contacts[resource]) {
+          list = loc.contacts[resource];
+          break;
+        }
       if (!list?.length) return;
       const id = list[Math.min(Math.max(node | 0, 0), list.length - 1)];
-      const w = doc.watrig[id]; if (!id || !w || w.type !== 1) return; // named banks never play as contacts (2B5F60)
-      const key = `${resource}:${node}`, prev = contactVoices.get(key);
+      const w = doc.watrig[id];
+      if (!id || !w || w.type !== 1) return; // named banks never play as contacts (2B5F60)
+      const key = `${resource}:${node}`,
+        prev = contactVoices.get(key);
       if (prev?.playing()) return; // 295028
       const vol = Math.min(Math.max(Math.trunc(curve(CURVES.contact_445898, speed)), 0), 127);
-      const v = sfx.play({ slot: w.bank, sound: w.snd, bus: 'COLLISION', volume: vol, position: [...position], posStatic: true, tag: 'contact' });
-      if (v) { if (contactVoices.size >= 64) sweep(contactVoices); contactVoices.set(key, v); }
+      const v = sfx.play({
+        slot: w.bank,
+        sound: w.snd,
+        bus: 'COLLISION',
+        volume: vol,
+        position: [...position],
+        posStatic: true,
+        tag: 'contact'
+      });
+      if (v) {
+        if (contactVoices.size >= 64) sweep(contactVoices);
+        contactVoices.set(key, v);
+      }
     },
     // Stage-script builtins: kind 0 play (2974A0), 1 loop (297950), 2 stop (297EB8).
     script(kind, id, resource, position, location = 0) {
-      const r = scriptSoundRoute(id); if (!r) return;
-      if (kind === 0) { // 2974A0: id 102 needs a location record word != 0 (144BC0: never in Snow Jam), repeat FIFO per instance
+      const r = scriptSoundRoute(id);
+      if (!r) return;
+      if (kind === 0) {
+        // 2974A0: id 102 needs a location record word != 0 (144BC0: never in Snow Jam), repeat FIFO per instance
         if (id === 102 && location === 0) return;
         if (scriptVoices.get(resource)?.playing()) return;
       }
-      if (kind === 2) { const l = scriptLoops.get(resource); if (l && l.id === id) { l.voice?.stop(0); scriptLoops.delete(resource); } return; }
-      if (kind === 1) { const l = scriptLoops.get(resource); if (l) { l.voice?.stop(0); scriptLoops.delete(resource); } }
+      if (kind === 2) {
+        const l = scriptLoops.get(resource);
+        if (l && l.id === id) {
+          l.voice?.stop(0);
+          scriptLoops.delete(resource);
+        }
+        return;
+      }
+      if (kind === 1) {
+        const l = scriptLoops.get(resource);
+        if (l) {
+          l.voice?.stop(0);
+          scriptLoops.delete(resource);
+        }
+      }
       const v = sfx.play({ slot: r.slot, sound: r.sound, bus: 'UI', volume: 127, position, posStatic: true, vanish: 300, tag: 'script' });
       if (kind === 1 && v) scriptLoops.set(resource, { id, voice: v });
-      else if (v) { if (scriptVoices.size >= 64) sweep(scriptVoices); scriptVoices.set(resource, v); } // 295628
+      else if (v) {
+        if (scriptVoices.size >= 64) sweep(scriptVoices);
+        scriptVoices.set(resource, v);
+      } // 295628
     },
     // 0x29DEF0 / 0x29E4A0: the avalanche rumble. on = the core's loop count > 0; tumblers = [[x, y, z, scale] (source cm)];
     // L = the listener rider's position (rider +0x110, source cm). Once per tick.
     // events: the refcounts after each 0x29DEF0 call since the last tick (a return to 0 stops the voice even if it rises again).
     avalanche(on, tumblers, L, events = []) {
-      if (rumble && events.some((v) => v <= 0)) { rumble.voice?.stop(2.0); rumble = null; } // 0x2AD5F0(queue, handle, 2.0, 1)
-      if (!on) { if (rumble) { rumble.voice?.stop(2.0); rumble = null; } return; }
+      if (rumble && events.some((v) => v <= 0)) {
+        rumble.voice?.stop(2.0);
+        rumble = null;
+      } // 0x2AD5F0(queue, handle, 2.0, 1)
+      if (!on) {
+        if (rumble) {
+          rumble.voice?.stop(2.0);
+          rumble = null;
+        }
+        return;
+      }
       if (!L) return;
       const { volume, centroid } = avalancheRumble(tumblers, L);
       if (!rumble) {
         const position = centroid ? [...centroid] : [...L];
-        const voice = sfx.play({ slot: SLOT.WORLD8, sound: 2, bus: 'UI', volume, position, posStatic: false, vanish: 100, tag: 'avalanche' });
+        const voice = sfx.play({
+          slot: SLOT.WORLD8,
+          sound: 2,
+          bus: 'UI',
+          volume,
+          position,
+          posStatic: false,
+          vanish: 100,
+          tag: 'avalanche'
+        });
         rumble = { voice, position, volume };
       } else {
-        if (centroid) { rumble.position[0] = centroid[0]; rumble.position[1] = centroid[1]; rumble.position[2] = centroid[2]; }
-        rumble.voice?.setVolume(volume); rumble.volume = volume;
+        if (centroid) {
+          rumble.position[0] = centroid[0];
+          rumble.position[1] = centroid[1];
+          rumble.position[2] = centroid[2];
+        }
+        rumble.voice?.setVolume(volume);
+        rumble.volume = volume;
       }
     },
     // 291438: thunder after a lightning flash at `distanceCm` (bank 8 sound 16, 2D, bus 5).
     thunder(distanceCm) {
-      const loc = locationByTrack.get(track); if (!loc?.thunder) return;
-      sfx.play({ slot: SLOT.WORLD8, sound: 16, bus: 'UI', volume: 127, delayMs: Math.trunc(distanceCm * 0.0018072) * 1000 / 60 });
+      const loc = locationByTrack.get(track);
+      if (!loc?.thunder) return;
+      sfx.play({ slot: SLOT.WORLD8, sound: 16, bus: 'UI', volume: 127, delayMs: (Math.trunc(distanceCm * 0.0018072) * 1000) / 60 });
     },
-    debug() { return { loaded: !!doc, event: loadedEvent, resident: resident ? [...resident] : null, banks: bankOwner, track, emitters: instances.size, named: named.name, ambience: !!ambience?.playing(), loops: scriptLoops.size, rumble: rumble ? { playing: !!rumble.voice?.playing?.(), volume: rumble.volume, position: rumble.position.map(Math.round) } : null }; },
+    debug() {
+      return {
+        loaded: !!doc,
+        event: loadedEvent,
+        resident: resident ? [...resident] : null,
+        banks: bankOwner,
+        track,
+        emitters: instances.size,
+        named: named.name,
+        ambience: !!ambience?.playing(),
+        loops: scriptLoops.size,
+        rumble: rumble ? { playing: !!rumble.voice?.playing?.(), volume: rumble.volume, position: rumble.position.map(Math.round) } : null
+      };
+    }
   };
   return api;
 }

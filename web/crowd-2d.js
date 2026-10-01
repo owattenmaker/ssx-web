@@ -30,7 +30,12 @@ export async function createCrowd2d({core, group, root, origin = [0, 0, 0], load
   // Frames swap in as the targets' images: exact decoded texels for the DataTextures of web/texture-archive.js (WebKit's
   // ImageBitmap premultiplies alpha < 255 even with premultiplyAlpha 'none'), an ImageBitmap for an image texture.
   const decoded = targets.length > 0 && targets.every((t) => t.isDataTexture);
-  const bitmap = async (url) => { const blob = await (await fetch(url)).blob(); return decoded ? decodePngTexels(await blob.arrayBuffer()) : createImageBitmap(blob, {imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none'}); };
+  const bitmap = async (url) => {
+    const blob = await (await fetch(url)).blob();
+    return decoded
+      ? decodePngTexels(await blob.arrayBuffer())
+      : createImageBitmap(blob, { imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  };
   const frames = await Promise.all(data.frames.map((f) => bitmap('/assets/FX/crowd/' + f.file)));
   const statics = targets.map((t) => t.image);
   // Flash sprites (instanced, world pass).
@@ -38,8 +43,14 @@ export async function createCrowd2d({core, group, root, origin = [0, 0, 0], load
   let mesh = null, centres = null;
   if (meta) {
     const bytes = new Uint8Array(await (await fetch('/assets/FX/' + meta.file)).arrayBuffer());
-    const map = new T.DataTexture(bytes, meta.width, meta.height, T.RGBAFormat); map.minFilter = map.magFilter = T.LinearFilter; map.wrapS = map.wrapT = T.ClampToEdgeWrapping; map.colorSpace = T.NoColorSpace; map.needsUpdate = true;
-    const geometry = new T.PlaneGeometry(2, 2); centres = new T.InstancedBufferAttribute(new Float32Array(FLASH_RING * 4), 4).setUsage(T.DynamicDrawUsage); geometry.setAttribute('flashCentre', centres);
+    const map = new T.DataTexture(bytes, meta.width, meta.height, T.RGBAFormat);
+    map.minFilter = map.magFilter = T.LinearFilter;
+    map.wrapS = map.wrapT = T.ClampToEdgeWrapping;
+    map.colorSpace = T.NoColorSpace;
+    map.needsUpdate = true;
+    const geometry = new T.PlaneGeometry(2, 2);
+    centres = new T.InstancedBufferAttribute(new Float32Array(FLASH_RING * 4), 4).setUsage(T.DynamicDrawUsage);
+    geometry.setAttribute('flashCentre', centres);
     const material = new T.MeshBasicNodeMaterial({transparent: true, depthWrite: false, depthTest: true, side: T.DoubleSide, fog: false, toneMapped: false});
     const c = attribute('flashCentre', 'vec4'), view = modelViewMatrix.mul(vec4(c.xyz, 1));
     material.vertexNode = cameraProjectionMatrix.mul(vec4(view.x.add(positionGeometry.x.mul(c.w)), view.y.add(positionGeometry.y.mul(c.w)), view.z, 1));

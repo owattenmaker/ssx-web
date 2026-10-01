@@ -351,7 +351,6 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
 {
   const prevLoc = globalThis.location, prevSS = globalThis.sessionStorage;
   globalThis.sessionStorage = new Memory();
-  setPv('careerReload', true);
   for (const [flagSet, lodge, want] of [[true, 17, 14], [false, 18, 18]]) {
     const storage = new Memory();
     globalThis.location = { href: 'http://localhost/?course=PEAK1&peakCourse=17&rider=zoe&autostart=1' };
@@ -366,12 +365,11 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
     const other = page(storage); other.ui.careerMode = false; delete other.cs.career.save.pending;   // (the stub page never ran the world load)
     assert.equal(other.cs.resume(), false, 'a reload of another URL is not a career re-entry');
   }
-  setPv('careerReload', null); globalThis.location = prevLoc; globalThis.sessionStorage = prevSS;
+  globalThis.location = prevLoc; globalThis.sessionStorage = prevSS;
   console.log('reload: a marked career URL re-enters at Happiness (flag set) or the last lodge, with the career');
 }
 // ---- 15. Transport lists and help (pv transportLists): the row tables 0x4781D0 / 0x4786E0, 0x207430's help ------------------------
 {
-  setPv('transportLists', true);
   const { ui, cs } = page(); const id = 'zoe'; const r = cs.career.rider(id); r.peaks = [true, true, true];
   const names = (peak, goal) => { cs.peak = peak; cs.goal = goal; return cs.list().map((e) => [e.course, e.mode]); };
   const elf = new URL('../local/disc/SLUS_207.72', import.meta.url);
@@ -389,18 +387,14 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
   for (const e of cs.career.goalEvents(id, 2, 'freestyle')) if (e.mode < 4) r.medals[`${e.mode}:${e.course}`] = MEDAL.GOLD;
   const rivalRow = cs.list().findIndex((e) => e.mode === 5);
   assert.equal(cs.helpText('ctm-events', rivalRow), 'A battle against your rival.');
-  setPv('transportLists', null);
   console.log('transport lists: the Race / Freestyle rows in the PS2 table order; the rival / peak help lines');
 }
 // ---- 16. Stations and heats (pv stationFlow): the lodge prompt, the booth, the post-event map, the heli drop, WS13 by event type -----
 {
-  setPv('stationFlow', true);
   // the lodge prompt: Triangle = No (1F72E0); pv doorNoPlace: No places the rider at the station's session point 0 (PS2 ctm-parity/door:
   // tick 636, (-65782, 33404) at Green, forward x 833 cm/s)
-  { setPv('doorNoPlace', true); const { ui, cs, log } = page(); cs.freeRide = { course: 17, station: 17 }; ui.set('ctm-enterlodge'); cs.back();
-    assert.equal(ui.screen, 'game'); assert.deepEqual(last(log, 'respawn'), ['respawn', 17], 'No: the session point 0 placement'); setPv('doorNoPlace', null); }
-  { setPv('doorNoPlace', false); const { ui, cs, log } = page(); cs.freeRide = { course: 17, station: 17 }; ui.set('ctm-enterlodge'); cs.back();
-    assert.ok(!log.some((e) => e[0] === 'respawn'), 'switch off: no placement after No'); setPv('doorNoPlace', null); }
+  { const { ui, cs, log } = page(); cs.freeRide = { course: 17, station: 17 }; ui.set('ctm-enterlodge'); cs.back();
+    assert.equal(ui.screen, 'game'); assert.deepEqual(last(log, 'respawn'), ['respawn', 17], 'No: the session point 0 placement'); }
   // a station row asks the Transport question (PS2 peak3/nav out-fr-to-black-station prompt)
   { const { cs } = page(); cs.selected = { station: true, course: 21 }; assert.deepEqual(cs.promptLines('ctm-confirm'), [cs.t('kT_MAPTransArea', 'Transport to this area now?')]); }
   // the booth: the map on the ridden peak; Back = world state 15 at the station (session point 1)
@@ -422,22 +416,19 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
   { const { ui, cs, log } = page(); cs.career.startEvent('zoe', MODE.RIVAL_TIME, 14, true); cs.result = { outcome: { round: 1 }, mode: MODE.RIVAL_TIME }; cs.restartToCard(true); await tick();
     assert.equal(last(log, 'cutscene'), undefined, 'a rival event queues nothing (0x235B38)'); assert.equal(ui.screen, 'ctm-objectives'); }
   // pv ws13Rival: a peak run (event type 5 / 6 like the rival challenges) takes the same branch: no cutscene, the card
-  { setPv('ws13Rival', true); const { ui, cs, log } = page(); cs.career.startEvent('zoe', 6, null, true); cs.result = { outcome: { round: 1 }, mode: 6 }; cs.restartToCard(true); await tick();
-    assert.equal(last(log, 'cutscene'), undefined, 'a peak run queues nothing (0x235B38)'); assert.equal(ui.screen, 'ctm-objectives'); setPv('ws13Rival', null); }
+  { const { ui, cs, log } = page(); cs.career.startEvent('zoe', 6, null, true); cs.result = { outcome: { round: 1 }, mode: 6 }; cs.restartToCard(true); await tick();
+    assert.equal(last(log, 'cutscene'), undefined, 'a peak run queues nothing (0x235B38)'); assert.equal(ui.screen, 'ctm-objectives'); }
   { const { ui, cs, log } = page(); cs.career.startEvent('zoe', MODE.RACE, 0, true); cs.result = { outcome: { round: 1 }, mode: MODE.RACE }; cs.restartToCard(true); await tick();
     assert.deepEqual(last(log, 'cutscene').slice(0, 2), ['cutscene', 'heat'], 'a race rides the gondola'); }
   // pv crossWorld: riding out of Peak 2 into Green Base Station: the crossing clears the new-career flag, a world load (no ride) at 17
-  { setPv('crossWorld', true); const { cs, log } = page(); const r = cs.career.rider('zoe'); r.firstRun = undefined; r.lastStation = 20;
+  { const { cs, log } = page(); const r = cs.career.rider('zoe'); r.firstRun = undefined; r.lastStation = 20;
     cs.freeRide = { course: 3 }; cs.crossWorld(17); assert.equal(r.firstRun, false); assert.deepEqual(last(log, 'load'), ['load', 17, true]);
-    cs.resume(); await tick(); assert.equal(r.lastStation, 17, 'the last lodge at the station reached (WS10)'); setPv('crossWorld', null); }
-  setPv('stationFlow', null);
+    cs.resume(); await tick(); assert.equal(r.lastStation, 17, 'the last lodge at the station reached (WS10)'); }
   console.log('stations: lodge Triangle = No at the door, the booth on the ridden peak and its Back, the post-event map, the heli drop');
 }
 // ---- 17. pv mountainRide: the free ride in the whole-mountain world (the PS2's one world) -------------------------------------
 {
-  setPv('mountainRide', false); assert.equal(freeRideWorldOf(3), 'PEAK2', 'switch off: the course\'s peak world');
-  setPv('mountainRide', true);
-  try {
+  {
     assert.equal(freeRideWorldOf(3), 'MOUNTAIN', 'desktop tier: the whole mountain');
     const { ui, cs, log } = page(); ui.course = { code: 'MOUNTAIN', freeRide: { kind: 4 } };
     assert.equal(switchesWorld(ui, 17), false, 'every course is in the loaded world: a transport inside it, not a world switch');
@@ -450,11 +441,11 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
     assert.equal(cs.freeRide.course, 17);
     // Gravitude into Yellow Mid Station: Peak 2
     cs.freeRide = { course: 4 }; cs.peak = 3; cs.courseChanged(19); assert.equal(cs.peak, 2); cs.crossingArrived(19); assert.equal(r.lastStation, 19);
-  } finally { setPv('mountainRide', null); }
+  }
   // pv crossingArrival (PS2 ctm-parity/mountain/fr-dra4a): a riding crossing's Unload is world state 11 (the new-career flag, the course);
   // the last lodge and the visited bit wait for the connector's Load trigger (WS10 at record 19215, WS4 at 19216)
-  { setPv('crossingArrival', true);
-    try { const { cs } = page(); const r = cs.career.rider('zoe'); r.firstRun = undefined; r.lastStation = 20; r.visited = (1 << 3) | (1 << 14);
+  {
+    { const { cs } = page(); const r = cs.career.rider('zoe'); r.firstRun = undefined; r.lastStation = 20; r.visited = (1 << 3) | (1 << 14);
       cs.freeRide = { course: 3 }; cs.courseChanged(17);
       assert.equal(r.firstRun, false, 'WS11 enter clears the new-career flag at the Unload'); assert.equal(cs.freeRide.course, 17);
       assert.equal(r.lastStation, 20, 'no last lodge before the Load'); assert.ok(!(r.visited & (1 << 17)), 'not visited before the Load');
@@ -466,7 +457,7 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
       // a transport's arrival is world state 10 at once
       const w = page(); w.ui.cb.freeRide = () => 'transport'; const r2 = w.cs.career.rider('zoe'); r2.firstRun = false; r2.lastStation = 17;
       w.cs.freeRide = { course: 0 }; w.cs.goWorld(18); w.cs.courseChanged(18); assert.equal(r2.lastStation, 18, 'a transport arrives at once');
-    } finally { setPv('crossingArrival', null); } }
+    } }
   console.log('mountainRide: the whole mountain on the desktop tier, crossings keep the career on the rider\'s location');
 }
 // ---- pv ps2MenuInput through the screen phases (web/screen-phases.js): the race pause's Restart -> No, counted in UI frames (PS2

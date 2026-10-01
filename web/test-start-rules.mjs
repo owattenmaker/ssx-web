@@ -2,6 +2,7 @@
 // (local/ps2-capture/menus/startprobe): the game update's pause gates 0x230A34 and the LUI's UINext (Cross or Start).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { sourceOf } from './test-source.mjs';
 const { startOpensPause, startAccepts } = await import('./start-rules.js');
 const { createPadMenus } = await import('./gamepad-menus.js');
 const { setPv } = await import('./pv-flags.js');
@@ -66,13 +67,10 @@ setPv('ps2MenuInput', true);
   set(9, 0); f(4); assert.equal(m.taken('start'), false, 'released: no longer spent');
 }
 setPv('ps2MenuInput', null);
-const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+const main = sourceOf('main.js');
 assert.match(main, /const padMenus=installPadMenus\(/, 'main.js keeps the pad menus');
-assert.match(main, /!\(pv\('startConsume'\)&&padMenus\?\.taken\?\.\('start'\)\)/, 'pad path: a spent Start does not pause');
-assert.match(main, /&&running&&!\(e\.ssxPadMenu&&pv\('startConsume'\)\)\)/, 'keyboard path: the pad menus\' keys do not pause');
+assert.match(main, /!padMenus\?\.taken\?\.\('start'\)/, 'pad path: a spent Start does not pause');
+assert.match(main, /&&running&&!e\.ssxPadMenu\)/, 'keyboard path: the pad menus\' keys do not pause');
 assert.match(main, /frameScreen==='game'&&startOpensPause\(/, 'pad Start pauses from the ride only (the screen of the previous frame)');
 assert.match(main, /window\.addEventListener\('keydown',\(\)=>\{keyScreen=ui\.screen;keyPaused=isPaused\(\);\},true\);/, 'keyboard: the screen before any menu handled the key');
-const { PV_DEFAULTS } = await import('./pv-flags.js');
-assert.equal(PV_DEFAULTS.startRules, true, 'startRules on');
-assert.equal(PV_DEFAULTS.startConsume, true, 'startConsume on');
 console.log('start rules ok');

@@ -24,9 +24,10 @@ export function webKitDriverBinary() {
   return bin;
 }
 
-export async function startWebKit({ width = 1280, height = 960, offscreen = false } = {}) {
+// store: a UUID string, the driver's own persistent data store (repeat-visit runs); trustLocal: accept https://127.0.0.1's certificate.
+export async function startWebKit({ width = 1280, height = 960, offscreen = false, store = null, trustLocal = false } = {}) {
   const bin = webKitDriverBinary(); if (!bin) return null;
-  const proc = spawn(bin, ['about:blank', String(width), String(height), ...(offscreen ? ['--offscreen'] : [])], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const proc = spawn(bin, ['about:blank', String(width), String(height), ...(offscreen ? ['--offscreen'] : []), ...(store ? ['--store', store] : []), ...(trustLocal ? ['--trust-local'] : [])], { stdio: ['pipe', 'pipe', 'inherit'] });
   // WebKit stops requestAnimationFrame while the display sleeps: keep it awake for the driver's lifetime.
   if (process.platform === 'darwin' && proc.pid) { try { spawn('caffeinate', ['-d', '-u', '-w', String(proc.pid)], { stdio: 'ignore', detached: true }).unref(); } catch {} }
   const rl = readline.createInterface({ input: proc.stdout }), waiting = [], events = [];

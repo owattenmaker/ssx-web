@@ -73,7 +73,10 @@ export function createRunCheck({ course = null } = {}) {
         if (lead <= AHEAD_TICKS) run.ahead = null;
         else {
           const e = run.ahead ?? (run.ahead = { since: wallTicks, peak: lead, found: false }); e.peak = Math.max(e.peak, lead);
-          if (!e.found && (lead > AHEAD_BURST_TICKS || wallTicks - e.since > AHEAD_RECOVER_TICKS)) { e.found = true; find('clock-ahead', { tick: h.tick, wall: Math.round(wallTicks), lead: Math.round(lead), since: Math.round(e.since) }); }
+          if (!e.found && (lead > AHEAD_BURST_TICKS || wallTicks - e.since > AHEAD_RECOVER_TICKS)) {
+            e.found = true;
+            find('clock-ahead', { tick: h.tick, wall: Math.round(wallTicks), lead: Math.round(lead), since: Math.round(e.since) });
+          }
         }
       }
       if (!a) { run.first = h; run.route = h.remaining; }
@@ -105,7 +108,17 @@ export function createRunCheck({ course = null } = {}) {
       }
       const expected = (ticks + countdown) / 3;
       if (run.packets < MIN_COVERAGE * expected) out.push({ code: 'coverage', packets: run.packets, expected: Math.round(expected) });
-      return { ok: out.length === 0, findings: out, stats: { packets: run.packets, path: Math.round(run.path), route: Math.round(run.route), teleports: run.teleports.length, lead: Number.isFinite(run.lead) ? Math.round(run.lead) : null } };
+      return {
+        ok: out.length === 0,
+        findings: out,
+        stats: {
+          packets: run.packets,
+          path: Math.round(run.path),
+          route: Math.round(run.route),
+          teleports: run.teleports.length,
+          lead: Number.isFinite(run.lead) ? Math.round(run.lead) : null
+        }
+      };
     },
   };
 }

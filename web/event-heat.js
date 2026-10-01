@@ -4,7 +4,17 @@ import { assembleLineup, buildRoster, lineupFor, peakRival, roundEntries } from 
 import { syncWorldNodes } from './ai-racers.js';
 
 // The core exports WS13's path runs (pv eventReturnInWorld): a core without one throws here rather than riding on with the wrong state.
-export const HEAT_CORE_EXPORTS = ['_world_node_states', '_shared_world_nodes', '_ctm_world_reset', '_game_tick_restart', '_event_row_enter', '_free', '_nis_hold', '_event_route_seed', '_event_grid_start'];
+export const HEAT_CORE_EXPORTS = [
+  '_world_node_states',
+  '_shared_world_nodes',
+  '_ctm_world_reset',
+  '_game_tick_restart',
+  '_event_row_enter',
+  '_free',
+  '_nis_hold',
+  '_event_route_seed',
+  '_event_grid_start'
+];
 export const HEAT_RIDER_EXPORTS = ['_world_instance_states', '_world_node_states_apply', '_ctm_world_reset', '_game_tick_restart', '_npc_fresh_rider', '_npc_grid_start', '_event_clock_hold'];
 export function requireHeatCore(human, racers) {
   const missing = HEAT_CORE_EXPORTS.filter((f) => typeof human?.[f] !== 'function');

@@ -73,8 +73,18 @@ export function createBootProgress(manifest = {}, { now = () => Date.now(), star
       if (finished) return { fraction: 1, phase: null };
       let total = 0, got = 0; const left = new Map();
       // the phase shown: the first (in load order) with work under way; files not yet asked for do not hold it
-      for (const f of files.values()) { const x = api.itemFraction(f, t, true); total += f.w; got += f.w * x; if (!f.done && f.start != null) left.set(f.phase, (left.get(f.phase) || 0) + f.w * (1 - x)); }
-      for (const s of steps.values()) { const x = api.itemFraction(s, t, false); total += s.w; got += s.w * x; if (!s.done && s.start != null) left.set(s.phase, (left.get(s.phase) || 0) + s.w * (1 - x)); }
+      for (const f of files.values()) {
+        const x = api.itemFraction(f, t, true);
+        total += f.w;
+        got += f.w * x;
+        if (!f.done && f.start != null) left.set(f.phase, (left.get(f.phase) || 0) + f.w * (1 - x));
+      }
+      for (const s of steps.values()) {
+        const x = api.itemFraction(s, t, false);
+        total += s.w;
+        got += s.w * x;
+        if (!s.done && s.start != null) left.set(s.phase, (left.get(s.phase) || 0) + s.w * (1 - x));
+      }
       // ... and it only moves on: work of an earlier phase finishing late (a picture of the menus) does not take it back
       const from = Math.max(0, phaseOrder.indexOf(lastPhase));
       const phase = phaseOrder.find((p, i) => i >= from && (left.get(p) || 0) > 0) ?? lastPhase;

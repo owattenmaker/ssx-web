@@ -21,7 +21,6 @@
 // (?course=..&autostart=1, ?online=1, ?lobby=..), ?qa=1, a page whose first screen after the load is not the title, or a
 // later return to the title (a race's quit). Automated browsers (web/audio-engine.js testMuted) get neither switch unless
 // the page asks with ?femovies=1 (which also lifts the ?qa=1 skip); headless Chrome counts as automated (automatedBrowser).
-import { pv } from './pv-flags.js';
 import { testMuted } from './audio-engine.js';
 import { loadMovieIndex, startMovie } from './fe-movie.js';
 
@@ -46,7 +45,7 @@ export function nextMovie(mask, djOnce) {
 // `idle` (the title with "Press START button", no movie) and returns the movie to start, if any; input() is a pad event.
 export function createAttractState({ attract = true, boot = false } = {}) {
   const s = { mask: boot ? BOOT_MASK : 0, bootBits: boot ? BOOT_MASK : 0, djOnce: true, frames: 0, hold: 0, playing: null };
-  // pv attract without the boot sequence: the power-on intro (the DJ cut) never played, but a PS2 player never sees the DJ
+  // attract without the boot sequence: the power-on intro (the DJ cut) never played, but a PS2 player never sees the DJ
   // cut in the attract either (the boot intro always took it), so the attract plays intro.mpc.
   if (!boot) s.djOnce = false;
   return {
@@ -97,7 +96,7 @@ export function bootSkip(q, { automated = false } = {}) {
 // while a movie plays (the FE screens are frozen on the PS2) and resets the idle count otherwise.
 export class FeAttract {
   constructor(ui) {
-    this.ui = ui; this.on = { attract: pv('attract'), boot: pv('bootMovies') };
+    this.ui = ui; this.on = { attract: true, boot: true };
     const q = PAGE_URL.searchParams;
     this.enabled = (this.on.attract || this.on.boot) && wanted(q);
     this.logic = createAttractState({ attract: this.on.attract, boot: false });
@@ -107,7 +106,18 @@ export class FeAttract {
     if (!this.enabled || typeof addEventListener !== 'function') return;
     // Leaving the title before the power-on intro started (an event load, a menu, a race) ends its chance: a later return to
     // the title is not a boot.
-    try { const st = ui.stage; if (st && typeof MutationObserver === 'function') { const mo = new MutationObserver(() => { if (st.dataset.screen !== 'title') { this.bootDone = true; mo.disconnect(); } }); mo.observe(st, { attributes: true, attributeFilter: ['data-screen'] }); } } catch {}
+    try {
+      const st = ui.stage;
+      if (st && typeof MutationObserver === 'function') {
+        const mo = new MutationObserver(() => {
+          if (st.dataset.screen !== 'title') {
+            this.bootDone = true;
+            mo.disconnect();
+          }
+        });
+        mo.observe(st, { attributes: true, attributeFilter: ['data-screen'] });
+      }
+    } catch {}
     const onKey = (e) => {
       const r = this.logic.key(e.code);
       if (!r) { if (this.ui.screen === 'title') this.logic.input(); return; }

@@ -16,7 +16,7 @@
 //   fe-poster   130rewardposter one owned reward (a Video plays full screen instead: playMovie)
 //   fe-display  (19game_opt)    Display & Touch (the port's own settings, built from Game Options' rows, focus bar,
 //                               arrows, help line and legend; displayScreen()): Resolution, Upscaling, PS2 softness (Off / On), Texture set
-//                               (PS2 / Xbox HD, pv xboxRiders), Frame rate,
+//                               (PS2 / Xbox HD, xboxRiders), Frame rate,
 //                               Quality (Yes/No before the graphics rebuild), Touch controls, Touch layout, Touch stick,
 //                               Touch vibration (greyed while the touch controller is not up). Options gets a
 //                               "Display & Touch" item above DONE (optionsWithDisplay()); the deck's ≡ opens it.
@@ -32,7 +32,6 @@ import { TOUCH_DEFAULTS, loadTouchSettings, saveTouchSettings } from './touch-co
 import { inputDevice } from './input-glyphs.js';
 import { PAD_SCREEN, PAD_TITLE, PAD_ROWS, CONTROL_PAD, controlWithPad, PadSetup, padName } from './fe-gamepad.js';   /* Controller Settings > Gamepad (pad test, remap) */
 import { activeEntry } from './gamepad.js';
-import { pv } from './pv-flags.js';
 
 // Pro (INPUT2.MAP) keyboard rows: the direction keys turn and, with Space held, spin/flip (late spin / prewind);
 // Y (Triangle) is the hand plant; C (Circle) has no function (the 22control Pro labels).
@@ -125,23 +124,99 @@ export function saveDateTime(ms) {
 export const DISPLAY_SCREEN = 'fe-display';
 export const DISPLAY_TITLE = 'Display & Touch';
 export const DISPLAY_ENTRY = Object.freeze({ text: 'Display & Touch', help: 'Change the picture, frame rate and touch controller.' });
-// Texture set (pv xboxRiders, quality.riderTextures; docs/xbox-textures.md section 8): the riders' PS2 textures or the Xbox HD set.
+// Texture set (quality.riderTextures; docs/xbox-textures.md section 8): the riders' PS2 textures or the Xbox HD set.
 // Riders shown already keep theirs until they load again (the next course, Select Character / Equip Gear rebuild them).
 export const TEXTURE_SET_ROW = Object.freeze({ q: 'riderTextures', label: 'Texture set', help: 'Xbox HD gives the riders sharper textures. Riders update when they next load.',
   values: [['ps2', 'PS2'], ['xbox', 'Xbox HD']] });
 export const DISPLAY_ROWS = Object.freeze([
-  { q: 'renderScale', label: 'Resolution', help: 'PS2 draws the original 640x448 picture. Screen matches your display.',
-    values: [['native', 'PS2 640x448'], ['native512', 'PS2 512x448'], ['css', 'Screen 1x'], ['full', 'Screen full']] },
-  { q: 'upscale', label: 'Upscaling', help: 'Smooth softens the picture like a TV. Sharp keeps hard pixel edges.', values: [['smooth', 'Smooth'], ['pixelated', 'Sharp']] },
-  { q: 'ps2Output', label: 'PS2 softness', help: 'On softens the 3D picture by one PS2 pixel, like the PS2 on a TV. The HUD stays sharp.',
-    values: [[false, 'kT_CMNOff'], [true, 'kT_CMNOn']] },
-  ...(pv('xboxRiders') ? [TEXTURE_SET_ROW] : []),
-  { q: 'fps', label: 'Frame rate', help: 'Auto drops to 30 frames a second when the device falls behind.', values: [['auto', 'Auto'], [60, '60'], [30, '30']] },
-  { q: 'tier', label: 'Quality', help: 'Low suits phones, High suits computers. Changing it rebuilds the graphics.', values: TIERS.map((t) => [t, t[0].toUpperCase() + t.slice(1)]), confirm: 'Rebuild the graphics for this quality?' },
-  { t: 'show', label: 'Touch controls', help: 'Auto shows the touch controller when you touch the screen.', values: [['auto', 'Auto'], ['on', 'Always'], ['off', 'kT_CMNOff']], confirmOff: 'Hide the touch controller?' },
-  { t: 'layout', deck: true, label: 'Touch layout', help: 'Shoulders on top puts L1 L2 R2 R1 above the picture.', values: [['split', 'Shoulders on top'], ['below', 'All below']] },
-  { t: 'stick', deck: true, label: 'Touch stick', help: 'Floating centres the stick where your thumb lands.', values: [['floating', 'Floating'], ['fixed', 'Fixed']] },
-  { t: 'haptics', deck: true, label: 'Touch vibration', help: 'Vibrate on each button press where the device allows it.', values: [[true, 'kT_CMNOn'], [false, 'kT_CMNOff']] },
+  {
+    q: 'renderScale',
+    label: 'Resolution',
+    help: 'PS2 draws the original 640x448 picture. Screen matches your display.',
+    values: [
+      ['native', 'PS2 640x448'],
+      ['native512', 'PS2 512x448'],
+      ['css', 'Screen 1x'],
+      ['full', 'Screen full']
+    ]
+  },
+  {
+    q: 'upscale',
+    label: 'Upscaling',
+    help: 'Smooth softens the picture like a TV. Sharp keeps hard pixel edges.',
+    values: [
+      ['smooth', 'Smooth'],
+      ['pixelated', 'Sharp']
+    ]
+  },
+  {
+    q: 'ps2Output',
+    label: 'PS2 softness',
+    help: 'On softens the 3D picture by one PS2 pixel, like the PS2 on a TV. The HUD stays sharp.',
+    values: [
+      [false, 'kT_CMNOff'],
+      [true, 'kT_CMNOn']
+    ]
+  },
+  TEXTURE_SET_ROW,
+  {
+    q: 'fps',
+    label: 'Frame rate',
+    help: 'Auto drops to 30 frames a second when the device falls behind.',
+    values: [
+      ['auto', 'Auto'],
+      [60, '60'],
+      [30, '30']
+    ]
+  },
+  {
+    q: 'tier',
+    label: 'Quality',
+    help: 'Low suits phones, High suits computers. Changing it rebuilds the graphics.',
+    values: TIERS.map((t) => [t, t[0].toUpperCase() + t.slice(1)]),
+    confirm: 'Rebuild the graphics for this quality?'
+  },
+  {
+    t: 'show',
+    label: 'Touch controls',
+    help: 'Auto shows the touch controller when you touch the screen.',
+    values: [
+      ['auto', 'Auto'],
+      ['on', 'Always'],
+      ['off', 'kT_CMNOff']
+    ],
+    confirmOff: 'Hide the touch controller?'
+  },
+  {
+    t: 'layout',
+    deck: true,
+    label: 'Touch layout',
+    help: 'Shoulders on top puts L1 L2 R2 R1 above the picture.',
+    values: [
+      ['split', 'Shoulders on top'],
+      ['below', 'All below']
+    ]
+  },
+  {
+    t: 'stick',
+    deck: true,
+    label: 'Touch stick',
+    help: 'Floating centres the stick where your thumb lands.',
+    values: [
+      ['floating', 'Floating'],
+      ['fixed', 'Fixed']
+    ]
+  },
+  {
+    t: 'haptics',
+    deck: true,
+    label: 'Touch vibration',
+    help: 'Vibrate on each button press where the device allows it.',
+    values: [
+      [true, 'kT_CMNOn'],
+      [false, 'kT_CMNOff']
+    ]
+  }
 ]);
 
 // 19game_opt parts the Display & Touch rows are built from (row template = Speed units, focused at frame 40).
@@ -275,7 +350,18 @@ function optionSpecs(x) {
 
 export class FeExtraScreens {
   constructor(fe) {
-    this.fe = fe; this.ui = fe.ui; this.padSetup = new PadSetup(this); this.quality = liveQuality; this.displayFrom = null; this.lui = {}; this.models = {}; this.options = loadFeOptions(); this.category = 0; this.item = 0; this.enterAt = {}; this.arrow = null;
+    this.fe = fe;
+    this.ui = fe.ui;
+    this.padSetup = new PadSetup(this);
+    this.quality = liveQuality;
+    this.displayFrom = null;
+    this.lui = {};
+    this.models = {};
+    this.options = loadFeOptions();
+    this.category = 0;
+    this.item = 0;
+    this.enterAt = {};
+    this.arrow = null;
     this.applyScreenPosition();
   }
   stage() { return this.ui.stage || (typeof document !== 'undefined' ? document.querySelector('#stage') : null); }
@@ -383,7 +469,17 @@ export class FeExtraScreens {
   }
   choose(s, i) {
     if (s === 'fe-rewards') { if (!this.career) return; this.category = i; this.item = 0; this.fe.returnTo['fe-rewards'] = { index: i }; this.fe.go('fe-gallery'); return; }
-    if (s === 'fe-gallery') { const st = this.status(); if (this.lodge() && st?.state === 'buy') { this.askBuy(st, this.item); return; } if (st?.state !== 'owned') return; if (this.section() === 'video') this.playMovie(st.item); else this.fe.go('fe-poster'); return; }
+    if (s === 'fe-gallery') {
+      const st = this.status();
+      if (this.lodge() && st?.state === 'buy') {
+        this.askBuy(st, this.item);
+        return;
+      }
+      if (st?.state !== 'owned') return;
+      if (this.section() === 'video') this.playMovie(st.item);
+      else this.fe.go('fe-poster');
+      return;
+    }
     if (s === 'fe-game' && this.specs[s][i]?.popup === 'screen-position') { this.openScreenPosition(); return; }
     if (s === 'fe-control' && this.specs[s][i]?.open) { this.fe.returnTo['fe-control'] = { index: i }; this.fe.go(this.specs[s][i].open); return; }   // Gamepad
     if (s === PAD_SCREEN) { const r = this.specs[s][i]; if (r?.choose && !rowDisabled(r)) r.choose(); return; }
@@ -423,7 +519,17 @@ export class FeExtraScreens {
   // Square (Reset options): the detected tier's picture settings and the touch defaults (Yes/No when the tier changes).
   resetDisplay() {
     const auto = this.quality.auto || this.quality.tier, d = TIER_DEFAULTS[auto];
-    const apply = () => { setQuality({ tier: auto, renderScale: d.renderScale, upscale: d.upscale, fps: d.fps, ps2Output: false, ...(pv('xboxRiders') ? { riderTextures: defaultRiderTextures(liveDevice, auto) } : {}) }); for (const [k, v] of Object.entries(TOUCH_DEFAULTS)) if (String(this.touchSettings()[k]) !== String(v)) this.setTouch(k, v); };
+    const apply = () => {
+      setQuality({
+        tier: auto,
+        renderScale: d.renderScale,
+        upscale: d.upscale,
+        fps: d.fps,
+        ps2Output: false,
+        riderTextures: defaultRiderTextures(liveDevice, auto)
+      });
+      for (const [k, v] of Object.entries(TOUCH_DEFAULTS)) if (String(this.touchSettings()[k]) !== String(v)) this.setTouch(k, v);
+    };
     if (auto !== this.quality.tier) this.ask(DISPLAY_ROWS.find((r) => r.q === 'tier').confirm, apply); else apply();
   }
 
@@ -431,13 +537,15 @@ export class FeExtraScreens {
   section() { return REWARD_CATEGORIES[this.category][0]; }
   rewardItems() { try { return this.career?.rewardItems(this.section()) || []; } catch { return []; } }
   page() { return Math.floor(this.item / PAGE); }
-  // pv lodgeRewards: opened from the lodge's Rider Details (web/fe-screens.js openFromLodge) the room sells, at this lodge's peak
-  lodge() { return !!this.fe.lodgeBack && pv('lodgeRewards'); }
+  // Opened from the lodge's Rider Details (web/fe-screens.js openFromLodge) the room sells, at this lodge's peak
+  lodge() { return !!this.fe.lodgeBack; }
   status(i = this.item) { try { return this.career?.rewardStatus(this.riderId, this.section(), i, this.lodge() ? (this.ui.careerUI?.lodgePeak || 1) : 0) || null; } catch { return null; } }
   // the lodge's buy popup (PS2 local/ps2-capture/lodge/runs/l11 cheat-buy-popup): '<category>:' / name / Cost / You have / 'Buy item?', Yes
   askBuy(st, index) {
     const fe = this.fe, c = this.career, cu = this.ui.careerUI, t = (k, f) => cu?.t?.(k, f) || f, id = this.riderId, section = this.section(), peak = cu?.lodgePeak || 1;
-    const done = (buy) => { fe.prompt = null; if (buy) c.buyReward(id, section, index, peak);   /* 0x15A818 rules, the collection bonus (web/career.js) */ this.focusAt = this.now(); this.ui.sync?.(); };
+    const done = (buy) => { fe.prompt = null; if (buy) c.buyReward(id, section, index, peak);
+    // 0x15A818 rules, the collection bonus (web/career.js)
+this.focusAt = this.now(); this.ui.sync?.(); };
     fe.prompt = { at: fe.now(), index: 0, message: t('kT_OVRCMNBuyItem', 'Buy item?'), buy: { title: this.data.strings?.[`label_${this.category}`] || this.galleryLabel(), name: st.item.name,
       rows: [[t(0x05f1a304, 'Cost:'), `$${st.item.price.toLocaleString('en-US')}`], [t(0x0918c5a5, 'You have:'), `$ ${(c.rider(id).cash ?? 0).toLocaleString('en-US')}`]] },
       yes: () => done(true), no: () => done(false) };
@@ -555,8 +663,14 @@ export class FeExtraScreens {
       if (labelOf.has(e.name) && dis[labelOf.get(e.name)]) return { alpha: DISABLED_ALPHA };
       if (s === PAD_SCREEN && e.name === PAD_REMAP_HELP && this.padSetup.remap) return { text: this.padSetup.remapHelp() };
       if (s === PAD_SCREEN && e.name === PAD_TEST_HELP && this.padSetup.test) return { text: this.padSetup.testHelp() };
-      if (s === PAD_SCREEN && values.has(e.name) && dis[values.get(e.name)]) { const v = this.value(s, values.get(e.name)); return { alpha: DISABLED_ALPHA, text: this.label(v?.vals[v.index] ?? '') }; }
-      if (s === DISPLAY_SCREEN && values.has(e.name) && dis[values.get(e.name)]) { const v = this.value(s, values.get(e.name)); return { alpha: DISABLED_ALPHA, text: this.label(v?.vals[v.index] ?? '') }; }
+      if (s === PAD_SCREEN && values.has(e.name) && dis[values.get(e.name)]) {
+        const v = this.value(s, values.get(e.name));
+        return { alpha: DISABLED_ALPHA, text: this.label(v?.vals[v.index] ?? '') };
+      }
+      if (s === DISPLAY_SCREEN && values.has(e.name) && dis[values.get(e.name)]) {
+        const v = this.value(s, values.get(e.name));
+        return { alpha: DISABLED_ALPHA, text: this.label(v?.vals[v.index] ?? '') };
+      }
       if (values.has(e.name)) { const v = this.value(s, values.get(e.name)); if (v) return { text: this.label(v.vals[v.index] ?? '') }; }
       if (s === 'fe-control') return this.controlOverride(e);
       if (s === 'fe-rewards') return this.roomOverride(e);
@@ -570,7 +684,18 @@ export class FeExtraScreens {
   controlOverride(e) {
     if (e.name === CONTROL_PAD.value) return { text: padName(activeEntry(), 12) };   // Gamepad row: the pad the game reads
     const kb = this.device() === 'keyboard', pro = this.options.controller1 === 1;
-    const lui = this.lui['fe-control'], pad = this.padElements ??= new Set(lui.screen.elements.filter((x) => x.kind === 'sprite' && x.sprite?.page === 'FE_1-14' && (x.sprite.sw > 60) || ['02c8befe', '08976274', '05f515af'].includes(x.parent) || ['02c8befe', '08976274', '05f515af'].includes(x.name) || (x.kind === 'shape' && x.layer >= 12 && ['02c8befe', '08976274', '05f515af'].includes(lui.byName.get(x.parent)?.parent))).map((x) => x.name));
+    const lui = this.lui['fe-control'],
+      pad = (this.padElements ??= new Set(
+        lui.screen.elements
+          .filter(
+            (x) =>
+              (x.kind === 'sprite' && x.sprite?.page === 'FE_1-14' && x.sprite.sw > 60) ||
+              ['02c8befe', '08976274', '05f515af'].includes(x.parent) ||
+              ['02c8befe', '08976274', '05f515af'].includes(x.name) ||
+              (x.kind === 'shape' && x.layer >= 12 && ['02c8befe', '08976274', '05f515af'].includes(lui.byName.get(x.parent)?.parent))
+          )
+          .map((x) => x.name)
+      ));
     if (kb && pad.has(e.name)) return { hidden: true };            // keyboard: the DualShock and its labels give way to the key table
     if (e.name === '08976274') return { alpha: pro ? 0 : 255 };    // Default labels
     if (e.name === '05f515af') return { alpha: pro ? 255 : 0 };    // Pro labels
@@ -616,9 +741,14 @@ export class FeExtraScreens {
       if (this.lodge() && (st?.state === 'buy' || st?.state === 'short')) return { alpha: i === this.item ? 255 : 150 };   // for sale in this lodge: the slot's own '$' (PS2 lodge/runs/l11)
       return { sprite: QUESTMARK, alpha: i === this.item ? 255 : 150 };   // 'questmark' (0x0CABC9EB), bright when focused (PS2: 255 / 151)
     }
-    if (e.name === '009371e2') { const k = this.item % PAGE, p = this.lui['fe-gallery'].props(e, [], 0); return { props: { 0: (p[0] || 0) + (k % GALLERY_COLS) * 68, 1: (p[1] || 0) + Math.floor(k / GALLERY_COLS) * 66 } }; }   // focus frame
+    // focus frame
+    if (e.name === '009371e2') {
+      const k = this.item % PAGE,
+        p = this.lui['fe-gallery'].props(e, [], 0);
+      return { props: { 0: (p[0] || 0) + (k % GALLERY_COLS) * 68, 1: (p[1] || 0) + Math.floor(k / GALLERY_COLS) * 66 } };
+    }
     if (e.name === '0f480214') return { text: `Page ${page + 1}/${Math.max(1, Math.ceil(items.length / PAGE))}` };
-    if (e.name === '0ca85a45') return { text: this.ui.careerUI?.t?.(cat[1], cat[2]) || cat[2], ...(pv('lodgeRewards') ? { props: { 6: 400 } } : {}) };   // one line, as the PS2 (flags without 0x80: no wrap)
+    if (e.name === '0ca85a45') return { text: this.ui.careerUI?.t?.(cat[1], cat[2]) || cat[2], props: { 6: 400 } };   // one line, as the PS2 (flags without 0x80: no wrap)
     if (e.name === '06481d1e') return { text: this.data.strings?.[`label_${this.category}`] || this.galleryLabel() };
     if (e.name === '0896df35') return { text: items[this.item]?.name || '' };
     const st = this.status(), priced = st && st.state !== 'owned' && st.item.price;
@@ -632,7 +762,7 @@ export class FeExtraScreens {
   galleryLabel() { return ({ art: 'Art:', poster: 'Poster:', toy: 'Toy:', trading_card: 'Card:', cheat_character: 'Cheat Character:', video: 'Video:' })[this.section()]; }
   posterOverride(e) {
     const item = this.rewardItems()[this.item], cat = REWARD_CATEGORIES[this.category];
-    if (e.name === '0ca85a45') return { text: this.ui.careerUI?.t?.(cat[1], cat[2]) || cat[2], ...(pv('lodgeRewards') ? { props: { 6: 400 } } : {}) };
+    if (e.name === '0ca85a45') return { text: this.ui.careerUI?.t?.(cat[1], cat[2]) || cat[2], props: { 6: 400 } };
     if (e.name === '0896df35') return { text: item?.name || '', alpha: 255 };
     return null;
   }

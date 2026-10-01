@@ -322,10 +322,10 @@ Round 2 (2026-09-27). Work files: `local/browser-validation/visual-parity/round2
 - **After:** `round2/results2/menu-cmp.png` (PS2 | before | Chrome | WebKit): one line, cursor on Restart.
 - **Not changed:** the PS2 menu wraps around (three Ups from the top land on Replay); `ui.js` clamps at the ends.
 
-## 17. Additive world models in byte space (pv `byteBlend`, off)
+## 17. Additive world models in byte space (pv `byteBlend`: removed 2026-09-30, moot with `encodedBlend`, section 38)
 
-The static-model additive class (ALPHA 0x48, model flag 8) can draw in the encoded pass after the fog composite
-(`world-material.js registerWorldAdditive`, `web/fog-shared.js`: the contribution scaled by the fog alpha at its depth, as the
+The static-model additive class (ALPHA 0x48, model flag 8) could draw in the encoded pass after the fog composite
+(the removed `world-material.js registerWorldAdditive` and `web/fog-shared.js`: the contribution scaled by the fog alpha at its depth, as the
 composite fogs Cd + Cs*As): Metro City 318 searchlight pixels 62 -> 67 (PS2 94), centre MAD 7.72 -> 7.65. The beams' remaining
 gap (40-60 % of the PS2's contribution; geometry and LiveComp phase match) is not the blend space: their texture alpha
 (palette 52 -> 104, correct) and vertex colour (c5 7) give Cs*As <= 46 in bytes, the PS2 shows up to +61. The entity draw path

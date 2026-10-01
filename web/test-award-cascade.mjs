@@ -5,7 +5,6 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { setPv } from './pv-flags.js';
 import { Career, MODE, MEDAL, eventKey } from './career.js';
 import { setBigChallengeTable, statusWords, challengeStatus } from './big-challenges.js';
 import { COLLECTIBLE_TOTALS } from './free-ride-hud.js';
@@ -16,7 +15,6 @@ if (!fs.existsSync(new URL('CAREER/career.json', root)) || !fs.existsSync(new UR
 const data = read('CAREER/career.json'), shop = fs.existsSync(new URL('CAREER/shop.json', root)) ? read('CAREER/shop.json') : null;
 const rows = read('BIGCHAL/big-challenges.json').challenges;
 setBigChallengeTable(rows);
-setPv('awardCascade', true);
 class Memory { constructor() { this.map = new Map(); } getItem(k) { return this.map.get(k) ?? null; } setItem(k, v) { this.map.set(k, String(v)); } removeItem(k) { this.map.delete(k); } }
 const fresh = () => new Career(data, { storage: new Memory(), shop, rosterSeed: () => 0x1234 });
 const id = 'zoe', ZOE = 4;
@@ -77,16 +75,6 @@ const counts = (c, award) => Array.from(c.rewardRecord?.counts.get(award) ?? Arr
   assert.equal(c.rewardRecord.cheats.get(2), 0x12, 'award 2 records its cheat character (Jurgen, 0x12)');
   assert.ok(c.owned(id, 'cheat_character').includes(c.rewardItems('cheat_character').findIndex((x) => x.character === 0x12)));
   assert.ok(!c.granted(id, 1) && !c.granted(id, 0));
-  // the old rules gave nothing here (awards 2..4 only after the next completed event)
-  setPv('awardCascade', false);
-  const old = fresh(); old.rider(id);
-  for (const g of ['race', 'freestyle']) for (const e of goalEvents(1, g)) medal(old, e.mode, e.course, MEDAL.GOLD);
-  old.rider(id).earned = 100000; old.rider(id).awards = [5, 8, 14]; old.rider(id).peaks[1] = true;
-  for (let i = 0; i < 40; i++) old.markCollected(id, 14, i, 0);
-  const w2 = statusWords(old, id); done = 0; rows.forEach((x, i) => { if (done < 11 && x.course >= 0 && peakOf(x.course) === 1) { w2[i] = (w2[i] | 8) >>> 0; done++; } });
-  challengeStatus(old, id, twelfth, (w2[twelfth] | 8) >>> 0);
-  assert.ok(old.granted(id, 11) && !old.granted(id, 2), 'switch off: award 2 waits');
-  setPv('awardCascade', true);
   console.log('cascade: the Freeride goal that completes Peak 1 grants "Peak 1 conquered!" (Jurgen) at once, in free ride');
 }
 
@@ -149,8 +137,7 @@ const counts = (c, award) => Array.from(c.rewardRecord?.counts.get(award) ?? Arr
 {
   const { seededWords, nextWord } = await import('./lineup.js');
   const gen = (seed) => { const w = seededWords(seed); return () => nextWord(w); };
-  setPv('rewardRng', true);
-  try {
+  {
     const c = new Career(data, { storage: new Memory(), shop, rosterSeed: () => 0x1234, presentation: gen(0xC0FFEE) }); c.rider(id);
     const seed0 = c.save.seed;
     // the expected picks with the same stream: award 5 (Peak 1 race goal): four cards, then a poster (0x159F50 .. 0x159FA8)
@@ -163,8 +150,7 @@ const counts = (c, award) => Array.from(c.rewardRecord?.counts.get(award) ?? Arr
     const got = c.grantAward(id, 5).filter((g) => g.category === 'trading_card' || g.category === 'poster').map((g) => [g.category, g.index]);
     assert.deepEqual(got, expect, 'picks from the presentation stream (0x157080)');
     assert.equal(c.save.seed, seed0, 'the xorshift stand-in is not drawn');
-  } finally { setPv('rewardRng', null); }
+  }
   console.log('rewardRng: the picks draw 0x3177F0');
 }
-setPv('awardCascade', null);
 console.log('test-award-cascade: ok');

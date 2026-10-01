@@ -1,4 +1,4 @@
-// New-career plane FX (pv planeFx; docs/presentation.md "New-career plane"): what the kind-7 channel-0 stage calls of
+// New-career plane FX (planeFx; docs/presentation.md "New-career plane"): what the kind-7 channel-0 stage calls of
 // #153 abc1_heli_arr_midway / #163 heli_arrb_<char>_midwayabc1 do besides the plane's LiveComp (web/cutscene-stage-sets.js).
 // PS2 (tools/export_cutscene_sets.py, the ABC1 track-6 globals run through the stage VM):
 //  - the engine: 0x0DE99225 (#153 t0) / 0x0EE53794 (#163 t0) = builtin 73 (297EB8: stop) then builtin 31 (297950: loop
@@ -11,7 +11,6 @@
 //    ticks (the PS2 entity pass runs under the NIS; the page's world is paused behind the cutscene). Its cleanup 0x0D905E74
 //    (builtin 69 mode 0) runs there at the step end: a Particle's stop is a no-op, so the spray goes on (PS2 new-career
 //    s3200..3330: the clouds under the jump).
-import { pv } from './pv-flags.js';
 import { SLOT } from './sfx.js';
 
 export const NOSCRIPT = 0x049A9AD4;
@@ -44,7 +43,7 @@ export function createPlaneFx(host) {
     stats,
     // A channel-0 event [symbol, cleanup] of a step with a staged set shown; owned: the set started a player with it.
     call(set, symbol, cleanup, owned) {
-      if (!set || !pv('planeFx')) return;
+      if (!set) return;
       stats.calls++;
       const recorded = cleanup != null && (cleanup >>> 0) !== NOSCRIPT;
       if (owned) { startLoop(set); if (recorded) loopCleanups.add(cleanup >>> 0); return; }

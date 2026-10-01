@@ -1,4 +1,4 @@
-// Fog-particle puffs (pv fogPuffs; docs/visual-parity.md 41): SSB kind-5 instances, each pointing to a kind-4 set of puffs
+// Fog-particle puffs (fogPuffs; docs/visual-parity.md 41): SSB kind-5 instances, each pointing to a kind-4 set of puffs
 // (tools/export_fog_puffs.py -> <package>/fog-puffs.json). The PS2 draws them through cPS2FogParticleMan (vtable 0x4882E0):
 //  - cull 0x22A270 (VU0 0xDB8): the 8 corners of the instance's +0x68/+0x74 box through the frustum clip matrix, VU CLIP against
 //    |w|: all 8 flagged on one side -> dropped (the node's occluder volumes, result 2, are not modelled: the occluding geometry hides
@@ -21,8 +21,8 @@ import * as T from 'three/webgpu';
 import {attribute, texture, vec4, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv, select} from 'three/tsl';
 import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
-import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 import {setUpdateRange} from './heap-views.js';
+import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 const F = Math.fround;
 // Streamed (CTM) packages with puffs (tools/export_fog_puffs.py; web/test-fog-puffs.mjs checks this against the exported files).
@@ -62,7 +62,13 @@ export function fogPuffLayout(doc, origin = [0, 0, 0]) {
     }
     const lo = x.box_min, hi = x.box_max; // source (x, y, z) -> scene (x, z, -y): an axis-aligned box stays one
     let q = 24 * j; // VU0 0x0AC8 corner order: x fastest over (min, max), then y, then z
-    for (const z of [lo[2], hi[2]]) for (const y of [lo[1], hi[1]]) for (const x of [lo[0], hi[0]]) { corners[q++] = x / 100 - origin[0]; corners[q++] = z / 100 - origin[1]; corners[q++] = -y / 100 - origin[2]; }
+    for (const z of [lo[2], hi[2]])
+      for (const y of [lo[1], hi[1]])
+        for (const x of [lo[0], hi[0]]) {
+          corners[q++] = x / 100 - origin[0];
+          corners[q++] = z / 100 - origin[1];
+          corners[q++] = -y / 100 - origin[2];
+        }
     const c = [F(F(lo[0] + hi[0]) * 0.5), F(F(lo[1] + hi[1]) * 0.5), F(F(lo[2] + hi[2]) * 0.5)];
     centres[3 * j] = c[0] / 100 - origin[0]; centres[3 * j + 1] = c[2] / 100 - origin[1]; centres[3 * j + 2] = -c[1] / 100 - origin[2];
     chunks.push(x.chunk);
@@ -115,54 +121,139 @@ async function loadFog0(fetchJson, fetchBytes) {
 
 // One package's puffs. root = the package folder URL (/assets/ARA1/, /assets/PEAK1/ARA1/); resident(chunk) -> false when the
 // original has streamed that chunk out. Resolves to null when the package has no puffs.
-export async function createFogPuffs({root, origin = [0, 0, 0], resident = () => true, fetchJson = (p) => fetch(p).then((r) => { if (!r.ok) throw Error(`${p}: ${r.status}`); return r.json(); }), fetchBytes = (p) => fetch(p).then((r) => r.arrayBuffer())}) {
+export async function createFogPuffs({
+  root,
+  origin = [0, 0, 0],
+  resident = () => true,
+  fetchJson = (p) =>
+    fetch(p).then((r) => {
+      if (!r.ok) throw Error(`${p}: ${r.status}`);
+      return r.json();
+    }),
+  fetchBytes = (p) => fetch(p).then((r) => r.arrayBuffer())
+}) {
   const doc = await fetchJson(root + 'fog-puffs.json').catch(() => null);
   if (!doc?.instances?.length) return null;
-  const layout = fogPuffLayout(doc, origin); if (!layout.count) return null;
+  const layout = fogPuffLayout(doc, origin);
+  if (!layout.count) return null;
   const tex = await loadFog0(fetchJson, fetchBytes);
-  const capacity = layout.count, geometry = new T.PlaneGeometry(2, 2);
-  for (let v = 0; v < geometry.attributes.uv.count; v++) geometry.attributes.uv.setXY(v, (geometry.attributes.position.getX(v) + 1) / 2, (geometry.attributes.position.getY(v) + 1) / 2); // ST (0,0) bottom-left
+  const capacity = layout.count,
+    geometry = new T.PlaneGeometry(2, 2);
+  // ST (0,0) bottom-left
+  for (let v = 0; v < geometry.attributes.uv.count; v++)
+    geometry.attributes.uv.setXY(v, (geometry.attributes.position.getX(v) + 1) / 2, (geometry.attributes.position.getY(v) + 1) / 2);
   const centre = new T.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(T.DynamicDrawUsage); // scene xyz, w = half side (m)
   const colour = new T.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(T.DynamicDrawUsage); // RGBAQ bytes / 128
-  geometry.setAttribute('fpCentre', centre); geometry.setAttribute('fpColour', colour);
+  geometry.setAttribute('fpCentre', centre);
+  geometry.setAttribute('fpColour', colour);
   const encodedOutput = uniform(false);
-  const material = new T.MeshBasicNodeMaterial({transparent: true, depthWrite: false, depthTest: true, side: T.DoubleSide, forceSinglePass: true, fog: false, toneMapped: false});
-  const c = attribute('fpCentre', 'vec4'), view = modelViewMatrix.mul(vec4(c.xyz, 1));
-  material.vertexNode = cameraProjectionMatrix.mul(vec4(view.x.add(positionGeometry.x.mul(c.w)), view.y.add(positionGeometry.y.mul(c.w)), view.z, 1));
-  const texel = texture(tex.map, uv()), col = attribute('fpColour', 'vec4');
-  const rgb = texel.rgb.mul(col.rgb).clamp(0, 1), As = texel.a.mul(tex.scale).mul(col.a); // MODULATE; As / 128
+  const material = new T.MeshBasicNodeMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    side: T.DoubleSide,
+    forceSinglePass: true,
+    fog: false,
+    toneMapped: false
+  });
+  const c = attribute('fpCentre', 'vec4'),
+    view = modelViewMatrix.mul(vec4(c.xyz, 1));
+  material.vertexNode = cameraProjectionMatrix.mul(
+    vec4(view.x.add(positionGeometry.x.mul(c.w)), view.y.add(positionGeometry.y.mul(c.w)), view.z, 1)
+  );
+  const texel = texture(tex.map, uv()),
+    col = attribute('fpColour', 'vec4');
+  const rgb = texel.rgb.mul(col.rgb).clamp(0, 1),
+    As = texel.a.mul(tex.scale).mul(col.a); // MODULATE; As / 128
   material.fragmentNode = vec4(select(encodedOutput, rgb, toFrame(rgb)), As.clamp(0, 1)); // 0x44: (Cs - Cd) x As + Cd
   material.name = 'FogPuffs';
   const mesh = new T.InstancedMesh(geometry, material, capacity);
-  mesh.count = 1; mesh.frustumCulled = false; mesh.renderOrder = pv('effectOrder') ? drawOrder(EFFECT.fogPuffs, SUBMIT.fogPuffs) : 684; mesh.name = 'fog puffs'; // pv effectOrder: 0x364240, t0 1023: first at priority 7
-  const group = new T.Group(); group.name = 'fog puffs'; group.add(mesh);
-  const out = {}, clip = new T.Matrix4(), mv = new T.Matrix4(), state = {sprites: 0, instances: layout.instances, puffs: layout.count};
+  mesh.count = 1;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = drawOrder(EFFECT.fogPuffs, SUBMIT.fogPuffs);
+  mesh.name = 'fog puffs'; // 0x364240, t0 1023: first at priority 7
+  const group = new T.Group();
+  group.name = 'fog puffs';
+  group.add(mesh);
+  const out = {},
+    clip = new T.Matrix4(),
+    mv = new T.Matrix4(),
+    state = { sprites: 0, instances: layout.instances, puffs: layout.count };
   const visible = (j) => layout.chunks[j] === undefined || resident(layout.chunks[j]) !== false;
   // The sprites for the camera that draws: from the encoded composite's populated(camera) and again right before the draw.
   function prepare(camera) {
     group.updateWorldMatrix(true, false);
     mv.multiplyMatrices(camera.matrixWorldInverse, group.matrixWorld);
     // the frustum clip matrix of 0xDB8 (VU0 64..67): the camera's projection with its z row mapping near / far to -w / +w
-    clip.copy(camera.projectionMatrix); const e = clip.elements, n0 = camera.near, f0 = camera.far;
-    e[2] = 0; e[6] = 0; e[10] = -(f0 + n0) / (f0 - n0); e[14] = -2 * f0 * n0 / (f0 - n0); clip.multiply(mv);
-    const M = clip.elements, keep = (j) => visible(j) && !clipCulled(M, layout.corners, 24 * j);
-    const n = buildFogSprites(layout, mv, keep, out), C = centre.array, Co = colour.array, P = layout.pos;
+    clip.copy(camera.projectionMatrix);
+    const e = clip.elements,
+      n0 = camera.near,
+      f0 = camera.far;
+    e[2] = 0;
+    e[6] = 0;
+    e[10] = -(f0 + n0) / (f0 - n0);
+    e[14] = (-2 * f0 * n0) / (f0 - n0);
+    clip.multiply(mv);
+    const M = clip.elements,
+      keep = (j) => visible(j) && !clipCulled(M, layout.corners, 24 * j);
+    const n = buildFogSprites(layout, mv, keep, out),
+      C = centre.array,
+      Co = colour.array,
+      P = layout.pos;
     for (let i = 0; i < n; i++) {
-      const k = out.order[i], o = 4 * i;
-      C[o] = P[3 * k]; C[o + 1] = P[3 * k + 1]; C[o + 2] = P[3 * k + 2]; C[o + 3] = layout.size[k];
-      Co[o] = layout.rgb[3 * k] / 128; Co[o + 1] = layout.rgb[3 * k + 1] / 128; Co[o + 2] = layout.rgb[3 * k + 2] / 128; Co[o + 3] = out.alpha[k] / 128;
+      const k = out.order[i],
+        o = 4 * i;
+      C[o] = P[3 * k];
+      C[o + 1] = P[3 * k + 1];
+      C[o + 2] = P[3 * k + 2];
+      C[o + 3] = layout.size[k];
+      Co[o] = layout.rgb[3 * k] / 128;
+      Co[o + 1] = layout.rgb[3 * k + 1] / 128;
+      Co[o + 2] = layout.rgb[3 * k + 2] / 128;
+      Co[o + 3] = out.alpha[k] / 128;
     }
-    if (!n) { C.fill(0, 0, 4); Co.fill(0, 0, 4); } // one empty sprite (zero size, alpha 0): the pipeline stays built and warmable
-    setUpdateRange(centre, 0, Math.max(n, 1) * 4); setUpdateRange(colour, 0, Math.max(n, 1) * 4);
-    mesh.count = Math.max(n, 1); state.sprites = n;
+    if (!n) {
+      C.fill(0, 0, 4);
+      Co.fill(0, 0, 4);
+    } // one empty sprite (zero size, alpha 0): the pipeline stays built and warmable
+    setUpdateRange(centre, 0, Math.max(n, 1) * 4);
+    setUpdateRange(colour, 0, Math.max(n, 1) * 4);
+    mesh.count = Math.max(n, 1);
+    state.sprites = n;
     return n;
   }
-  mesh.onBeforeRender = (renderer, scene, camera) => { prepare(camera); };
+  mesh.onBeforeRender = (renderer, scene, camera) => {
+    prepare(camera);
+  };
   let disposed = false;
-  const shown = () => { let o = group; while (o.parent) { if (!o.visible) return false; o = o.parent; } return o.isScene === true && o.visible; };
-  const effect = registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: (camera) => !disposed && shown() && (camera ? prepare(camera) > 0 : state.sprites > 0)});
+  const shown = () => {
+    let o = group;
+    while (o.parent) {
+      if (!o.visible) return false;
+      o = o.parent;
+    }
+    return o.isScene === true && o.visible;
+  };
+  const effect = registerEncodedEffect({
+    object: group,
+    setEncodedOutput: (v) => {
+      encodedOutput.value = !!v;
+    },
+    populated: (camera) => !disposed && shown() && (camera ? prepare(camera) > 0 : state.sprites > 0)
+  });
   return {
-    group, mesh, layout, state, prepare, effect,
-    dispose() { disposed = true; geometry.dispose(); material.dispose(); tex.map.dispose(); group.removeFromParent(); },
+    group,
+    mesh,
+    layout,
+    state,
+    prepare,
+    effect,
+    dispose() {
+      disposed = true;
+      geometry.dispose();
+      material.dispose();
+      tex.map.dispose();
+      group.removeFromParent();
+    }
   };
 }

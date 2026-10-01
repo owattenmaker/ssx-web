@@ -516,6 +516,10 @@ From the host's field reports (`~/ssx-host/logs/diag.log`, web/diagnostics.js; 1
 - **Unknown course at boot** (CRA3/ERA5, our own smoke tests while the Peak 2/3 data was being swapped in): a course
   missing from courses.json now falls back to Snow Jam and the menus instead of a dead "Load failed" card.
 
+- **In-world Transport stalls (2026-09-30):** not memory. No WebContent crash or jetsam in 60 WebKit Transports (12 runs, phone and Mac policy, before and
+  after the fix); footprint max 727-1386 MB per Transport. The cause was a crashbag roller reading freed collision (core) and a dropped held loop
+  (page): [course-switch.md](course-switch.md) "In-world Transports that stalled or took the page down". A failed init() whose C++
+  exception carried another core's tag left the page at 'loading' with no report (main.js init().catch); it now shows "Load failed".
 - **Hangs (pv `hangWatch`, on; 2026-09-28):** a freeze with no error and no pagehide looked the same as a killed
   WebContent process. The page now pings a small blob worker every 250 ms with the screen, the course, the last
   performance marks, and `step` / `recent` (the last events that are not heartbeats). When the pings stop for 8 s while

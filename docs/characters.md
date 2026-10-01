@@ -1097,6 +1097,10 @@ or Zoe when the human is Nate, so Nate never races as a computer rider).
 - **Checks.** The build reproduces every state's document. `web/test-lineups.mjs` now runs its race-course checks on
   CRA3 and DRA4 (0x23A4F0, documents, pair records, anchor RNG), races the anchor, Nate and two cheat humans on each, and
   checks Style Mile's 0x239938 opponents and documents.
+- **Career finals (2026-09-30, career-rival agent).** A career race final rides the rival in slot 1, so CRA3 / DRA4 need Nate's records,
+  which no Single Event state has. `tools/export_lineups.py export-career` / `build` take them from the derived career finals
+  (`characters/career/{CRA3,DRA4}-final-zoe`): skin `nate`, `skin_scale.nate` 3f7fffff, `grid[1][3f7fffff]`, `career_skins.nate`
+  (additive). The page uses them under pv careerRival (web/lineup.js careerSkinGated). docs/career-events.md "The peak rival in career events".
 
 ### Limits
 
@@ -1370,7 +1374,8 @@ The multiplayer agent owns `web/net/*`; nothing there was changed. The interface
     merge them like `character-roster.js loadCharacter` does
   - `settings_package` (Sam)
   - `files`: the six package URLs `world.json`, `rider.json`, `vertices.bin`, `indices.bin`, `colors.bin`,
-    `animation-samples.json`
+    `animation-samples.json`. The original riders' gameplay clip table is one shared file,
+    `/assets/ANIMATIONS/animation-samples.json` (web/wardrobe.js riderSamplesUrl); Sam's packages keep their own.
   - Texture paths in `world.json` are relative to `root`.
   - An unknown, malformed or incomplete key (one where 0x1521F0 would have to fill a slot) gives the default
     package.

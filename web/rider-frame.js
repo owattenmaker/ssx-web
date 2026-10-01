@@ -14,8 +14,14 @@ export function captureRiderFrame(state,pose,info,parents,origin,physicalOrienta
  const bonePositions=[],boneRotations=[];
  for(let i=0;i<parents.length;i++){
   const parent=parents[i];
-  if(parent<0){bonePositions.push(positions[i]);boneRotations.push(rotations[i]);}
-  else {const inverse=rotations[parent].clone().invert();bonePositions.push(positions[i].clone().sub(positions[parent]).applyQuaternion(inverse));boneRotations.push(inverse.multiply(rotations[i]).normalize());}
+  if (parent < 0) {
+    bonePositions.push(positions[i]);
+    boneRotations.push(rotations[i]);
+  } else {
+    const inverse = rotations[parent].clone().invert();
+    bonePositions.push(positions[i].clone().sub(positions[parent]).applyQuaternion(inverse));
+    boneRotations.push(inverse.multiply(rotations[i]).normalize());
+  }
  }
  return {position,rotation,bonePositions,boneRotations};
 }

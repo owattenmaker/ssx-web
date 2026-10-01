@@ -77,7 +77,12 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       let x = comp * (1 - (brake + turn)); if (spd < 0.1) x *= spd * 10;
       if (Math.abs(r.smoothB - x) > 0.1) x = r.smoothB - 0.25 * (r.smoothB - x);
       r.smoothB = x;
-      const [V, P] = fam === 0 ? [CURVES.glide0_vol_482B78, CURVES.glide0_pitch_482BA0] : fam === 1 ? [CURVES.glide1_vol_482BC8, CURVES.glide1_pitch_482BF0] : [CURVES.glide2_vol_482C18, CURVES.glide2_pitch_482C40];
+      const [V, P] =
+        fam === 0
+          ? [CURVES.glide0_vol_482B78, CURVES.glide0_pitch_482BA0]
+          : fam === 1
+            ? [CURVES.glide1_vol_482BC8, CURVES.glide1_pitch_482BF0]
+            : [CURVES.glide2_vol_482C18, CURVES.glide2_pitch_482C40];
       r.loops.b.setVolume(m ? 0 : Math.trunc(curve(V, x))); r.loops.b.setBend(Math.trunc(curve(P, x) * 4096));
     }
     if (r.loops.c) { // 293410 -> 293BB0 / 293DC0 / 293FC8
@@ -98,8 +103,19 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     const speed = Math.hypot(r.t[19], r.t[20], r.t[21]);
     const vol = Math.min(Math.max(Math.trunc(curve(CURVES.grunt_445910, speed)), 0), 127); // 290C40
     let slot, sound;
-    if (r.human) { slot = SLOT.GRUNT; sound = kind === 1 ? Math.floor(rand15(random) * 3 / 0x7fff) : kind === 0 ? Math.floor(rand15(random) * 3 / 0x7fff) + 3 : ((r.grunt = (r.grunt + 1) % 6) + 5) % 6; } // audio+0x5734 cycles 0..5
-    else { slot = SLOT.GRUNT_AI; sound = gruntIndex(r.character) * 2 + (kind === 1 ? 1 : 0); }
+    if (r.human) {
+      slot = SLOT.GRUNT;
+      sound =
+        kind === 1
+          ? Math.floor((rand15(random) * 3) / 0x7fff)
+          : kind === 0
+            ? Math.floor((rand15(random) * 3) / 0x7fff) + 3
+            : ((r.grunt = (r.grunt + 1) % 6) + 5) % 6;
+    } // audio+0x5734 cycles 0..5
+    else {
+      slot = SLOT.GRUNT_AI;
+      sound = gruntIndex(r.character) * 2 + (kind === 1 ? 1 : 0);
+    }
     if (r.gruntVoice?.playing()) return; // repeat tag 3 (295028)
     r.gruntVoice = play({ slot, sound, bus: 'CHARACTER', speaker: r.id, volume: vol, position: pos(r), tag: 'grunt', owner: r });
   }
@@ -151,7 +167,15 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     if (!inRange(r)) return;
     r.landVoice?.stop(0);
     const c = riderClass(r);
-    r.landVoice = play({ slot: SLOT.LAND, sound: c * 8 + (r.human ? 1 : 5), bus: 'BOARD', volume: Math.min(Math.max(Math.trunc(curve(CURVES.landing_vol_482D30, Math.abs(impact))), 0), 127), position: pos(r), tag: 'land', owner: r });
+    r.landVoice = play({
+      slot: SLOT.LAND,
+      sound: c * 8 + (r.human ? 1 : 5),
+      bus: 'BOARD',
+      volume: Math.min(Math.max(Math.trunc(curve(CURVES.landing_vol_482D30, Math.abs(impact))), 0), 127),
+      position: pos(r),
+      tag: 'land',
+      owner: r
+    });
   }
 
   // ---- event dispatch ----
@@ -232,7 +256,15 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     if (kind < 2) { // 298488 (tag 7)
       if (inRange(B) && !B.bumpVoice?.playing()) {
         const rel = Math.hypot(B.t[19] + A.t[19], B.t[20] + A.t[20], B.t[21] + A.t[21]); // vadd of the two velocities (as coded)
-        B.bumpVoice = play({ slot: SLOT.MAIN, sound: 0x36, bus: 'UI', volume: Math.min(Math.max(Math.trunc(curve(CURVES.bump_4458C0, Math.trunc(rel))), 0), 127), position: pos(B), tag: 'bump', owner: B });
+        B.bumpVoice = play({
+          slot: SLOT.MAIN,
+          sound: 0x36,
+          bus: 'UI',
+          volume: Math.min(Math.max(Math.trunc(curve(CURVES.bump_4458C0, Math.trunc(rel))), 0), 127),
+          position: pos(B),
+          tag: 'bump',
+          owner: B
+        });
       }
     } else if (!B.attackVoice?.playing()) B.attackVoice = play({ slot: SLOT.MAIN, sound: 0x5a, bus: 'UI', volume: 127, position: pos(B), tag: 'attack', owner: B }); // 298138 (tag 5)
     // 2A0A30: grunt for B always (after the gates), speech only from 10E3A8 (kind 2).
@@ -351,21 +383,57 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     // World start (286E20 -> 2929D8 -> 292A50) / teardown (286A80 -> 292B48).
     start({ courseIndex = 0, bigAir = false, halfPipe = false, backcountry = false, raceKind = 0 } = {}) {
       api.stop();
-      Object.assign(G, { courseIndex, bigAirEvent: bigAir, halfPipeEvent: halfPipe, backcountry, raceKind, countdown: 0, goPhase: null, timedOut: false, finished: false, sinceGo: -1 });
-      G.points = { last: 0, voice: null }; G.hud = { prev: null, uberVoice: null }; G.fill = { prev: 0, bend: 0x1000, tricky: 0 }; G.uberTier = undefined; G.frameSlots = null;
+      Object.assign(G, {
+        courseIndex,
+        bigAirEvent: bigAir,
+        halfPipeEvent: halfPipe,
+        backcountry,
+        raceKind,
+        countdown: 0,
+        goPhase: null,
+        timedOut: false,
+        finished: false,
+        sinceGo: -1
+      });
+      G.points = { last: 0, voice: null };
+      G.hud = { prev: null, uberVoice: null };
+      G.fill = { prev: 0, bend: 0x1000, tricky: 0 };
+      G.uberTier = undefined;
+      G.frameSlots = null;
       G.air = { flag: 0, T: 0, start: 0, end: 0, voice: null, gain: 0, loopsOn: false };
     },
     stop() {
-      for (const r of riders.values()) { stopLoops(r); stopCrashLoops(r); r.boostVoice?.stop(0.25); }
-      riders.clear(); G.air.voice?.stop(0.25);
+      for (const r of riders.values()) {
+        stopLoops(r);
+        stopCrashLoops(r);
+        r.boostVoice?.stop(0.25);
+      }
+      riders.clear();
+      G.air.voice?.stop(0.25);
       sfx.stopAll({ tag: 'boost' });
     },
     // One 60 Hz game tick after the cores stepped. riders: [{core, character, slot, human, finished, place}].
-    tick({ riders: list, raceInfo = null, running = true, paused = false, pending = 0, hudSlots = null, finished = false, timedOut = false }) {
-      G.running = running; G.paused = paused;
+    tick({
+      riders: list,
+      raceInfo = null,
+      running = true,
+      paused = false,
+      pending = 0,
+      hudSlots = null,
+      finished = false,
+      timedOut = false
+    }) {
+      G.running = running;
+      G.paused = paused;
       if (G.sinceGo >= 0) G.sinceGo++; // ticks since GO, counted before this tick's events are dispatched
-      for (const x of list) { const r = rider(x.core, { character: x.character, slot: x.slot, isHuman: x.human }); r.finished = !!x.finished; r.place = x.place ?? 0; drain(r); }
-      const h = human(); if (!h) return;
+      for (const x of list) {
+        const r = rider(x.core, { character: x.character, slot: x.slot, isHuman: x.human });
+        r.finished = !!x.finished;
+        r.place = x.place ?? 0;
+        drain(r);
+      }
+      const h = human();
+      if (!h) return;
       for (const r of riders.values()) {
         if (r.retry && (r.t[7] === 1 || r.t[7] === 3)) takeoffFollowup(r, r.t[8]); // 2947B0
         if (r.retry && r.t[4] !== 1) r.retry = false;
@@ -376,13 +444,22 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       // 0x234C..: the countdown state calls 29C420 on entering (3) and whenever its remaining ticks are a multiple of 60 -- also at
       // 0 on the GO tick -- one tick after the core's raceInfo[6] (PS2 monster-yellowcard audio log: beeps at 60, 120 and 180 = GO).
       const digit = phase === 4 ? Math.ceil(raceInfo[6] / 60) : 0;
-      const beep = (d) => { if (G.replay) return; play({ slot: SLOT.MAIN, sound: 0x4e, bus: 'UI', volume: 127 }); if (d > 0) music.countdown?.(d); };   // no countdown in a replay (288AE0)
+      const beep = (d) => {
+        if (G.replay) return;
+        play({ slot: SLOT.MAIN, sound: 0x4e, bus: 'UI', volume: 127 });
+        if (d > 0) music.countdown?.(d);
+      }; // no countdown in a replay (288AE0)
       if (phase === 4 && G.goPhase !== 4) beep(3);
       else if (phase === 4 && raceInfo[6] > 0 && (raceInfo[6] + 1) % 60 === 0) beep((raceInfo[6] + 1) / 60);
       else if (phase === 5 && G.goPhase === 4) beep(0);
       G.countdown = digit;
       if (G.goPhase === 3 && phase === 5 && G.backcountry) G.sinceGo = 0; // rolling start (2872A8 writes the GO tick 0x582C, no GO sound)
-      if (G.goPhase === 4 && phase === 5) { G.sinceGo = 0; if (!G.replay) play({ slot: SLOT.MAIN, sound: 0x5e, bus: 'ARCADESFX', volume: 127 }); play({ slot: SLOT.MAIN, sound: 0x62, bus: 'UI', volume: 127 }); } // a replay's GO: 0x62 only (PS2 replay audio log)
+      // a replay's GO: 0x62 only (PS2 replay audio log)
+      if (G.goPhase === 4 && phase === 5) {
+        G.sinceGo = 0;
+        if (!G.replay) play({ slot: SLOT.MAIN, sound: 0x5e, bus: 'ARCADESFX', volume: 127 });
+        play({ slot: SLOT.MAIN, sound: 0x62, bus: 'UI', volume: 127 });
+      }
       G.goPhase = phase;
       // 125228: TIME'S UP -> arcade prompt 2.
       if (timedOut && !G.timedOut) speech.arcade(EV.ARCADE_PROMPTS, 2);
@@ -392,7 +469,11 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
         hudSounds(h, hudSlots, pending, h.t[22] ?? 0, h.t[23] ?? 0);
         // 29B738 (per frame, previous tick's +0x2F4): the focus rider reaching Uber tier 10 (Super Uber) while racing ->
         // Arcade_Uber variant 2; audio+0x581C keeps the last tier seen.
-        if (h.prevValid) { const tier = h.prevT[23] ?? 0; if (G.uberTier !== undefined && tier === 10 && G.uberTier !== 10 && running && !paused) speech.arcade(EV.ARCADE_UBER, 2); G.uberTier = tier; }
+        if (h.prevValid) {
+          const tier = h.prevT[23] ?? 0;
+          if (G.uberTier !== undefined && tier === 10 && G.uberTier !== 10 && running && !paused) speech.arcade(EV.ARCADE_UBER, 2);
+          G.uberTier = tier;
+        }
       }
       G.frameSlots = hudSlots;
       // 28C8C8 runs in the per-frame audio update 285BF8, before that frame's game tick: it sees the previous tick's
@@ -401,30 +482,64 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       // 290FD0: anticipation level from the remaining air time and the pending trick value.
       crowd.update(() => {
         if (h.t[4] !== 1) return 3;
-        const t = (h.t[7] === 1 || h.t[7] === 3) ? h.t[8] - h.t[10] : 4; if (t > 3) return 3;
-        const p = pending / 10000; return p <= 0 ? 3 : p < 0.25 ? 0 : p < 0.5 ? 1 : 2;
+        const t = h.t[7] === 1 || h.t[7] === 3 ? h.t[8] - h.t[10] : 4;
+        if (t > 3) return 3;
+        const p = pending / 10000;
+        return p <= 0 ? 3 : p < 0.25 ? 0 : p < 0.5 ? 1 : 2;
       });
-      if (finished && !G.finished) { // 286EA0 (focus rider)
-        crowd.trick(2); stopCrashLoops(h); G.hud.uberVoice?.stop(0.25);
+      if (finished && !G.finished) {
+        // 286EA0 (focus rider)
+        crowd.trick(2);
+        stopCrashLoops(h);
+        G.hud.uberVoice?.stop(0.25);
         stopLoops(h); // the rider loops fall silent after the finish (rider+0x470)
       }
       G.finished = finished;
     },
     // 29ED18 (pause menu entry): the focus rider's crash loops, the pending-Uber sound and the boost loop stop.
     pauseStops() {
-      const h = human(); if (!h) return;
-      stopCrashLoops(h); G.hud.uberVoice?.stop(0.25); G.hud.uberVoice = null;
-      if (h.boost > 0) { h.boostVoice?.stop(0); h.boostVoice = null; h.boost = 0; }
+      const h = human();
+      if (!h) return;
+      stopCrashLoops(h);
+      G.hud.uberVoice?.stop(0.25);
+      G.hud.uberVoice = null;
+      if (h.boost > 0) {
+        h.boostVoice?.stop(0);
+        h.boostVoice = null;
+        h.boost = 0;
+      }
     },
-    // Big Challenge start / stop (29D6E0 / 29DBB0; pv bigChallengeAudio): the first rider's crash slide loops (296E20 /
+    // Big Challenge start / stop (29D6E0 / 29DBB0; bigChallengeAudio): the first rider's crash slide loops (296E20 /
     // 297438) and the pending-Uber sound (29B3C0). Unlike 29ED18 the boost loop keeps running.
-    challengeStops() { const h = human(); if (h) stopCrashLoops(h); G.hud.uberVoice?.stop(0.25); G.hud.uberVoice = null; },
+    challengeStops() {
+      const h = human();
+      if (h) stopCrashLoops(h);
+      G.hud.uberVoice?.stop(0.25);
+      G.hud.uberVoice = null;
+    },
     // 29D8E0 (challenge complete): bank 0 sound 0x6D on ARCADESFX, volume 127, not positional.
-    challengeComplete() { return arcade(0x6d); },
+    challengeComplete() {
+      return arcade(0x6d);
+    },
     // 29C420 / 29C7B0 callbacks are driven from tick(); these expose the dispatchers for tests.
-    dispatch, rider, riders: () => [...riders.values()],
-    debug() { return { riders: [...riders.values()].map((r) => ({ slot: r.slot, human: r.human, motion: r.t[4], class: r.loopClass, loops: Object.values(r.loops).filter(Boolean).length, boost: r.boost })),
-      air: { flag: G.air.flag, T: +G.air.T.toFixed(2), gain: +G.air.gain.toFixed(2), loops: G.air.loopsOn }, crowd: crowd.debug(), voices: sfx.voiceCount }; },
+    dispatch,
+    rider,
+    riders: () => [...riders.values()],
+    debug() {
+      return {
+        riders: [...riders.values()].map((r) => ({
+          slot: r.slot,
+          human: r.human,
+          motion: r.t[4],
+          class: r.loopClass,
+          loops: Object.values(r.loops).filter(Boolean).length,
+          boost: r.boost
+        })),
+        air: { flag: G.air.flag, T: +G.air.T.toFixed(2), gain: +G.air.gain.toFixed(2), loops: G.air.loopsOn },
+        crowd: crowd.debug(),
+        voices: sfx.voiceCount
+      };
+    }
   };
   return api;
 }

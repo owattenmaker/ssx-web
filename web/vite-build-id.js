@@ -11,7 +11,13 @@ import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node
 const web = path.dirname(new URL(import.meta.url).pathname);
 const BUILD_FILE = path.join(web, 'build-id.js');
 // Worker name (web/worker-guard.js createGuardedWorker / serveWorker) -> entry file.
-export const WORKER_ENTRIES = { 'peak-world': 'peak-world-worker.js', terrain: 'terrain-worker.js', 'fe-preview': 'fe-preview-worker.js', 'audio-decode': 'audio-decode-worker.js', 'texture-decode': 'texture-decode-worker.js' };
+export const WORKER_ENTRIES = {
+  'peak-world': 'peak-world-worker.js',
+  terrain: 'terrain-worker.js',
+  'fe-preview': 'fe-preview-worker.js',
+  'audio-decode': 'audio-decode-worker.js',
+  'texture-decode': 'texture-decode-worker.js'
+};
 const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
 export const PROCESS_BUILD_ID = `b${stamp}-${crypto.randomBytes(3).toString('hex')}`;
 const DEV_ID = `dev-${Date.now().toString(36)}`;

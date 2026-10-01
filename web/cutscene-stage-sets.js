@@ -1,6 +1,6 @@
 // Stage-script calls of cutscene scripts on cutscene sets that carry a LiveComp record: the new-career midway plane
 // (tools/export_cutscene_sets.py --plane -> CUTSCENES/SETS/ABC1PLANE; docs/presentation.md "New-career plane") and the
-// backcountry helis (--helis -> SETS/<LOC>HELI, pv bcHeli; docs/presentation.md 16).
+// backcountry helis (--helis -> SETS/<LOC>HELI, bcHeli; docs/presentation.md 16).
 //
 // PS2: a script's kind-7 object (0x280640) runs its channel-0 point events in the per-tick handler 0x2808E8: the call hash
 // is looked up in the stage globals of the current course's location (0x309E50) and that function runs; its cleanup hash
@@ -81,7 +81,7 @@ export function hideWorldCopy(scene, meta, exclude) {
   activeCopies.add(entry);
   return () => { for (const o of hidden) o.visible = true; hidden.length = 0; activeCopies.delete(entry); };
 }
-// A world mesh put into the scene while a set stands in for its copy (web/set-pieces-renderer.js, pv heliWorld): hidden with the
+// A world mesh put into the scene while a set stands in for its copy (web/set-pieces-renderer.js, heliWorld): hidden with the
 // copy and shown again when the set leaves.
 export function adoptWorldCopy(o) {
   for (const {copy, hidden} of activeCopies) if (inCopy(o, copy)) { o.visible = false; hidden.push(o); return true; }

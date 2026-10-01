@@ -179,52 +179,90 @@ export const MESSAGE_SCREENS = ['ctm-messages', 'ctm-message'];
 
 export class CareerMessages {
   constructor(careerUI) {
-    this.cu = careerUI; this.ui = careerUI.ui; this.data = null; this.back = null; this.view = null; this.top = 0;
-    this.hud = null; this.lastHud = 0; this.awards = null;
+    this.cu = careerUI;
+    this.ui = careerUI.ui;
+    this.data = null;
+    this.back = null;
+    this.view = null;
+    this.top = 0;
+    this.hud = null;
+    this.lastHud = 0;
+    this.awards = null;
   }
   async load() {
-    try { this.data = await (await fetch('/assets/CAREER/messages.json')).json(); } catch { this.data = null; }
+    try {
+      this.data = await (await fetch('/assets/CAREER/messages.json')).json();
+    } catch {
+      this.data = null;
+    }
     // OV_1-1 (envelope, folder and arrow icons) is not among the pages ui.js loads.
-    try { const im = new Image(); im.src = '/assets/UI/OV_1-1.png'; await im.decode(); this.ov1 = im; } catch { this.ov1 = null; }
+    try {
+      const im = new Image();
+      im.src = '/assets/UI/OV_1-1.png';
+      await im.decode();
+      this.ov1 = im;
+    } catch {
+      this.ov1 = null;
+    }
     this.hook(this.cu.career);
   }
-  icon(c, sx, sy, sw, sh, x, y, w, h) { if (this.ov1) c.drawImage(this.ov1, sx, sy, sw, sh, x, y, w, h); }
-  get ready() { return !!this.data; }
+  icon(c, sx, sy, sw, sh, x, y, w, h) {
+    if (this.ov1) c.drawImage(this.ov1, sx, sy, sw, sh, x, y, w, h);
+  }
+  get ready() {
+    return !!this.data;
+  }
   // The inbox of a rider profile (the career save's rider record; saved with it, old saves start empty).
-  inbox(rider = this.cu.me) { rider.messages ??= MessageInbox.empty(); return new MessageInbox(this.data, rider.messages); }
-  humanBase() { return this.cu.me?.character ?? 3; }
+  inbox(rider = this.cu.me) {
+    rider.messages ??= MessageInbox.empty();
+    return new MessageInbox(this.data, rider.messages);
+  }
+  humanBase() {
+    return this.cu.me?.character ?? 3;
+  }
   // Relationship notice (web/ai-race.js onRelationshipNotice): only in a Conquer the Mountain event.
   notify(character, score) {
     if (!this.ready || !this.cu.active?.career) return null;
     const entry = this.inbox().notify(character, score, this.humanBase());
-    if (entry) { this.hud = { frames: 0 }; this.cu.career.persist(); }
+    if (entry) {
+      this.hud = { frames: 0 };
+      this.cu.career.persist();
+    }
     return entry;
   }
   // The career hooks (web/career.js stays untouched): event completion, awards and collectible cash.
   hook(career) {
     if (!career || career.messagesHooked) return;
     career.messagesHooked = true;
-    const self = this, complete = career.completeEvent, grant = career.grantAward, earn = career.earnCash;
+    const self = this,
+      complete = career.completeEvent,
+      grant = career.grantAward,
+      earn = career.earnCash;
     career.completeEvent = function (place, result) {
       const before = self.ready ? self.snapshot(this) : null;
       self.awards = [];
-      try { const out = complete.call(this, place, result); if (before) self.eventComplete(this, before, place, out); return out; } finally { self.awards = null; }
+      try {
+        const out = complete.call(this, place, result);
+        if (before) self.eventComplete(this, before, place, out);
+        return out;
+      } finally {
+        self.awards = null;
+      }
     };
     career.grantAward = function (id, award) {
-      // pv awardCascade: 159CD0 posts an award's message at its case, before the items, the pass (158F60) and the cascade's awards
-      if (pv('awardCascade')) {
-        if (!this.rider(id).awards?.includes(award) && self.ready) { if (self.awards) self.awards.push(award); else self.postAward(this, id, award, self.snapshot(this)); }
-        return grant.call(this, id, award);
+      // 159CD0 posts an award's message at its case, before the items, the pass (158F60) and the cascade's awards
+      if (!this.rider(id).awards?.includes(award) && self.ready) {
+        if (self.awards) self.awards.push(award);
+        else self.postAward(this, id, award, self.snapshot(this));
       }
-      const had = this.rider(id).awards?.includes(award), got = grant.call(this, id, award);
-      if (!had && self.ready) { if (self.awards) self.awards.push(award); else self.postAward(this, id, award, self.snapshot(this)); }
-      return got;
+      return grant.call(this, id, award);
     };
     // 119EF8 -> 1E3760 before 1597B0 adds the cash: every award's cash in the world (collectibles, free-ride tricks, Big
     // Challenges; web/career.js earnCash).
     career.earnCash = function (id, amount) {
       if (self.ready && amount > 0) {
-        const r = this.rider(id), rules = new MessageRules(self.data, self.inbox(r));
+        const r = this.rider(id),
+          rules = new MessageRules(self.data, self.inbox(r));
         rules.earnings(amount, r.earned, this.rules.earnings_goal, (n) => !r.peaks[n]);
         if (rules.posts.length) self.hud = { frames: 0 };
       }
@@ -233,28 +271,60 @@ export class CareerMessages {
   }
   // Career facts before the event result is applied: rival locks (+0x278 bits 6+peak / 9+peak) and peak passes.
   snapshot(career) {
-    const id = career.active?.id ?? this.cu.riderId, r = career.rider(id);
-    const open = [1, 2, 3].map((peak) => ['race', 'freestyle'].map((g) => career.goalEvents(id, peak, g).filter((e) => e.mode < 4).every((e) => e.medal !== NONE)));
+    const id = career.active?.id ?? this.cu.riderId,
+      r = career.rider(id);
+    const open = [1, 2, 3].map((peak) =>
+      ['race', 'freestyle'].map((g) =>
+        career
+          .goalEvents(id, peak, g)
+          .filter((e) => e.mode < 4)
+          .every((e) => e.medal !== NONE)
+      )
+    );
     return { id, open, peaks: [...r.peaks] };
   }
   postAward(career, id, award, before) {
     const rules = new MessageRules(this.data, this.inbox(career.rider(id)));
-    rules.award(award, (n) => !before.peaks[n], (p) => career.goalComplete(id, p + 1, 'freeride'));
+    rules.award(
+      award,
+      (n) => !before.peaks[n],
+      (p) => career.goalComplete(id, p + 1, 'freeride')
+    );
     if (rules.posts.length) this.hud = { frames: 0 };
   }
   // 0x154EE8's message calls, in the original order.
   eventComplete(career, before, place, out) {
-    const { id, ev } = career.active || {}; if (!ev?.career) return;   // 0x5305F9: Conquer the Mountain only
-    const r = career.rider(id), character = r.character, rules = new MessageRules(this.data, this.inbox(r));
-    const { mode, course } = ev, medal = out.medal;
+    const { id, ev } = career.active || {};
+    if (!ev?.career) return; // 0x5305F9: Conquer the Mountain only
+    const r = career.rider(id),
+      character = r.character,
+      rules = new MessageRules(this.data, this.inbox(r));
+    const { mode, course } = ev,
+      medal = out.medal;
     rules.backcountryResult(mode, course, place, character);
     if (medal !== NONE) {
       rules.pendingPeakChallenges();
-      if (mode !== 4 && mode !== 5) rules.rivalReminders(character, (p, list) => before.open[p][list], (p, list) => career.medal(id, list ? 5 : 4, 14 + p) !== NONE);
-      for (const a of this.awards || []) rules.award(a, (n) => !before.peaks[n], (p) => career.goalComplete(id, p + 1, 'freeride'));
+      if (mode !== 4 && mode !== 5)
+        rules.rivalReminders(
+          character,
+          (p, list) => before.open[p][list],
+          (p, list) => career.medal(id, list ? 5 : 4, 14 + p) !== NONE
+        );
+      for (const a of this.awards || [])
+        rules.award(
+          a,
+          (n) => !before.peaks[n],
+          (p) => career.goalComplete(id, p + 1, 'freeride')
+        );
       if (medal >= SILVER) rules.peakChallengeFlag(mode, medal === SILVER);
-      const peak = mode >= 6 ? (mode - 6) % 3 : career.peakOf(course) - 1, goal = goalOf(mode);
-      rules.goalWalk(peak, goal, career.goalEvents(id, peak + 1, goal).map((e) => ({ mode: e.mode, medalled: e.medal !== NONE })), character);
+      const peak = mode >= 6 ? (mode - 6) % 3 : career.peakOf(course) - 1,
+        goal = goalOf(mode);
+      rules.goalWalk(
+        peak,
+        goal,
+        career.goalEvents(id, peak + 1, goal).map((e) => ({ mode: e.mode, medalled: e.medal !== NONE })),
+        character
+      );
     }
     this.awards = null;
     // every 1E2FE0 post sends HUD event 8; the icon's 5 s clock (1EB6E4) runs only while the HUD is up, so an event's posts
@@ -263,29 +333,66 @@ export class CareerMessages {
     // until WS5's 180-frame countdown (0x233C88) opens the results overlays, which freeze it (+0x3D8); PS2 race-f: 0.050 at fin, 3.033 at
     // res, 3.050 at the next ride (f95-after). The port posts at the results, so its clock starts where the PS2's froze: the next ride
     // shows the last ~2 s. (The ~3 s blink under the finish HUD itself is not drawn: the result is decided at the results here.)
-    if (rules.posts.length) { career.persist(); this.hud = { frames: pv('mailFreeze') ? 182 : 0 }; if (pv('mailFreeze')) this.lastHud = 0; }
+    if (rules.posts.length) {
+      career.persist();
+      this.hud = { frames: pv('mailFreeze') ? 182 : 0 };
+      if (pv('mailFreeze')) this.lastHud = 0;
+    }
   }
-  owns(screen) { return this.ready && MESSAGE_SCREENS.includes(screen); }
+  owns(screen) {
+    return this.ready && MESSAGE_SCREENS.includes(screen);
+  }
   // pv mailFreeze: an overlay's open / close sends HUD events 3 / 4 (20A380 / 20A430 -> 1EC3D4): the icon freezes and resumes (no sender of
   // event 9 exists); before, opening the Message Center cleared it.
-  freezeHud() { if (pv('mailFreeze')) this.lastHud = 0; else this.hud = null; }
-  open(back) { this.back = back; this.view = null; this.top = 0; this.freezeHud(); this.ui.set('ctm-messages'); this.ui.index = 0; this.ui.sync(); }
+  freezeHud() {
+    if (pv('mailFreeze')) this.lastHud = 0;
+    else this.hud = null;
+  }
+  open(back) {
+    this.back = back;
+    this.view = null;
+    this.top = 0;
+    this.freezeHud();
+    this.ui.set('ctm-messages');
+    this.ui.index = 0;
+    this.ui.sync();
+  }
   // The career's first FAQ (world state 4 at 0x2309A4 with gp-0x1024 != -1, set by Green Base Station's "?" through stage
   // builtin 100 -> 1E3510; web/peak_world.inc): the Message Center (1E3C00) opens the Progression/Rewards folder (category 7,
   // 1E3A78) for as long as it is shown and views the folder's first FAQ, "How do I open up other peaks?" (PS2 new career:
   // scratchpad music/runs/stall). Previous shows the list; leaving the list returns to the ride and restores the folder.
   openFaq(back, category = 7) {
-    const box = this.inbox(), c = this.data.categories[category]; if (!c) { back?.(); return; }
-    const wasOpen = box.posted(category); box.setPosted(category, true);
-    this.back = () => { if (!wasOpen) { this.inbox().setPosted(category, false); this.cu.career.persist(); } back?.(); };
-    this.top = 0; this.freezeHud(); this.view = { type: 'faq', category, item: c.first + 1 };
-    this.ui.set('ctm-message'); this.ui.index = 2; this.ui.sync();
+    const box = this.inbox(),
+      c = this.data.categories[category];
+    if (!c) {
+      back?.();
+      return;
+    }
+    const wasOpen = box.posted(category);
+    box.setPosted(category, true);
+    this.back = () => {
+      if (!wasOpen) {
+        this.inbox().setPosted(category, false);
+        this.cu.career.persist();
+      }
+      back?.();
+    };
+    this.top = 0;
+    this.freezeHud();
+    this.view = { type: 'faq', category, item: c.first + 1 };
+    this.ui.set('ctm-message');
+    this.ui.index = 2;
+    this.ui.sync();
   }
   // List rows (0x1E2BB8): the inbox newest first, then the FAQ folders (kind 2 categories), an open folder's FAQs below it.
   // A folder is open while its posted bit is set (0x1E4338 toggles it), so it stays open in the save.
   rows() {
-    const box = this.inbox(), rows = [];
-    for (let k = box.count - 1; k >= 0; k--) { const [item, variant] = box.box.entries[k]; rows.push({ type: 'message', index: k, item, variant, number: box.count - k, read: box.isRead(k) }); }
+    const box = this.inbox(),
+      rows = [];
+    for (let k = box.count - 1; k >= 0; k--) {
+      const [item, variant] = box.box.entries[k];
+      rows.push({ type: 'message', index: k, item, variant, number: box.count - k, read: box.isRead(k) });
+    }
     this.data.categories.forEach((c, cat) => {
       if (c.kind !== 2 || !c.folder) return;
       rows.push({ type: 'folder', category: cat, item: c.first });
@@ -293,34 +400,94 @@ export class CareerMessages {
     });
     return rows;
   }
-  items() { return this.ui.screen === 'ctm-message' ? [this.data.texts.previous, this.data.texts.delete_message, this.data.texts.keep] : this.rows().map((r) => this.inbox().subject(r.item, r.variant)); }
-  disabled() { return false; }
-  layout(i) { return this.ui.screen === 'ctm-message' ? [30 + 170 * i, Y(405), 150, Y(26)] : (i < this.top || i >= this.top + VISIBLE ? [0, 0, 0, 0] : [40, Y(150) + (i - this.top) * Y(25), 400, Y(24)]); }
+  items() {
+    return this.ui.screen === 'ctm-message'
+      ? [this.data.texts.previous, this.data.texts.delete_message, this.data.texts.keep]
+      : this.rows().map((r) => this.inbox().subject(r.item, r.variant));
+  }
+  disabled() {
+    return false;
+  }
+  layout(i) {
+    return this.ui.screen === 'ctm-message'
+      ? [30 + 170 * i, Y(405), 150, Y(26)]
+      : i < this.top || i >= this.top + VISIBLE
+        ? [0, 0, 0, 0]
+        : [40, Y(150) + (i - this.top) * Y(25), 400, Y(24)];
+  }
   key(e) {
-    if (this.ui.screen === 'ctm-messages' && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) {   // Square: Delete
-      const row = this.rows()[this.ui.index]; if (row?.type === 'message') { this.inbox().remove(row.index); this.cu.career.persist(); this.ui.index = Math.max(0, Math.min(this.ui.index, this.rows().length - 1)); this.ui.sync(); }
+    if (this.ui.screen === 'ctm-messages' && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) {
+      // Square: Delete
+      const row = this.rows()[this.ui.index];
+      if (row?.type === 'message') {
+        this.inbox().remove(row.index);
+        this.cu.career.persist();
+        this.ui.index = Math.max(0, Math.min(this.ui.index, this.rows().length - 1));
+        this.ui.sync();
+      }
       return true;
     }
     if (this.ui.screen === 'ctm-messages' && ['ArrowUp', 'ArrowDown'].includes(e.code)) setTimeout(() => this.scroll());
     return false;
   }
-  scroll() { const i = this.ui.index, top = this.top; if (i < this.top) this.top = i; if (i >= this.top + VISIBLE) this.top = i - VISIBLE + 1; if (top !== this.top) this.ui.sync(); }   // off-list rows get no pointer target
+  // off-list rows get no pointer target
+  scroll() {
+    const i = this.ui.index,
+      top = this.top;
+    if (i < this.top) this.top = i;
+    if (i >= this.top + VISIBLE) this.top = i - VISIBLE + 1;
+    if (top !== this.top) this.ui.sync();
+  }
   choose(i) {
     if (this.ui.screen === 'ctm-message') {
       const box = this.inbox();
-      // pv ctmSmallFixes: 0x1E5800 -> 1E3268(item) removes the FIRST entry with the viewed item (a repeated message: the oldest)
-      if (i === 1 && this.view?.type === 'message') { box.remove(pv('ctmSmallFixes') && this.view.item != null && box.has(this.view.item) >= 0 ? box.has(this.view.item) : this.view.index); this.cu.career.persist(); }
-      this.view = null; this.ui.set('ctm-messages'); this.ui.index = 0; this.top = 0; this.ui.sync(); return;
+      // 0x1E5800 -> 1E3268(item) removes the FIRST entry with the viewed item (a repeated message: the oldest)
+      if (i === 1 && this.view?.type === 'message') {
+        box.remove(this.view.item != null && box.has(this.view.item) >= 0 ? box.has(this.view.item) : this.view.index);
+        this.cu.career.persist();
+      }
+      this.view = null;
+      this.ui.set('ctm-messages');
+      this.ui.index = 0;
+      this.top = 0;
+      this.ui.sync();
+      return;
     }
-    const row = this.rows()[i]; if (!row) return;
-    if (row.type === 'folder') { const box = this.inbox(); box.setPosted(row.category, !box.posted(row.category)); this.cu.career.persist(); this.ui.sync(); return; }
-    if (row.type === 'message') { this.inbox().markRead(row.index); this.cu.career.persist(); }
-    this.view = row; this.ui.set('ctm-message'); this.ui.index = 2; this.ui.sync();
+    const row = this.rows()[i];
+    if (!row) return;
+    if (row.type === 'folder') {
+      const box = this.inbox();
+      box.setPosted(row.category, !box.posted(row.category));
+      this.cu.career.persist();
+      this.ui.sync();
+      return;
+    }
+    if (row.type === 'message') {
+      this.inbox().markRead(row.index);
+      this.cu.career.persist();
+    }
+    this.view = row;
+    this.ui.set('ctm-message');
+    this.ui.index = 2;
+    this.ui.sync();
   }
-  goBack() { if (this.ui.screen === 'ctm-message') { this.view = null; this.ui.set('ctm-messages'); this.ui.index = 0; this.ui.sync(); return; } const back = this.back; this.back = null; back?.(); }
+  goBack() {
+    if (this.ui.screen === 'ctm-message') {
+      this.view = null;
+      this.ui.set('ctm-messages');
+      this.ui.index = 0;
+      this.ui.sync();
+      return;
+    }
+    const back = this.back;
+    this.back = null;
+    back?.();
+  }
   // ---- drawing (layout from the PS2 frames local/ps2-capture/menus/lineup-messages*.png, 640x480 -> 448 lines) ----
   draw(c, b) {
-    const ui = this.ui, t = this.data.texts, box = this.inbox();
+    const ui = this.ui,
+      t = this.data.texts,
+      box = this.inbox();
     this.cu.mcommFrame(c, b);
     ui.sprite('OV_1-6', 66.5, 65.5, 142, 47, -30, Y(45), 141, Y(48));
     this.icon(c, 26.5, 51.5, 23, 15, 60, Y(56), 32, Y(22));
@@ -328,101 +495,221 @@ export class CareerMessages {
     if (ui.screen === 'ctm-message') return this.drawView(c, box);
     ui.text(c, t.total.replace('%d', box.count), 50, Y(92), 16, '#0c1a26');
     ui.text(c, t.unread.replace('%d', box.unread()), 350, Y(92), 16, '#0c1a26');
-    ui.text(c, t.from_label, 110, Y(123), 15, '#0c1a26'); ui.text(c, t.subject_label, 220, Y(123), 15, '#0c1a26');
-    const rows = this.rows(); this.scroll();
+    ui.text(c, t.from_label, 110, Y(123), 15, '#0c1a26');
+    ui.text(c, t.subject_label, 220, Y(123), 15, '#0c1a26');
+    const rows = this.rows();
+    this.scroll();
     rows.slice(this.top, this.top + VISIBLE).forEach((r, k) => {
-      const i = this.top + k, y = Y(152 + 25 * k), on = ui.index === i, color = on ? '#eef4f7' : '#0c1a26';
+      const i = this.top + k,
+        y = Y(152 + 25 * k),
+        on = ui.index === i,
+        color = on ? '#eef4f7' : '#0c1a26';
       if (r.type === 'message' && !r.read) this.icon(c, 26.5, 51.5, 23, 15, 43, y + Y(4), 23, Y(15));
-      const open = r.type === 'folder' && box.posted(r.category);   // OV_1-1 folder '-' / folder '?' / big '?'
+      const open = r.type === 'folder' && box.posted(r.category); // OV_1-1 folder '-' / folder '?' / big '?'
       if (r.type === 'folder') this.icon(c, open ? 77.5 : 121.5, 194.5, 40, open ? 30 : 29, 44, y, 18, Y(16));
       if (r.type === 'faq') this.icon(c, 164.5, 2.5, 36, 41, 44, y - Y(4), 17, Y(26));
       if (r.type === 'message') ui.text(c, `${r.number}.`, 73, y, 15, color);
       else if (open || r.type === 'faq') ui.text(c, open ? '-' : '>', 78, y, 15, color);
-      else { c.fillStyle = color; c.fillRect(79, y + Y(7), 3, Y(3)); }   // the font has no bullet glyph
+      else {
+        c.fillStyle = color;
+        c.fillRect(79, y + Y(7), 3, Y(3));
+      } // the font has no bullet glyph
       ui.text(c, r.type === 'folder' ? t.folder : box.sender(r.item), 110, y, 15, color);
       ui.text(c, r.type === 'message' ? box.subject(r.item, r.variant) : this.data.records[r.item].subject, 220, y, 15, color);
     });
     if (this.top + VISIBLE < rows.length) this.icon(c, 76.5, 34.5, 41, 25, 71, Y(349), 22, Y(22));
     if (this.top > 0) this.icon(c, 76.5, 2.5, 41, 25, 71, Y(129), 22, Y(22));
     const row = rows[ui.index];
-    this.help(c, t.select_message, row?.type === 'folder' ? [['cross', box.posted(row.category) ? t.collapse : t.expand], ['triangle', t.previous]]
-      : row?.type === 'message' ? [['cross', t.view], ['triangle', t.previous], ['square', t.delete]] : [['cross', t.view], ['triangle', t.previous]]);
+    this.help(
+      c,
+      t.select_message,
+      row?.type === 'folder'
+        ? [
+            ['cross', box.posted(row.category) ? t.collapse : t.expand],
+            ['triangle', t.previous]
+          ]
+        : row?.type === 'message'
+          ? [
+              ['cross', t.view],
+              ['triangle', t.previous],
+              ['square', t.delete]
+            ]
+          : [
+              ['cross', t.view],
+              ['triangle', t.previous]
+            ]
+    );
   }
   help(c, text, buttons) {
-    const ui = this.ui; c.fillStyle = '#4488b2'; c.fillRect(0, Y(382), 640, Y(64));
+    const ui = this.ui;
+    c.fillStyle = '#4488b2';
+    c.fillRect(0, Y(382), 640, Y(64));
     ui.text(c, text, 48, Y(399), 13, '#0c1a26');
     const cell = { cross: [55, 122], triangle: [10, 122], square: [33, 122] };
-    buttons.forEach(([button, label], i) => { const [u, v] = cell[button]; ui.sprite('OV_1-2', u, v, 24, 24, 453 - 13 * i, Y(388) + i * Y(17), 17, Y(17)); ui.text(c, label, 473 - 13 * i, Y(389) + i * Y(17), 13, '#e3edf3'); });
+    buttons.forEach(([button, label], i) => {
+      const [u, v] = cell[button];
+      ui.sprite('OV_1-2', u, v, 24, 24, 453 - 13 * i, Y(388) + i * Y(17), 17, Y(17));
+      ui.text(c, label, 473 - 13 * i, Y(389) + i * Y(17), 13, '#e3edf3');
+    });
   }
   // ui.wrap without collapsing spaces (the texts keep their double spaces after a sentence).
   wrap(text, width, size) {
-    const font = this.ui.fonts?.FEFONT || {}, measure = (t) => [...t].reduce((sum, ch) => sum + (font[ch]?.advance || 10) * size / 22, 0), lines = [];
+    const font = this.ui.fonts?.FEFONT || {},
+      measure = (t) => [...t].reduce((sum, ch) => sum + ((font[ch]?.advance || 10) * size) / 22, 0),
+      lines = [];
     let line = null;
-    for (const word of text.split(' ')) { const next = line === null ? word : line + ' ' + word; if (line !== null && line.trim() && measure(next) > width) { lines.push(line); line = word; } else line = next; }
-    if (line) lines.push(line); return lines;
+    for (const word of text.split(' ')) {
+      const next = line === null ? word : line + ' ' + word;
+      if (line !== null && line.trim() && measure(next) > width) {
+        lines.push(line);
+        line = word;
+      } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines;
   }
   // A LUI shape (vertices at props 21+9k / 22+9k, alpha / r / g / b at 26..29+9k) at its parents' offset; alpha is
   // a/255 and a two-colour shape is a vertical gradient (PS2 frame samples: shadow 0.78 over the grey background).
   luiShape(c, screen, el) {
-    const L = this.data.layout[screen], p = el.props, n = el.shape[0], v = [];
-    let ox = 0, oy = 0; for (let q = L.find((e) => e.name === el.parent); q; q = L.find((e) => e.name === q.parent)) { ox += q.props[0]; oy += q.props[1]; }
-    for (let k = 0; k < n; k++) v.push({ x: ox + p[0] + p[21 + 9 * k], y: (oy + p[1] + p[22 + 9 * k]) * 448 / 480, color: `rgba(${p[27 + 9 * k]},${p[28 + 9 * k]},${p[29 + 9 * k]},${Math.min(1, p[26 + 9 * k] / 255)})` });
-    c.beginPath(); v.forEach((q, k) => (k ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y))); c.closePath();
-    if (el.shape[1] === 0) { c.strokeStyle = v[0].color; c.lineWidth = 1; c.stroke(); return; }   // outline (mode 2)
-    const top = v.reduce((a, b) => (b.y < a.y ? b : a)), bottom = v.reduce((a, b) => (b.y > a.y ? b : a));
+    const L = this.data.layout[screen],
+      p = el.props,
+      n = el.shape[0],
+      v = [];
+    let ox = 0,
+      oy = 0;
+    for (let q = L.find((e) => e.name === el.parent); q; q = L.find((e) => e.name === q.parent)) {
+      ox += q.props[0];
+      oy += q.props[1];
+    }
+    for (let k = 0; k < n; k++)
+      v.push({
+        x: ox + p[0] + p[21 + 9 * k],
+        y: ((oy + p[1] + p[22 + 9 * k]) * 448) / 480,
+        color: `rgba(${p[27 + 9 * k]},${p[28 + 9 * k]},${p[29 + 9 * k]},${Math.min(1, p[26 + 9 * k] / 255)})`
+      });
+    c.beginPath();
+    v.forEach((q, k) => (k ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y)));
+    c.closePath();
+    if (el.shape[1] === 0) {
+      c.strokeStyle = v[0].color;
+      c.lineWidth = 1;
+      c.stroke();
+      return;
+    } // outline (mode 2)
+    const top = v.reduce((a, b) => (b.y < a.y ? b : a)),
+      bottom = v.reduce((a, b) => (b.y > a.y ? b : a));
     if (top.color === bottom.color) c.fillStyle = top.color;
-    else { const g = c.createLinearGradient(0, top.y, 0, bottom.y); g.addColorStop(0, top.color); g.addColorStop(1, bottom.color); c.fillStyle = g; }
+    else {
+      const g = c.createLinearGradient(0, top.y, 0, bottom.y);
+      g.addColorStop(0, top.color);
+      g.addColorStop(1, bottom.color);
+      c.fillStyle = g;
+    }
     c.fill();
   }
   // 1E2DC0: the FAQ's number counts the FAQ records (the folders' questions, not the folder rows) up to it, folder by folder.
   faqNumber(item) {
     let n = 0;
-    for (const c of this.data.categories) { if (c.kind !== 2 || !c.folder) continue; for (let i = c.first + 1; i < c.first + c.count; i++) { n++; if (i === item) return n; } }
+    for (const c of this.data.categories) {
+      if (c.kind !== 2 || !c.folder) continue;
+      for (let i = c.first + 1; i < c.first + c.count; i++) {
+        n++;
+        if (i === item) return n;
+      }
+    }
     return Math.max(1, n);
   }
-  measure(text, size) { const font = this.ui.fonts?.FEFONT || {}; return [...text].reduce((sum, ch) => sum + (font[ch]?.advance || 10) * size / 22, 0); }
+  measure(text, size) {
+    const font = this.ui.fonts?.FEFONT || {};
+    return [...text].reduce((sum, ch) => sum + ((font[ch]?.advance || 10) * size) / 22, 0);
+  }
   // 113ViewMessage: the grey background, the notched "3D Ov" frame (shadow, big and small shapes, outlines; drawn by
   // layer), the header (labels right-aligned at x 175, values at 179) and separator, the body and the buttons.
   drawView(c, box) {
-    const ui = this.ui, t = this.data.texts, r = this.view; if (!r) return;
+    const ui = this.ui,
+      t = this.data.texts,
+      r = this.view;
+    if (!r) return;
     const L = this.data.layout['113ViewMessage'];
-    L.filter((e) => e.kind === 'shape').sort((a, b) => a.layer - b.layer).forEach((e) => this.luiShape(c, '113ViewMessage', e));
+    L.filter((e) => e.kind === 'shape')
+      .sort((a, b) => a.layer - b.layer)
+      .forEach((e) => this.luiShape(c, '113ViewMessage', e));
     // an FAQ shows kT_MSGFAQNumber 'FAQ %d' with its running FAQ number (0x1E5504 -> 1E2DC0) and no Delete (PS2 new career:
     // "Message #FAQ 1", Previous / Keep message)
-    const n = r.type === 'message' ? String(r.number) : r.type === 'faq' ? (this.cu.t?.('kT_MSGFAQNumber', 'FAQ %d') || 'FAQ %d').replace('%d', String(this.faqNumber(r.item))) : t.folder;
+    const n =
+      r.type === 'message'
+        ? String(r.number)
+        : r.type === 'faq'
+          ? (this.cu.t?.('kT_MSGFAQNumber', 'FAQ %d') || 'FAQ %d').replace('%d', String(this.faqNumber(r.item)))
+          : t.folder;
     const subject = r.type === 'message' ? box.subject(r.item, r.variant) : this.data.records[r.item].subject;
-    [[t.message_number, n], [t.from_label, box.sender(r.item)], [t.subject_label, subject]].forEach(([label, value], k) => {
-      ui.text(c, label, 176 - this.measure(label, 13), Y(120 + 15 * k), 13, '#0c1a26'); ui.text(c, value, 179, Y(120 + 15 * k), 13, '#0c1a26');   // 60% text
+    [
+      [t.message_number, n],
+      [t.from_label, box.sender(r.item)],
+      [t.subject_label, subject]
+    ].forEach(([label, value], k) => {
+      ui.text(c, label, 176 - this.measure(label, 13), Y(120 + 15 * k), 13, '#0c1a26');
+      ui.text(c, value, 179, Y(120 + 15 * k), 13, '#0c1a26'); // 60% text
     });
     const body = (this.data.records[r.item].body || '').replace(/\\\\/g, '\n');
-    let line = 0; for (const para of body.split('\n')) for (const l of (para ? this.wrap(para, 522, 13) : [''])) { if (line < 10) ui.text(c, l, 61, Y(204) + line * Y(20), 13, '#ffffff'); line++; }   // MessageLine0: (61, 203), 522 wide, 60%
+    let line = 0;
+    // MessageLine0: (61, 203), 522 wide, 60%
+    for (const para of body.split('\n'))
+      for (const l of para ? this.wrap(para, 522, 13) : ['']) {
+        if (line < 10) ui.text(c, l, 61, Y(204) + line * Y(20), 13, '#ffffff');
+        line++;
+      }
     const labels = [t.previous, t.delete_message, t.keep];
-    let end = -Infinity;   // keyboard: a wide key cap (web/input-glyphs.js) moves its entry right, clear of the previous label
-    [['triangle', 75, 89], ['square', 215, 229], ['cross', 415, 429]].forEach(([button, x, tx], i) => {   // buttons group (55, 420), texts (54, 409) + 11
-      if (i === 1 && r.type !== 'message') return;   // Delete only for inbox messages (0x1E54A4 hides it for an FAQ)
+    let end = -Infinity; // keyboard: a wide key cap (web/input-glyphs.js) moves its entry right, clear of the previous label
+    [
+      ['triangle', 75, 89],
+      ['square', 215, 229],
+      ['cross', 415, 429]
+    ].forEach(([button, x, tx], i) => {
+      // buttons group (55, 420), texts (54, 409) + 11
+      if (i === 1 && r.type !== 'message') return; // Delete only for inbox messages (0x1E54A4 hides it for an FAQ)
       const [u, v] = { cross: [55, 122], triangle: [10, 122], square: [33, 122] }[button];
-      const cap = glyphKeyRect(ui, 'OV_1-2', u, v, 24, 24, x - 9, Y(411), 17, Y(17)), dx = cap ? Math.max(0, end + 8 - cap.x) : 0;
-      ui.sprite('OV_1-2', u, v, 24, 24, x - 9 + dx, Y(411), 17, Y(17)); ui.text(c, labels[i], tx + dx, Y(412), 13, ui.index === i ? '#ffffff' : '#dbe6ee');
+      const cap = glyphKeyRect(ui, 'OV_1-2', u, v, 24, 24, x - 9, Y(411), 17, Y(17)),
+        dx = cap ? Math.max(0, end + 8 - cap.x) : 0;
+      ui.sprite('OV_1-2', u, v, 24, 24, x - 9 + dx, Y(411), 17, Y(17));
+      ui.text(c, labels[i], tx + dx, Y(412), 13, ui.index === i ? '#ffffff' : '#dbe6ee');
       end = tx + dx + this.measure(labels[i], 13);
     });
   }
   // In-race mail icon (HUD event 8): white while the 1 s phase <= 0.5, orange after; 5 s; paused with the race.
   drawHud(c, racing = true) {
-    const h = this.hud; if (!h || !this.data) return;
+    const h = this.hud;
+    if (!h || !this.data) return;
     const now = performance.now();
-    if (racing) { h.frames += Math.min(4, Math.max(0, Math.round((now - (this.lastHud || now)) * 60 / 1000))); }
+    if (racing) {
+      h.frames += Math.min(4, Math.max(0, Math.round(((now - (this.lastHud || now)) * 60) / 1000)));
+    }
     this.lastHud = now;
-    const spec = this.data.hud, color = hudTint(spec, h.frames); if (!color) { this.hud = null; return; }
-    const s = this.data.sprites.mail_icon, key = color.join();
+    const spec = this.data.hud,
+      color = hudTint(spec, h.frames);
+    if (!color) {
+      this.hud = null;
+      return;
+    }
+    const s = this.data.sprites.mail_icon,
+      key = color.join();
     this.tinted ??= new Map();
     let im = this.tinted.get(key);
     const src = this.ui.images[s.page];
     if (!im && src) {
-      im = document.createElement('canvas'); im.width = Math.ceil(s.sw); im.height = Math.ceil(s.sh);
-      const x = im.getContext('2d', { willReadFrequently: true }); x.drawImage(src, s.sx, s.sy, s.sw, s.sh, 0, 0, s.sw, s.sh);
+      im = document.createElement('canvas');
+      im.width = Math.ceil(s.sw);
+      im.height = Math.ceil(s.sh);
+      const x = im.getContext('2d', { willReadFrequently: true });
+      x.drawImage(src, s.sx, s.sy, s.sw, s.sh, 0, 0, s.sw, s.sh);
       const d = x.getImageData(0, 0, im.width, im.height);
-      for (let k = 0; k < d.data.length; k += 4) { d.data[k] *= color[0]; d.data[k + 1] *= color[1]; d.data[k + 2] *= color[2]; }
-      x.putImageData(d, 0, 0); this.tinted.set(key, im);
+      for (let k = 0; k < d.data.length; k += 4) {
+        d.data[k] *= color[0];
+        d.data[k + 1] *= color[1];
+        d.data[k + 2] *= color[2];
+      }
+      x.putImageData(d, 0, 0);
+      this.tinted.set(key, im);
     }
     if (im) c.drawImage(im, spec.x, Y(spec.y), s.sw, Y(s.sh));
   }

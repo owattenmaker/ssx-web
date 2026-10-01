@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { LuiScreen } from './lui-player.js';
 import { helpOverride } from './fe-event-select.js';
-import { setPv } from './pv-flags.js';
+import { sourceOf } from './test-source.mjs';
 
 const ui = new URL('./public/assets/UI/', import.meta.url).pathname;
 const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
@@ -28,8 +28,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     ['R&B is a world class BEGINNER course filled with', 'rails, pipes, paths, and hits.'],
     ['A battle against your rival.'],
   ];
-  setPv('help', false); assert.deepEqual(wrap(ps2[0].join(' ')), ['Choose this peak and continue to select', 'mode.'], 'switch off: the shipped 400 / 56% box');
-  setPv('help', true);
   for (const want of ps2) assert.deepEqual(wrap(want.join(' ')), want, `help wraps like the PS2: ${want.join(' ')}`);
   console.log('help line: element box 375 / 50% -> every PS2 wrap');
 }
@@ -46,7 +44,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     characterSelect: { base: { id: 'zoe', name: 'Zoe' }, unlocked: () => [], overlay: () => false, human() { return this.base; }, hidePreviewFor() {} }, careerUI: null, fonts: { FEFONT: read('FEFONT-glyphs.json') }, text() {} };
   const fe = new FeScreens(host); host.fe = fe; assert.ok(fe.init(cs, {}));
   const backs = { '07a1575d': 'back_com', '07a151f0': 'back_exp', '07a165b7': 'back_reg' };
-  setPv('cheat', true);
   for (const kind of ['cheat', 'name']) {
     fe.openKeyboard(kind); const drawn = [];
     fe.kbLui.draw = (c, events, frame, override) => { for (const [name, label] of Object.entries(backs)) if (!override(fe.kbLui.byName.get(name))?.hidden) drawn.push(label); };
@@ -55,7 +52,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     const shape = fe.kbLui.byName.get('07a1575d'); assert.equal(shape.props[26], 153, 'back_com vertex alpha 153 (0.6)');
     fe.keyboard = null;
   }
-  setPv('cheat', false); fe.openKeyboard('cheat'); { const drawn = []; fe.kbLui.draw = (c, events, frame, override) => { for (const [name, label] of Object.entries(backs)) if (!override(fe.kbLui.byName.get(name))?.hidden) drawn.push(label); }; fe.drawKeyboard({ save() {}, restore() {}, translate() {}, scale() {} }, fe.now()); assert.equal(drawn.length, 3, 'switch off: the shipped three shapes'); fe.keyboard = null; }
   console.log('keyboard dim: back_com only (PS2 fit 0.591, port was 0.936)');
 }
 
@@ -74,8 +70,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   }
   const T = await import('three/webgpu'), { staticModelTexture } = await import('./world-material.js');
   const map = new T.Texture(); map.wrapS = map.wrapT = T.RepeatWrapping; const cache = new Map();
-  setPv('worldWrap', false); assert.equal(staticModelTexture(map, 3, cache), map, 'switch off: the shipped repeat texture');
-  setPv('worldWrap', true);
   const clamped = staticModelTexture(map, 3, cache);
   assert.notEqual(clamped, map); assert.equal(clamped.wrapS, T.ClampToEdgeWrapping); assert.equal(clamped.wrapT, T.ClampToEdgeWrapping);
   assert.equal(staticModelTexture(map, 3, cache), clamped, 'one clamped copy per texture'); assert.equal(map.wrapS, T.RepeatWrapping, 'the package texture keeps repeating');
@@ -127,8 +121,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   assert.deepEqual(TRICK_BOOST_LIGHT.colour, [2, 2, 2]);
   const heap = new Float32Array(64); heap.set([1, 0, 0, 0, 0, 0, 1, 2, 2, 2], 4);
   const core = { HEAPF32: heap, _rider_controller_lights: () => 16 };   // the core's list at byte 16: [count, ambient, dir, colour]
-  setPv('boostLight', false); assert.equal(createControllerLights(core).count(), 0, 'switch off: no extra light (shipped path)');
-  setPv('boostLight', true); const lights = createControllerLights(core); assert.equal(lights.count(), 1); assert.equal(lights.pointer, 20, 'extra block = the list from +4');
+  const lights = createControllerLights(core); assert.equal(lights.count(), 1); assert.equal(lights.pointer, 20, 'extra block = the list from +4');
   console.log('boost light: (0,0,1) x (2,2,2) from the core list (PS2 gain matched within 1.2 levels)');
 }
 
@@ -153,9 +146,9 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
 
 // ---- The clear behind the sky: black (382AF0 / renderer+6AE0, 0 in every in-race savestate) behind pv skyClear ----
 {
-  const main = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-  assert.ok(main.includes("skyScene.background=new T.Color(pv('skyClear')?0x000000:0x7a9cb9)"), 'the sky scene clears to black with pv skyClear');
-  assert.equal((main.match(/if\(!pv\('skyClear'\)\)skyScene\.background\.copy\((?:scene\.fog|gf)\.color\)/g) || []).length, 2, 'the fog colour is copied only with the switch off');
+  const main = sourceOf('main.js');
+  assert.ok(main.includes('skyScene.background=new T.Color(0x000000)'), 'the sky scene clears to black');
+  assert.ok(!main.includes('skyScene.background.copy'), 'the fog colour is never copied to the sky clear');
 }
 
 // ---- Heli / gondola ride over a world switch: which goWorld calls play it (web/ctm-transport.js) ----
@@ -163,22 +156,18 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   const { rideWanted } = await import('./ctm-transport.js');
   const peak1 = { course: { code: 'PEAK1', freeRide: { kind: 4 } }, cutscene: {} }, event = { course: { code: 'ARA1' }, cutscene: {} };
   const inFreeRide = { freeRide: { course: 17 } }, afterEvent = { afterEvent: true, active: { mode: 0, course: 0 } };
-  setPv('heli', true);
   assert.equal(rideWanted(peak1, inFreeRide, 15), true, 'Transport > Peak 2 from Peak 1: the heli ride');
   assert.equal(rideWanted(peak1, inFreeRide, 18), false, 'another station of the same peak: the in-world transport (main.js)');
   // pv mountainRide (free-ride.js freeRideHolds): the PS2 is one world, a Transport is world state 14 arg 1 (0x236250) inside it; the page's
   // MOUNTAIN world holds every course (free-ride.js transport plays the ride), and a peak world (a tier change) keeps its own stations.
-  setPv('mountainRide', true);
   const mountain = { course: { code: 'MOUNTAIN', freeRide: { kind: 4 } }, cutscene: {} };
   assert.equal(rideWanted(mountain, inFreeRide, 15), false, 'mountainRide: Transport > Peak 2 inside the whole mountain');
   assert.equal(rideWanted(peak1, inFreeRide, 18), false, 'mountainRide: a peak world keeps its own stations');
   assert.equal(rideWanted({ course: { code: 'PEAK1', freeRide: { kind: 5 } }, cutscene: {} }, afterEvent, 18), true, 'mountainRide: after a peak run (kind 5) the world is loaded');
-  setPv('mountainRide', null);
   assert.equal(rideWanted(event, afterEvent, 15), true, 'after Snow Jam, Peak 2: the heli ride');
   assert.equal(rideWanted(event, afterEvent, 17), true, 'after Snow Jam, a Peak 1 station: the gondola ride');
   assert.equal(rideWanted(event, afterEvent, 0), false, 'after Snow Jam, Snow Jam again: WS15 (white fade), no ride');
   assert.equal(rideWanted(peak1, {}, 15), false, 'a career start from the front end: the load screen');
-  setPv('heli', false); assert.equal(rideWanted(peak1, inFreeRide, 15), false, 'switch off: the shipped load screen'); setPv('heli', null);
   console.log('transport ride: peak change / post-event transport, not the same-location return');
 }
 
@@ -186,7 +175,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
 {
   const T = await import('three/webgpu'), { createRiderIcons, iconStep } = await import('./rival-beam.js');
   const scene = new T.Scene(), camera = new T.PerspectiveCamera(60, 4 / 3, 0.1, 1000); camera.position.set(0, 0, 10); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
-  setPv('rivalIcon', true);
   const icons = createRiderIcons({ T, scene, origin: new T.Vector3(), count: 1, texture: null });
   const mesh = scene.children[0].children[0];
   assert.ok(mesh.material.isNodeMaterial && mesh.material.fragmentNode, 'byte-space node material');
@@ -196,7 +184,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   const c = mesh.geometry.getAttribute('color');
   assert.deepEqual([c.getX(0), c.getY(0), c.getZ(0)], [1, 0.5, 0], 'vertex colour r, g, b as the GS sends them (x 255, texel 0x80 -> 255, 127, 0)');
   assert.ok(Math.abs(c.getW(0) - 0.8) < 1e-6, 'alpha 0.8 (x 128)');
-  setPv('rivalIcon', null); void iconStep;
+  void iconStep;
   console.log("rival '!': byte-space orange 255,127,0 at 0.8 over the encoded frame");
 }
 
@@ -213,9 +201,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   const matrices = [[[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [-54137, 21774, -186429, 1]]];
   const set = { meta: { location_index: 6, sound_loop: 201, instances: [{ position_cm: [-29634, 27408, -187319.6] }], livecomp: { instances: [{ resource: (1803 << 8) | 6 }] } },
     stage: { anim: { matrices: () => matrices } } };
-  setPv('planeFx', false); fx.call(set, 0x0DE99225, 0x07D196B4, true); fx.call(set, 0x0D9F751E, 0x0D905E74, false);
-  assert.equal(plays.length + calls.length, 0, 'switch off: no engine, no spray (shipped path)');
-  setPv('planeFx', true);
   fx.call(set, 0x0DE99225, 0x07D196B4, true);
   assert.equal(plays.length, 1); assert.deepEqual([plays[0].slot, plays[0].sound, plays[0].bus, plays[0].volume, plays[0].vanish], [4, 1, 'UI', 127, 300], 'script sound 201: TRANSPORT sound 1, bus 5, 300 m');
   assert.deepEqual(plays[0].position, [-54137, 21774, -186429], 'at the plane (its LiveComp root, 297FA0 every frame)');
@@ -227,7 +212,6 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   assert.deepEqual(calls.find((c) => c[0] === 'call' && c[2] === 0x0D905E74)?.slice(0, 3), ['call', 6, 0x0D905E74], 'the step end runs the spray cleanup');
   assert.equal(stops.length, 1, 'and the plane cleanup (builtin 73) stops the engine');
   fx.end(); assert.ok(calls.some((c) => c[0] === 'end'), 'the list end hands the effects to the run');
-  setPv('planeFx', null);
   // The core (skipped before the core has the exports): the spray's Particle as the PS2 builds it (new-career fr.p2s holds two,
   // both alive after the run start: the owner matrix and every emitter word but the construct's visual-RNG draws 18..27 and
   // the flip phase 97 equal).
@@ -290,7 +274,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     }
     // the runtime takes it at the cut only with the switch on (web/cutscenes.js cameraPose)
     const src = fs.readFileSync(new URL('./cutscenes.js', import.meta.url), 'utf8');
-    assert.match(src, /seq\.liveCut !== cam && pv\('planeCam'\)\) \{ seq\.liveCut = cam; const f = liveCutFrame\(cam, seq\.actors, t\)/, 'cameraPose frames a live-actor camera at its cut behind pv planeCam');
+    assert.match(src, /seq\.liveCut !== cam\) \{ seq\.liveCut = cam; const f = liveCutFrame\(cam, seq\.actors, t\)/, 'cameraPose frames a live-actor camera at its cut');
     console.log('plane camera: #163 camera 5 at the door, PS2 eye within 1.5 / 3 cm at t376 / t456 (was 3.25 m back)');
   }
 }
@@ -329,8 +313,8 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     for (const [e, T] of [[eye, [[-0.191, 0.208, 0.959], [-0.695, -0.719, 0.018], [0.694, -0.663, 0.282]]], [[-360808.539, 319309.95, 739866.481], [[-0.651, 0.622, 0.435], [-0.537, 0.027, -0.843], [-0.536, -0.782, 0.317]]]]) {
       const M = sp.twinkleRotation(e); assert.ok(M.every((r, a) => r.every((v, b) => Math.abs(v - T[a][b]) < 2e-3)), `twinkle rotation at ${e}`);
     }
-    const src = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-    assert.ok(src.includes("if(pv('sparkle')){terrainSparkle=await createTerrainSparkle({T,origin})"), 'main.js builds it only behind pv sparkle');
+    const src = sourceOf('main.js');
+    assert.ok(src.includes('terrainSparkle=await createTerrainSparkle({T,origin})'), 'main.js builds it');
     console.log(`sparkle: PS2 counts / LOD lists / VU sprites (5 bit-exact) / twinkle rotation (2 states) match; ${set.n} patches in PEAK1/ABC1`);
     // Density renderer+0xC4 = world painter type 10 (Surface) current value: the counts scale with it; a count only ends the RNG chain.
     const lo = set.words.subarray(i * sp.PATCH_WORDS + 48, i * sp.PATCH_WORDS + 51), hi = set.words.subarray(i * sp.PATCH_WORDS + 51, i * sp.PATCH_WORDS + 54);
@@ -382,7 +366,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   ps.call(0x0DE99225, 0x07D196B4, 0); ps.end();
   assert.equal(ps.anim.state(plane.livecomp.instances[0].resource), null, 'the plane: its cleanup still removes the player (SetNodeState 1)');
   const src = fs.readFileSync(new URL('./cutscenes.js', import.meta.url), 'utf8');
-  assert.match(src, /pv\('bcHeli'\) && !seq\.loop && HELI_SETS\.has\(active\?\.location\) && seq\.objects\.some\(\(o\) => o\.ext\?\.anchor === 29\)/, 'setOf picks <LOC>HELI behind pv bcHeli');
+  assert.match(src, /: !seq\.loop && HELI_SETS\.has\(active\?\.location\) && seq\.objects\.some\(\(o\) => o\.ext\?\.anchor === 29\)/, 'setOf picks <LOC>HELI');
   const createCore = (await import(process.env.CORE ? new URL(process.env.CORE, `file://${process.cwd()}/`).href : './runtime/core.js')).default, c = await createCore();
   if (!c._stage_global_call || !c._stage_world_livecomps) console.log('bcHeli: the core has no stage_global_call, core part skipped');
   else {
@@ -411,8 +395,8 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
     if (!L) { console.log(`heliLight: ${k} has no lighting bank yet (tools/export_cutscene_sets.py --helis)`); continue; }
     assert.deepEqual([L.bank, L.index, L.scale, L.rows.length], [bank, index, 128, 10], `${k}: the object bank`);
   }
-  const main = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
-  assert.ok(main.includes('cutscenes?.linger?.(isPaused()?0:Math.min(dt,.25))'), 'main.js advances the heli hover (heliHover) while no cutscene plays');
+  const main = sourceOf('main.js');
+  assert.ok(main.includes('cutscenes?.linger?.(isPaused()?0:Math.min(dt,0.25))'), 'main.js advances the heli hover (heliHover) while no cutscene plays');
   console.log('bcHeli: the three heli sets (players of the calls, the cleanup hover), DBC2 calls in the core = the set; heliLight VU semantics and banks');
 }
 
@@ -431,7 +415,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   const [a1, b1] = P(30, 1, 1), [a2, b2] = P(30, 2, 1);
   assert.ok(Math.abs(a1 - 1.2990) < 2e-3 && Math.abs(b1 - 1.4549 / 0.75) < 2e-3 && Math.abs(a2 - 1.2990) < 2e-3 && Math.abs(b2 - 1.4549) < 2e-3, 'widescreen modes 16:9 / Anamorphic');
   const src = fs.readFileSync(new URL('./cutscenes.js', import.meta.url), 'utf8');
-  assert.match(src, /if \(pv\('nisProjection'\) && api\.qaFovAspect == null\) \{/, 'applyCamera uses it behind pv nisProjection');
+  assert.match(src, /if \(api\.qaFovAspect == null\) \{/, 'applyCamera uses it');
   console.log('NIS projection: P00 / P11 of 4 PS2 states (letterboxed, idle, mid-slide) and the widescreen bands');
 }
 
@@ -449,7 +433,7 @@ const read = (p) => JSON.parse(fs.readFileSync(ui + p, 'utf8'));
   const blend = (src, dst) => [0, 1, 2].map((k) => src[k] * 0 + dst[k] * 1).concat([src[3] * 1 + dst[3] * 0]);
   assert.deepEqual(blend([0, 0, 0, 1], [0.3, 0.4, 0.6, 0.75]), [0.3, 0.4, 0.6, 1]);
   const src = fs.readFileSync(new URL('./cutscenes.js', import.meta.url), 'utf8');
-  assert.match(src, /const fill = pv\('acrossLoop'\) \? opaqueAlpha\(\) : null; if \(fill\) scene\.add\(fill\);\s*try \{ host\.render\(\); \}[^\n]*finally \{[^\n]*if \(fill\) scene\.remove\(fill\); \}/, 'only the across-switch draw adds it, behind pv acrossLoop');
+  assert.match(src, /const fill = opaqueAlpha\(\); scene\.add\(fill\);\s*try \{ host\.render\(\); \}[^\n]*finally \{[^\n]*scene\.remove\(fill\); \}/, 'only the across-switch draw adds it');
   console.log('transport loop over a switch: canvas alpha 1 (acrossLoop)');
 }
 

@@ -31,6 +31,17 @@ try{
   }
   cases.push({rim:rims[batch],pixels:size*size});
  }
- result.textContent=JSON.stringify({passed:true,backend:renderer.backend.isWebGPUBackend?'WebGPU':'WebGL2',pixels:rims.length*size*size,lanes:4,cases,scope:'HIGHLIGHT2 texture/light combination only; no live rider lighting or framebuffer blend claim'},null,2);
+ result.textContent = JSON.stringify(
+   {
+     passed: true,
+     backend: renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL2',
+     pixels: rims.length * size * size,
+     lanes: 4,
+     cases,
+     scope: 'HIGHLIGHT2 texture/light combination only; no live rider lighting or framebuffer blend claim'
+   },
+   null,
+   2
+ );
 }catch(error){result.textContent='FAILED: '+error.stack;}
 finally{pipeline?.dispose();target?.dispose();renderer?.dispose();}

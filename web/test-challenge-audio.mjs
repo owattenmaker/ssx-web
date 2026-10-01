@@ -1,4 +1,4 @@
-// Big Challenge audio (docs/audio-logic.md 3.9, pv bigChallengeAudio): 29D6E0 / 29D8E0 / 29DBB0 and the songs' challenge
+// Big Challenge audio (docs/audio-logic.md 3.9): 29D6E0 / 29D8E0 / 29DBB0 and the songs' challenge
 // stingers, checked against the song data and the PS2 runs (ARMSX2, Snow Jam free ride, Speed Demon = type 3 -> event 38):
 //   Wobble  ticks 3076 / 3197 / 3436 / 3526: track 1 committed node 650 (entry 64) / 649 (entry 66) / 650 / 649 one tick after
 //           SendEvent(38); track 0 cut, then node 592 (head 590) 75 ticks later; the stinger ends 166 ticks after it started
@@ -101,7 +101,7 @@ const reaches = (n, target, seen = new Set()) => n === target || (!seen.has(n) &
   let ctx = fakeContext(), music = ctx.createGain();
   let p = createPathfinderPlayer({ context: ctx, destination: music, song: w, intensity: 127, autoPump: false, clockRandom: true });
   p.start(0, 0); ctx.currentTime = 30; p.pump(); p.event(38); ctx.currentTime = 30.5; p.pump();
-  assert.equal(ctx.sources.filter((s) => s.buffer.sampleRate === 22050).length, 0, 'without 2B4620 the stinger is silent (the port before pv bigChallengeAudio)');
+  assert.equal(ctx.sources.filter((s) => s.buffer.sampleRate === 22050).length, 0, 'without 2B4620 the stinger is silent');
   p.stop();
   // attached, the overlay on its own output (the master): the clock picks the branch
   for (const [pct, gain] of [[100, 1], [90, 114 / 127]]) {
@@ -133,7 +133,6 @@ const reaches = (n, target, seen = new Set()) => n === target || (!seen.has(n) &
   globalThis.AudioContext = function AudioContext() { return new Proxy(Object.assign(fake, { state: 'running', resume: () => Promise.resolve(), suspend: () => Promise.resolve(),
     decodeAudioData: async () => fake.createBuffer(1, 1, 22050) }), { get(o, k) { if (!(k in o) && typeof k === 'string' && k.startsWith('create')) return () => anyNode(); return o[k]; } }); };
   globalThis.location = { href: 'http://localhost/?audioSong=Wobble', search: '?audioSong=Wobble' };
-  const { setPv } = await import('./pv-flags.js');
   const { createGameAudio } = await import('./game-audio.js');
   let T = 1000;
   const ga = createGameAudio({ now: () => T, fetchJson: async (p) => JSON.parse(fs.readFileSync(PUBLIC + p, 'utf8')), fetchBytes: async (p) => new Uint8Array(fs.readFileSync(PUBLIC + p)) });
@@ -142,7 +141,6 @@ const reaches = (n, target, seen = new Set()) => n === target || (!seen.has(n) &
   const events = () => ga.timeline().filter((e) => e[1] === 'event').map((e) => e[2]);
   const FREE = { kind: 4, mode: 12 };
   // Green Base Station (Peak1), crossing into Snow Jam with the hub song still on, then a challenge start (PS2 stage 1).
-  setPv('bigChallengeAudio', true);
   await ga.runStart({ courseIndex: 17, freeRide: FREE, courseCode: 'PEAK1', character: 'zoe' }); await settle();
   assert.equal(ga.debug().music, 'Peak1');
   ga.freeRideCourse(0, { kind: 4 });
@@ -166,10 +164,7 @@ const reaches = (n, target, seen = new Set()) => n === target || (!seen.has(n) &
   ga.timelineReset(); ga.challengeStop(false); assert.deepEqual(events(), [39]);
   ga.timelineReset(); ga.challengeStop(true); assert.deepEqual(events(), []);
   // radio mode 2: nothing (29D6E0 returns before the hub check)
-  // the switch off: the previous behaviour (event without the attach)
-  setPv('bigChallengeAudio', false);
-  ga.timelineReset(); ga.challengeStart(1); assert.deepEqual(events(), [33]);
-  ga.leaveWorld(); setPv('bigChallengeAudio', null);
-  console.log('challenge audio: director hub branch, attach + event 38, completion 39, type 0 and the switch');
+  ga.leaveWorld();
+  console.log('challenge audio: director hub branch, attach + event 38, completion 39, type 0');
 }
 console.log('test-challenge-audio: OK');

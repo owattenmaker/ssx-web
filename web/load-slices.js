@@ -1,4 +1,4 @@
-// pv sliceLoad (docs/ctm-flow.md "Start and streaming"): the load screen's long core calls cut into small ones that end in the same
+// sliceLoad (docs/ctm-flow.md "Start and streaming"): the load screen's long core calls cut into small ones that end in the same
 // core state, so the load screen keeps animating (the goal: no task much over ~50 ms on a phone-class CPU).
 //   - the environment lattice (web/environment_bridge.cpp): init_environment with the globals only and the "streamed" store, then
 //     the textures and patches in environment_add parts of 2 textures / 400 patches cut from the document's own text (numbers as
@@ -50,7 +50,7 @@ export async function initStageWorldSliced(core, urls, { yieldFn = nextFrame, bu
   return n;
 }
 
-// ---- pv eventSlices (docs/ctm-flow.md 8.4, core world_bridge.cpp event_world_seal): an event course's core world in parts ----
+// ---- eventSlices (docs/ctm-flow.md 8.4, core world_bridge.cpp event_world_seal): an event course's core world in parts ----
 // The files come through the page's downloads (web/downloads.js: counted on the load screen, shared with later readers); their bytes
 // go to the worker (transferred), which cuts them from their own text and computes the whole documents' parse keys. Returns
 // {hash, keys: {world, body, rails}, terrain: {head, parts}, world: {head, parts}, rails: {head, parts, count}}, or null (the caller
@@ -70,7 +70,8 @@ const stepper = (yieldFn, budgetMs, alive = null) => {
   return async () => {
     if (performance.now() - t0 <= budget) return;
     const y0 = performance.now(); await yieldFn(); alive?.(); t0 = performance.now();
-    if (budgetMs === 'frame') budget = Math.max(16, Math.min(30, 36 - (t0 - y0))); // (work + the rest of the frame under ~36 ms: the next vsync at 50; at least 16 ms, so slow frames do not stretch the load)
+    // (work + the rest of the frame under ~36 ms: the next vsync at 50; at least 16 ms, so slow frames do not stretch the load)
+    if (budgetMs === 'frame') budget = Math.max(16, Math.min(30, 36 - (t0 - y0)));
   };
 };
 // init_terrain / init_world_collision / init_body_terrain of the whole documents, in parts (hashPtr: the terrain's source hash in the core).

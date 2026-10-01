@@ -76,9 +76,9 @@ export const heightText = (cm) => { const v = Math.max(0, Math.trunc(cm)); retur
 export async function createBigChallenges({ core, ui, gameAudio = null, riderId = () => null, careerUI = () => ui.careerUI }) {
   if (!core?._mission_hud) return null;
   const rows = await loadBigChallengeTable();
-  // pv bcSpeed: stage builtin 59 (0x3032C0, the tick's distance |rider+0x1E0| x 1/60) answers (the Kick Doubt Grinder challenges);
+  // Stage builtin 59 (0x3032C0, the tick's distance |rider+0x1E0| x 1/60) answers (the Kick Doubt Grinder challenges);
   // set in the human's context at every tick, where the WScript tick runs
-  const speedBuiltin = pv('bcSpeed') ? 1 : 0;
+  const speedBuiltin = 1;
   const lifecycle = pv('bcDecline') ? 7 : 0; // core mission_lifecycle: 1235F8 reset, builtin 67's 30B7F8, WS10 enter's 308988
   if (!rows) return null;
   const I32 = (p, n) => new Int32Array(core.HEAPU8.buffer, p, n);
@@ -93,7 +93,16 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
   }
   function hud() {
     const v = I32(core._mission_hud(), 24);
-    const out = { active: v[0] >>> 0, running: !!v[1], state: v[2], task: v[3], tasks: v[4], words: Array.from(v.slice(5, 21)), height: new Float32Array(v.buffer, v.byteOffset + 21 * 4, 1)[0], called: '' };
+    const out = {
+      active: v[0] >>> 0,
+      running: !!v[1],
+      state: v[2],
+      task: v[3],
+      tasks: v[4],
+      words: Array.from(v.slice(5, 21)),
+      height: new Float32Array(v.buffer, v.byteOffset + 21 * 4, 1)[0],
+      called: ''
+    };
     if (out.words[13] && core._mission_called_trick) { const H = core.HEAPU8; let p = core._mission_called_trick(); while (H[p]) out.called += String.fromCharCode(H[p++]); }
     return out;
   }
@@ -116,13 +125,26 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
     const c = career(), id = riderId();
     for (let k = 0; k < n; k++) {
       const [kind, a, b] = [H[p + 1 + 3 * k], H[p + 2 + 3 * k], H[p + 3 + 3 * k]];
-      if (kind === 5 && c && id) challengeStatus(c, id, a, b);                                    // status word
-      else if (kind === 6 && c && id && a > 0) { if (c.earnCash) c.earnCash(id, a); else { const r = c.rider(id); r.cash += a; r.earned += a; } c.persist(); } // 119EF8 kind 4 -> 1597B0 (web/career.js earnCash)
-      else if (kind === 2) banner = { text: 'MISSION SUCCESS', cash: b, until: performance.now() + 1500 }; // HUD popup 0x1B (11A110: 1.5 s; string at ELF 0x36FC18)
-      else if (kind === 1) gameAudio?.challengeStart?.(row(a)?.misc >>> 16 & 0xffff);                 // 29D6E0: type = row +0x22
-      else if (kind === 3) gameAudio?.challengeEnd?.();                                                // 29D8E0
-      else if (kind === 4) gameAudio?.challengeStop?.(b === 0);                                       // 29DBB0(audio, 0 fail / 1)
-      else if (kind === 7) gameAudio?.challengeAccepted?.();                                           // 29D6D0 (+0x5FD8, pv bigChallengeAudio)
+      if (kind === 5 && c && id)
+        challengeStatus(c, id, a, b); // status word
+      else if (kind === 6 && c && id && a > 0) {
+        if (c.earnCash) c.earnCash(id, a);
+        else {
+          const r = c.rider(id);
+          r.cash += a;
+          r.earned += a;
+        }
+        c.persist();
+      } // 119EF8 kind 4 -> 1597B0 (web/career.js earnCash)
+      else if (kind === 2)
+        banner = { text: 'MISSION SUCCESS', cash: b, until: performance.now() + 1500 }; // HUD popup 0x1B (11A110: 1.5 s; string at ELF 0x36FC18)
+      else if (kind === 1)
+        gameAudio?.challengeStart?.((row(a)?.misc >>> 16) & 0xffff); // 29D6E0: type = row +0x22
+      else if (kind === 3)
+        gameAudio?.challengeEnd?.(); // 29D8E0
+      else if (kind === 4)
+        gameAudio?.challengeStop?.(b === 0); // 29DBB0(audio, 0 fail / 1)
+      else if (kind === 7) gameAudio?.challengeAccepted?.();                                           // 29D6D0 (+0x5FD8, bigChallengeAudio)
     }
   }
   const api = {
@@ -153,8 +175,8 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
       if (banner && now < banner.until && !u.trickHud?.sprites?.go) {
         // PS2 bigchal/sd-complete20.png: "MISSION SUCCESS" / "$ 2,000" small under the clock
         u.text(c, banner.text, 320, Y(126), 13, '#e6ecec', 'HUDFONT', 'center');
-        // pv bcBanner: 1F09D0 skips the cash line when the award is 0 (blez +0x3C8: a completed challenge repeated pays $0)
-        if (!pv('bcBanner') || banner.cash > 0) u.text(c, '$ ' + String(Math.max(0, banner.cash)).replace(/\B(?=(\d{3})+(?!\d))/g, ','), 320, Y(140), 13, '#e6ecec', 'HUDFONT', 'center');
+        // 1F09D0 skips the cash line when the award is 0 (blez +0x3C8: a completed challenge repeated pays $0)
+        if (banner.cash > 0) u.text(c, '$ ' + String(Math.max(0, banner.cash)).replace(/\B(?=(\d{3})+(?!\d))/g, ','), 320, Y(140), 13, '#e6ecec', 'HUDFONT', 'center');
       }
       // 1EB350: flag 0x400000 (the badge) while a challenge runs (+0x18C = its id), and also while the MISSION SUCCESS popup
       // (score slot 0x1B, 1.5 s) lives after it: the badge stays with the counter (0x80, back on) drawn over it (PS2
@@ -215,13 +237,14 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
       }
       if (s === 'ctm-bcpause') {
         const back = (k) => () => { ui.set('ctm-bcpause'); ui.index = k; ui.sync(); };
+        // 20D944 -> 30B758
         if (i === 0) resume();
         else if (i === 1) { const go = () => { prompt = { id: lastHud?.active ?? id, from: 'pause' }; ui.set('ctm-bcstart'); ui.index = 0; ui.sync(); }; // 20D8F4: overlay 0x1D
           if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[1], go, back(1)); else go(); }   // pv ps2MenuInput: "Are you sure?" first
         else if (i === 2) careerUI()?.messages?.open?.(back(2));
         else if (i === 3) ui.audioMenus?.open?.('audio', { back: back(3) });
         else if (i === 4) { ui.optionsReturn = 'ctm-bcpause'; ui.set('options'); }
-        else { const go = () => { core._mission_prompt(3, 0); resume(); }; if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[5], go, back(5)); else go(); } // 20D944 -> 30B758
+        else { const go = () => { core._mission_prompt(3, 0); resume(); }; if (pv('ps2MenuInput') && careerUI()?.bcConfirm) careerUI().bcConfirm(ui.items()[5], go, back(5)); else go(); }
       }
     },
     back() {
@@ -238,36 +261,89 @@ export async function createBigChallenges({ core, ui, gameAudio = null, riderId 
         c.fillStyle = '#34637f'; c.fillRect(x0 + 10, Y(y0 + 9), x1 - x0 - 20, Y(y1 - 9) - Y(y0 + 9));
         c.fillStyle = '#3e7aa2'; c.fillRect(x0 + 22, Y(y0 + 19), x1 - x0 - 44, Y(y1 - 20) - Y(y0 + 19));
       };
-      const lines = (text, y, colour, size = 17) => { for (const l of ui.wrap(String(text ?? '').replace(/\n/g, ' '), 470, size)) { ui.text(c, l, 320, y, size, colour, 'FEFONT', 'center'); y += Y(22); } return y; };
+      const lines = (text, y, colour, size = 17) => {
+        for (const l of ui.wrap(String(text ?? '').replace(/\n/g, ' '), 470, size)) {
+          ui.text(c, l, 320, y, size, colour, 'FEFONT', 'center');
+          y += Y(22);
+        }
+        return y;
+      };
       const pda = careerUI()?.pda;
       // overlay 0x1D / 0x1E from OV.LUI (tools/export_ctm_screens.py: 63bc_start, 90bc_fail)
-      if (s === 'ctm-bcstart' && pda?.lui?.['63bc_start'] && pda.popup(c, '63bc_start', 60, [65, 70], ui.index,
-        { title: t(T.bigChallenge, 'Big Challenge'), chalname: r ? t(r.title, '') : '', ObjText: r ? String(t(r.description, '')).replace(/\n/g, ' ') : '', '006c02b4': t(T.accept, 'Accept challenge?'), yes: t(T.yes, 'Yes'), no: t(T.no, 'No') })) return;
-      if (s === 'ctm-bcfail' && pda?.lui?.['90bc_fail'] && pda.popup(c, '90bc_fail', 60, [65, 70, 75], ui.index,
-        { '0e82cadc': t(T.failed, 'Challenge failed'), '0c2684a5': t(T.retry, 'Retry?'), yes: t(T.yes, 'Yes'), no: t(T.no, 'No'), info: { text: t(T.info, 'Challenge Info'), props: { 6: 300 } } })) return;
+      if (
+        s === 'ctm-bcstart' &&
+        pda?.lui?.['63bc_start'] &&
+        pda.popup(c, '63bc_start', 60, [65, 70], ui.index, {
+          title: t(T.bigChallenge, 'Big Challenge'),
+          chalname: r ? t(r.title, '') : '',
+          ObjText: r ? String(t(r.description, '')).replace(/\n/g, ' ') : '',
+          '006c02b4': t(T.accept, 'Accept challenge?'),
+          yes: t(T.yes, 'Yes'),
+          no: t(T.no, 'No')
+        })
+      )
+        return;
+      if (
+        s === 'ctm-bcfail' &&
+        pda?.lui?.['90bc_fail'] &&
+        pda.popup(c, '90bc_fail', 60, [65, 70, 75], ui.index, {
+          '0e82cadc': t(T.failed, 'Challenge failed'),
+          '0c2684a5': t(T.retry, 'Retry?'),
+          yes: t(T.yes, 'Yes'),
+          no: t(T.no, 'No'),
+          info: { text: t(T.info, 'Challenge Info'), props: { 6: 300 } }
+        })
+      )
+        return;
       if (s === 'ctm-bcstart') {
         panel(31, 93, 606, 366);
         ui.text(c, t(T.bigChallenge, 'Big Challenge'), 320, Y(130), 20, '#ffffff', 'FEFONT', 'center');
         ui.text(c, r ? t(r.title, '') : '', 320, Y(160), 18, '#a9d7f0', 'FEFONT', 'center');
         lines(r ? t(r.description, '') : '', Y(182), '#ffffff');
         ui.text(c, t(T.accept, 'Accept challenge?'), 320, Y(266), 18, '#ffffff', 'FEFONT', 'center');
-        ui.items().forEach((label, i) => { const y = Y(294) + i * Y(21); if (ui.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 272, y, 18, 18); ui.text(c, label, 296, y, 18, ui.index === i ? '#f2f4f6' : '#0c1a26'); });
+        ui.items().forEach((label, i) => {
+          const y = Y(294) + i * Y(21);
+          if (ui.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 272, y, 18, 18);
+          ui.text(c, label, 296, y, 18, ui.index === i ? '#f2f4f6' : '#0c1a26');
+        });
         return;
       }
       if (s === 'ctm-bcfail') { // overlay 0x1E (PS2 local/ps2-capture/menus/bigchal/sd-run-stop.png): a smaller panel, dark text
         panel(132, 142, 504, 341);
         ui.text(c, t(T.failed, 'Challenge failed'), 320, Y(180), 18, '#0c1a26', 'FEFONT', 'center');
         ui.text(c, t(T.retry, 'Retry?'), 320, Y(222), 18, '#0c1a26', 'FEFONT', 'center');
-        ui.items().forEach((label, i) => { const y = Y(256) + i * Y(21); if (ui.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 214, y, 18, 18); ui.text(c, label, 238, y, 18, ui.index === i ? '#f2f4f6' : '#0c1a26'); });
+        ui.items().forEach((label, i) => {
+          const y = Y(256) + i * Y(21);
+          if (ui.index === i) ui.sprite('OV_1-2', 55, 122, 24, 24, 214, y, 18, 18);
+          ui.text(c, label, 238, y, 18, ui.index === i ? '#f2f4f6' : '#0c1a26');
+        });
         return;
       }
       // Overlay 2 (challenge pause, PS2 bigchal/sd-pause.png): the MCOMM frame and list of web/career-ui.js.
       const cu = careerUI(), b = bg ?? ui.bg;
-      const help = [cu?.t?.('kT_OVRHELPGetBoarding'), t(T.restartHelp, 'Restart the current challenge.'), cu?.t?.('kT_OVRHELPMessages'), cu?.t?.('kT_OVRHELPChangeMusic'), cu?.t?.('kT_OVRHELPOptions'), t(T.quitHelp, 'Quit out of the current challenge.')][ui.index];
+      const help = [
+        cu?.t?.('kT_OVRHELPGetBoarding'),
+        t(T.restartHelp, 'Restart the current challenge.'),
+        cu?.t?.('kT_OVRHELPMessages'),
+        cu?.t?.('kT_OVRHELPChangeMusic'),
+        cu?.t?.('kT_OVRHELPOptions'),
+        t(T.quitHelp, 'Quit out of the current challenge.')
+      ][ui.index];
       // 31paus_freeride with the challenge rows' icons (table 0x441C30 by item id: cont, rstart, mess, radio, opt, hex; PS2 bigchal/sd-pause.png)
       if (cu?.pda?.ready && cu.mcommFrame && b) {
         cu.mcommFrame(c, b); const I = PDA_ICONS;
-        cu.pda.menu(c, ui.items().map((label, i) => ({ label, icon: [I.return, I.restart, I.messages, I.audio, I.options, I.quit][i], disabled: this.disabled('ctm-bcpause', i) })), ui.index, help || '');
+        cu.pda.menu(
+          c,
+          ui
+            .items()
+            .map((label, i) => ({
+              label,
+              icon: [I.return, I.restart, I.messages, I.audio, I.options, I.quit][i],
+              disabled: this.disabled('ctm-bcpause', i)
+            })),
+          ui.index,
+          help || ''
+        );
         return;
       }
       if (cu?.mcommFrame && b) { cu.mcommFrame(c, b); b.fillStyle = '#f2f5f6'; b.fillRect(112, Y(92), 62, Y(282)); }

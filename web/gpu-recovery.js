@@ -15,7 +15,18 @@
 const RELOAD_KEY = 'ssx3.gpu-reloads';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
-const whenVisible = () => visible() ? Promise.resolve() : new Promise((r) => { const on = () => { if (visible()) { document.removeEventListener('visibilitychange', on); r(); } }; document.addEventListener('visibilitychange', on); });
+const whenVisible = () =>
+  visible()
+    ? Promise.resolve()
+    : new Promise((r) => {
+        const on = () => {
+          if (visible()) {
+            document.removeEventListener('visibilitychange', on);
+            r();
+          }
+        };
+        document.addEventListener('visibilitychange', on);
+      });
 
 // Fresh device-bound state on the existing renderer, then renderer.init() makes the new device and managers.
 // beforeResume: awaited once the new device exists and before drawing resumes (web/gpu-copies.js restoreGpuCopies: the arrays the page
@@ -50,8 +61,19 @@ export async function reinitRenderer(renderer, { beforeResume = null } = {}) {
 }
 
 function reloadBudget(storage) {
-  try { const now = Date.now(), recent = JSON.parse(storage?.getItem(RELOAD_KEY) || '[]').filter((t) => now - t < 300000); return { recent, ok: recent.length < 2, note() { storage?.setItem(RELOAD_KEY, JSON.stringify([...recent, now])); } }; }
-  catch { return { recent: [], ok: false, note() {} }; }
+  try {
+    const now = Date.now(),
+      recent = JSON.parse(storage?.getItem(RELOAD_KEY) || '[]').filter((t) => now - t < 300000);
+    return {
+      recent,
+      ok: recent.length < 2,
+      note() {
+        storage?.setItem(RELOAD_KEY, JSON.stringify([...recent, now]));
+      }
+    };
+  } catch {
+    return { recent: [], ok: false, note() {} };
+  }
 }
 
 // hooks: onLost(info), onRecovered({ms, attempts, device}), onFailed(reason), report(kind, data) (diagnostics).
@@ -66,7 +88,12 @@ export function installDeviceRecovery(renderer, { onLost, onRecovered, onFailed,
     onFailed?.(reason);
   };
   if (!backend.isWebGPUBackend) { // WebGL: three sets _isDeviceLost on webglcontextlost; a reload is the clean way back
-    renderer.onDeviceLost = (info) => { renderer._isDeviceLost = true; onLost?.(info); report('gpu-device-lost', { reason: info?.reason ?? null, message: String(info?.message ?? '').slice(0, 300), backend: 'webgl' }); fail('webgl context lost'); };
+    renderer.onDeviceLost = (info) => {
+      renderer._isDeviceLost = true;
+      onLost?.(info);
+      report('gpu-device-lost', { reason: info?.reason ?? null, message: String(info?.message ?? '').slice(0, 300), backend: 'webgl' });
+      fail('webgl context lost');
+    };
     return state;
   }
   renderer.onDeviceLost = () => {}; // three's default logs and gives up; the watcher below handles every reason

@@ -41,7 +41,17 @@ async function brotli(file, stat, target) {
   seen.add(target);
   try { const t = fs.statSync(target); if (t.mtimeMs >= stat.mtimeMs) return; } catch {}
   const temp = target + '.tmp'; fs.mkdirSync(path.dirname(target), { recursive: true });
-  await pipeline(fs.createReadStream(file), zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_LGWIN]: 24, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: stat.size } }), fs.createWriteStream(temp));
+  await pipeline(
+    fs.createReadStream(file),
+    zlib.createBrotliCompress({
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+        [zlib.constants.BROTLI_PARAM_LGWIN]: 24,
+        [zlib.constants.BROTLI_PARAM_SIZE_HINT]: stat.size
+      }
+    }),
+    fs.createWriteStream(temp)
+  );
   if (fs.statSync(temp).size > stat.size * MAX_RATIO) { fs.rmSync(temp); fs.rmSync(target, { force: true }); seen.delete(target); return; }
   fs.renameSync(temp, target); brotliWritten++;
 }
@@ -54,4 +64,6 @@ function prune(dir) {
   }
 }
 await walk(root); prune(out);
-console.log(`precompress: ${written} written, ${kept} up to date, ${skipped} not worth it; ${(rawBytes / 1e6).toFixed(0)} MB -> ${(gzBytes / 1e6).toFixed(0)} MB${brotliWritten ? `; ${brotliWritten} brotli` : ''}`);
+console.log(
+  `precompress: ${written} written, ${kept} up to date, ${skipped} not worth it; ${(rawBytes / 1e6).toFixed(0)} MB -> ${(gzBytes / 1e6).toFixed(0)} MB${brotliWritten ? `; ${brotliWritten} brotli` : ''}`
+);

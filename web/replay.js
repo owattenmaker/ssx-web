@@ -126,6 +126,13 @@ export function createReplay(host) {
     get recording() { return rec; }, get finishTick() { return finishTick; }, get snapshot() { return snapshot; },
     get length() { return finishTick + 1; },
     available() { return !!rec && finishTick >= 0 && !!snapshot && host.allowed(); },
+    // pv onlineRecords (docs/online-records.md): a downloaded run in place of the live one (Watch Replay): its recording (made with
+    // createRecording().importBytes), the start state snapshot() took on the uploader's page, its finish tick and highlight buckets.
+    load({ recording, snapshot: start, finishTick: end, highlights: kept = [] }) {
+      if (mode) api.stop();
+      rec = recording; snapshot = start; finishTick = end; autoPending = false; highlights = kept.filter((b) => Number.isInteger(b)).slice(0, 3); air = null; replayed = false;
+      host.prepare?.();
+    },
     // ---- playback ----
     get mode() { return mode; }, get active() { return !!mode; }, get tick() { return t; }, get paused() { return paused; }, get seeking() { return seekTo >= 0; },
     get loops() { return loops; }, get played() { return played; }, get pending() { return paused || seekTo >= 0 ? 0 : clock.pending; },

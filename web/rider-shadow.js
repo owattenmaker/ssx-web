@@ -11,7 +11,6 @@
 // pose_physical)}.
 import * as T from 'three/webgpu';
 import {Fn, uniform, uniformArray, texture, vec2, vec4, float, int, Loop, positionWorld, attribute, select, dot, max, clamp, round, Discard, varying, renderGroup} from 'three/tsl';
-import {pv} from './pv-flags.js';
 
 export const SHADOW_MAX = 6, SHADOW_TEXELS = 128;
 const BONES = [5, 10, 15, 18, 21, 0], MARGIN = 70, SLAB = 3000, VALUE = 32 / 255; // 0x428C0000 cm; 30 m slab; 38 -> PSMCT16 -> 32
@@ -22,9 +21,10 @@ const atlas = new T.RenderTarget(SHADOW_TEXELS * SHADOW_MAX, SHADOW_TEXELS, {typ
 atlas.texture.minFilter = atlas.texture.magFilter = T.LinearFilter; atlas.texture.generateMipmaps = false; atlas.texture.colorSpace = T.NoColorSpace;
 const rows = uniformArray(Array.from({length: 3 * SHADOW_MAX}, () => new T.Vector4()), 'vec4'); // per slot: u, v, depth-below-feet rows over browser world metres
 const count = uniform(0, 'int');
-// pv staticRefresh (web/static-world.js): the receiver's per-frame values in the shared render group, so a terrain batch that skips three's
+// web/static-world.js staticRefresh: the receiver's per-frame values in the shared render group, so a terrain batch that skips three's
 // per-object refresh still reads this frame's rows (same values, updated once per render)
-if (pv('staticRefresh')) { rows.setGroup(renderGroup); count.setGroup(renderGroup); }
+rows.setGroup(renderGroup);
+count.setGroup(renderGroup);
 // bytes: the terrain's GS colour (0..255 per channel) after the light pass. Returns max(bytes - sum of shadow texels, 0).
 export function riderShadowReceiver(bytes) {
   return Fn(() => {
@@ -57,7 +57,15 @@ function fitShadowInto(bones, up, out) {
   crossInto(N, L, A); normalizeInto(A); crossInto(L, A, X); B[0] = X[0]; B[1] = X[1]; B[2] = X[2]; normalizeInto(B);
   const ac = dot3(A, C), bc = dot3(B, C);
   let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-  for (let i = 0; i < bones.length; i++) { const p = bones[i], x = f(dot3(A, p) - ac), y = f(dot3(B, p) - bc); minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); }
+  for (let i = 0; i < bones.length; i++) {
+    const p = bones[i],
+      x = f(dot3(A, p) - ac),
+      y = f(dot3(B, p) - bc);
+    minx = Math.min(minx, x);
+    maxx = Math.max(maxx, x);
+    miny = Math.min(miny, y);
+    maxy = Math.max(maxy, y);
+  }
   out.ac = ac; out.bc = bc; out.minx = f(minx - MARGIN); out.maxx = f(maxx + MARGIN); out.miny = f(miny - MARGIN); out.maxy = f(maxy + MARGIN);
   return out;
 }
@@ -82,9 +90,9 @@ function receiverRowsInto(fit, ox, oy, oz, out, at) {
   out[at + 2].set(0, -100, 0, fit.C[2] - 100 * oy);
 }
 
-// pv shadowAtlasInit: the atlas is a render target that world and rider materials sample (riderShadowReceiver). three creates a render
+// the atlas is a render target that world and rider materials sample (riderShadowReceiver). three creates a render
 // target's GPU texture when it is first drawn into, destroying the one it made if a material bound the texture earlier. A streamed
-// world compiled under the load screen (pv streamWarm, rideWarm) or drawn before any rider cast a shadow bound it first, and every
+// world compiled under the load screen (streamWarm, rideWarm) or drawn before any rider cast a shadow bound it first, and every
 // frame after the first shadow then failed validation ("Destroyed texture [768x128] used in a submit"): the rider stopped drawing in
 // free ride (PEAK1 station after a second ride start), and a teleported rider froze the frame (PEAK2 DBC2). Made a render target
 // once, cleared, as soon as the renderer exists (main.js), and kept for the page (768 x 128: never disposed).
@@ -119,7 +127,9 @@ export function createRiderShadows({renderer, scene, origin}) {
     material.vertexNode = Fn(() => {
       const w = skin.worldNode, p = vec4(w.xyz.div(w.w), 1), r = attribute('shadowRank', 'float');
       const n = vec2(dot(rowX, p), dot(rowY, p)); ndc.assign(n);
-      const x = slot.add(n.x.mul(.5).add(.5)).div(SHADOW_MAX).mul(2).sub(1), y = n.y.negate(); // three's texture convention on both backends (WGSL as is, GLSL flips render targets): v = 0 samples the row drawn at clip y = +1, and receiver v = (1 - n.y) / 2
+      // three's texture convention on both backends (WGSL as is, GLSL flips render targets): v = 0 samples the row drawn at clip y = +1,
+      // and receiver v = (1 - n.y) / 2
+      const x = slot.add(n.x.mul(.5).add(.5)).div(SHADOW_MAX).mul(2).sub(1), y = n.y.negate();
       return vec4(x, y, float(.8).sub(r.mul(.3)), 1);
     })();
     material.colorNode = Fn(() => {
@@ -135,64 +145,135 @@ export function createRiderShadows({renderer, scene, origin}) {
     });
     e = {group, info, meshes, rowX, rowY, slot, board, material}; entries.set(group, e); return e;
   }
-  // scene.traverse order, without descending into the static world (pv staticWorld cells and location groups, web/static-world.js):
+  // scene.traverse order, without descending into the static world (staticWorld cells and location groups, web/static-world.js):
   // no rider lives there, and it is thousands of objects per frame
   const riderList = [], walk = (o) => { if (o.userData.shadowRider) riderList.push(o); if (o.userData.staticWorld) return; const c = o.children; for (let i = 0; i < c.length; i++) walk(c[i]); };
   function riders() { riderList.length = 0; walk(scene); return riderList; }
   // per-frame scratch (docs/web-render-performance.md "Per-frame garbage"): each entry keeps its bones, fit and candidate record
   const candidates = [], byDistance = (a, b) => a.d - b.d, up = [0, 0, 0];
   const api = {
-    state, atlas,
-    get entryCount() { return entries.size; }, // riders with silhouette meshes (main.js warmupRender, pv warmSpread)
+    state,
+    atlas,
+    get entryCount() {
+      return entries.size;
+    }, // riders with silhouette meshes (main.js warmupRender, warmSpread)
     // Once per rendered frame after the riders' palettes were displayed, before the world pass. warming: render every
     // rider's shadow pipeline (loading screen) whatever its visibility.
-    // warmLimit (pv warmSpread, main.js warmupRender): while warming, only the first warmLimit riders' silhouettes draw, so their
+    // warmLimit (warmSpread, main.js warmupRender): while warming, only the first warmLimit riders' silhouettes draw, so their
     // materials build a rider per loading frame instead of all in the first one.
     update(view, warming = false, warmLimit = Infinity) {
-      if (api.enabled === false) { count.value = 0; return; }
-      view.updateMatrixWorld(); frustum.setFromProjectionMatrix(matrix.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
-      candidates.length = 0; const groups = riders();
+      if (api.enabled === false) {
+        count.value = 0;
+        return;
+      }
+      view.updateMatrixWorld();
+      frustum.setFromProjectionMatrix(matrix.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
+      candidates.length = 0;
+      const groups = riders();
       for (let g = 0; g < groups.length; g++) {
         const group = groups[g];
-        const e = entryFor(group); if (!e) continue; for (const m of e.meshes) m.visible = warming; // warming: every rider's silhouette pipeline builds, posed or not (computer riders have no pose before the race)
-        const core = e.info.core?.(); if (!core?._world_pose_bones) continue;
-        let visible = group.visible; for (let p = group.parent; p && visible; p = p.parent) visible = p.visible;
+        const e = entryFor(group);
+        if (!e) continue;
+        // warming: every rider's silhouette pipeline builds, posed or not (computer riders have no pose before the race)
+        for (const m of e.meshes) m.visible = warming;
+        const core = e.info.core?.();
+        if (!core?._world_pose_bones) continue;
+        let visible = group.visible;
+        for (let p = group.parent; p && visible; p = p.parent) visible = p.visible;
         if (!visible && !warming) continue;
         // The pose the skin draws this frame (interpolated between ticks, web/rider-skinning.js shadowPose); the core's
         // current tick for a skin without it. On the PS2 the box and the silhouette come from the same tick's pose.
         const drawn = e.info.skin.shadowPose?.();
-        const F = drawn ? drawn.bones : core.HEAPF32, bp = drawn ? 0 : core._world_pose_bones() >> 2, n = F[bp];
+        const F = drawn ? drawn.bones : core.HEAPF32,
+          bp = drawn ? 0 : core._world_pose_bones() >> 2,
+          n = F[bp];
         if (n < 22) continue;
-        const bones = e.bones ??= BONES.map(() => [0, 0, 0]); let finite = true;
-        for (let i = 0; i < BONES.length; i++) { const o = bones[i], at = bp + 1 + 7 * BONES[i]; o[0] = F[at]; o[1] = F[at + 1]; o[2] = F[at + 2]; finite = finite && Number.isFinite(o[0]) && Number.isFinite(o[1]) && Number.isFinite(o[2]); }
-        const P = drawn ? drawn.physical : F, pp = drawn ? 0 : core._pose_physical() >> 2, q0 = P[pp + 3], q1 = P[pp + 4], q2 = P[pp + 5], q3 = P[pp + 6], grounded = P[pp + 8] !== 0;
-        up[0] = 2 * (q0 * q2 + q3 * q1); up[1] = 2 * (q1 * q2 - q3 * q0); up[2] = 1 - 2 * (q0 * q0 + q1 * q1); // physical frame +Z (rider+0x1C0)
+        const bones = (e.bones ??= BONES.map(() => [0, 0, 0]));
+        let finite = true;
+        for (let i = 0; i < BONES.length; i++) {
+          const o = bones[i],
+            at = bp + 1 + 7 * BONES[i];
+          o[0] = F[at];
+          o[1] = F[at + 1];
+          o[2] = F[at + 2];
+          finite = finite && Number.isFinite(o[0]) && Number.isFinite(o[1]) && Number.isFinite(o[2]);
+        }
+        const P = drawn ? drawn.physical : F,
+          pp = drawn ? 0 : core._pose_physical() >> 2,
+          q0 = P[pp + 3],
+          q1 = P[pp + 4],
+          q2 = P[pp + 5],
+          q3 = P[pp + 6],
+          grounded = P[pp + 8] !== 0;
+        up[0] = 2 * (q0 * q2 + q3 * q1);
+        up[1] = 2 * (q1 * q2 - q3 * q0);
+        up[2] = 1 - 2 * (q0 * q0 + q1 * q1); // physical frame +Z (rider+0x1C0)
         if (!finite || !Number.isFinite(up[0]) || !Number.isFinite(up[1]) || !Number.isFinite(up[2])) continue;
-        const fit = fitShadowInto(bones, up, e.fit ??= newFit());
-        sphere.center.set(fit.C[0] / 100 - origin.x, fit.C[2] / 100 - origin.y, -fit.C[1] / 100 - origin.z); sphere.radius = 3;
+        const fit = fitShadowInto(bones, up, (e.fit ??= newFit()));
+        sphere.center.set(fit.C[0] / 100 - origin.x, fit.C[2] / 100 - origin.y, -fit.C[1] / 100 - origin.z);
+        sphere.radius = 3;
         if (!warming && !frustum.intersectsSphere(sphere)) continue; // stand-in for the rider visibility flag (rider+0xB18)
-        const cand = e.candidate ??= {e, fit, grounded: false, d: 0}; cand.grounded = grounded; cand.d = view.position.distanceToSquared(sphere.center); candidates.push(cand);
+        const cand = (e.candidate ??= { e, fit, grounded: false, d: 0 });
+        cand.grounded = grounded;
+        cand.d = view.position.distanceToSquared(sphere.center);
+        candidates.push(cand);
       }
-      candidates.sort(byDistance); const slots = Math.min(candidates.length, SHADOW_MAX);
+      candidates.sort(byDistance);
+      const slots = Math.min(candidates.length, SHADOW_MAX);
       for (let k = 0; k < slots; k++) {
-        const {e, fit, grounded} = candidates[k];
-        const w = fit.maxx - fit.minx, h = fit.maxy - fit.miny, mx = (fit.maxx + fit.minx) / 2, my = (fit.maxy + fit.miny) / 2;
-        e.rowX.value.set(fit.A[0] * 2 / w, fit.A[1] * 2 / w, fit.A[2] * 2 / w, (-fit.ac - mx) * 2 / w);
-        e.rowY.value.set(-fit.B[0] * 2 / h, -fit.B[1] * 2 / h, -fit.B[2] * 2 / h, (fit.bc + my) * 2 / h);
-        e.slot.value = k; e.board.value = grounded ? 0 : VALUE;
-        for (const m of e.meshes) { let v = true; for (let o = m.userData.source; o && o !== e.group && v; o = o.parent) v = o.visible; m.visible = v; } // only the parts the rider draws (hidden gear / variants cast nothing)
+        const { e, fit, grounded } = candidates[k];
+        const w = fit.maxx - fit.minx,
+          h = fit.maxy - fit.miny,
+          mx = (fit.maxx + fit.minx) / 2,
+          my = (fit.maxy + fit.miny) / 2;
+        e.rowX.value.set((fit.A[0] * 2) / w, (fit.A[1] * 2) / w, (fit.A[2] * 2) / w, ((-fit.ac - mx) * 2) / w);
+        e.rowY.value.set((-fit.B[0] * 2) / h, (-fit.B[1] * 2) / h, (-fit.B[2] * 2) / h, ((fit.bc + my) * 2) / h);
+        e.slot.value = k;
+        e.board.value = grounded ? 0 : VALUE;
+        // only the parts the rider draws (hidden gear / variants cast nothing)
+        for (const m of e.meshes) {
+          let v = true;
+          for (let o = m.userData.source; o && o !== e.group && v; o = o.parent) v = o.visible;
+          m.visible = v;
+        }
         receiverRowsInto(fit, origin.x, origin.y, origin.z, rows.array, 3 * k);
       }
-      count.value = warming ? SHADOW_MAX : slots; state.riders = candidates.length; state.slots = slots;
+      count.value = warming ? SHADOW_MAX : slots;
+      state.riders = candidates.length;
+      state.slots = slots;
       if (!slots && !warming) return;
-      if (warming && warmLimit < Infinity) { let k = 0; for (const e of entries.values()) if (k++ >= warmLimit) for (const m of e.meshes) m.visible = false; }
-      const prior = renderer.getRenderTarget(), autoClear = renderer.autoClear, alpha = renderer.getClearAlpha(); renderer.getClearColor(clear);
-      try { renderer.setRenderTarget(atlas); renderer.autoClear = true; renderer.setClearColor(0x000000, 0); renderer.render(shadowScene, camera); }
-      finally { renderer.setRenderTarget(prior); renderer.autoClear = autoClear; renderer.setClearColor(clear, alpha); }
+      if (warming && warmLimit < Infinity) {
+        let k = 0;
+        for (const e of entries.values()) if (k++ >= warmLimit) for (const m of e.meshes) m.visible = false;
+      }
+      const prior = renderer.getRenderTarget(),
+        autoClear = renderer.autoClear,
+        alpha = renderer.getClearAlpha();
+      renderer.getClearColor(clear);
+      try {
+        renderer.setRenderTarget(atlas);
+        renderer.autoClear = true;
+        renderer.setClearColor(0x000000, 0);
+        renderer.render(shadowScene, camera);
+      } finally {
+        renderer.setRenderTarget(prior);
+        renderer.autoClear = autoClear;
+        renderer.setClearColor(clear, alpha);
+      }
       if (warming) count.value = slots;
     },
     // Course change (main.js unloadCourse): the silhouette meshes' render objects go with their dispose events.
-    dispose() { if (!atlasReady) atlas.dispose(); for (const e of entries.values()) { for (const m of e.meshes) { m.removeFromParent(); m.dispatchEvent({type: 'dispose'}); } e.material.dispose(); } entries.clear(); },
+    dispose() {
+      if (!atlasReady) atlas.dispose();
+      for (const e of entries.values()) {
+        for (const m of e.meshes) {
+          m.removeFromParent();
+          m.dispatchEvent({ type: 'dispose' });
+        }
+        e.material.dispose();
+      }
+      entries.clear();
+    }
   };
   return api;
 }

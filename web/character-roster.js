@@ -58,7 +58,7 @@ const uberChoices = new Map();
 export function setUberChoice(id, rows) { if (rows?.length) uberChoices.set(id, rows); else uberChoices.delete(id); }
 
 // { settings, identity, uber_rows } for a riders.json entry (a cheat entry carries `base`), or null (Zoe/Sam).
-// rider.uber_choice (pv careerRider, web/career-rider.js): the rows of the profile's current selection, resolved with the
+// rider.uber_choice (careerRider, web/career-rider.js): the rows of the profile's current selection, resolved with the
 // rider entry at each world / event load and run start; otherwise the rows the front-end screen last set.
 export async function loadCharacter(rider) {
   const doc = withOutfit(await loadCharacterDoc(rider), rider), choice = rider && (rider.uber_choice ?? uberChoices.get(rider.kind === 'cheat' ? rider.base || 'zoe' : rider.id));

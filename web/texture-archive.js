@@ -19,7 +19,7 @@
 // world.json texture entries: {path} = a PNG file next to the package (older exports), or {pack, id}: pack is the
 // archive URL, package-relative unless it starts with '/' (`archive` in rider entries names the disc BIG, not this).
 //
-// Xbox HD rider set (pv xboxRiders, quality.riderTextures 'xbox'; docs/xbox-textures.md section 8): a rider's textures.tex /
+// Xbox HD rider set (xboxRiders, quality.riderTextures 'xbox'; docs/xbox-textures.md section 8): a rider's textures.tex /
 // gear.tex is read from its twin textures-xbox.tex / gear-xbox.tex, which holds every id of the PS2 archive: the Xbox's own BC1 /
 // BC2 blocks where the Xbox texture is better (web/bc-texels.js entry: 'SXBC' header, domain 'xbox' = full intensity, halved by
 // the rider material), the PS2 PNG entry otherwise. A BC entry is decoded off the main thread (web/texture-decode-worker.js):
@@ -177,7 +177,10 @@ export async function packageTexture(loader, root, t) {
 /** A package texture's exact RGBA texels {width, height, data} (archive entry or PNG file). */
 export async function packageTexels(root, t) {
   const buffer = await (await packageTextureBlob(root, t)).arrayBuffer();
-  if (isBCEntry(new Uint8Array(buffer, 0, Math.min(16, buffer.byteLength)))) { const e = parseBCEntry(buffer); return { width: e.width, height: e.height, data: decodeBC(e.codec, e.blocks, e.width, e.height) }; }
+  if (isBCEntry(new Uint8Array(buffer, 0, Math.min(16, buffer.byteLength)))) {
+    const e = parseBCEntry(buffer);
+    return { width: e.width, height: e.height, data: decodeBC(e.codec, e.blocks, e.width, e.height) };
+  }
   return decodePngTexels(buffer);
 }
 

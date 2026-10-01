@@ -51,7 +51,15 @@ async function downloadOnce(url) {
     // Content-Length of an unencoded body; a compressed body without either grows the total as it arrives.
     const decoded = +response.headers.get('x-decoded-length') || 0, encoded = !!response.headers.get('content-encoding');
     length = decoded || (encoded ? 0 : +response.headers.get('content-length') || 0);
-    if (!response.body || !response.ok) { watchdog(); return { status: response.status, statusText: response.statusText, headers: response.headers, bytes: new Uint8Array(await response.arrayBuffer()) }; }
+    if (!response.body || !response.ok) {
+      watchdog();
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        bytes: new Uint8Array(await response.arrayBuffer())
+      };
+    }
     state.active++; state.files++; state.expected += length; if (!state.since) state.since = performance.now(); counted = true;
     // A known size: the body goes straight into one buffer (no chunk list plus a second full copy to join it: on a phone the
     // Snow Jam package's ~68 MB peaked twice over while it arrived, docs/presentation.md); else the chunks are joined at the end.
@@ -61,7 +69,13 @@ async function downloadOnce(url) {
       watchdog(); const { done, value } = await reader.read(); if (done) break;
       if (whole && got + value.length <= whole.length) whole.set(value, got);
       else { if (whole) { chunks.push(whole.subarray(0, got)); whole = null; } chunks.push(value); } // the size was wrong: chunks from here
-      got += value.length; state.received += value.length; if (!length) state.expected = Math.max(state.expected, state.received); for (const fn of byteListeners) try { fn(url, got, length); } catch {}
+      got += value.length;
+      state.received += value.length;
+      if (!length) state.expected = Math.max(state.expected, state.received);
+      for (const fn of byteListeners)
+        try {
+          fn(url, got, length);
+        } catch {}
     }
     let bytes;
     if (whole) bytes = got === whole.length ? whole : whole.slice(0, got);
@@ -139,13 +153,35 @@ function sharedResponse(r, headers) {
   const text = (b) => new TextDecoder().decode(b);
   Object.defineProperties(res, {
     bodyUsed: { get: () => consumed(), configurable: true },
-    body: { get: () => { if (!stream && used) return null; if (!stream) { stream = new Response(bytes.slice(), init); bytes = null; } return stream.body; }, configurable: true },
+    body: {
+      get: () => {
+        if (!stream && used) return null;
+        if (!stream) {
+          stream = new Response(bytes.slice(), init);
+          bytes = null;
+        }
+        return stream.body;
+      },
+      configurable: true
+    },
     arrayBuffer: { value: () => take((b) => b.slice().buffer, 'arrayBuffer'), configurable: true, writable: true },
     bytes: { value: () => take((b) => b.slice(), 'bytes'), configurable: true, writable: true },
     text: { value: () => take(text, 'text'), configurable: true, writable: true },
     json: { value: () => take((b) => JSON.parse(text(b)), 'json'), configurable: true, writable: true },
-    blob: { value: () => take((b) => new Blob([b], { type: headers.get('content-type') ?? '' }), 'blob'), configurable: true, writable: true },
-    clone: { value: () => { if (stream) return stream.clone(); if (used) throw new TypeError('Body has already been consumed.'); return sharedResponse({ ...r, bytes }, headers); }, configurable: true, writable: true },
+    blob: {
+      value: () => take((b) => new Blob([b], { type: headers.get('content-type') ?? '' }), 'blob'),
+      configurable: true,
+      writable: true
+    },
+    clone: {
+      value: () => {
+        if (stream) return stream.clone();
+        if (used) throw new TypeError('Body has already been consumed.');
+        return sharedResponse({ ...r, bytes }, headers);
+      },
+      configurable: true,
+      writable: true
+    }
   });
   return res;
 }
@@ -155,7 +191,7 @@ function sharedResponse(r, headers) {
 // three copies per file while it reads (the shared bytes, the Response copy, the ArrayBuffer): the ~68 MB Snow Jam package
 // peaked at +300-400 MB of renderer memory under the fly-over (Chrome 390x844, 4x; docs/presentation.md). Resolves ok (2xx).
 export const PREFETCH_KEEP_MS = 30000;
-// keepMs: how long an untaken copy is kept (pv riderPrefetch: the event's riders, taken when the course behind the load screen is in).
+// keepMs: how long an untaken copy is kept (riderPrefetch: the event's riders, taken when the course behind the load screen is in).
 export function prefetchDownload(input, { keepMs = PREFETCH_KEEP_MS } = {}) {
   const url = assetUrl(input); if (!url) return Promise.resolve(false);
   let entry = shared.get(url);
@@ -167,7 +203,7 @@ export function prefetchDownload(input, { keepMs = PREFETCH_KEEP_MS } = {}) {
 }
 
 // The bytes of a download in flight or kept (a prefetch) without taking it: null when there is none, or it failed. Shared: read only.
-// (pv riderPrefetch: a rider package's world.json names the texture archives to prefetch.)
+// (riderPrefetch: a rider package's world.json names the texture archives to prefetch.)
 export function peekDownload(input) {
   const url = assetUrl(input), entry = url ? shared.get(url) : null;
   return entry ? entry.then((r) => (r.status >= 200 && r.status < 300 ? r.bytes : null), () => null) : Promise.resolve(null);
@@ -180,5 +216,12 @@ export function peekDownload(input) {
 export function downloadProgress(now = performance.now()) {
   if (!state.active && state.since && now - state.idleAt > IDLE_RESET_MS) { state.received = state.expected = state.files = 0; state.since = 0; }
   const total = Math.max(state.expected, state.received);
-  return { active: state.active > 0, received: state.received, expected: total, files: state.files, fraction: total ? Math.min(1, state.received / total) : 1, busyMs: state.active && state.since ? now - state.since : 0 };
+  return {
+    active: state.active > 0,
+    received: state.received,
+    expected: total,
+    files: state.files,
+    fraction: total ? Math.min(1, state.received / total) : 1,
+    busyMs: state.active && state.since ? now - state.since : 0
+  };
 }

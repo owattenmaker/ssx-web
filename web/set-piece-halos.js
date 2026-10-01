@@ -10,8 +10,8 @@
 import * as T from 'three/webgpu';
 import {attribute, texture, vec4, float, select, uniform, positionGeometry, modelViewMatrix, cameraProjectionMatrix, uv} from 'three/tsl';import {toFrame} from './frame-space.js';
 import {registerEncodedEffect} from './snow-composite.js';
-import {pv} from './pv-flags.js';import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 import {setUpdateRange} from './heap-views.js';
+import {drawOrder, EFFECT, SUBMIT} from './ps2-draw-order.js';
 
 export const HALO_FX_BASE = 37; // FX texture table 0x4891B0 index = 37 + key1
 export const HALO_TEXTURES = {37: 'blha', 38: 'bsha', 39: 'gcha', 40: 'orha', 41: 'rdha', 42: 'whha'};
@@ -25,7 +25,17 @@ export function readHalos(core) {
   for (let k = 0; k < n; k++, at += HALO_FLOATS) {
     const key = F[at + 1], angle = F[at + 8], P = Number.isNaN(F[at + 9]) ? null : [F[at + 9], F[at + 10], F[at + 11]];
     const bytes = [F[at + 3], F[at + 4], F[at + 5], F[at + 6]].map((v) => Math.trunc(Math.fround(v * 128))); // vertex R,G,B,A
-    out.push({resource: F[at], key, node: F[at + 2], rgba: bytes, sizeCm: F[at + 7], angleDeg: angle, angle: angle === 0 ? 0 : Math.fround(angle * DEG), P, copies: angle !== 0 && (key === 1 || key === 4) ? 2 : 1});
+    out.push({
+      resource: F[at],
+      key,
+      node: F[at + 2],
+      rgba: bytes,
+      sizeCm: F[at + 7],
+      angleDeg: angle,
+      angle: angle === 0 ? 0 : Math.fround(angle * DEG),
+      P,
+      copies: angle !== 0 && (key === 1 || key === 4) ? 2 : 1
+    });
   }
   return out;
 }
@@ -65,12 +75,21 @@ export async function createSetPieceHalos({core, origin = [0, 0, 0], fetchJson =
     material.fragmentNode = vec4(select(encodedOutput, pre, toFrame(pre)), 1);
     material.blending = T.CustomBlending; material.blendSrc = T.OneFactor; material.blendDst = T.OneFactor; material.blendEquation = T.AddEquation;
     material.blendSrcAlpha = T.ZeroFactor; material.blendDstAlpha = T.OneFactor; material.blendEquationAlpha = T.AddEquation;
-    const mesh = new T.InstancedMesh(geometry, material, capacity); mesh.count = 1; mesh.frustumCulled = false; mesh.visible = false; mesh.renderOrder = 690; // count 1: warmable
-    if (pv('effectOrder')) mesh.renderOrder = drawOrder(EFFECT.halo(id), SUBMIT.halo); // 0x364240: priority 8, after every priority-7 effect
+    const mesh = new T.InstancedMesh(geometry, material, capacity); mesh.count = 1; mesh.frustumCulled = false; mesh.visible = false; // count 1: warmable
+    mesh.renderOrder = drawOrder(EFFECT.halo(id), SUBMIT.halo); // 0x364240: priority 8, after every priority-7 effect
     mesh.userData.halo = {key: id - HALO_FX_BASE};
     group.add(mesh); meshes.set(id - HALO_FX_BASE, {mesh, centre, spin, colour, count: 0});
   }
-  registerEncodedEffect({object: group, setEncodedOutput: (v) => { encodedOutput.value = !!v; }, populated: () => { for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true; return false; }});
+  registerEncodedEffect({
+    object: group,
+    setEncodedOutput: (v) => {
+      encodedOutput.value = !!v;
+    },
+    populated: () => {
+      for (const m of meshes.values()) if (m.mesh.visible && m.mesh.count > 0) return true;
+      return false;
+    }
+  });
   const state = {halos: 0, sprites: 0, unresolved: 0}, scratchP = [0, 0, 0];
   return {
     group, meshes, state,
@@ -87,7 +106,11 @@ export async function createSetPieceHalos({core, origin = [0, 0, 0], fetchJson =
           if (Number.isNaN(F[at + 9])) { const P = nodePosition(F[at], F[at + 2], scratchP); if (!P) { state.unresolved++; continue; } px = P[0]; py = P[1]; pz = P[2]; }
           else { px = F[at + 9]; py = F[at + 10]; pz = F[at + 11]; }
           const angleDeg = F[at + 8], angle = angleDeg === 0 ? 0 : Math.fround(angleDeg * DEG), copies = angleDeg !== 0 && (key === 1 || key === 4) ? 2 : 1, size = F[at + 7];
-          const r = Math.trunc(Math.fround(F[at + 3] * 128)), g = Math.trunc(Math.fround(F[at + 4] * 128)), b = Math.trunc(Math.fround(F[at + 5] * 128)), al = Math.trunc(Math.fround(F[at + 6] * 128)); // vertex R,G,B,A bytes
+          // vertex R,G,B,A bytes
+          const r = Math.trunc(Math.fround(F[at + 3] * 128)),
+            g = Math.trunc(Math.fround(F[at + 4] * 128)),
+            b = Math.trunc(Math.fround(F[at + 5] * 128)),
+            al = Math.trunc(Math.fround(F[at + 6] * 128));
           for (let copy = 0; copy < copies; copy++) {
             if (target.count >= target.centre.count) break;
             const i = target.count++, a = copy ? -angle : angle, C = target.centre.array, Sp = target.spin.array, Co = target.colour.array, o = i * 4;

@@ -8,7 +8,8 @@
 //    page's old text path (ui.text: flat tint, other sizes and places) is rendered the same way for contrast.
 import fs from 'node:fs'; import zlib from 'node:zlib';
 import { TrickHud, hudTextByte } from './trick-hud.js';
-import { PV_DEFAULTS, setPv } from './pv-flags.js';
+import { PV_DEFAULTS } from './pv-flags.js';
+import { sourceOf } from './test-source.mjs';
 
 const ui = new URL('public/assets/UI/', import.meta.url);
 const data = JSON.parse(fs.readFileSync(new URL('trick-hud.json', ui)));
@@ -35,7 +36,6 @@ const near = (a, b, e = 1e-4) => Math.abs(a - b) <= e;
   const slow = []; hud.speed(slow, 0.2, false); check(slow[1].text === '0', 'standing still reads 0'); }
 // 2. Text colour bytes.
 check(hudTextByte(1) === 204 && hudTextByte(0.7828530073165894) === 159 && hudTextByte(0) === 0, 'font vertex RGB = trunc(colour x 204): white 204, OPPONENT red 159');
-check(PV_DEFAULTS.raceHud === true && PV_DEFAULTS.hudText === true, 'raceHud and hudText on by default (verified in Chrome and WebKit)');
 // 2b. Finish / time-up banner 0x21F660 (pv finishBanner): a finish is the 'fini' sprite at descriptor 0x42 (320, 190, 213 x 41,
 //     centred) with the value centred under it at scale 1.9075785; time up is 'timeup' at descriptor 0x1B (320, 180, 240 x 41).
 { const fin = []; hud.finishBanner(fin, false, '00:03:55'); const [spr, txt] = fin, tw = hud.measure('HUDFONT', '00:03:55', txt.scale[0], txt.scale[1]).w;
@@ -44,7 +44,7 @@ check(PV_DEFAULTS.raceHud === true && PV_DEFAULTS.hudText === true, 'raceHud and
   check(txt.text === '00:03:55' && near(txt.x + tw / 2, 320, 1e-3) && near(txt.y, 210.5) && near(txt.scale[0], 1.907578468322754) && txt.argb.every((c) => c === 1), 'finish value centred at x 320, top 210.5, scale 1.9075785, white');
   const up = []; hud.finishBanner(up, true, '00:03:55');
   check(up.length === 1 && near(up[0].x, 200) && near(up[0].y, 159.5) && up[0].size.join() === '240,41' && up[0].sprite.uv.map((v) => v * 256).join() === '127.5,1.5,170.5,150.5', "time up: 'timeup' at (200, 159.5) 240 x 41, no value");
-  check(PV_DEFAULTS.finishBanner === true, 'finishBanner on by default (verified in Chrome and WebKit)'); }
+  }
 
 // 3. Pixels against the PS2 frame.
 function png(file) {
@@ -112,10 +112,9 @@ else {
   const ucFile = new URL('../local/ps2-capture/runs/uber-chain.tick929.png', import.meta.url);
   if (fs.existsSync(ucFile)) { const uc = png(ucFile), rect = [190, 425, 260, 45], nl = [], ol = [];
     hud.iconLabel(nl, hud.iconLayout('UBER TRICK = @r1 + @square', Math.fround(0.7)), 73, {}, { hint: true });
-    const h2 = new TrickHud(data, glyphs); h2.hint55C = 1; const s9 = []; s9[9] = { type: 9, maximum: 2, value: 1 }; setPv('uberLayout', false); h2.uberHint(ol, s9, 0x1200000 | 0x1000000, {}); setPv('uberLayout', null);
-    const eN = error(render(withRgb(nl, hudTextByte)), rect, uc), eO = error(render(withRgb(ol, hudTextByte)), rect, uc);
-    console.log(`PS2 uber-chain 929 Uber hint box error ${eN.toFixed(1)} (the port's own measure ${eO.toFixed(1)})`);
-    check(eN < 8 && eN < eO, 'Uber hint (0x1E92A8 record) matches the PS2 frame better than the port measure'); }
+    const eN = error(render(withRgb(nl, hudTextByte)), rect, uc);
+    console.log(`PS2 uber-chain 929 Uber hint box error ${eN.toFixed(1)}`);
+    check(eN < 8, 'Uber hint (0x1E92A8 record) matches the PS2 frame'); }
   check(oClock > eClock + 10 && oSpeed > eSpeed + 3, 'the old text path is measurably further from the PS2 frame');
   check(wClock > eClock + 1 && wSpeed > eSpeed + 1, 'the 204 text colour is closer than white');
   // The slope style OPPONENT line (career-ui.js opponentLine, pv raceHud): descriptors 0x4A / 0x4B in the HUD font with the
@@ -223,7 +222,7 @@ else {
   check(tex(left) === '141.5,151.5,159.5,152.5' && tex(right) === '141.5,159.5,151.5,152.5' && tex(mid) === '141.5,163.5,171.5,152.5', 'bar UV rows: the left end u 151.5..159.5, the right end mirrored, the middle u 163.5..171.5');
   check(fill.kind === 'quad' && fill.x === 269 && fill.y === 445 && fill.size.join() === '62.5,6' && fill.argb.join() === '1,1,0,0' && fill.order === button.order + 1, 'fill 0.5: red quad (269, 445) 62.5 x 6, one layer above the bar');
   const faded = []; h.recoverMeter(faded, 1, 0.4, false, {}); check(faded.every((d) => near(d.argb[0], 0.5, 1e-3)) && !faded.some((d) => d.kind === 'text'), 'RECOVERED! at ratio 0.4: no label, everything at half alpha');
-  check(PV_DEFAULTS.recoverMeter === true, 'recoverMeter on by default (verified in Chrome and WebKit)'); }
+  }
 // R2. Freestyle standings 0x1ED104 (pv hudStandings): descriptor 0x17 (20, 20), rows 21 apart, the value column at x + 66.997 right-aligned
 //     on the widest row, 'ST' / 'ND' / 'RD' at half scale 1.6 px down; PS2 pipe-brake tick 2018: 162880 / 98220 / 44820.
 { const out = []; hud.standings(out, hud.standingsRows([162880, 98220, 44820], 0, 'Zoe')); const at = (t) => out.find((d) => d.text === t);
@@ -234,7 +233,7 @@ else {
   // PS2 menus/transport-map/heats/h2-scorepoke sample00303 (the human's score poked): 'ZOE 402000' over the red box, pixels x 20..205.
   const top = []; hud.standings(top, hud.standingsRows([328320, 186960, 1000], 402000, 'Zoe')); const box = top.find((d) => d.kind === 'rect');
   check(box && box.x === 20 && box.y === 20 && Math.round(box.x + box.w) === 206 && box.h === 21 && top.some((d) => d.text === 'Zoe' && d.x === 20 && d.y === 20) && top.some((d) => d.text === '328320' && d.y === 41), "the player's first row: the red box over x 20..205 as on the PS2 (h2-scorepoke 'ZOE 402000')");
-  check(PV_DEFAULTS.hudStandings === true, 'hudStandings on by default (verified in Chrome and WebKit)'); }
+  }
 // R3. OV_darkblue header lights (pv luiLights): the six lights at y 73 (groups 06c3ae11 (433, 57) / 06c3ae12 (449, 63) + their shapes),
 //     the light loop 65..500 started at panel frame 50 (436 frames a turn).
 { const { panelTimeline, LIGHT_SHAPES, LIGHT_GROUPS } = await import('./results-lui.js'); const { LuiScreen } = await import('./lui-player.js');
@@ -248,10 +247,10 @@ else {
     const starts = (tt) => panelTimeline(sc.events, tt).filter((x) => x.ev.frame === 65).map((x) => x.start);
     check(starts(49).length === 0 && starts(50).every((s) => s === 50) && starts(486).every((s) => s === 486), 'the lights loop starts at panel frame 50 and turns every 436 frames');
   }
-  check(PV_DEFAULTS.luiLights === true, 'luiLights on by default (verified in Chrome and WebKit)'); }
+  }
 // R4. "Cash: $ 10,000" (pv cashGap): 0x198AF0 puts '$ ' before the digits (PS2 race-f final: '$' -> '1' 11.4 px).
-{ const { money } = await import('./trick-hud.js'); const src = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8');
-  check(money(10000) === '$ 10,000' && /pv\('cashGap'\)\?money\(o\.cash\)/.test(src) && PV_DEFAULTS.cashGap === true, 'rewards cash line "$ 10,000" (0x198AF0) with cashGap on'); }
+{ const { money } = await import('./trick-hud.js'); const src = sourceOf('career-ui.js');
+  check(money(10000) === '$ 10,000' && /'Cash: %S'\),money\(rec\.cash\)/.test(src), 'rewards cash line "$ 10,000" (0x198AF0)'); }
 // R5. Air streamers 2EF950 (pv streamers): the GS samples strm with its bright rows at T = 1: over the ribbon's T = scroll + k / count
 //     (to ~1.8, clamped) the flipped texture is bright for any scroll, the exported order dark past T = 0.75 (PS2 setpieces-bra2 418).
 { const fxDir = new URL('public/assets/FX/', import.meta.url);
@@ -261,7 +260,7 @@ else {
     const at = (T, flip) => { const y = Math.min(h - 1, Math.max(0, Math.floor(T * h))); return rowG(flip ? h - 1 - y : y); };
     const mean = (flip, s) => { let m = 0; for (let k = 0; k < 25; k++) m += at(s + k / 25, flip); return m / 25; };
     check([0.35, 0.77].every((s) => mean(true, s) > 100 && mean(false, s) < 40), `strm over T = s..s+1: flipped ${mean(true, 0.77).toFixed(0)} / exported ${mean(false, 0.77).toFixed(0)} (s 0.77)`);
-    check(/tag==='strm'&&pv\('streamers'\)/.test(fs.readFileSync(new URL('boost-renderer.js', import.meta.url), 'utf8')) && PV_DEFAULTS.streamers === true, 'boost-renderer flips strm with streamers on');
+    check(/tag==='strm'\)\{/.test(sourceOf('boost-renderer.js')), 'boost-renderer flips strm');
   } }
 // R6. Results menu (pv resultsMenu): a LUI text wraps only when its element has flag 0x80 (0x3A0528 -> 0x3A0D00 / 0x3A0EB0), so the
 //     43final_standings items (flags 0x24c, 80 px at 50 %) keep 'Next event' / 'Final Round' on one line (PS2 bhp1-neutral:
@@ -273,23 +272,23 @@ else {
     const wrapped = els.filter((e) => e.kind === 'text' && e.flags & 0x80).map((e) => e.name);
     check(items.every((e) => e && !(e.flags & 0x80)) && wrapped.includes('0c37a134'), `menu items without flag 0x80 (${items.map((e) => e?.flags?.toString(16)).join(' ')}), helptext wraps`);
   }
-  const lui = fs.readFileSync(new URL('lui-player.js', import.meta.url), 'utf8'), cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8');
-  check(/!this\.flagWrap \|\| !!\(e\.flags & 0x80\)/.test(lui) && /resultsFocus\(was\)\{if\(!pv\('resultsMenu'\)\)return was;return this\.peakResults\(\)\|\|this\.active\?\.career\?0:1;\}/.test(cu), 'flagWrap wraps flag-0x80 texts only; resultsFocus: Single Event -> Restart (1), career / peak runs -> 0');
+  const lui = fs.readFileSync(new URL('lui-player.js', import.meta.url), 'utf8'), cu = sourceOf('career-ui.js');
+  check(/!this\.flagWrap \|\| !!\(e\.flags & 0x80\)/.test(lui) && /resultsFocus\(was\)\{return this\.peakResults\(\)\|\|this\.active\?\.career\?0:1;\}/.test(cu), 'flagWrap wraps flag-0x80 texts only; resultsFocus: Single Event -> Restart (1), career / peak runs -> 0');
   // Up / Down (0x39AB50 / 0x39AC48): greyed items (flags 0x20) skipped, round the ends when the menu element has 0x80
   if (all) { const wraps = ['43final_standings', '70peakchal_results', '61toptimes'].map((k) => all[k]?.elements.find((e) => e.kind === 'menu')?.flags ?? 0);
-    check(wraps.every((f) => f & 0x80) && /\(s==='ctm-results'\|\|s==='ctm-records'\)&&\(e\.code==='ArrowUp'\|\|e\.code==='ArrowDown'\)&&pv\('resultsMenu'\)/.test(cu), `results / records menus wrap (menu flags ${wraps.map((f) => f.toString(16)).join(' ')} have 0x80), career-ui key() wraps them`); }
-  check(PV_DEFAULTS.resultsMenu === true, 'resultsMenu on by default (verified in Chrome and WebKit)'); }
+    check(wraps.every((f) => f & 0x80) && /\(s==='ctm-results'\|\|s==='ctm-records'\)&&\(e\.code==='ArrowUp'\|\|e\.code==='ArrowDown'\)\)/.test(cu), `results / records menus wrap (menu flags ${wraps.map((f) => f.toString(16)).join(' ')} have 0x80), career-ui key() wraps them`); }
+  }
 // R7. Uber hint layout (pv uberLayout): the 0x1E92A8 record (PS2 owner +0x560: W 209.99992, pieces 144.9 / 28 / 16.1 / 21) drawn by
 //     0x1E95A0 at descriptor 73: the text from x 215 (the port's own measure put it at 212).
 { const out = []; hud.iconLabel(out, hud.iconLayout('UBER TRICK = @r1 + @square', Math.fround(0.7)), 73, {}, { hint: true });
   const [t0, i0, t1, i1] = out;
   check(near(hud.iconLayout('UBER TRICK = @r1 + @square', Math.fround(0.7)).W, 209.99992, 1e-3) && near(t0.x, 215, 1e-3) && near(i0.x, 359.9, 1e-3) && near(t1.x, 387.9, 1e-3) && near(i1.x, 404, 1e-3) && near(i1.y + 20, 459.85, 1e-2),
     `uber hint: text at 215, icons at 359.9 / 404 (record W 209.99992): ${out.map((d) => d.x.toFixed(2)).join(' ')}`);
-  check(PV_DEFAULTS.uberLayout === true, 'uberLayout on by default (verified in Chrome and WebKit)'); }
+  }
 // R8. The static-model additive class (model flag 8, ALPHA 0x48) writes no depth (ZBUF ZMSK 1 in the PS2 render queue, metro-event-race
-//     tick 318; TEST 0x5114d): pv additiveNoZ draws it as one additive pass with depthWrite off, so the cones' back faces add too.
-{ const src = fs.readFileSync(new URL('world-material.js', import.meta.url), 'utf8');
-  check(/if\(blend===3&&pv\('additiveNoZ'\)\)\{m\.alphaTest=0;m\.depthWrite=false;cache\.set\(key,m\);return m;\}/.test(src) && PV_DEFAULTS.additiveNoZ === true, 'additive static models: one pass, no depth write (additiveNoZ on)'); }
+//     tick 318; TEST 0x5114d): it draws as one additive pass with depthWrite off, so the cones' back faces add too.
+{ const src = sourceOf('world-material.js');
+  check(/if\(blend===3\)\{m\.alphaTest=0;m\.depthWrite=false;cache\.set\(key,m\);return m;\}/.test(src), 'additive static models: one pass, no depth write'); }
 // R9. LUI word wrap (pv luiWrap, web/lui-player.js ps2Wrap): 0x3A0D00 breaks a flag-0x80 text where the font's advances x the scale
 //     +0x50 pass the width +0x60, both in PS2 units. 68rival_pre: Nate (652 x 0.73 = 476.0 > 475) and Psymon wrap after 'Rival', Griff
 //     (464.3) stays on one line, the 60 % bullet (445.2 <= 450) never wraps (PS2 local/reference/pcsx2 ruthless / the-throne / happiness-mac-ready).
@@ -301,7 +300,7 @@ else {
     const c = { save() {}, restore() {}, translate() {}, scale() {} }, wrap = (text, p) => { lines.length = 0; lui.text(c, text, 0, 0, p, 1, true); return lines.join('|'); };
     const face = (n) => `Face off against ${n} in a Rival Challenge!`, bullet = 'The first rider to the bottom of Backcountry wins.';
     check(wrap(face('Nate'), head.props) === 'Face off against Nate in a Rival|Challenge!' && wrap(face('Psymon'), head.props) === 'Face off against Psymon in a Rival|Challenge!'
-      && wrap(face('Griff'), head.props) === face('Griff') && wrap(bullet, obj.props) === bullet && !!(head.flags & 0x80) && PV_DEFAULTS.luiWrap === true,
+      && wrap(face('Griff'), head.props) === face('Griff') && wrap(bullet, obj.props) === bullet && !!(head.flags & 0x80),
       "rival card: 'Face off against Nate in a Rival' / 'Challenge!' where the PS2 wraps it, Griff and the bullet on one line (luiWrap on)"); } }
 // R10. The CTM plane drop (pv dropCamera, web/plane-drop.js): the rider lies head first (+0x120, forward +0x1B0 68 degrees down) and the
 //      camera is 10 ticks into the lock of the drop's set-target 0x176FE0 (lockView = forward x 250), looking down the slope. On Happiness
@@ -322,9 +321,9 @@ else {
     235: { rider: [-31701.5, 28295.6, -194093.5], eye: [-31640.7, 28293.5, -193639.6], look: [-31753.6, 28283.8, -194028.5] } };
   const err = (at) => Math.max(...[187, 235].flatMap((k) => ['rider', 'eye', 'look'].map((n) => Math.hypot(...at[k][n].map((v, i) => v - PS2[k][n][i])))));
   const on = err(await run(true)), off = err(await run(false));
-  check(on < 1 && off > 5 && drop.drop === true && PLANE_DROP.camera.length === 271 && PV_DEFAULTS.dropCamera === true, `plane drop: rider and camera within ${on.toFixed(2)} cm of the PS2 at ticks 187 / 235 (level start: ${off.toFixed(1)} cm; dropCamera on)`);
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(/const drop=!!spawn\.drop&&pv\('dropCamera'\)/.test(main) && /core\._camera_seed_words\(w,k\)/.test(main), 'plane drop: main.js resetPhysics sets the orientation before set_rider_velocity and seeds the camera');
+  check(on < 1 && off > 5 && drop.drop === true && PLANE_DROP.camera.length === 271, `plane drop: rider and camera within ${on.toFixed(2)} cm of the PS2 at ticks 187 / 235 (level start: ${off.toFixed(1)} cm)`);
+  const main = sourceOf('main.js');
+  check(/const drop=!!spawn\.drop;/.test(main) && /core\._camera_seed_words\(w,k\)/.test(main), 'plane drop: main.js resetPhysics sets the orientation before set_rider_velocity and seeds the camera');
   const state = new URL('../local/ps2-capture/menus/fr/ctmstart.f02700.p2s', import.meta.url);
   if (fs.existsSync(state)) { const { execFileSync } = await import('node:child_process');
     const py = `import sys,struct,zipfile,re\nsys.path.insert(0,'../tools')\nimport ps2_capture as pc\nfrom locations import human_rider\nm=zipfile.ZipFile('../local/ps2-capture/menus/fr/ctmstart.f02700.p2s').read('eeMemory.bin');d=pc.discover(m);r=human_rider(m)\noffs=[int(x,16) for x in re.search(r'compositorOffsets\\{([^}]*)\\}',open('../engine/original_camera_words.hpp').read()).group(1).split(',')]\nu=lambda a:struct.unpack_from('<I',m,a)[0]\nprint([u(r+0x120+4*i) for i in range(4)]+[u(d['camera']+4*i) for i in range(228)]+[u(d['outer']+k) for k in offs])`;
@@ -351,10 +350,10 @@ else {
   const camErr = Math.max(Math.hypot(...fv(0x40).map((v, i) => v - [-29729.9, 28504.3, -186744.4][i])), Math.hypot(...fv(0x20).map((v, i) => v - [-29802.3, 28511.9, -187095.8][i])));
   const info = new Float32Array(c.HEAPF32.buffer, c._rider_fx_info(), 8), n = info[6], v = new Float32Array(c.HEAPF32.buffer, c._rider_fx_vertices(4), n * 9);
   const ts = [...new Set(Array.from({ length: n }, (_, i) => +v[i * 9 + 4].toFixed(3)))].sort((a, b) => a - b);
-  check(boneErr < 0.5 && camErr < 1 && Math.abs(ts[0] - 0.872) < 0.01 && ts.length === 25 && PV_DEFAULTS.dropPose === true && PV_DEFAULTS.dropStreamer === true,
-    `plane drop pose: skeleton ${boneErr.toFixed(2)} cm and camera ${camErr.toFixed(2)} cm from the PS2 at f02747; streamer ${ts.length} rows from T ${ts[0]} (dropPose, dropStreamer on)`);
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(/pv\('dropPose'\)&&core\._drop_air_seed/.test(main) && /pv\('dropStreamer'\)&&core\._rider_fx_streamer_seed/.test(main), 'plane drop pose: main.js seeds the air controller and the streamers'); }
+  check(boneErr < 0.5 && camErr < 1 && Math.abs(ts[0] - 0.872) < 0.01 && ts.length === 25,
+    `plane drop pose: skeleton ${boneErr.toFixed(2)} cm and camera ${camErr.toFixed(2)} cm from the PS2 at f02747; streamer ${ts.length} rows from T ${ts[0]}`);
+  const main = sourceOf('main.js');
+  check(/if\(drop&&core\._drop_air_seed/.test(main) && /if\(drop&&core\._rider_fx_streamer_seed/.test(main), 'plane drop pose: main.js seeds the air controller and the streamers'); }
 // R12. A LiveComp owner its Object player draws (pv liveCompObject): The Throne's summit flag pole (resource 282410) has runtime flags
 //      0x210225 (the static collector skips it: flags & 3 != 3) and a type-1 Object entity (vtable 0x490B10) whose 0x356298 draws it
 //      (flags & 4) while the player lives: PS2 the-throne-ready shows it at the card's left (projected x 162 -> 96, y 291 -> 66).
@@ -365,7 +364,7 @@ else {
     check(JSON.parse(cls).join() === 'object,none', "LiveComp draw class: The Throne's flag pole is 'object' (its Object player draws it), the os609 heli keeps 'none'"); }
   else console.log('skip LiveComp draw class: countdown audit not present');
   const src = fs.readFileSync(new URL('set-pieces-renderer.js', import.meta.url), 'utf8');
-  check(/live\.byResource\.get\(resource\)\?\.draw === 'object' && pv\('liveCompObject'\)/.test(src) && PV_DEFAULTS.liveCompObject === true, 'set-pieces-renderer draws an object-class LiveComp while its player runs (liveCompObject on)');
+  check(/\(live\.byResource\.get\(resource\)\?\.draw === 'object' \|\| heli\)/.test(src), 'set-pieces-renderer draws an object-class LiveComp while its player runs');
   const lc = JSON.parse(fs.readFileSync(new URL('public/assets/EBC3/LIVECOMP/livecomp.json', import.meta.url))).instances.find((x) => x.resource === 282410);
   check(lc?.draw === 'object', "EBC3 livecomp.json: the summit flag pole is drawn by its Object player (draw 'object')"); }
 // R13. The rival card's rider (pv readyLight, web/main.js readyView): the PS2 draws it shaded with the environment irradiance its load
@@ -374,20 +373,20 @@ else {
 { const { createTestRider } = await import('./net/test-core.mjs'), r = await createTestRider({ course: 'EBC3', lighting: true }), c = r.core; r.startEvent();
   const before = Array.from(new Float32Array(c.HEAPF32.buffer, c._environment_irradiance(), 3)); c._environment_settle(60);
   const row0 = Array.from(new Float32Array(c.HEAPF32.buffer, c._environment_irradiance(), 3)), ps2 = [0.220, 0.307, 0.508];
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(before.every((v) => v === 0) && row0.every((v, i) => Math.abs(v - ps2[i]) < 0.02) && /pv\('readyLight'\)&&riderLightingUpdate/.test(main) && /core\._environment_settle\?\.\(60\)/.test(main)
-    && /\(pv\('readyLight'\)&&readyScreen\(\)\)/.test(main) && PV_DEFAULTS.readyLight === true,
-    `rival card rider: the environment settled at the start spot, row 0 ${row0.map((v) => v.toFixed(3)).join(', ')} (PS2 0.220, 0.307, 0.508); readyLight on`); }
+  const main = sourceOf('main.js');
+  check(before.every((v) => v === 0) && row0.every((v, i) => Math.abs(v - ps2[i]) < 0.02) && /if\(riderLightingUpdate&&sam\?\.userData\.sourceLighting\)/.test(main) && /core\._environment_settle\?\.\(60\)/.test(main)
+    && /\|\|readyScreen\(\)\),renderAlpha/.test(main),
+    `rival card rider: the environment settled at the start spot, row 0 ${row0.map((v) => v.toFixed(3)).join(', ')} (PS2 0.220, 0.307, 0.508)`); }
 // R14. The switch-stance 'S' (pv switchIcon): 0x1EC3F8 draws owner +0x470's sprite at descriptor 0x4F under the meter when HUD flags
 //      0x10000000 (the race and the free-ride HUDs both have it), alpha x 0.2 while rider +0x320 == +0x324. PS2: faint on every regular
 //      frame (peak1-green-start 103, Snow Jam 418), full orange riding switch (Snow Jam 4419, CRA3 1218); icon box error 12.2 -> 6.3,
 //      8.5 -> 4.1, 73.6 -> 19.8, 55.9 -> 17.3.
 { const h = new TrickHud(data, glyphs);
   const reg = [], sw = []; h.switchIcon(reg, true); h.switchIcon(sw, false); const d = reg[0];
-  const ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8'), main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+  const ui = sourceOf('ui.js'), main = sourceOf('main.js');
   check(d && d.x === 571 && d.y === 397 && d.size.join() === '24,22' && near(d.argb[0], 0.2) && sw[0].argb[0] === 1 && d.sprite.page === 'OV_1-4'
     && (data.flags & 0x10000000) !== 0 && (0x1530C380 & 0x10000000) !== 0 && /if\(flags&0x10000000\)\{const l=\[\];this\.trickHud\.switchIcon\(l,s\.stanceRegular!==false\)/.test(ui)
-    && /stanceRegular:core\?\._rider_stance_info/.test(main) && PV_DEFAULTS.switchIcon === true, "switch-stance 'S': descriptor 0x4F (571, 397, 24 x 22), alpha 0.2 regular / 1 switch, race and free-ride flags (switchIcon on)");
+    && /stanceRegular:core\?\._rider_stance_info/.test(main), "switch-stance 'S': descriptor 0x4F (571, 397, 24 x 22), alpha 0.2 regular / 1 switch, race and free-ride flags ");
   check(data.sprites.switchIcon?.owner_offset === '0x470' && data.sprites.switchIcon.page === 'OV_1-4', "trick-hud.json: the switch icon is owner +0x470's OV_1-4 sprite"); }
 // R15. A world load's ride start (pv painterWorldLoad: web/free-ride.js placeRegion -> core environment_world_load). The PS2 places
 //      the new rider during the load and the load's painter steps run in the stale region gp+0x770, whose record is not loaded:
@@ -405,9 +404,9 @@ else {
     return out; };
   const on = run(1), off = run(0);
   check(near(on[101].elevation, 6.739697, 1e-4) && near(on[101].azimuth, 79.63936, 1e-3) && near(on[201].elevation, 9.167935, 1e-4) && near(on[201].azimuth, 108.3325, 1e-3)
-    && off[101].azimuth === Math.fround(124.9) && PV_DEFAULTS.painterWorldLoad === true, `world load: Sun A blends in from the class defaults (az ${on[101].azimuth.toFixed(3)} / ${on[201].azimuth.toFixed(3)} at 101 / 201; PS2 79.639 / 108.332)`);
+    && off[101].azimuth === Math.fround(124.9), `world load: Sun A blends in from the class defaults (az ${on[101].azimuth.toFixed(3)} / ${on[201].azimuth.toFixed(3)} at 101 / 201; PS2 79.639 / 108.332)`);
   const fr = fs.readFileSync(new URL('free-ride.js', import.meta.url), 'utf8');
-  check(/core\._place_rider_region\([^\n]*\n[^\n]*\n[^\n]*\n\s*if \(fresh && pv\('painterWorldLoad'\)\) core\._environment_world_load\?\.\(\);/.test(fr), 'free-ride placeRegion: the world load reset after the new rider\'s placement (its 0x2C03E8)');
+  check(/core\._place_rider_region\([^\n]*\n[^\n]*\n[^\n]*\n\s*if \(fresh\) core\._environment_world_load\?\.\(\);/.test(fr), 'free-ride placeRegion: the world load reset after the new rider\'s placement (its 0x2C03E8)');
   const { createTestRider } = await import('./net/test-core.mjs'), fog = async (load) => { const r = await createTestRider({ course: 'ARA1' }), c = r.core;
     if (!c._environment_world_load) return null;
     const b = Buffer.from(fs.readFileSync(new URL('public/assets/ARA1/fog-tree.json', import.meta.url)) + '\0'), p = c._malloc(b.length); c.HEAPU8.set(b, p); c._init_fog(p); c._free(p);
@@ -431,10 +430,10 @@ else {
   const off = (visited) => CareerScreens.prototype.hintsOff.call({ visitedMask: CareerScreens.prototype.visitedMask }, { visited });
   const slots = Array(0x40).fill(null); slots[0] = { type: 0xB, value: 1, maximum: 2, points: 0 };
   const label = (flags) => new TrickHud(data, glyphs).frame(slots, { flags }).some((d) => d.kind === 'text' && /RECOVER/.test(d.text));
-  const ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8');
+  const ui = sourceOf('ui.js');
   check(!off(1 << 17) && !off((1 << 14) | (1 << 8)) && off(1 << 15) && off(1 << 19) && off(1 << 21) && label(0x1530C380) && !label(0x1530C380 & ~0x1000000)
-    && /hintsOff=pv\('hudHints'\)&&\(fr\|\|this\.careerMode\)&&!!this\.careerUI\?\.hintsOff\?\.\(\)/.test(ui) && PV_DEFAULTS.hudHints === true,
-    'hints off after a Peak 2 / 3 visit: Peak 1 masks keep the RECOVER label, a Peak 2 / 3 bit removes it (hudHints on)'); }
+    && /hintsOff=\(fr\|\|this\.careerMode\)&&!!this\.careerUI\?\.hintsOff\?\.\(\)/.test(ui),
+    'hints off after a Peak 2 / 3 visit: Peak 1 masks keep the RECOVER label, a Peak 2 / 3 bit removes it'); }
 // R18. Single Event pause (pv singlePause): the MCOMM PDA with Return / Restart / Audio / Options / Quit, no Messages / Give Up (PS2
 //      menus/single/11-single-pause, r3-pause-rows): help 'Get back to boarding.' / 'Restart the current competition.' / 'Change music
 //      tracks.' / 'Modify game and sound options.' / 'Quit out to Title screen.'; Restart 'Are you sure?' (No) -> the round's card
@@ -442,40 +441,40 @@ else {
 //      pv menuRiders: the computer / online riders hide while a menu covers the world (they drew over the pause).
 { const { CareerScreens } = await import('./career-ui.js');
   const items = (career) => CareerScreens.prototype.pauseItems.call({ active: { career }, t: (k, f) => f, singlePause: CareerScreens.prototype.singlePause });
-  const cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8'), ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8');
-  const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8'), opp = fs.readFileSync(new URL('opponent-riders.js', import.meta.url), 'utf8');
+  const cu = sourceOf('career-ui.js'), ui = sourceOf('ui.js');
+  const main = sourceOf('main.js'), opp = fs.readFileSync(new URL('opponent-riders.js', import.meta.url), 'utf8');
   check(items(false).join() === 'Return,Restart,Audio,Options,Quit' && items(true).join() === 'Return,Restart,Messages,Audio,Options,Give Up'
     && /this\.singlePause\(\)\?\[this\.t\('kT_OVRHELPGetBoarding'\),this\.t\('kT_OVRHELPRestartComp'\),this\.t\('kT_OVRHELPChangeMusic'\),this\.t\('kT_OVRHELPOptions'\),this\.t\('kT_MAPHELPQuitGame'\)\]/.test(cu)
     && /case 'ctm-quit':if\(i===0&&this\.quitFrom==='ctm-pause'\)\{this\.quitToTitle\(\);return;\}/.test(cu) && /else if\(i===4\)\{this\.quitFrom='ctm-pause';this\.go\('ctm-quit',1\);\}/.test(cu)
-    && /if\(this\.screen==='pause'&&this\.pdaPause\(\)\)/.test(ui) && PV_DEFAULTS.singlePause === true,
+    && /if\(this\.screen==='pause'&&this\.pdaPause\(\)\)/.test(ui),
     'Single Event pause: Return / Restart / Audio / Options / Quit with the PS2 help lines, Quit Game -> title; career pause unchanged (singlePause on)');
   check(/entry\.group\.userData\.opponentRider=true;scene\.add\(entry\.group\);/.test(opp)
-    && /if\(!playing&&pv\('menuRiders'\)\)for\(const o of scene\.children\)if\(o\.userData\.opponentRider\)o\.visible=false;/.test(main) && PV_DEFAULTS.menuRiders === true,
-    'computer / online riders hidden under a menu (menuRiders on)'); }
+    && /if\(!playing\)for\(const o of scene\.children\)if\(o\.userData\.opponentRider\)o\.visible=false;/.test(main),
+    'computer / online riders hidden under a menu'); }
 // R19. Transport arrival fade (pv arrivalFade): the PS2 world comes in from black over ~30 ticks after the arrival placement, the HUD
 //      drawn over it (watched re-capture of menus/fr-courses/aba1-screen10: the fade's opaque first frames reset the painters, weight
 //      -99999 at tick 2020; snow luma 6 % / 40 % / 84 % / 100 % at +1 / +11 / +24 / +29). main.js starts cutscenes.fadeFrom({ticks: 30,
 //      colour: 'black', hud: true}) after a course arrival (not a station or backcountry, whose cuts fade themselves); ui.js draws that
 //      overlay first and the HUD over it.
-{ const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8'), ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8'), cs = fs.readFileSync(new URL('cutscenes.js', import.meta.url), 'utf8');
-  check(/if\(s&&\(dest<14\|\|\(dest>=17&&pv\('stationArrival'\)\)\)&&pv\('arrivalFade'\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:30,colour:'black',hud:true(,bars:pv\('transportFade'\))?\}\)/.test(main)
+{ const main = sourceOf('main.js'), ui = sourceOf('ui.js'), cs = sourceOf('cutscenes.js');
+  check(/else if\(s&&\(dest<14\|\|dest>=17\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:30,colour:'black',hud:true(,bars:pv\('transportFade'\))?\}\)/.test(main)
     && /if\(this\.cutscene\?\.overlayUnderHud\)this\.cutscene\.draw\(c,this\);/.test(ui) && /if\(this\.cutscene\?\.overlay&&!this\.cutscene\.overlayUnderHud\)\{/.test(ui)
-    && /get overlayUnderHud\(\) \{ return !!overlay\?\.hud; \}/.test(cs) && PV_DEFAULTS.arrivalFade === true,
-    'transport arrival: 30-tick fade from black under the HUD (arrivalFade on)'); }
+    && /get overlayUnderHud\(\)\{return!!overlay\?\.hud;\}/.test(cs),
+    'transport arrival: 30-tick fade from black under the HUD'); }
 // R20. Generic scene fog (pv genericFogOff): with the original fog pass, three's linear scene fog is detached after the course load. The
 //      load's traverse cleared m.fog only on the meshes present then; every material made later (streamed free-ride locations after a
 //      transport or on the way down, static cells, set pieces) was fogged by it to the painter's colour at its far, on top of the PS2
 //      fog (ABA1 arrival far 80 m: near-white trees and signs; the PS2 CLUT there peaks at alpha 104 / 128, 19 %).
-{ const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(/if\(fogRenderer&&pv\('genericFogOff'\)\)\{scene\.userData\.genericFog=scene\.fog;scene\.fog=null;\}/.test(main)
-    && /const gf=scene\.fog\|\|scene\.userData\.genericFog;if\(gf&&fogValues\[10\]&&fogValues\[7\]>0\)/.test(main) && PV_DEFAULTS.genericFogOff === true,
-    'generic scene fog detached under the original fog pass (genericFogOff on)'); }
+{ const main = sourceOf('main.js');
+  check(/if\(fogRenderer\)\{scene\.userData\.genericFog=scene\.fog;scene\.fog=null;\}/.test(main)
+    && /const gf=scene\.fog\|\|scene\.userData\.genericFog;if\(gf&&fogValues\[10\]&&fogValues\[7\]>0\)/.test(main),
+    'generic scene fog detached under the original fog pass'); }
 // R21. In-game Options (pv pdaOptions): the PDA page OV.LUI 37beoptions (PS2 menus/single/r3-options: HUD Options, Camera 1, Camera 2
 //      greyed, Music/MC / SFX / Character speech sliders, DJ Speech, Arcade SFX, Save game greyed in a Single Event; Down wraps past
 //      the greyed rows; ctm/47-options: Save game in Conquer the Mountain). The port's Widescreen / Keyboard / Display & Touch sit
 //      behind "More options" in the online-only EA Talk row (y 325, focus 120). ui.js routes every in-game 'options' there.
 { const am = await import('./audio-menu.js'), { stepMenu } = await import('./fe-screens.js');
-  const ui = fs.readFileSync(new URL('ui.js', import.meta.url), 'utf8');
+  const ui = sourceOf('ui.js');
   const lui = JSON.parse(fs.readFileSync(new URL('public/assets/UI/audio-menus.json', import.meta.url), 'utf8')).screens['37beoptions'];
   const names = new Set((lui?.elements || []).map((e) => e.name));
   const rowsOk = !lui || am.PDA_ROWS.every((r) => [r.row, r.label, r.value, r.slider, r.help].filter(Boolean).every((n) => names.has(n)));
@@ -483,45 +482,43 @@ else {
   const dis = am.PDA_ROWS.map((r) => !!r.disabled || r.kind === 'save'), walk = []; let i = 0; for (let k = 0; k < 9; k++) { i = stepMenu(i, 1, dis); walk.push(i); }
   check(am.PDA_ROWS.map((r) => r.y).join() === '100,125,150,175,200,225,250,275,300,325' && rowsOk && framesOk && walk.join() === '1,3,4,5,6,7,9,0,1'
     && am.PDA_MORE.map((r) => r.text).join() === 'Widescreen,Keyboard,Display & Touch'
-    && /if\(screen==='options'&&pv\('pdaOptions'\)&&this\.audioMenus\?\.owns\?\.\('pda-options'\)\)screen='pda-options';/.test(ui) && PV_DEFAULTS.pdaOptions === true,
-    `in-game Options is the 37beoptions PDA page${lui ? '' : ' (audio-menus.json without 37beoptions yet: rows not checked)'} (pdaOptions on)`); }
+    && /if\(screen==='options'&&this\.audioMenus\?\.owns\?\.\('pda-options'\)\)screen='pda-options';/.test(ui),
+    `in-game Options is the 37beoptions PDA page${lui ? '' : ' (audio-menus.json without 37beoptions yet: rows not checked)'}`); }
 // R22. Restarts (pv pauseRestart, loopFadeOnce). PS2 menus/race/r3-restart: the pause's Restart shows the lit start gate at once and the
 //      card over it; r3-results-restart: the results' Restart rides the gondola first; r3-rr-dense: the gate under the card is steady
 //      (luma 179.1 over 1600 samples). The port rode the gondola for both, and the idle under a heat card re-ran its fade-in (from the
 //      start hut's fade-out record) on every loop: the card sat over a gate dipping to black.
-{ const cs = await import('./cutscenes.js'), cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8');
+{ const cs = await import('./cutscenes.js'), cu = sourceOf('career-ui.js');
   const idle = { fade_in: { type: 0 }, fade_out: { type: 0 } }, prev = { type: 1, colour: 'black', in_ticks: 30 };
   const a = (o) => cs.fadeAt(o).alpha;
   check(a({ script: idle, t: 15, duration: 60, prevFadeOut: prev, step: { idle: true } }) === 0.5 && a({ script: idle, t: 15, duration: 60, prevFadeOut: prev, step: { idle: true }, loops: 1 }) === 0
-    && cs.restartSteps().length === 1 && /const kind=fromResults\|\|!pv\('pauseRestart'\)\?'heat':'restart'[;,]/.test(cu)
-    && PV_DEFAULTS.pauseRestart === true && PV_DEFAULTS.loopFadeOnce === true,
-    "pause Restart: the gate idle under the card (no gondola); a looping step's fade-in on its first pass only (pauseRestart, loopFadeOnce on)"); }
+    && cs.restartSteps().length === 1 && /const kind=fromResults\?'heat':'restart'[;,]/.test(cu),
+    "pause Restart: the gate idle under the card (no gondola); a looping step's fade-in on its first pass only"); }
 // R23. The lodge (pv lodgeLui): the menu is FE.LUI 28lodge (PS2 menus/ctm/62-lodge, 63-lodge-cursor-*: the orange frame, rows at
 //      508 x 132 + 20 i, 'Save your progress.'), its questions the FE popup sized 0.681 x 0.585, moved (-4, -36), with the veil
 //      (64-lodge-quit-confirm; the veil fitted from 63-lodge-cursor-8quit -> 64: light blue, A 0.72).
-{ const fe = await import('./fe-screens.js'), cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8'), fs2 = fs.readFileSync(new URL('fe-screens.js', import.meta.url), 'utf8');
+{ const fe = await import('./fe-screens.js'), cu = sourceOf('career-ui.js'), fs2 = fs.readFileSync(new URL('fe-screens.js', import.meta.url), 'utf8');
   const lui = JSON.parse(fs.readFileSync(new URL('public/assets/UI/character-select.json', import.meta.url), 'utf8')).screens['28lodge'];
   const rowsOk = !lui || ['Return to Game', 'Equip Gear', 'Buy Gear', 'Buy Attributes', 'Rider Details', 'Music', 'Save Game', 'Quit'].every((t, i) => lui.elements.some((e) => e.text === t && e.props?.[1] === 132 + 20 * i));
   check(rowsOk && fe.LODGE_POPUP.sx === 0.681 && fe.LODGE_POPUP.veil[3] === 184 && /drawLodgeMenu\(c, b, \{ index = this\.ui\.index/.test(fs2)
-    && /if\(s==='ctm-lodge'&&pv\('lodgeLui'\)&&ui\.feScreens\?\.drawLodgeMenu\?\.\(/.test(cu) && /overLodge&&pv\('lodgeLui'\)&&ui\.feScreens\?\.drawLodgePrompt\?\.\(/.test(cu)
-    && PV_DEFAULTS.lodgeLui === true, `lodge menu from 28lodge and its questions in the FE popup${lui ? '' : ' (character-select.json without 28lodge yet: rows not checked)'} (lodgeLui on)`); }
+    && /if\(s==='ctm-lodge'&&ui\.feScreens\?\.drawLodgeMenu\?\.\(/.test(cu) && /overLodge&&ui\.feScreens\?\.drawLodgePrompt\?\.\(/.test(cu), `lodge menu from 28lodge and its questions in the FE popup${lui ? '' : ' (character-select.json without 28lodge yet: rows not checked)'}`); }
 // R24. The MCOMM Session map (pv sessionMap): OV.LUI 38session with the location's picture ses_<x> (table 0x440770), the points and the
 //      rider at |(p - c0) / (c1 - c0)| x (356, 266), truncated, + (252, 97) - 5 (0x209A88 / 0x209754), the focus opening on the nearest
 //      point (0x26B680). PS2 menus/ctm/r3-session-up (Happiness, the rider at the bottom): Bottom of run focused; the Top of run
 //      highlight's top-left (489, 132), the rider's (604, 281).
 { const sm = await import('./session-map.js'), abc1 = sm.SESSION_MAP[14][2], rider = [-46106, 37351, -206688];
   const pts = [[1980, -45988, 96309], [10773, -23646, 77059], [45216, -9407, 50865], [64333, 30111, 7806], [44349, 48523, -64943], [29150, 36753, -90407], [-1792, 46153, -132981]];
-  const cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8');
+  const cu = sourceOf('career-ui.js');
   check(sm.mapMarker(abc1, pts[0][0], pts[0][1]).join() === '489,132' && sm.mapMarker(abc1, rider[0], rider[1]).join() === '604,281'
     && sm.nearestSessionPoint(pts, rider) === 7 && Object.keys(sm.SESSION_MAP).length === 22 && sm.SESSION_MAP[1][1] === 8
-    && /if\(pv\('sessionMap'\)&&this\.drawSessionMap\(c,b,s\)\)return;/.test(cu) && PV_DEFAULTS.sessionMap === true,
+    && /if\(this\.drawSessionMap\(c,b,s\)\)return;/.test(cu),
     'Session map: the Top of run highlight at (489, 132), the rider at (604, 281), Bottom of run focused, as PS2 r3-session-up (sessionMap on)'); }
 // R25. PS2 softness (Options > Display & Touch, quality.ps2Output; section 30): Off by default and then the page builds today's composite
 //      (Chrome: the 52 WGSL modules identical, frames identical; WebKit frames identical); On: the scene colour low-passed by four
 //      bilinear taps at +-0.25 / +-0.75 of a 640-frame pixel before the fog composite (Snow Jam free ride 3946: high-frequency energy
 //      12.49 -> 8.87, PS2 8.67; crawl 1.32 -> 0.99). Built only when switched on; switching back restores the first graph.
 { const { resolveQuality, detectDevice } = await import('./quality.js'), { DISPLAY_ROWS } = await import('./fe-options.js');
-  const fr = fs.readFileSync(new URL('fog-renderer.js', import.meta.url), 'utf8'), main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
+  const fr = fs.readFileSync(new URL('fog-renderer.js', import.meta.url), 'utf8'), main = sourceOf('main.js');
   const dev = detectDevice({}), row = DISPLAY_ROWS.find((r) => r.q === 'ps2Output');
   check(resolveQuality(dev, {}, new URLSearchParams()).ps2Output === false && resolveQuality(dev, { ps2Output: true }, new URLSearchParams()).ps2Output === true
     && resolveQuality(dev, { ps2Output: true }, new URLSearchParams('ps2soft=0')).ps2Output === false && row?.label === 'PS2 softness' && DISPLAY_ROWS.indexOf(row) === 2
@@ -533,31 +530,30 @@ else {
 //      course (PS2 stations-sj-to-green, stations-to-c). World state 15 (pv sessionFade): MCOMM Session Yes or a Transport to the current
 //      location fades in from white over 60 ticks with the HUD over it (2E4370(mgr, 1, 0, white, 0, 0, 1.0), 2E47E8 1 - t / 1.0 at the
 //      60 Hz timer; PS2 stations-ws15).
-{ const fr = fs.readFileSync(new URL('free-ride.js', import.meta.url), 'utf8'), main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(/if \(dest >= 17 && !pv\('stationArrival'\)\) await playCutscene\(\{ kind: 'station-arrival'/.test(fr) && /if \(s\) s\.sameLocation = true; return s; \}/.test(fr)
-    && /if\(s\?\.sameLocation&&pv\('sessionFade'\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:60,colour:'white',hud:true\}\);else if\(s&&\(dest<14\|\|\(dest>=17&&pv\('stationArrival'\)\)\)&&pv\('arrivalFade'\)\)/.test(main)
-    && /if\(dest>=17&&cu\?\.freeRide&&!pv\('stationArrival'\)\)\{/.test(main) && /if\(pv\('sessionFade'\)\)cutscenes\?\.fadeFrom\?\.\(\{ticks:60,colour:'white',hud:true\}\);else freeRide\.whiteFade/.test(main)
-    && PV_DEFAULTS.stationArrival === true && PV_DEFAULTS.sessionFade === true,
-    'station Transport: no walk-in or lodge prompt, a black fade-in; Session / same-location Transport: a 60-tick white fade under the HUD (stationArrival, sessionFade on)'); }
+{ const fr = sourceOf('free-ride.js'), main = sourceOf('main.js');
+  check(!/station-arrival/.test(fr) && /if\(s\)s\.sameLocation=true;return s;\}/.test(fr)
+    && /if\(s\?\.sameLocation\)cutscenes\?\.fadeFrom\?\.\(\{ticks:60,colour:'white',hud:true\}\);else if\(s&&\(dest<14\|\|dest>=17\)\)/.test(main)
+    && !/station-arrival/.test(main) && /freeRide\.afterReset\(\);cutscenes\?\.fadeFrom\?\.\(\{ticks:60,colour:'white',hud:true\}\);/.test(main),
+    'station Transport: no walk-in or lodge prompt, a black fade-in; Session / same-location Transport: a 60-tick white fade under the HUD'); }
 // R27. No rider at its bind pose (pv riderPoseGate, docs/ctm-flow.md "T-poses on the first load"): the placeholder RIDER_SAM of every course
 //      load and a newly loaded rider start hidden (the held transport loop draws the scene across a world switch, where the frame's
 //      visibility pass does not run: the field probe's 26-bone hit at 'loading', PEAK1/1), and in the ride screens the rider draws once a
 //      tick has posed it (a switch's first ride frame drew the career rider at its bind pose, in view).
-{ const main = fs.readFileSync(new URL('main.js', import.meta.url), 'utf8');
-  check(/if\(pv\('riderPoseGate'\)\)sam\.visible=false;scene\.add\(sam\);/.test(main) && /sam=model;if\(pv\('riderPoseGate'\)\)sam\.visible=false;/.test(main)
-    && /!\(pv\('riderPoseGate'\)&&!currentRiderFrame&&\(readyScreen\(\)\|\|/.test(main) && PV_DEFAULTS.riderPoseGate === true,
-    'rider pose gate: the placeholder and a new rider start hidden, the ride shows the rider once posed (riderPoseGate on)'); }
+{ const main = sourceOf('main.js');
+  check(/sam\.visible=false;scene\.add\(sam\);/.test(main) && /sam=model;sam\.visible=false;/.test(main)
+    && /!\(!currentRiderFrame&&\(readyScreen\(\)\|\|/.test(main),
+    'rider pose gate: the placeholder and a new rider start hidden, the ride shows the rider once posed'); }
 // R28. The freestyle finish panel (pv finishLui): OV.LUI finishov as 0x1E8200 sets it up (the run label by round, 'place%d' / place6,
 //      pointstotal, the medal of a final or Rival Points career run, new_record, Menu0000 hidden), frame 1 two ticks after the 3 s mark.
 //      PS2 pipe-finishov2 4589..4634: panel MAD 12.6-39.7 -> 2.1-8.4 in Chrome and WebKit.
-{ const cu = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8'), amp = new URL('public/assets/UI/audio-menus.json', import.meta.url);
+{ const cu = sourceOf('career-ui.js'), amp = new URL('public/assets/UI/audio-menus.json', import.meta.url);
   const lui = fs.existsSync(amp) ? JSON.parse(fs.readFileSync(amp, 'utf8')).screens?.finishov : null;
   const labels = lui ? new Set(lui.elements.map((e) => e.label)) : null;
   const need = ['Menu0000', 'firstrun', 'secondrun', 'finalrun', 'place1', 'place6', 'pointstotal', 'new_record', 'gold', 'silver', 'bronze', 'platinum'];
-  check((!labels || need.every((n) => labels.has(n))) && /if\(pv\('finishLui'\)&&this\.finishLui\(c,ev,score,t,place,rival\)\)return;/.test(cu)
+  check((!labels || need.every((n) => labels.has(n))) && /if\(this\.finishLui\(c,ev,score,t,place,rival\)\)return;/.test(cu)
     && /const frame=Math\.min\(45,t\*60-2\),events=\[\];if\(frame<1\)return true;/.test(cu) && /round===2\?'secondrun':round===3\?'finalrun':'firstrun'/.test(cu)
     && /if\(ev\.career&&\(round===3\|\|ev\.mode===MODE\.RIVAL_POINTS\)\)\{medal=placementMedal\(ev\.mode,place-1\);/.test(cu)
-    && /n==='place'\+Math\.min\(6,place\)/.test(cu) && PV_DEFAULTS.finishLui === true,
+    && /n==='place'\+Math\.min\(6,place\)/.test(cu),
     `finish panel from OV.LUI finishov${labels ? '' : ' (audio-menus.json without finishov yet: elements not checked)'} (finishLui on)`); }
 // R29. The lodge's Trophies (pv trophyLui, section 36): FE.LUI 125mountainroom / 126peakroom / 127trophyroom with their states' rules
 //      (0x1D2990.., 0x1D3890.., 0x1D4368..): the goal rows of table 0x45AAD8 named as 0x1CE758 names them, the medals (0x1CED90), the
@@ -595,9 +591,9 @@ else {
       && help[1].startsWith('LOCKED:') && help[2].startsWith('LOCKED:') && help[3] === 'View current peak pass.',
       'Trophies markers (0x1D3340: medal earned on the five medalled standard events, PS2 trophy-medals f380), menu and help by focus');
   }
-  const lodge = fs.readFileSync(new URL('lodge-ui.js', import.meta.url), 'utf8');
-  check(/if\(this\.trophyLui\(s\)&&this\.trophies\.draw\(c,b\)\)return;/.test(lodge) && /trophyLui\(s\)\{return pv\('trophyLui'\)&&this\.trophies\.owns\(s\);\}/.test(lodge) && PV_DEFAULTS.trophyLui === true,
-    `lodge Trophies drawn from FE.LUI 125 / 126 / 127${lui ? '' : ' (character-select.json without the trophy screens yet: markers not checked)'} (trophyLui on)`); }
+  const lodge = sourceOf('lodge-ui.js');
+  check(/if\(this\.trophyLui\(s\)&&this\.trophies\.draw\(c,b\)\)return;/.test(lodge) && /trophyLui\(s\)\{return this\.trophies\.owns\(s\);\}/.test(lodge),
+    `lodge Trophies drawn from FE.LUI 125 / 126 / 127${lui ? '' : ' (character-select.json without the trophy screens yet: markers not checked)'}`); }
 // R30. The lodge's Save Game (pv lodgeSave, section 37): cFEStateProfileLoad mode 3 (0x1F3A38 menu value 8) on FE.LUI 93profile_load
 //      with the browser's card (one save), the name keyboard, then the memory-card popups: Checking, overwrite? (No focused), Saving,
 //      Save complete. / Continue back to the lodge on Save Game (or where Options > Save/Load opened it). The popups: cFEPopup's own
@@ -626,9 +622,9 @@ else {
   g.open(); key('Enter'); key('Escape'); const cancel = g.phase === 'list' && !fe.keyboard; key('Enter'); key('Enter'); clock += 61; g.tick(); key('Enter'); const no = g.phase === 'list' && persisted === 1;
   card = false; const blocked = g.items().length === 0; key('Enter'); const stay = g.phase === 'list' && !fe.keyboard; key('Escape');
   check(cancel && no && blocked && stay && ui.screen === 'ctm-lodge', 'Save Game: Triangle leaves the keyboard, No keeps the save, no card (storage blocked) = no rows, Triangle back to the lodge');
-  const lodge = fs.readFileSync(new URL('lodge-ui.js', import.meta.url), 'utf8'), cui = fs.readFileSync(new URL('career-ui.js', import.meta.url), 'utf8');
-  check(/if\(this\.saveLui\(s\)&&this\.saveGame\.draw\(c,b\)\)return;/.test(lodge) && /else if\(i===6\)\{if\(pv\('lodgeSave'\)&&this\.lodge\.saveGame\?\.ready\(\)\)this\.lodgeGo\(\(\)=>this\.lodge\.saveGame\.open\(\)\);/.test(cui) && PV_DEFAULTS.lodgeSave === true,
-    'lodge Save Game opens the Save game screen (lodgeSave on)'); }
+  const lodge = sourceOf('lodge-ui.js'), cui = sourceOf('career-ui.js');
+  check(/if\(this\.saveLui\(s\)&&this\.saveGame\.draw\(c,b\)\)return;/.test(lodge) && /else if\(i===6\)\{if\(this\.lodge\.saveGame\?\.ready\(\)\)this\.lodgeGo\(\(\)=>this\.lodge\.saveGame\.open\(\)\);/.test(cui),
+    'lodge Save Game opens the Save game screen'); }
 // R31. The front end's popup box (pv fePopup, section 39): cFEPopup's layout (0x1C6B08 .. 0x1C7C20, web/fe-popup.js) reproduces the live
 //      popup objects of the PS2 captures (+0x260 size, +0x278 scale, the menu at +0x290 and the frame parts' y) for the overwrite question
 //      (save-s7), Save complete. (s4 / s8), the format question (s3) and the lodge's Quit / Save progress questions; the lodge's questions
@@ -646,9 +642,9 @@ else {
   const step = (k, t) => 0.2 + k * (t - 0.2) / 24;
   check(ok && near2(textBox(G, 'Yes', 0.6), 32.4, 0.01) && near2(textBox(G, 'Continue', 0.6), 81.6, 0.01) && near2(step(7, 0.6667), 0.3361, 0.0002) && near2(step(15, 0.6667), 0.4917, 0.0002) && near2(step(25, 0.6667), 0.6861, 0.0002),
     'FE popup layout as cFEPopup computes it (the PS2 popup objects of save-s3/s4/s7/s8 and lodge-quitprompt; the confirm popup\'s growth steps)');
-  const fes = fs.readFileSync(new URL('fe-screens.js', import.meta.url), 'utf8'), fsl = fs.readFileSync(new URL('fe-saveload.js', import.meta.url), 'utf8');
-  check(/if \(pv\('fePopup'\) && this\.data\?\.screens\?\.popup\) \{/.test(fes) && /animated: true \}\);/.test(fes) && /if \(i === 0 && pv\('lodgeSave'\) && this\.ui\.careerUI\?\.lodge\?\.saveGame\?\.ready\(\)\)/.test(fsl) && PV_DEFAULTS.fePopup === true,
-    'the lodge\'s Yes / No questions drawn as cFEPopup (fePopup on); Options > Save/Load Save game opens the Save game screen'); }
+  const fes = sourceOf('fe-screens.js'), fsl = sourceOf('fe-saveload.js');
+  check(/if\(this\.data\?\.screens\?\.popup\)\{/.test(fes) && /animated:true\}\);/.test(fes) && /if\(i===0&&this\.ui\.careerUI\?\.lodge\?\.saveGame\?\.ready\(\)\)/.test(fsl),
+    'the lodge\'s Yes / No questions drawn as cFEPopup; Options > Save/Load Save game opens the Save game screen'); }
 // R32. Lit LiveComp instances (pv litLiveComp, section 40): authored descriptor flag 0x40000000 is runtime flag 0x4000 in every countdown
 //      audit, and 37E238 (0x37E3B8) -> 2F5148 -> 2F5400 lights such an instance per vertex from its light cache on the node-rotated normal
 //      (VU1 program 3 0x8B8), over the baked colours. PS2 RAM: the ERA5 crash billboards' cache entries (grav-bb tick1209, 0xACC2D0 /
@@ -668,10 +664,10 @@ else {
   const era5 = lc('ERA5'), cra3 = lc('CRA3'), lit = (list) => list.filter((x) => x.lighting).map((x) => x.resource).join();
   check(flagged(era5) && flagged(cra3) && lit(era5) === '332333,669741' && lit(cra3) === '39960' && era5.filter((x) => x.lighting).every((x) => rowsOk(x.lighting, EOBR1)) &&
     rowsOk(cra3.find((x) => x.lighting).lighting, COBR1), 'lit LiveComps (authored flag 0x40000000) carry their object bank as the PS2 light cache holds it (ERA5 EOBR1, CRA3 COBR1)');
-  const spr = fs.readFileSync(new URL('set-pieces-renderer.js', import.meta.url), 'utf8'), wm = fs.readFileSync(new URL('world-material.js', import.meta.url), 'utf8');
-  check(/if \(pv\('litLiveComp'\) && liveData\?\.instances\)/.test(spr) && /mesh\.material = litWorldMaterial\(mesh\.material, l\)/.test(spr) &&
-    /const L=varying\(floor\(clamp\(acc,0,255\)\)\)/.test(wm) && /frameBytes\(floor\(base\.rgb\.mul\(L\)\.div\(128\)\)\)/.test(wm) && PV_DEFAULTS.litLiveComp === true,
-    'lit LiveComp meshes drawn with Cs = T x L >> 7 from the per-vertex bank (litLiveComp on)'); }
+  const spr = fs.readFileSync(new URL('set-pieces-renderer.js', import.meta.url), 'utf8'), wm = sourceOf('world-material.js');
+  check(/if \(liveData\?\.instances\)/.test(spr) && /mesh\.material = litWorldMaterial\(mesh\.material, l\)/.test(spr) &&
+    /const L=varying\(floor\(clamp\(acc,0,255\)\)\)/.test(wm) && /frameBytes\(floor\(base\.rgb\.mul\(L\)\.div\(128\)\)\)/.test(wm),
+    'lit LiveComp meshes drawn with Cs = T x L >> 7 from the per-vertex bank'); }
 // R33. The lodge's screen changes (pv lodgeFlash, section 42): an FE state change (0x39F400) plays the old state's TransitionOut, whose
 //      control 0x30 starts transition_flash (white A up over 10 frames, down over 9) and whose end label's 0x41 (0x39CE98, 9 frames on)
 //      makes the switch; the new state's LUI plays its intro from frame 0, its menu focus from the intro's 0x42 label (frame 25). PS2
@@ -686,11 +682,11 @@ else {
     'lodge flash: A = t / 10 up, the switch at full white once, A down over 9, then idle; one change at a time');
   T = 100; f.flash = null; f.fall(); const fallOnly = a(100) === 1 && Math.abs(a(104.5) - 0.5) < 1e-9 && (a(109), !f.active);
   const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8');
-  const cui = src('career-ui.js'), lui = src('lodge-ui.js'), tro = src('trophy-room.js'), sav = src('save-game.js'), fes = src('fe-screens.js');
+  const cui = sourceOf('career-ui.js'), lui = sourceOf('lodge-ui.js'), tro = sourceOf('trophy-room.js'), sav = sourceOf('save-game.js'), fes = sourceOf('fe-screens.js');
   check(fallOnly && /else if\(i===4\)this\.lodgeGo\(\(\)=>ui\.set\('ctm-details'\)\)/.test(cui) && /if\(this\.lodgeFlashing\(s\)\)\{e\.preventDefault\(\);return true;\}/.test(cui) &&
-    /if\(s==='ctm-details'\)\{this\.cs\.lodgeGo\(/.test(lui) && /go\(to\) \{ const cs = this\.lodge\.cs; if \(cs\?\.lodgeGo\) cs\.lodgeGo\(to\); else to\(\); \}/.test(tro) &&
-    /const cs = this\.lodge\.cs; if \(cs\?\.lodgeGo\) cs\.lodgeGo\(to\); else to\(\);/.test(sav) && /if \(this\.lodgeFlash\(\)\) \{ this\.ui\.careerUI\.lodgeGo\(to\); return; \}/.test(fes) && PV_DEFAULTS.lodgeFlash === true,
-    'every lodge LUI screen change goes through the flash: the lodge, Rider Details, Trophies, Save Game, Highlights, the FE screens it opens (lodgeFlash on)'); }
+    /if\(s==='ctm-details'\)\{this\.cs\.lodgeGo\(/.test(lui) && /go\(to\)\{const cs=this\.lodge\.cs;if\(cs\?\.lodgeGo\)cs\.lodgeGo\(to\);else to\(\);\}/.test(tro) &&
+    /const cs=this\.lodge\.cs;if\(cs\?\.lodgeGo\)cs\.lodgeGo\(to\);else to\(\);/.test(sav) && /if\(this\.lodgeFlash\(\)\)\{this\.ui\.careerUI\.lodgeGo\(to\);return;\}/.test(fes),
+    'every lodge LUI screen change goes through the flash: the lodge, Rider Details, Trophies, Save Game, Highlights, the FE screens it opens'); }
 // R34. The lodge's states (section 42): the menu cursor kept per state (pv stateCursor: 0x1865A8 -> 1A0708 on exit, 0x186518 ->
 //      1A06F0 / 39B960 on activation for the lodge, Rider Details, Buy Attributes, Trophies' mountain room; PS2 tout-kbd: Rider Details
 //      reopens on Trophies), the new state's intro 2 frames in when it shows (pv introLead: 0x39ED4C + the phase-4 tail 0x39EED4) and its
@@ -705,11 +701,11 @@ else {
   T = 125; g.draw(c); const held = g.flash?.wait === true && c.fillStyle === 'rgba(255,255,255,1)'; resolve(); await Promise.resolve(); await Promise.resolve();
   const fell = !g.flash?.wait && Math.abs(g.alpha() - 1) < 1e-9 && g.switchedAt === 125;
   check(lead && held && fell && ba.FLASH_IN === FLASH_IN && ba.flashAlpha(5) === 0.5, 'lodge states: intro 2 frames in at the switch, full white while the next screen loads, Buy Attributes on lui-flash.js');
-  const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8'), cui = src('career-ui.js'), lui = src('lodge-ui.js'), war = src('wardrobe.js'), bat = src('buy-attribs.js');
+  const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8'), cui = sourceOf('career-ui.js'), lui = sourceOf('lodge-ui.js'), war = sourceOf('wardrobe.js'), bat = sourceOf('buy-attribs.js');
   check(/const CURSOR_STATES=new Set\(\['ctm-lodge','ctm-details','ctm-trophies','ctm-attributes'\]\)/.test(cui) && /lodgeGo\(to\)\{const run=\(\)=>\{this\.memoCursor\(\);const r=to\(\);/.test(cui) &&
     /else if\(i===1\|\|i===2\)this\.lodgeGo\(\(\)=>this\.lodge\.openGear/.test(cui) && /onExit:\(\)=>this\.cs\.lodgeGo\(/.test(lui) && /this\.ui\.careerUI\?\.lodgeFlash\?\.draw\(c\)/.test(war) &&
-    /if \(pv\('lodgeFlash'\) && this\.cu\.lodgeGo\) \{ this\.cu\.lodgeGo\(to\); return; \}/.test(bat) && !/openKeyboard\('name'\)\)|lodgeGo\(\(\)=>fe\.openKeyboard/.test(lui) &&
-    PV_DEFAULTS.stateCursor === true && PV_DEFAULTS.introLead === true, 'lodge states: cursor memory, gear and Buy Attributes through the flash, the keyboard not (stateCursor, introLead on)'); }
+    /if\(this\.cu\.lodgeGo\)\{this\.cu\.lodgeGo\(to\);return;\}/.test(bat) && !/openKeyboard\('name'\)\)|lodgeGo\(\(\)=>fe\.openKeyboard/.test(lui) &&
+    true, 'lodge states: cursor memory, gear and Buy Attributes through the flash, the keyboard not'); }
 // R35. Lit static-model instances (pv litInstances, section 40): each lit instance's light-cache rows (2F5400: the object bank of the
 //      painter payload at its x/y plus up to 4 local lights ranked there, 2F5AF0 / 2F5B68 capacity 4 / 38A6A8; engine/lit_instance_lighting.hpp,
 //      tools/export_lit_instances.py) on its own batches, drawn by one shared program with the rows as object uniforms. PS2 light caches in
@@ -719,15 +715,15 @@ else {
   const bag = w.batches.find((b) => b.lighting?.resource === 46637), r0 = bag?.lighting?.rows?.[0] ?? [];
   const exact = [0.5109544, 0.6061056, 1.0957082].every((v, i) => Math.abs(r0[i] - v) < 1e-6) && bag.lighting.bank === 'EOBR1';
   const lit = new Set(w.batches.filter((b) => b.lighting).map((b) => b.lighting.resource));
-  const wm = fs.readFileSync(new URL('world-material.js', import.meta.url), 'utf8'), wb = fs.readFileSync(new URL('world-batches.py', import.meta.url), 'utf8');
-  check(exact && lit.size === 29 && /uniform\(new Vector3\(\)\)\.onObjectUpdate\(\(frame\)=>frame\.material\?\.userData\?\.litRows/.test(wm) &&
-    /const lit=batch\.instance&&batch\.lighting&&pv\('litInstances'\)/.test(wm) && /if lit is not None:batch\['lighting'\]=lit_resources\[lit\]/.test(wb) && PV_DEFAULTS.litInstances === true,
+  const wm = sourceOf('world-material.js'), wb = fs.readFileSync(new URL('world-batches.py', import.meta.url), 'utf8');
+  check(exact && lit.size === 29 && /uniform\(new Vector3\(\)\)\.onObjectUpdate\(\(?frame\)?=>frame\.material\?\.userData\?\.litRows/.test(wm) &&
+    /const lit=batch\.instance&&batch\.lighting,/.test(wm) && /if lit is not None:batch\['lighting'\]=lit_resources\[lit\]/.test(wb),
     'lit instances: the PS2 light-cache rows on their batches (ERA5: 29 instances), one shared lit program (litInstances on)'); }
 // R36. The lodge's Equip Gear load (pv equipLoading, section 42; PS2 local/ps2-capture/menus/eqg-k*, eqg2-k*): no white hold, the screen is
 //      up at the switch with "Loading..." over the list; phase 3 (the intro's 0x42 label + FOCUS_LAG: CharEquip vt+0x30 = 0x1993A0, 19E538
 //      (slot, 1)) shows the rider once loaded, 36 frames after Cross on the PS2 (37 after the flash's 2-frame lead), "Loading..." one frame
 //      later; a reload hides it again; the help line waits for the outfit's data (+0xA60).
-{ const { EquipGearScreen } = await import('./wardrobe.js'); setPv('equipLoading', true);
+{ const { EquipGearScreen } = await import('./wardrobe.js');
   let T = 0; const p = { failed: new Set(), model: null, shown: null, isReady: true, want() { return true; }, get ready() { return this.isReady; }, show(v) { this.shown = v; } };
   const g = new EquipGearScreen({ characterSelect: { preview3d: p } }); g.now = () => T; g.base = { id: 'zoe', package: 'RIDER_ZOE' }; g.enter = 8; g.T = {};
   g.data = { screen: { labels: [{ frame: 25, control: ['4200080000000000', '10000400'] }] } }; g.preparing = { promise: Promise.resolve() };
@@ -736,10 +732,9 @@ else {
   T = 35; g.showPreview(); const first = p.shown === true && g.settled() && g.loadingText();
   T = 36; g.showPreview(); const next = p.shown === true && !g.loadingText();
   p.isReady = false; T = 50; g.showPreview(); const reload = p.shown === false && g.loadingText();
-  setPv('equipLoading', false); const off = g.settled(); setPv('equipLoading', null);
-  const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8'), lui = src('lodge-ui.js'), cui = src('career-ui.js'), war = src('wardrobe.js');
-  check(building && early && first && next && reload && off && /preloadGear\(\)\{/.test(lui) && /if\(pv\('equipLoading'\)\)this\.lodge\.preloadGear\?\.\(\)/.test(cui) &&
-    /case '0b777dd4':return settled\?null:\{hidden:true\}/.test(war) && PV_DEFAULTS.equipLoading === true,
-    'Equip Gear load: the screen at the switch, "Loading..." until the rider draws from phase 3, no help until the outfit is in (equipLoading on)'); }
+  const src = (n) => fs.readFileSync(new URL(n, import.meta.url), 'utf8'), lui = sourceOf('lodge-ui.js'), cui = sourceOf('career-ui.js'), war = sourceOf('wardrobe.js');
+  check(building && early && first && next && reload && /preloadGear\(\)\{/.test(lui) && /this\.lodge\.preloadGear\?\.\(\)/.test(cui) &&
+    /case '0b777dd4':return settled\?null:\{hidden:true\}/.test(war),
+    'Equip Gear load: the screen at the switch, "Loading..." until the rider draws from phase 3, no help until the outfit is in'); }
 if (failed) { console.error(`${failed} visual-parity check(s) failed`); process.exit(1); }
 console.log('visual parity: all checks passed');
