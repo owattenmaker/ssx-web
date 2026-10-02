@@ -1,4 +1,3 @@
-import { detectDevice, loadSaved, resolveQuality } from './quality.js';
 // Rollout switches (AGENTS.md "Shared tree"). The tree deploys as it stands, so a change that is not verified yet sits behind
 // a switch here, default off, until it is checked against the PS2 (frames, captures) and in WebKit and Chrome; then its default flips,
 // and once it has been on through a few deploys the switch and its off path are deleted (2026-09-30 cleanup: 216 -> 40).
@@ -95,6 +94,9 @@ import { detectDevice, loadSaved, resolveQuality } from './quality.js';
 // LiveComp, the sound loops, the heli snow spray, SetNodeState), with the recorded cleanup at the step end. Before, they were dropped.
 // gcWatchdog (memory, WebKit only; docs/mobile.md "Hangs"): web/gc-watchdog.js. When JavaScriptCore has stopped running full collections
 // (a load-time full GC left its timer unarmed: the WebKit memory runaway), a few one-page WebAssembly.Memory objects make it run one.
+// The in-world CTM events (worldUnderCuts, eventWorldData, eventInWorld, eventInWorldAi, nisSectionPoint, eventReturnInWorld) and
+// returnGC: on for every tier (2026-10-01, coordinator; desktop first, then phones with returnGC). The event-load CTM path stays as the
+// fallback for one release (?pv=-eventInWorld).
 // worldUnderCuts (docs/ctm-events-in-world.md stage 1, section 6.2 / 6.8): the world ticks under the CTM cuts as on the PS2, the human held by
 // the cut's rider actor (core nis_hold) instead of a HOLD context that stopped the simulation:
 // - WS1 (the event gate's fly-over in the streamed world): no 'WS1 ride-in' HOLD; the rider rides the 30-tick fade in its own control, then
@@ -126,7 +128,8 @@ import { detectDevice, loadSaved, resolveQuality } from './quality.js';
 // collectNow, the coreTracker's markers) after an in-world event, while the results' Transport map holds the world (WS14; no ride
 // frame). The in-world path has no course
 // switch, so nothing brought JSC's heap back down: WebKit Malloc stepped +300 MB once and stayed (phone policy, 8 cycles: medians
-// ~1330 MB against the event-load path's ~820-970). With a collection at each return: 941-983 MB, flat, WebKit Malloc 570-615. A core
+// ~1330 MB against the event-load path's ~820-970). With it at the map: medians 951-983 MB over 8 cycles, flat, WebKit Malloc 583-594,
+// cycle peaks <= 1059; the collection takes ~150 ms of 50 ms steps, the longest map frame 34 ms (none over 50). A core
 // instantiation waits for a running one (its kick memories dropped first: iOS has 3 fast-memory slots). Off: no collection there.
 // switchGC (memory, WebKit only; docs/mobile.md "Load spikes"): web/switch-gc.js. Before a course's new core is made, while an earlier
 // course's core is still alive (JavaScriptCore frees a wasm memory only in a full collection), the gc-watchdog kick asks for one.
@@ -178,15 +181,15 @@ export const PV_DEFAULTS = Object.freeze({
   transportFade: false,
   departCalls: false,
   gcWatchdog: true,
-  worldUnderCuts: false,
-  eventWorldData: false,
-  eventInWorld: false,
-  eventInWorldAi: false,
-  nisSectionPoint: false,
-  eventReturnInWorld: false,
+  worldUnderCuts: true,
+  eventWorldData: true,
+  eventInWorld: true,
+  eventInWorldAi: true,
+  nisSectionPoint: true,
+  eventReturnInWorld: true,
   loadCopies: false,
   switchGC: false,
-  returnGC: false,
+  returnGC: true,
   padCarry: true,
   heatRoles: true,
   onlineRecords: true,
@@ -194,24 +197,6 @@ export const PV_DEFAULTS = Object.freeze({
   careerLevel: true,
   semiFresh: true
 });
-// Desktop-tier switches (CTM agent, 2026-10-01; docs/ctm-events-in-world.md "Turning it on"): the in-world CTM events. On for the desktop
-// tier, off on a phone: the old mountainRide split (docs/ctm-parity.md "The whole mountain"), not iOS / Android and not the low quality
-// tier (the effective one at page load: ?quality=, the saved choice, the device's). PV_DEFAULTS holds their phone value (off); ?pv=
-// overrides as for every switch. Node harnesses (no page) keep PV_DEFAULTS. The event-load CTM path stays as the phones' path and the
-// fallback for one release.
-export const PV_DESKTOP = Object.freeze(['worldUnderCuts', 'eventWorldData', 'eventInWorld', 'eventInWorldAi', 'nisSectionPoint', 'eventReturnInWorld']);
-export function desktopTier(env = globalThis) {
-  if (!env.location) return false;
-  try {
-    const device = detectDevice(env),
-      q = resolveQuality(device, loadSaved(env.localStorage), new URLSearchParams(env.location.search ?? ''));
-    return !device.ios && !device.android && q.tier !== 'low';
-  } catch {
-    return false;
-  }
-}
-const desktop = desktopTier();
-const defaultOf = (k) => (desktop && PV_DESKTOP.includes(k) ? true : PV_DEFAULTS[k]);
 const overrides = new Map();
 function fromQuery() {
   // node harnesses: SSX_PV=name,-name (the page's ?pv= syntax) when there is no page URL
@@ -220,7 +205,7 @@ function fromQuery() {
   const all = (on) => new Map(Object.keys(PV_DEFAULTS).map((k) => [k, on]));
   if (q === '1' || q === 'all') return all(true);
   if (q === '0' || q === '') return all(false);
-  const out = new Map(Object.keys(PV_DEFAULTS).map((k) => [k, defaultOf(k)]));
+  const out = new Map(Object.entries(PV_DEFAULTS));
   for (const w of q.split(',')) { const off = w.startsWith('-'), k = off ? w.slice(1) : w; if (k in PV_DEFAULTS) out.set(k, !off); }
   return out;
 }
@@ -228,7 +213,7 @@ const query = fromQuery();
 export function pv(name) {
   if (!(name in PV_DEFAULTS)) throw new Error(`Unknown presentation switch ${name}`);
   if (overrides.has(name)) return overrides.get(name);
-  return query ? query.get(name) : defaultOf(name);
+  return query ? query.get(name) : PV_DEFAULTS[name];
 }
 // Tests: force a switch (null restores the default / query).
 export function setPv(name, on) { if (on == null) overrides.delete(name); else overrides.set(name, !!on); }

@@ -962,6 +962,18 @@ and there are no world loads (3 course loads, all at boot).
   in Chrome.
 - The station preload in WebKit (pv nisPreload): the booth's t 0 pose is there in the firing tick (off: 26 ticks after the hold).
 
+**Memory by footprint category, and pv returnGC (2026-10-01; memevent.mjs CATS=1, WebKit phone policy, 8 cycles, core-rcam).**
+- In-world, no collection: WebKit Malloc steps +300 MB once (cycle 1 or 4: 624 -> 921) and stays (900-985). The medians are about 1330.
+- Event-load (today's phone path): medians 818-994, WebKit Malloc 516-560. It steps too (cycle 6: 842), then drops at its next course
+  switch. Peaks 1059-1281 (each gate's load).
+- In-world with 64 one-page wasm memories made 3 s after each return (QA KICK=1): medians 941-983, WebKit Malloc 570-615, no step. So
+  the step is JSC heap headroom that nothing collected, not memory still held: the in-world path has no course switch.
+- pv returnGC (off): web/switch-gc.js collectNow when the results' Transport map opens (career-ui.js transportAfterEvent ->
+  ui.cb.eventMapShown), the world held (WS14). Measured, 8 cycles: medians 951-983 MB, flat; WebKit Malloc 583-594; cycle peaks
+  <= 1059; lifetime peak 1450 (boot). Each collection was full in 50-158 ms (1-3 memories). Longest frame over the map 23-34 ms,
+  in the ride's first 4 s after the return 20-41 ms; none over 50 ms. newCore waits for a running collection (its memories dropped
+  before any instantiation: iOS's 3 fast-memory slots).
+
 **In-world WS13 on the page (superseded 2026-10-01: see "The page's in-world WS13" above).**
 - The results' Restart and Next heat call ui.cb.cutscene({kind: 'heat'}). In a free-ride course that kind is not in the playable
   list (main.js cb.cutscene), so the gondola never plays: the card opens at once, over the rider where it gave up.

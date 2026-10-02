@@ -23,7 +23,7 @@ export const SNAPSHOT_KEEP = {
   sectionTemplate: STATIC + ' (the section list template)',
   // rider model / animation tables
   trickNameTables: 'constant tables', scoreRules: 'constant tables', sourceSkinBind: 'the rider model',
-  sourceSkinGroups: 'the rider model', sourceSkinIndices: 'the rider model', fastSkinBones: 'the rider model',
+  sourceSkinGroups: 'the rider model', sourceSkinIndices: 'the rider model',
   // (resetPaths / evictedResetPaths are snapshotted: a location unload changes them, peak3/fr-throne-unload)
 };
 // The snapshot hooks' own storage (web/world_bridge.cpp, stage_script_gameplay.inc, avalanche_gameplay.inc): neither restored nor
@@ -37,6 +37,9 @@ export const SNAPSHOT_CURRENT = {
   trailVisualRandom: 'the LCG gp+0xA0C',
   // the rider model's skinning of the drawn frame: re-derived by the next pose (the PS2's restore re-poses, 0x312598 / 0x3103F0)
   sourceSkinMatrices: 'the drawn frame\'s skin matrices', sourcePalette: 'the drawn frame\'s skin palette',
+  // presentationFast's (the low tier's) skin matrices of the drawn frame, rebuilt with each new animation tick (animation_bridge.cpp
+  // rider_skin_palette); kept, the phone tier's replay failed the keep check (it changes every frame)
+  fastSkinBones: 'the drawn frame\'s fast-path skin matrices',
   // the streaming's event queue, drained by the page every frame (web/peak_world.inc): a restore would hand it stale events
   'peak_stream::events': 'the streamed world\'s event queue (allpeak/apr-start and peak3/fr-throne-unload change it)',
   // the replay view (web/replay_camera.inc): 0x26D818 / 0x26DBF0 hold neither the camera trigger manager 0x4C5830 (the loaded triggers,
