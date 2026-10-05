@@ -14,7 +14,8 @@ import { pv } from './pv-flags.js';
 const SHARE_MS = 5000, IDLE_RESET_MS = 700;
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const shared = new Map(); // url -> Promise<{status, statusText, headers, bytes}>
-const state = { active: 0, files: 0, received: 0, expected: 0, since: 0, idleAt: 0 };
+// total: every body byte received in the page, never reset (a retry's bytes count again): the load screens' meter (pv loadMeter)
+const state = { active: 0, files: 0, received: 0, expected: 0, since: 0, idleAt: 0, total: 0 };
 export const downloadState = state;
 // Per-file bytes as they stream (url, received, decoded size or 0): the title's load meter (web/boot-screen.js via main.js).
 const byteListeners = new Set();
@@ -71,6 +72,7 @@ async function downloadOnce(url) {
       else { if (whole) { chunks.push(whole.subarray(0, got)); whole = null; } chunks.push(value); } // the size was wrong: chunks from here
       got += value.length;
       state.received += value.length;
+      state.total += value.length;
       if (!length) state.expected = Math.max(state.expected, state.received);
       for (const fn of byteListeners)
         try {
@@ -219,6 +221,8 @@ export function downloadProgress(now = performance.now()) {
   return {
     active: state.active > 0,
     received: state.received,
+    // every body byte so far in the page (pv loadMeter)
+    total: state.total,
     expected: total,
     files: state.files,
     fraction: total ? Math.min(1, state.received / total) : 1,

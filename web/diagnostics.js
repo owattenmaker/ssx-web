@@ -293,7 +293,8 @@ push('pagehide', { persisted: e.persisted || undefined, ...memory(), audio: audi
         if (stall ? stalls < 20 : hitches < 30) {
           if (stall) stalls++; else hitches++;
           const cause = stallCause(busyMs); let lt = 0; for (const [a, d] of longTasks) lt += Math.max(0, Math.min(a + d, t) - Math.max(a, lastFrame)); if (lt) cause.longTaskMs = Math.round(lt);
-          push(stall ? 'stall' : 'hitch', { ms: Math.round(gap), ...memory(), cause });
+          // pv loadMeter: the load screen's stage under way (web/loading-screen.js trackStage), if any
+          push(stall ? 'stall' : 'hitch', { ms: Math.round(gap), ...memory(), cause, loadStage: globalThis.ssxLoadStage || undefined });
         }
       }
     }
@@ -374,7 +375,8 @@ let tick=0;setInterval(()=>{const now=Date.now();if(tick&&now-tick>3000)lastAt=n
           mark: lastMark,
           step: r ? `${r.kind}${r.to ? ':' + r.to : r.message ? ':' + r.message : ''}` : '',
           marks: recentMarks,
-          recent: steps
+          recent: steps,
+          loadStage: globalThis.ssxLoadStage || undefined
         }
       });
     };

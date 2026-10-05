@@ -317,6 +317,7 @@ const ui = new OriginalUI({
     const meter = ui.loading;
     return (lazyPending() ? courseLive() : Promise.resolve())
       .then(async () => {
+        meter.done('lazyFiles');
         meter.done('course');
         meter.begin('rider');
         if (riderStale()) await selectRider(selectedRider.entry);
@@ -333,18 +334,24 @@ const ui = new OriginalUI({
       })
       .then(() => {
         meter.done('lineup');
+        // the riders' packages are in once the lineup is set up
+        meter.done('eventFiles');
         meter.begin('warm');
         prefetchIntro();
-        return warmupRender(ui.warmFramesDone, { progress: (f) => meter.step('warm', f) });
+        return warmupRender(ui.warmFramesDone, { progress: (f, count) => meter.step('warm', f, 0, count) });
       })
       .finally(() => meter.done('warm'));
   },
   // pv loadMeter: the event load's stages before the intro's (web/load-meter.js STAGE_MS): the course still loading behind the menus,
   // weighted by its share left, then the rider, the lineup and the warm-up
   loadStages: () => {
+    // the lazy course: its files and its build, by the share of it left (the build's progress: courseProgress, workFraction)
     const left = lazyPending() ? 1 - (globalThis.ssxBoot?.courseProgress?.target().fraction ?? 0) : 0;
-    const course = left > 0 ? [['course', Math.round(STAGE_MS.lazyCourse * left)]] : [];
-    return [...course, 'rider', 'lineup', 'warm'];
+    const lazyBytes = Math.round(left * expectedBytes('course', course?.code));
+    const lazy = left > 0 ? [['lazyFiles', { bytes: lazyBytes }], ['course', Math.round(left * STAGE_MS.course)]] : [];
+    // after a course switch (its plan's PENDING share) the riders' files counted with the course's
+    const files = ui.loading.session?.meter?.has(PENDING) ? [] : [['eventFiles', { bytes: eventBytes() }]];
+    return [...lazy, ...files, 'rider', 'lineup', 'warm'];
   },
   // FE rider speech (web/rider-speech.js)
   speech: (bank, options) => gameAudio.speak(bank, options),
@@ -3339,6 +3346,14 @@ function prefetchLineup(ev) {
 }
 /* the event intro's scripts and animation banks (web/cutscenes.js prepareData), under the warm-up */
 function prefetchIntro() {
+  // pv loadMeter: what the first seconds after the load screen fetched (cold-profile traces, docs/loading-screen.md "Everything under
+  // the screen"): the card's cutscene bank and the replay's camera triggers (prepare at the run's start), kept until taken
+  if (pv('loadMeter') && course && !course.freeRide) {
+    const keep = { keepMs: 120000 };
+    prefetchDownload(`/assets/CUTSCENES/banks/scdat_${course.code}.json`, keep);
+    prefetchDownload(`/assets/CUTSCENES/banks/scdat_${course.code}.bnk`, keep);
+    prefetchDownload(`/assets/${course.code}/camera-triggers.json`, keep);
+  }
   if (!cutscenes?.prepareData || course?.freeRide || mpGame?.racing || ui.mpUI?.racing) return;
   cutscenes
     .prepareData({
@@ -3417,6 +3432,7 @@ function lazyStart(first, params) {
   if (params.has('qa')) startLazyCourse();
 }
 function startLazyCourse() {
+  loadFilesLoad();
   if (!lazyBoot || lazyBoot.started) return;
   lazyBoot.started = true;
   if (live || switchTarget) return;
@@ -4405,6 +4421,8 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       variant = (o) =>
         `${Array.isArray(o.material) ? o.material.map((m) => m.id).join(',') : o.material?.id}|${o.isSkinnedMesh ? 1 : 0}|${o.isInstancedMesh ? 1 : 0}`;
     /* only the current slice is drawn (built materials and pipelines stay cached), so warm frames stay light on slow GPUs */
+    // pv loadMeter: the slices' share follows the material variants built (a new variant is the expensive build), as "31 / 80"
+    const variants = progress ? new Set(drawables.map(variant)).size : 0;
 
     // new materials per frame follow their measured cost (a build is 40-55 ms at 4x CPU: one a frame there, three on a
     // desktop)
@@ -4441,7 +4459,10 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
           )
         );
       for (const o of slice) o.visible = false;
-      progress?.(WARM_SHARE.pre + ((WARM_SHARE.slices - WARM_SHARE.pre) * i) / drawables.length);
+      if (progress) {
+        const share = variants ? built.size / variants : i / drawables.length;
+        progress(WARM_SHARE.pre + (WARM_SHARE.slices - WARM_SHARE.pre) * share, { done: built.size, total: variants });
+      }
     }
     for (const o of drawables) o.visible = true;
     // then the whole scene together (draw-order and pass combinations)
@@ -4719,12 +4740,15 @@ async function switchCourse(job) {
       ui.loading.open();
     }
     // pv loadMeter: the world load's stages (an event load after it plans its own over what is left)
+    loadFilesLoad();
     const rideStage = pv('rideWarm') && next.freeRide && after === 'autostart',
       worldStage = pv('worldWarm') && next.freeRide && after === 'autostart' && !params.has('peakMode'),
       gcStage = pv('switchGC') && isJavaScriptCore();
     // an event course with its event to follow (afterSwitch: ui.loadEvent) keeps a share for the event load's own stages
     const eventStage = after === 'autostart' && !next.freeRide;
     ui.loading.plan([
+      // (an event to follow: the lineup's packages download alongside the course, riderPrefetch)
+      ...(loadFiles ? [[next.freeRide ? 'worldFiles' : 'files', { bytes: courseBytes(next) + (eventStage ? eventBytes() : 0) }]] : []),
       'unload',
       'course',
       ...(rideStage ? ['ride'] : []),
@@ -4743,6 +4767,7 @@ async function switchCourse(job) {
     ui.loading.begin('course');
     await loadCourse(next);
     ui.loading.done('course');
+    ui.loading.done(next.freeRide ? 'worldFiles' : 'files');
     loadedKey = job.key;
     const t2 = performance.now();
     // the boot model is RIDER_SAM on the course's initial settings (as on a first load); the chosen rider loads with the event
@@ -5344,6 +5369,26 @@ async function unloadCourse() {
 /* One course / world in the page (Single Event course, the streamed Peak 1 world, an online lobby's course): everything below is
    per course; unloadCourse releases it (GPU objects via three's dispose events, the wasm core instance, workers, audio world).
    The renderer, scene/camera objects, UI, audio engine, input, cutscene player and online session stay for the page. */
+// pv loadMeter: what each kind of load downloads (web/load-files.json, node load-files.mjs), loaded from Press START (not at the title):
+// the load screen's download stages. Without it (not loaded yet, a load error) the meter counts the work stages only.
+let loadFiles = null,
+  loadFilesPending = null;
+function loadFilesLoad() {
+  if (!pv('loadMeter')) return null;
+  loadFilesPending ??= import('./load-files.json')
+    .then((m) => (loadFiles = m.default ?? m))
+    .catch((e) => console.warn('Load manifest unavailable', e));
+  return loadFilesPending;
+}
+const expectedBytes = (kind, key) => loadFiles?.sums?.[kind]?.[key] ?? 0;
+// a course switch's download: the course (or world) files
+const courseBytes = (c) => (c?.freeRide ? expectedBytes('world', c.code) : expectedBytes('course', c?.code));
+// an event load's download: its own files and five computer riders' packages (the lineup is planned later: the mean package)
+function eventBytes() {
+  const riders = Object.values(loadFiles?.sums?.rider ?? {}).filter((b) => b > 0);
+  const mean = riders.length ? riders.reduce((a, b) => a + b, 0) / riders.length : 0;
+  return Math.round(expectedBytes('event', course?.code) + (aiRace ? 5 * mean : 0));
+}
 // pv loadMeter: the course build's milestones, as the share of loadCourse's time each one ends (measured, docs/loading-screen.md "The
 // honest meter"), reported to the load screen's 'course' stage
 // (an event course: Chrome / WebKit, ARA1; a streamed world: PEAK1, whose start row's locations are most of it). within: the share
@@ -6051,7 +6096,12 @@ async function init() {
   coreModule.then(() => boot?.step('core', 1));
   await ui.load();
   // course reload into an event (?autostart=1): the original load screen covers the real asset load below
-  if (new URL(location.href).searchParams.get('autostart') === '1') ui.loading.open();
+  // pv loadMeter: a load stage over 5 s is a diag event (web/loading-screen.js trackStage)
+  ui.loading.report = (kind, data) => diagnose(kind, data);
+  if (new URL(location.href).searchParams.get('autostart') === '1') {
+    loadFilesLoad();
+    ui.loading.open();
+  }
   scene = new T.Scene();
   // The scene root stays at identity: do not force every static descendant to rebuild its world matrix each render.
   scene.matrixAutoUpdate = false;

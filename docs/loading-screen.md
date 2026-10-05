@@ -92,8 +92,8 @@ n = counter + 1. Hint 12 (Bragging Rights) is skipped. Then counter = (counter +
     promises have settled and the minimum has passed.
   - Then it shows 100% for 12 frames, fades to black over 20 frames, and continues.
   - As in the original, it cannot be skipped.
-  - With pv `loadMeter` (off until verified on the live site), the percentage is the load's own work instead: see "The honest
-    meter" below.
+  - With pv `loadMeter` (off until verified on the live site), there is no minimum and the percentage is the load's own work,
+    with a line under it saying what the load is doing: see "The meter is the load" below.
 - **Hooks:**
   - `ui.loadEvent(next, work)` is the entry point.
   - `career-ui.js` `begin()` goes through it before `ctm-objectives`. This covers Single Event, transport, and the
@@ -130,138 +130,134 @@ n = counter + 1. Hint 12 (Bragging Rights) is skipped. Then counter = (counter +
 - Snowflake rotation ignores the pivot properties 3/4.
 - Gouraud shapes are limited to flat quads and two-colour ramps, which is all this screen uses.
 
-## The honest meter (pv loadMeter, 2026-10-04)
+## The meter is the load (pv loadMeter, 2026-10-04 / 10-05)
 
-**The report:** after the assets load, the screen "freezes" at 98% and feels stuck.
+**The reports:**
+- The screen "freezes" at 98% and feels stuck.
+- The user wants the number to be real progress, not a timer, and the level fully loaded behind the screen so it is ready the
+  moment the screen goes. A plain line under the % says what is loading, so players see progress and a "stuck" report says where.
 
-**Cause:** the meter was a clock, not a measure of the load. The Snow Jam curve was stretched over the 7 s minimum, so it reached
-98% after 4.6 s (66% of the minimum). It then stayed at 98% for the rest of the minimum and for the load's own work (the course
-still downloading, the warm-up, the intro's preparation). On a CTM world load, which never sets a continuation, it sat at 98% and
-then cut straight to the arrival cutscene.
+**Cause:** the meter was a clock.
+- The Snow Jam curve was stretched over the port's 7 s minimum, so it reached 98% after 4.6 s.
+- It then held 98% for the rest of the minimum and for the real work.
+- On a CTM world load, which sets no continuation, it cut to the arrival cut without ever showing 100%.
 
-The PS2 meter does measure work. On the new-career CTM load (ARMSX2 `local/ps2-capture/ctm-parity/runs/new-career`, every 25
-samples) it climbs unevenly, 0 5 9 12 15 18 21 23 25 27 29 30 38 45 50 55 60 63 69 85%, and then goes black. It has no 98% hold
-there. The Single Event's 4.4 s at 98% is that load's real last step on the PS2.
+**PS2 truth:**
+- The PS2's screens show the loader's progress and have no minimum. cGameLoadState (vtable 0x47C948) has its update at 0x2454F8.
+  Each frame it formats the loader's float as "%3d%%" (string 0x4A2BD0) into the screen's text element, and keeps no frame count.
+  cGameLoadStateConquer's update is 0x2458B8.
+- FL.LUI 117loadinlodge likewise "lasts as long as the I/O" (docs/ctm-decomp-screens.md section 5).
+- On the new-career CTM load (ARMSX2 `local/ps2-capture/ctm-parity/runs/new-career`, every 25 samples) the number climbs
+  unevenly by work: 0 5 9 12 15 18 21 23 25 27 29 30 38 45 50 55 60 63 69 85%, then black.
+- The 7 s minimum was the port's own choice (2026-09-22 entry: "minimum display is 7 s").
+- Not traced: who reads the loader's float, and the screen's exit.
 
-**Measured before the fix** (cold Chrome profile, headless, 1280x720, this Mac, local dev server; WebKit through
-web/webkit-driver.mjs). Times are from the load screen opening:
+**With the switch:**
+- **No minimum.** The screen stays exactly as long as the load. `?loadingMs=` still forces one.
+- **The number** is floor(99 x the meter) until every promise of the load has settled, then 100%, the 12 frames and the fade.
+  No curve paces it.
+- **The meter** (web/load-meter.js) is a plan of stages, each weighted by the time it is expected to take:
+  - **Downloads** (`files`, `worldFiles`, `lazyFiles`, `eventFiles`): the bytes this load is expected to download, weighted by
+    bytes over the bandwidth measured while bytes arrive (6 KB/ms until 256 KB have been seen). Done is the body bytes received
+    since the plan (downloads.js `downloadProgress().total`, counted as they stream). The plan's download stages take the bytes
+    in order, each up to its total. A file the manifest did not know grows the last stage by what arrived and what is still in
+    flight (the downloads' known sizes), so the stage keeps moving instead of reaching its end.
+  - **Work:** `unload`, `course` (loadCourse milestones; the start row's locations as they arrive), `ride`, `world` (warmWorld's
+    compiles, then its frames), `rider`, `lineup`, `warm` (warmupRender: the material variants built, "31 / 351"), `intro`,
+    `gc`. These are weighted by their measured times on this Mac (`STAGE_MS`). A stage without reports creeps towards 90% of
+    itself over its typical time; between two reports it creeps towards the next one. Its own end only comes from the work.
+  - A course switch into an event keeps a `pending` share that the event's stages take over without a jump. Another plan
+    continues from the number shown.
+  - The shown value eases towards the fraction and never goes back. While the fraction stands still, for example when a new
+    download raised the total as fast as bytes arrived, the value keeps moving at 0.5%/s, but never more than 2% ahead of it.
+- **The expected bytes:** web/load-files.json, made by `node load-files.mjs record` from cold-profile runs (an ARA1 Single
+  Event after the course is in, a BRA2 Single Event after it, a new career).
+  - It stores path templates: a course code becomes {course}; a rider package's files, its outfit included, form one
+    template.
+  - It stores sums per course for the course kind and the event kind, per rider package, and for the world (MOUNTAIN).
+  - Streamed audio (.mus, speech .dat) is not counted: it is read by range as it plays.
+  - main.js loads the file with a dynamic import from Press START, a 2.7 KB gzip chunk, and plans:
+    - a course switch: the course or world sum, plus the event's when an event follows;
+    - an event: the event sum plus five mean rider packages;
+    - the lazy course: the course sum x the share left.
+  - `node load-files.mjs build` refreshes the sums after an asset export. `web/test-load-files.mjs` (npm test) fails when they
+    no longer match public/assets.
+- **The stage line:** one line in FEFONT, in the screen's text colour at 38%, right-aligned to the frame's margin under
+  "Loading..." (628, 448), so it stays off the art. The wording is plain:
+  - "Downloading course 42 / 77 MB", "Downloading world", "Downloading riders";
+  - "Building course", "Preparing rider(s)", "Building shaders 31 / 351", "Preparing intro", "Releasing course", "Freeing
+    memory".
+- **Diagnostics:** `globalThis.ssxLoadStage` (for example "warm 63%") rides on the 'stall' / 'hitch' events and on the hang
+  worker's pings, so it is in 'hang' events too. A stage that lasts over 5 s sends 'load-stage' {stage, ms, percent, text} once,
+  and again {ended} when it ends.
+- **Off:** unchanged: the curve over the 7 s minimum, the 90% download caps, 98% until done.
 
-| load | Chrome 1x | Chrome 4x CPU | WebKit | after the load (first 5 s) |
-| --- | --- | --- | --- | --- |
-| Snow Jam Single Event, picked right after Press START (course still loading) | 98% at 4.7 s, held 2.4 s | 98% at 10.3 s, held 7.3-11.5 s (warm-up 5.5-9.4 s, intro prep 1.6 s) | 98% at 4.6 s, held 2.4 s | intro max 29 / 42 / 38 ms, card max 27 ms |
-| the same at 20 Mbit/s, 40 ms | 86% while the course downloads (44 s), then 98% held 3.8 s | | | intro max 17 ms |
-| BRA2 Single Event (an in-page course switch) | | | smooth | intro max 35 ms |
-| CTM new career (PEAK1 world load) | 95% at 4.5 s, then the cut | 98% from 4.7 to 15.4 s (10.7 s), then the cut | 92% at 4.3 s, then the cut | arrival max 100-125 ms (the music start), ride max 48 ms |
-| in-world Transport (MOUNTAIN to Snow Jam) | no load screen (held loop) | | | max 100 ms in the ride, 17 ms after the arrival |
-| in-world event gate | no load screen (since 10-01): the lag agent's pv eventRiderWarm | | | |
-| Restart | no load screen | | | Chrome 4x: the race's steady 58 ms frames |
-| online race | the same ui.loadEvent path | | | not measured (needs a lobby) |
+## Everything under the screen (2026-10-05)
 
-Nothing after 100% stalls on this machine: earlier work (worldWarm, rideWarm, riderPrefetch, the warm-up) had already moved
-first-use work under the screen. A 466 ms "first race frame" and 741 ms "first load frame" seen in the first profiles were the
-CDP profiler starting, not the game.
+**Measured on a cold profile:** the whole first run after each load screen, with every pipeline, async pipeline, shader module,
+node build, texture creation, /assets fetch and frame recorded (`local/load-meter/qa/loadprobe.mjs` RACE / RIDE, `racean.mjs`):
 
-What still makes the screen stutter under it (Chrome 4x, by frame):
-- the warm-up's first frame builds the post passes: 11 pipelines and 11 node builds, 225-483 ms;
-- each warm slice takes about 100-125 ms, because a new material variant means about 4 node builds;
-- the intro cast's FE compiles (cutscenes.prepare through host.compile) take 140-216 ms each;
-- the course's core init calls take 180-325 ms.
+| run | after the screen | pipelines / node builds / textures | worst frame |
+| --- | --- | --- | --- |
+| Snow Jam Single Event, whole race, Chrome 1x (90% of the course, 208 s) | intro, card, race | 0 / 1 (1 ms) / 2 | under 50 ms |
+| the same, WebKit, to the finish and the results (272 s) | | 0 / 0 / 1 | 53 ms |
+| the same, WebKit, loadMeter on (257 s) | | 0 / 0 / 1 | **47 ms**, none over 50 |
+| new career, WebKit: the arrival cut, then 150 s of ride | streamed rows | 3 sync + async; 14 builds (6 ms) at the ride start | 90 ms (the movie's first frame), none over 100 |
+| the same, Chrome | | 6 sync + 69 async; 14 builds (3 ms) | under 50 ms |
 
-At 1x these are 50-110 ms. Left: splitting a variant's passes over frames, which needs three.js internals.
+The event warm-up (warmupRender: every scene drawable unculled, the encoded effects, set pieces, riders, shadows, post passes),
+the intro cast's compile, rideWarm and worldWarm had already moved every first-use build under the screen.
 
-**The fix (web/load-meter.js, wired in web/loading-screen.js, ui.js, main.js and free-ride.js):**
-- A load is a plan of stages, each weighted by its measured time (`STAGE_MS`). A stage either reports its own fraction or
-  creeps towards 90% of itself over its typical time.
-  - event load (`ui.loadEvent`): `course` (only if the page's first course is still loading behind the menus, weighted by the
-    share left; fed by `workFraction`), `rider`, `lineup`, `warm`, `intro`;
-  - world / course switch (`main.js switchCourse`): `unload`, `course`, `ride` (rideWarm), `world` (worldWarm), `gc`
-    (switchGC), and `pending` for an event course whose event load follows. The event load's own stages then take that
-    `pending` stage's place and share its weight, so the bar does not jump.
-- Progress reports:
-  - `warmupRender` reports its pre-steps, slices (drawables revealed) and final frames by `WARM_SHARE`;
-  - `warmWorld` reports its compiles as they settle (`WORLD_WARM_SHARE`), then its warm frames;
-  - `loadCourse` reports milestones (`COURSE_SHARE`, one table for event courses and one for streamed worlds; the stage creeps
-    towards the next milestone in between);
-  - free-ride.js `start` reports the start row's locations as they arrive.
-- The displayed percentage is min(pace, 99 x work):
-  - The pace is the PS2 curve up to its first 98%, stretched over the minimum, so it reaches 98% as the minimum ends.
-  - The pace applies only once the session waits for its minimum (`run()` gave it a continuation). It continues from the
-    number already shown, so a course switch that turns into an event load does not hold.
-  - A world load that may close into a cutscene shows only its work.
-  - 100% only when every promise has settled; then the 12 frames at 100% and the fade, as before.
-  - A world load (CTM, a lodge return, a peak world) ends the same way: main.js afterSwitch hands its continuation (the career's
-    resume: the arrival cut or the ride) to `LoadingScreen.finish()`, which ends the session as soon as its work has settled (no
-    minimum), on 100% and the fade, about 0.5 s. A world-mode session (the Transport's held loop) is left as it was.
-- Off: unchanged (the curve, 90% caps for downloads and the lazy course, 98% until done).
+What still happens after the screen:
+- **The streamed world's next rows** (A_ARA1, A_ASS1, DRA4_A, about 10 MB) download during the arrival movie and compile with
+  async pipelines (free-ride.js streamWarm). The rows the ride reaches later do the same, a few textures and pipelines a frame
+  (frames 11-25 ms in WebKit).
+  - These were not moved under the screen: they cause no hitch, and holding rows beyond the PS2's residency costs memory
+    (phones peak near 1.2 GB).
+- **Audio streams:** the music and the speech lines, read by range as they play, like the PS2's disc streams, and a few small
+  sound banks when their sound first plays (FlapLoop2, Waterfall1, Cheer30, chartune: 2-60 KB).
+  - The speech .dat files fetched whole after the screen (5-10 MB each) are a dev-server artefact: Vite answers a range with the
+    whole file.
+- **Moved under the screen (with the switch):** the card's cutscene bank (scdat_<course>) and the replay's camera triggers, which
+  were fetched at the card and the race start. main.js prefetchIntro keeps them up to 120 s until taken. Neither is fetched after
+  the screen any more.
+- No audio is decoded with decodeAudioData (the engine decodes its own).
 
-**Measured with the switch** (same set-up):
+## Measurements (2026-10-05, this Mac, local dev server, cold profiles; load = screen open to the next screen)
 
-| load | before | with loadMeter |
-| --- | --- | --- |
-| Single Event, Chrome 4x (back to back) | 98% held 7.3 s; the number was still for up to 7.3 s | 98% held 0.5 s; never still for more than 1.7 s; load time the same (13.6 / 14.6 s) |
-| Single Event, Chrome 1x / WebKit | 98% held 2.4 s | 97 -> 100 in 0.2-0.3 s |
-| Single Event at 20 Mbit/s | 86 -> 98, held 3.8 s | climbs to 95, then 100 |
-| BRA2 switch + event, WebKit | | 0 -> 97 over 7 s, 100 at the end |
-| `?autostart=1`, Chrome | | 0 -> 97 -> 100 |
-| CTM world load, WebKit / Chrome 4x | 92-98%, held up to 10.7 s, cut | climbs steadily, 100% and the fade, then the arrival cut (+0.5 s) |
+| browser | load | off | loadMeter |
+| --- | --- | --- | --- |
+| Chrome 1x | Snow Jam, early pick | 7.6 s, 98% held 2.4 s | **4.5 s**, never still for over 0.2 s |
+| | BRA2 switch + event | 7.6 s, held 2.4 s | **5.3 s**, still 0.2 s |
+| | CTM world | 3.6 s, ends at 57%, cut | 4.1 s, 100% and the fade, still 0.2 s |
+| Chrome 4x CPU | Snow Jam | 14.4 s, held 7.7 s | 14.4 s, held 0.3 s, still at most 1.7 s |
+| | BRA2 | 13.9 s, held 8.7 s | 13.4 s, held 0.5 s, still 1.2 s |
+| | CTM | 13.7 s, ends at 98%, cut | 13.8 s, 100%, still 2.0 s |
+| Chrome 20 Mbit/s, 40 ms | Snow Jam | 48.5 s, held 3.7 s | 48.6 s, still 3.3 s (the course's last files, before the 2% lead) |
+| | BRA2 | 35.2 s, **held 29.7 s** | 35.1 s, still 1.0 s, "Downloading course 63 / 77 MB" |
+| | CTM | 48.9 s, ends at 98% | 49.3 s, still 2.9 s |
+| WebKit | Snow Jam | 7.6 s, held 2.3 s | **5.8 s**, still 0.2 s |
+| | BRA2 | 7.5 s, held 2.3 s | **6.2 s**, still 0.2 s |
+| | CTM | 4.2 s, ends at 85%, cut | 4.8 s, 100%, still 0.3 s |
 
-Frames on and off are the same: the switch adds no work, only the reports.
+Frames under the screen and in the 5 s after are the same with the switch on and off: it adds only reports and the small
+prefetches.
 
-**Checked:** `web/test-load-meter.mjs` (npm test) covers the weights, creep, the creep floor and ceiling, the pending expansion
-and segments, the monotonic value, the climb curve, and 100% only when the load is done; with a LoadingScreen, 98% with every
-stage done but a promise pending, and the pace continuing from the number shown. Also passed: test-loading-screen,
-test-lazy-course, test-world-warm, test-ctm-stream, test-stage-world, test-peak-release, test-rider-prefetch,
-test-ctm-event-world, test-career-rider.
+**Checked:**
+- `web/test-load-meter.mjs`: the weights, creep and ceilings, download stages (order, overflow, in flight, bandwidth), the
+  pending expansion, the bounded lead, the stage line's words, the 'load-stage' reports, no minimum, `?loadingMs=`, 99% until the
+  promises settle, and the world-load finish.
+- `web/test-load-files.mjs`: the templating and the sums against public/assets.
+- Also passed: test-loading-screen, test-lazy-course, test-world-warm, test-downloads, test-ctm-stream, test-rider-prefetch,
+  test-fe-preview(s), test-input-glyphs, test-fe-screens, line length, comment code, and `npm run online:build`.
 
-**QA:** `local/load-meter/qa/` holds the probe and its traces:
-- `loadprobe.mjs`, with FLOW=single|late|ctm|transport|auto, BROWSER=chrome|webkit, THROTTLE, NET=mbit,latency, PV, COURSE,
-  PROFILE;
-- `an.mjs` for frame stats, the percentage, stages and the worst frames, with CPU-profile attribution;
-- `recorder.js` and `server.mjs` (start a new server after edits: it does not watch).
+**QA:** `local/load-meter/qa/` holds:
+- `loadprobe.mjs`, with FLOW single|late|ctm|transport|auto, BROWSER chrome|webkit|firefox, THROTTLE, NET, PV, COURSE, SHORT,
+  RACE, RIDE;
+- `an.mjs`, `sumload.mjs` (TEXT=1: the stage lines), `racean.mjs` (first-use work after the screen), `resan.mjs` (fetches
+  before / during / after), `batch2.sh`, and the runs' JSON.
 
-## Smooth under the load (pv loadSmooth, 2026-10-04)
-
-The load screen draws on the page's frames, so a long frame of first-use work under it makes its snow and trees hitch. With
-`loadSmooth` on (default off), the same work runs in the same order, spread over more frames, and nothing ticks:
-- **The post passes** (main.js `warmupRender`): the sun flare, light glow, glare and glow query join one a frame after the fog
-  composite's frame, instead of all in the warm-up's first frame. Before, that frame held 11 pipelines and 11 node builds:
-  FogComposite 42 ms, GlareFinal 10 ms and the effect quads 4-9 ms each, at 4x.
-- **The run-time textures** (the snow flipbook's `warmTextures`, 108 of them): 16 a frame (`WARM_TEXTURES`), not all in one.
-- **The slices:** a slice shrinks by half when a frame's work ran over `SLICE_BUDGET_MS` (24 ms; 40 before) and grows back by
-  1.5x once frames are light. The new-variant rate uses the same budget.
-- **The cutscene cast's FE compiles** (web/fe-preview.js `takeTurn`): each actor is its own FrontEndPreview, and each kept its own
-  16 ms budget, so several riders built in one frame (GRIFF + LUTHER: 117-133 ms at 1x). They now take turns, with a frame
-  between a model's build and its compile.
-- **A course's `_init_world_collision` and `_init_body_terrain`:** a frame between them under the load screen too (two tasks
-  behind the menus already).
-
-Not split, because each is one atom:
-- **One drawable's node builds:** a computer rider's mesh is 4 builds (its passes), about 25 ms each at 4x and 6-9 ms at 1x, so
-  about 100 ms at 4x even when the slice is down to one drawable.
-- **The course's C++ parses:** `_init_terrain`, `_init_world_collision` and `_init_body_terrain` are one core call each, 180-325 ms
-  at 4x. Splitting them needs a core change.
-- **The streamed world's start-row rewarm items** (free-ride.js): 108-125 ms frames at 4x.
-- **Firefox's GPU-process pipeline waits:** up to 267 ms with 73 ms of builds.
-
-**Measured** (same set-up as above, 2 runs each in Chrome, 1 in Firefox; load = load screen open -> next screen; frames under the
-load screen; "after" = the 5 s after it):
-
-| browser | load | off | loadMeter | loadMeter + loadSmooth |
-| --- | --- | --- | --- | --- |
-| Chrome 1x | Single Event | 7.6 s, max 108-117 ms, 1 > 100 | 7.6 s, max 108-117 ms, 1 > 100 | 7.6 s, **max 58 ms, 0 > 100**, 2-4 > 50 |
-| | CTM world | 3.7 s, max 50-67 ms | 4.1-4.3 s (the 100% beat), max 50-58 ms | 4.2 s, max 58 ms |
-| Chrome 4x | Single Event | 13.8 s, max 217 ms, 21 > 100 | 13.3-13.7 s, max 200-258 ms, 15-20 > 100 | 14.3-14.5 s, **max 175 ms, 15 > 100** |
-| | CTM world | 12.6-13.5 s, max 183 ms, 6 > 100 | 13.5-13.6 s, max 167-183 ms, 5-7 > 100 | 13.4-14.4 s, max 167-183 ms, 3-6 > 100 |
-| Firefox 1x (headless, `open -a Firefox`) | Single Event | 7.6 s, max 268 ms, 4 > 100 | 7.6 s, max 283 ms, 5 > 100 | 7.6 s, max 268 ms, 3 > 100 |
-| | CTM world | 5.1 s, max 117 ms, 2 > 100 | 5.6 s, max 117 ms, 3 > 100 | 5.9 s, max 118 ms, 2 > 100 |
-
-Results:
-- After the load screen, every run is smooth (max 17-58 ms in the 5 s after).
-- The meter's longest still stretch is 0.3 s on Single Event (2.3-7.5 s off) and 0.6-3.3 s on a world load (its start-row stream).
-- loadSmooth costs 0.6-0.9 s at Chrome 4x on Single Event (about 5%) and nothing at 1x.
-- WebKit for loadSmooth is owed: the screen locked at 22:00, and with it locked WebKit's frames stop. The loadMeter runs above were
-  made in WebKit before that.
-
-**Not confirmed from the code:** the PS2's own meter weighting (which loader steps move it); the port's weights are measured
-times, not the PS2's. Whether the PS2's CTM load shows 100% before its black: the 25-sample captures go from 85% to black.
-
+**Left:**
+- The manifest's world sum is the new-career start (Happiness). Other stations' rows grow the total as they arrive.
+- The rider packages are counted as five mean packages until the lineup is set.
+- The online lobby's load wasn't measured.

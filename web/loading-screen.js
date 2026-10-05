@@ -25,6 +25,38 @@ const FADE_FRAMES = 20;                            // black -> screen and screen
 const DONE_FRAMES = 12;                            // 100% stays up this long before the fade out
 const HINT_KEY = 'ssx3.loadingHint';
 
+// pv loadMeter: the bytes still to come of the downloads under way (downloads.js: their sizes as their headers gave them)
+function inflightBytes() {
+  const d = downloadProgress();
+  return d.active ? Math.max(0, (d.expected ?? 0) - (d.received ?? 0)) : 0;
+}
+// pv loadMeter: the stage line's wording (plain and short; counts where they are cheap) and the 'load-stage' report threshold
+const STAGE_REPORT_MS = 5000;
+const MB = (b) => (b / 1e6 >= 10 ? Math.round(b / 1e6) : (b / 1e6).toFixed(1));
+const STAGE_TEXT = {
+  files: 'Downloading course',
+  lazyFiles: 'Downloading course',
+  eventFiles: 'Downloading riders',
+  worldFiles: 'Downloading world',
+  course: 'Building course',
+  unload: 'Releasing course',
+  rider: 'Preparing rider',
+  ride: 'Preparing rider',
+  lineup: 'Preparing riders',
+  warm: 'Building shaders',
+  world: 'Building shaders',
+  intro: 'Preparing intro',
+  audio: 'Loading audio',
+  gc: 'Freeing memory',
+  pending: 'Preparing event'
+};
+export function stageText(cur, count = null) {
+  const name = STAGE_TEXT[cur.id] ?? 'Loading';
+  if (cur.bytes != null) return `${name} ${MB(cur.got)} / ${MB(Math.max(cur.bytes, cur.got))} MB`;
+  if (count?.total > 0) return `${name} ${Math.min(count.done, count.total)} / ${count.total}`;
+  return name;
+}
+
 // 0x245950: n = counter + 1 (hint 12, Bragging Rights, is skipped), then counter = (counter + 1) % 15.
 export function nextHint(counter) {
   let c = Number.isInteger(counter) && counter >= 0 && counter < HINT_COUNT ? counter : 0;
@@ -55,14 +87,11 @@ export function animationProps(anim, frame, mode) {
 }
 
 // Displayed percentage: the original Snow Jam load curve (frames -> percent, 0..98) stretched over the minimum
-// display time; it holds at 98% until the work is done (the original also sits at 98% while the event starts).
-// climb (pv loadMeter): the curve up to its first 98% is stretched over the minimum instead, so it is a pace limit that reaches
-// 98% as the minimum ends; the work (web/load-meter.js) decides the rest.
-export function loadingPercent(curve, frame, minFrames, originalFrames, done, climb = false) {
+// display time; it holds at 98% until the work is done (the original also sits at 98% while the event starts). Off pv loadMeter only.
+export function loadingPercent(curve, frame, minFrames, originalFrames, done) {
   const hold = curve.filter(([, p]) => p <= 98);
   const lastFrame = hold[hold.length - 1][0];
-  const top = hold.find(([, p]) => p >= 98)?.[0] ?? lastFrame;
-  const f = climb ? frame * top / Math.max(1, minFrames) : frame * lastFrame / Math.max(1, minFrames * lastFrame / originalFrames);
+  const f = frame * lastFrame / Math.max(1, minFrames * lastFrame / originalFrames);
   let p = hold[hold.length - 1][1];
   for (let i = 0; i < hold.length - 1; i++) {
     const [f0, p0] = hold[i], [f1, p1] = hold[i + 1];
@@ -115,7 +144,8 @@ export class LoadingScreen {
   params() {
     const q = typeof location !== 'undefined' ? new URL(location.href).searchParams : new URLSearchParams();
     const ms = Number(q.get('loadingMs'));
-    return { disabled: q.get('loading') === '0', minMs: Number.isFinite(ms) && ms >= 0 && q.has('loadingMs') ? ms : 7000 };
+    const forced = Number.isFinite(ms) && ms >= 0 && q.has('loadingMs');
+    return { disabled: q.get('loading') === '0', minMs: forced ? ms : 7000, forced };
   }
 
   // Show the screen now (e.g. while main.js init loads a course); run() attaches the continuation.
@@ -134,10 +164,14 @@ export class LoadingScreen {
         next: null,
         doneAt: 0,
         hint: this.data.hints.find((h) => h.index === hint),
-        minMs: this.world ? 0 : this.params().minMs,
+        // pv loadMeter: no minimum. The PS2's load screens stay as long as the load (cGameLoadState's update 0x2454F8 prints the
+        // loader's "%3d%%" each frame and counts nothing; FL.LUI 117loadinlodge likewise, docs/ctm-decomp-screens.md section 5);
+        // the 7 s was the port's own (2026-09-22). ?loadingMs= still sets one.
+        minMs: this.world ? 0 : pv('loadMeter') && !this.params().forced ? 0 : this.params().minMs,
         world: this.world || null,
-        // pv loadMeter: the load's stages (plan / begin / step / done below), weighted by their measured time
-        meter: pv('loadMeter') ? createLoadMeter() : null
+        // pv loadMeter: the stages of the load (plan / begin / step / done below), weighted by their expected time
+        meter: pv('loadMeter') ? createLoadMeter({ received: () => downloadProgress().total ?? 0, inflight: inflightBytes }) : null,
+        stage: null
       };
       // The race canvas is hidden under the load screen (style.css), except in world mode where the world shows: the warm-up
       // frames drawn there never reach the compositor (Firefox held its frames behind every pipeline build, docs/firefox-load.md).
@@ -171,7 +205,11 @@ export class LoadingScreen {
   // session or the switch they do nothing.
   plan(stages) { this.session?.meter?.plan(stages, { showing: (this.session.shownPercent ?? 0) / 99 }); }
   begin(id) { this.session?.meter?.begin(id); }
-  step(id, fraction, ceiling = 0) { this.session?.meter?.step(id, fraction, ceiling); }
+  // count: { done, total } for the stage line ("Building shaders 31 / 80")
+  step(id, fraction, ceiling = 0, count = null) {
+    this.session?.meter?.step(id, fraction, ceiling);
+    if (count && this.session) (this.session.counts ??= {})[id] = count;
+  }
   done(id) { this.session?.meter?.done(id); }
   // pv loadMeter: a load that opened the screen without a continuation (a world load) ends here: 100% and the fade out as soon as
   // its work has settled (no minimum), then next(). false: nothing to finish (no session, world mode, the switch off), so the
@@ -198,21 +236,13 @@ export class LoadingScreen {
     // The original curve paces the number; while game data is still downloading it cannot run ahead of the transfer
     // (up to 90% for the download, the rest is the warm-up the curve already covers), and it never goes backwards.
     let percent;
-    if (s.meter?.planned) {
-      // pv loadMeter: the curve paces the number up to 98% over the minimum and the load's work caps it, so it stays at 98% or
-      // below until every promise has settled: 100% is the load done
+    if (s.meter) {
+      // pv loadMeter: the number is the load's work (web/load-meter.js), 99% at most until every promise has settled: 100% is the
+      // load done. Nothing paces it.
       const work = s.doneAt ? null : this.workFraction?.();
       if (work != null) s.meter.step('course', work);
-      // the pace applies once the session waits for its minimum (run() gave it a continuation): from the number shown then, it
-      // reaches 98% as the minimum ends. Before (a world load that may close into a cutscene), only the work.
-      let limit = 98;
-      if (s.next && s.minMs > 0) {
-        const c = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, false, true);
-        s.pace ??= { c0: c, v0: s.shownPercent ?? 0 };
-        const { c0, v0 } = s.pace;
-        limit = v0 <= c0 ? c : v0 + ((98 - v0) * Math.max(0, c - c0)) / Math.max(1, 98 - c0);
-      }
-      percent = s.doneAt ? 100 : Math.min(Math.floor(limit), Math.floor(99 * s.meter.value(now)));
+      percent = s.doneAt ? 100 : Math.floor(99 * s.meter.value(now));
+      this.trackStage(s, now);
     } else {
       percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt);
       const dl = downloadProgress();
@@ -232,6 +262,27 @@ export class LoadingScreen {
     return { frame, percent, black };
   }
 
+  // pv loadMeter: the stage under way, as the line under the percentage and for the diagnostics (globalThis.ssxLoadStage: the hang
+  // and stall events carry it; a stage over STAGE_REPORT_MS sends a 'load-stage' event once, and again when it ends)
+  trackStage(s, now) {
+    const downloading = downloadProgress().active;
+    const cur = s.doneAt ? null : s.meter.current(now, { downloading });
+    const text = cur ? stageText(cur, s.counts?.[cur.id]) : s.doneAt ? '' : s.stage?.text ?? '';
+    // between two stages (or at the end) no stage is under way: the line keeps its last words
+    const id = cur?.id ?? null;
+    if (!s.stage || s.stage.id !== id) {
+      const was = s.stage;
+      if (was?.reported) this.report?.('load-stage', { stage: was.id, ms: Math.round(now - was.at), ended: true, percent: s.shownPercent ?? 0 });
+      s.stage = { id, at: now, text, reported: false };
+    }
+    s.stage.text = text;
+    if (id && !s.stage.reported && now - s.stage.at > STAGE_REPORT_MS) {
+      s.stage.reported = true;
+      this.report?.('load-stage', { stage: id, ms: Math.round(now - s.stage.at), percent: s.shownPercent ?? 0, text });
+    }
+    globalThis.ssxLoadStage = s.doneAt ? '' : id ? `${id} ${s.shownPercent ?? 0}%` : '';
+  }
+
   // ---- drawing (640x448 canvases, the LUI frame is 640x480) ----
   draw(c, b) {
     this.lastDraw = performance.now();
@@ -245,6 +296,10 @@ export class LoadingScreen {
     this.drawScreen(c, st, pad);
     if (!pad) this.drawKeyboard(c);
     this.drawHint(c, pad);
+    // pv loadMeter: what the load is doing, one small line under the percentage and "Loading..." (their element 0efd5af4 sits at
+    // 494, 424 at 60%), in the screen's own FEFONT and text colour, right-aligned to the frame's margin so it never runs off it
+    const line = this.session?.meter ? this.session.stage?.text : '';
+    if (line) this.drawText(c, line, 628, 448, { 9: 38, 12: 33 }, Math.max(0, 1 - st.black));
     if (st.black > 0) { c.globalAlpha = st.black; c.fillStyle = '#000'; c.fillRect(0, 0, 640, 480); }
     c.restore();
   }

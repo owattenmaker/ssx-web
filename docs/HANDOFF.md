@@ -1,3 +1,5 @@
+> **Deployed 2026-10-05 (coordinator): pv loadMeter ON.** The load screen's number is the load itself: bytes against web/load-files.json's expected total at the measured bandwidth, plus measured prep stages, 100% only when done (a creep of at most 2% ahead when stalled); no 7 s minimum (a port choice from 09-22; the PS2's 0x2454F8 prints the loader's progress and counts no frames); a stage line under the % in the screen's font; 'load-stage' diag events over 5 s. Snow Jam load 7.6 -> 4.5 s (Chrome) / 5.8 s (WebKit); a full first race after the screen has no shader builds. test-load-files guards the manifest; refresh with `node load-files.mjs build`.
+
 > **Deployed 2026-10-05 (coordinator): pv riderCull and fxCull ON.** A computer rider's (and a remote MP rider's) model skips its draw while a 5 m sphere around it is out of view; a computer rider's trail / wake / spray / streamers are neither read nor drawn while a 100 m sphere is out of view (rebuilt from core state when read again). Pixel A/B identical in Chrome (9 checkpoints; with history 11 checkpoints including re-entry; 2-client MP 8 checks) and WebKit (9 checkpoints). Up to 2.2 ms of a 6.6 ms race frame at 1x when the field is behind. loadSmooth removed; loadMeter (off) is being reworked into real streaming progress plus a stage caption.
 
 > **Races at 40 fps: the computer riders' presentation; pv riderCull + fxCull (new, off, approved pending WebKit) (2026-10-04, lag agent):** see [web-render-performance.md](web-render-performance.md) "Computer riders outside the view".
@@ -18,30 +20,38 @@
 > - **Tests:** remote-riders, mp-fx, opponent-riders, line-length.
 > - **WebKit (2026-10-05):** cullab identical at 9 of 9 (with 20 settle frames). cullhist can't be judged in WebKit: separate pages drew a sub-tick apart. The simulation was identical (?simtrace, 1500 ticks); the cause was the clock leftover kept across the QA freeze. Now ssxQA.advance resets it (QA only), and two WebKit pages draw 0 differing pixels. Flipped by the coordinator.
 
-> **The load screen's "stuck at 98%": pv loadMeter and pv loadSmooth (new, both off) (2026-10-04, load-screen agent):** see [loading-screen.md](loading-screen.md) "The honest meter" and "Smooth under the load".
-> - **Cause:** the meter was a clock. The PS2 Snow Jam curve was stretched over the 7 s minimum, so it reached 98% at 4.6 s. It then held 98% for the rest of the minimum and all of the real work.
->   - Single Event, cold profile: 98% held 2.4 s (Chrome 1x, WebKit, Firefox), 7.3-11.5 s (Chrome 4x) and 3.8 s at 20 Mbit/s.
->   - CTM world load: 98% for 10.7 s at Chrome 4x, then cut to the arrival without 100%.
->   - The PS2's CTM load climbs unevenly by work (0..85% in ctm-parity/runs/new-career) with no hold.
-> - **After 100%** nothing stalls in Chrome 1x/4x, WebKit or Firefox (max 17-58 ms in the 5 s after): Single Event intro / card / race, the CTM arrival and ride, an in-world Transport. Restarts and the in-world gate have no load screen.
-> - **loadMeter:** web/load-meter.js (new). The load is a plan of stages weighted by measured time:
->   - an event load: course left, rider, lineup, warm, intro (ui.js loadEvent, main.js cb.warmup / cb.loadStages);
->   - a course or world switch: unload, course, ride, world, gc, and `pending` for the event that follows (main.js switchCourse).
->   - Reports: warmupRender's parts, warmWorld's compiles, loadCourse milestones, free-ride.js start's locations.
->   - Shown: min(PS2 curve to 98% over the minimum, 99 x work). The pace applies only once the session waits for its minimum, and it continues from the number shown. 100% only when done.
->   - A world load ends on 100% and the fade before its arrival cut or ride (LoadingScreen.finish, about +0.5 s).
->   - Chrome 4x Single Event: the 98% hold went from 7.3 s to 0.3-0.6 s; the number is still for at most 1.4-1.6 s; same load time.
-> - **loadSmooth:** the same work spread over frames, nothing ticks:
->   - the warm-up's post passes one a frame;
->   - the 108 run-time textures 16 a frame;
->   - adaptive slices (24 ms budget);
->   - the cutscene cast's FE compiles take turns (fe-preview.js takeTurn);
->   - a frame between `_init_world_collision` and `_init_body_terrain`.
->   - Chrome 1x Single Event max frame 108-117 -> 58 ms; Chrome 4x frames > 100 ms 21 -> 15, max 217 -> 175 ms, +0.6-0.9 s load (about 5%); Firefox 4-5 -> 3 frames > 100.
->   - Left (one atom each): a rider mesh's 4 node builds (about 100 ms at 4x), the C++ course parses, the start-row rewarm items, Firefox's GPU-process waits.
-> - **Checked:** web/test-load-meter.mjs (new, in test:all); test-loading-screen, test-lazy-course, test-world-warm, test-ctm-stream, test-stage-world, test-peak-release, test-rider-prefetch, test-ctm-event-world, test-career-rider, test-fe-preview(s), test-cutscenes, line length and comment code pass.
-> - **Proposal:** turn both on after one WebKit batch (`local/load-meter/qa/batch.sh webkit 1 2`, about 15 min). It is owed because the screen locked at 22:00. WebKit has traced loadMeter's Single Event, BRA2 switch and CTM climb, but not the CTM 100% finish or loadSmooth. Chrome 1x/4x and Firefox are traced for both.
-> - **QA:** local/load-meter/qa: loadprobe.mjs (FLOW single|late|ctm|transport|auto, BROWSER chrome|webkit|firefox, THROTTLE, NET, PV, COURSE, SHORT), an.mjs, sumload.mjs, big.mjs, batch.sh, the runs' JSON.
+> **The load screen's number is the load (pv loadMeter, off; loadSmooth removed) (2026-10-05, load-screen agent):** see [loading-screen.md](loading-screen.md) "The meter is the load" and "Everything under the screen".
+> - **Cause of "stuck at 98%":** the meter was a clock, the PS2 curve stretched over the port's 7 s minimum. It held 98% for 2.4 s (1x), 7.7-8.7 s (4x CPU) and 29.7 s (BRA2 at 20 Mbit/s). A CTM world load cut to the arrival at 57-98%.
+> - **PS2:** no minimum. cGameLoadState's update 0x2454F8 prints the loader's float as "%3d%%" each frame and counts nothing (the lodge's 117loadinlodge the same). The 7 s was the port's own choice (2026-09-22).
+> - **With the switch:**
+>   - No minimum.
+>   - The number is the load's work (web/load-meter.js):
+>     - downloads in bytes against web/load-files.json (new, `node load-files.mjs record|build|check`), at the measured bandwidth;
+>     - work stages by their measured time.
+>   - 100% only when every promise has settled. A world load ends on 100% and the fade before its cut.
+>   - A plain FEFONT line under the % ("Downloading course 63 / 77 MB", "Building shaders 31 / 351").
+>   - globalThis.ssxLoadStage rides on the stall / hitch / hang events; a stage over 5 s sends 'load-stage'.
+> - **Measured** (cold profiles, local server):
+>   - Snow Jam: 7.6 -> 4.5 s (Chrome) and 7.6 -> 5.8 s (WebKit), never still for over 0.2 s.
+>   - BRA2 at 20 Mbit/s: still at most 1.0 s (was a 29.7 s hold).
+>   - Chrome 4x: holds 0.3-0.5 s, still at most 2 s, same load times.
+>   - CTM: 100% and the fade, +0.5 s.
+> - **Everything under the screen:** cold-profile traces of the whole first run found no first-use pipeline, node build or texture hitch after the screen:
+>   - Snow Jam to the finish in WebKit with the switch: 0 pipelines, 0 builds, 1 texture, worst frame 47 ms over 257 s;
+>   - a CTM ride in WebKit: worst 90 ms on the movie's first frame, nothing over 100 ms.
+>   - The streamed world's next rows load async during the arrival movie, with no hitch. I didn't move them under the screen (memory).
+>   - The two small files fetched after the screen (the card's cutscene bank, the replay camera triggers) are now prefetched under it.
+>   - Audio streams by range, as on the PS2.
+> - **loadSmooth:** removed (switch and code), as the user asked.
+> - **Checked:**
+>   - web/test-load-meter.mjs and web/test-load-files.mjs, both new and in test:all;
+>   - test-loading-screen, test-lazy-course, test-world-warm, test-downloads, test-ctm-stream, test-rider-prefetch, test-fe-preview(s), test-input-glyphs, test-fe-screens, line length and comment code;
+>   - `npm run online:build` (clean).
+> - **Proposal:** turn loadMeter on. It is traced in Chrome 1x / 4x / 20 Mbit and in WebKit.
+> - **QA:** local/load-meter/qa:
+>   - loadprobe.mjs (RACE / RIDE whole runs, NET, BROWSER chrome|webkit|firefox);
+>   - racean.mjs, resan.mjs, sumload.mjs, batch2.sh;
+>   - the runs' JSON.
 
 > **Deployed 2026-10-04 (coordinator): core6, the high-level-play physics fixes.** web/runtime core.wasm `5bd03604…`, core.js `920f941b…` from local/physics-jank/core6 (291 clean, 15 new hl/* gates exact to the end): the soft collision in a board press (108388 -> 131348 -> 12FE98; the 'flung' report), boost through a crouched departure (12E9B8 0x12EB58), the double meter decay after a rail loss, passive air stuck after a rail release with an attack held (12F730), 115B58 in control 1. padRing stays off pending the user's pad-rate probe.
 

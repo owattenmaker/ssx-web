@@ -1,8 +1,9 @@
-// The event load screen's honest meter (pv loadMeter, web/load-meter.js, web/loading-screen.js): stages weighted by their time,
-// creep capped below a stage's end, a later plan never takes the meter back, 100% only when the load is done.
+// The load screens' meter (pv loadMeter, web/load-meter.js, web/loading-screen.js): stages weighted by their expected time (work by
+// its measured time, downloads by bytes at the measured bandwidth), creep capped below a stage's end, a later plan never takes the
+// meter back, the stage line and its reports, no minimum, 100% only when the load is done.
 import assert from 'node:assert/strict';
-import { createLoadMeter, CREEP_MAX, STAGE_MS, PENDING } from './load-meter.js';
-import { loadingPercent, LoadingScreen } from './loading-screen.js';
+import { createLoadMeter, CREEP_MAX, STAGE_MS, PENDING, DEFAULT_BANDWIDTH } from './load-meter.js';
+import { LoadingScreen, stageText } from './loading-screen.js';
 import { setPv } from './pv-flags.js';
 
 let t = 0;
@@ -134,73 +135,119 @@ const clock = () => t;
   assert.ok(STAGE_MS.warm > STAGE_MS.rider);
 }
 
-// the climb curve: the PS2 curve to its first 98% over the minimum, a pace limit (98 exactly as the minimum ends)
+// download stages: bytes since the plan over the expected total, weighted at the measured bandwidth; an unknown file grows them
 {
-  const curve = [[0, 0], [20, 2], [120, 17], [240, 27], [400, 52], [520, 97], [540, 98], [800, 98], [810, 100]];
-  let prev = 0;
-  for (let f = 0; f <= 420; f += 5) {
-    const p = loadingPercent(curve, f, 420, 815, false, true);
-    assert.ok(p >= prev && p <= 98);
-    prev = p;
-  }
-  assert.ok(loadingPercent(curve, 410, 420, 815, false, true) < 98);
-  assert.equal(loadingPercent(curve, 420, 420, 815, false, true), 98);
-  // the old pacing reaches 98% at two thirds of the minimum
-  assert.equal(loadingPercent(curve, 280, 420, 815, false), 98);
+  t = 0;
+  let bytes = 0;
+  const m = createLoadMeter({ now: clock, received: () => bytes });
+  m.plan([['files', { bytes: 1000000 }], ['warm', 1000]]);
+  assert.equal(m.fraction(), 0);
+  assert.deepEqual(m.current(0)?.id, 'files');
+  // 1 MB at the default bandwidth weighs 1e6 / DEFAULT_BANDWIDTH ms
+  bytes = 500000;
+  t = 100;
+  const w = 1000000 / DEFAULT_BANDWIDTH;
+  assert.ok(Math.abs(m.fraction() - (w * 0.5) / (w + 1000)) < 0.02, String(m.fraction()));
+  // more bytes than expected: the stage grows, it never reaches its end by bytes alone
+  bytes = 3000000;
+  t = 200;
+  assert.ok(m.current(t).got === 3000000 && m.current(t).bytes > 3000000, JSON.stringify(m.current(t)));
+  const f = m.fraction();
+  assert.ok(f < 1);
+  // the bandwidth: 3 MB arrived over 200 ms
+  assert.ok(Math.abs(m.bandwidth - 15000) < 1);
+  m.done('files');
+  m.begin('warm');
+  assert.equal(m.current(t).id, 'warm');
+  // over the manifest's total, the stage counts what is still in flight: it keeps moving as those bytes arrive
+  let coming = 2000000;
+  const o = createLoadMeter({ now: clock, received: () => bytes, inflight: () => coming });
+  bytes = 0;
+  o.plan([['files', { bytes: 1000 }]]);
+  bytes = 1000000;
+  const f1 = o.fraction();
+  bytes = 2000000;
+  coming = 1000000;
+  const f2 = o.fraction();
+  bytes = 3000000;
+  coming = 0;
+  const f3 = o.fraction();
+  assert.ok(f1 < f2 && f2 < f3 && f3 < 1, `${f1} ${f2} ${f3}`);
+  // not downloading: the stage line skips the download stage
+  const n = createLoadMeter({ now: clock, received: () => bytes });
+  n.plan([['files', { bytes: 10 }], 'warm']);
+  n.begin('warm');
+  assert.equal(n.current(t, { downloading: false }).id, 'warm');
+  assert.equal(n.current(t, { downloading: true }).id, 'files');
 }
 
-// the screen: with the switch, its percentage is the work's (<= 98) until every promise has settled, then 100
+// a fraction standing still: the shown value keeps moving, at most 2% ahead of it
+{
+  t = 0;
+  const m = createLoadMeter({ now: clock });
+  m.plan([['a', 1000]]);
+  m.step('a', 0.5);
+  let v = 0;
+  for (let k = 0; k <= 100; k++) {
+    t = k * 100;
+    v = m.value();
+  }
+  assert.ok(v > 0.5 && v <= 0.52 + 1e-9, String(v));
+}
+
+// the stage line
+{
+  assert.equal(stageText({ id: 'files', got: 42e6, bytes: 118e6 }), 'Downloading course 42 / 118 MB');
+  assert.equal(stageText({ id: 'eventFiles', got: 1.25e6, bytes: 4e6 }), 'Downloading riders 1.3 / 4.0 MB');
+  assert.equal(stageText({ id: 'warm', got: null, bytes: null }, { done: 31, total: 80 }), 'Building shaders 31 / 80');
+  assert.equal(stageText({ id: 'lineup', got: null, bytes: null }), 'Preparing riders');
+}
+
+// the screen: with the switch, no minimum, its percentage is the work's (<= 99) until every promise has settled, then 100
 {
   setPv('loadMeter', true);
+  const reports = [];
   const ui = { set() {}, draw() {}, screen: 'loading', stage: null };
   const screen = new LoadingScreen(ui);
+  screen.report = (kind, data) => reports.push([kind, data]);
   screen.data = { timing: { original_frames: 815, percent_curve: [[0, 0], [20, 2], [120, 17], [240, 27], [400, 52], [520, 97], [540, 98], [800, 98], [810, 100]] }, hints: [] };
   globalThis.requestAnimationFrame ??= () => 0;
-  globalThis.location = new URL('http://x/?loadingMs=1000');
+  globalThis.location = new URL('http://x/');
   let resolve;
   const work = new Promise((r) => (resolve = r));
   screen.run(() => {}, [work]);
+  assert.equal(screen.session.minMs, 0, 'no minimum with the switch');
   screen.plan(['rider', 'warm']);
   const s0 = screen.session.start;
-  // well past the minimum: the curve allows 98, the work holds the number
-  let st = screen.update(s0 + 5000);
+  let st = screen.update(s0 + 16);
   assert.equal(st.percent, 0);
   screen.done('rider');
-  screen.step('warm', 0.5);
-  for (let k = 0; k < 40; k++) st = screen.update(s0 + 5000 + k * 16);
-  const expect = Math.floor(99 * (STAGE_MS.rider + 0.5 * STAGE_MS.warm) / (STAGE_MS.rider + STAGE_MS.warm));
-  assert.ok(st.percent > 0 && st.percent <= expect, `${st.percent} <= ${expect}`);
+  screen.begin('warm');
+  screen.step('warm', 0.5, 0, { done: 40, total: 80 });
+  for (let k = 0; k < 40; k++) st = screen.update(s0 + 100 + k * 16);
+  const expect = Math.floor((99 * (STAGE_MS.rider + 0.5 * STAGE_MS.warm)) / (STAGE_MS.rider + STAGE_MS.warm));
+  assert.ok(st.percent >= expect - 1 && st.percent <= expect, `${st.percent} ~ ${expect}`);
+  assert.equal(screen.session.stage.text, 'Building shaders 40 / 80');
+  assert.equal(globalThis.ssxLoadStage, `warm ${st.percent}%`);
+  // a stage over 5 s: one 'load-stage' report
+  for (let k = 0; k < 10; k++) screen.update(s0 + 6000 + k * 100);
+  assert.equal(reports.filter(([k]) => k === 'load-stage').length, 1);
   screen.done('warm');
-  for (let k = 0; k < 60; k++) st = screen.update(s0 + 6000 + k * 16);
-  assert.equal(st.percent, 98, 'every stage done, a promise still pending: the curve top, 98');
+  for (let k = 0; k < 60; k++) st = screen.update(s0 + 7100 + k * 16);
+  assert.equal(st.percent, 99, 'every stage done, a promise still pending: 99');
   resolve();
   await work;
   await new Promise((r) => setTimeout(r, 0));
-  st = screen.update(s0 + 7000);
+  st = screen.update(s0 + 8100);
   assert.equal(st.percent, 100);
-  // a world load (no continuation yet) shows its work; a continuation attached later paces on from the number shown
-  const later = new LoadingScreen(ui);
-  later.data = screen.data;
-  later.open();
-  later.plan([['course', 100]]);
-  const l0 = later.session.start;
-  later.step('course', 0.6);
-  for (let k = 0; k < 40; k++) st = later.update(l0 + 100 + k * 16);
-  const shownBefore = st.percent;
-  assert.ok(shownBefore >= 55, 'no pace before a continuation: ' + shownBefore);
-  later.done('course');
-  later.run(() => {}, []);
-  later.plan(['rider']);
-  later.done('rider');
-  let lastPct = shownBefore;
-  for (let k = 0; k < 70; k++) {
-    st = later.update(l0 + 800 + k * 2);
-    assert.ok(st.percent >= lastPct, 'never back');
-    lastPct = st.percent;
-  }
-  assert.ok(lastPct > shownBefore && lastPct < 98, 'paced on from the number shown towards 98 at the minimum: ' + lastPct);
-  st = later.update(l0 + 1000);
-  assert.ok(st.percent >= 98);
+  assert.equal(reports.filter(([k, d]) => k === 'load-stage' && d.ended).length, 1, 'the long stage reports its end');
+  // ?loadingMs= still sets a minimum
+  globalThis.location = new URL('http://x/?loadingMs=3000');
+  const forced = new LoadingScreen(ui);
+  forced.data = screen.data;
+  forced.open();
+  assert.equal(forced.session.minMs, 3000);
+  globalThis.location = new URL('http://x/');
   // a world load ends on 100% and the fade as soon as its work has settled, then its continuation (finish: no minimum)
   const world = new LoadingScreen(ui);
   world.data = screen.data;
@@ -221,4 +268,4 @@ const clock = () => t;
   assert.equal(new LoadingScreen(ui).finish(() => {}), false, 'off or no session: nothing to finish');
   delete globalThis.location;
 }
-console.log('load meter: stage weights, creep, segments, monotonic value, climb curve, 100% only when done OK');
+console.log('load meter: stage weights, creep, downloads, segments, monotonic value, stage line and reports, no minimum, 100% only when done OK');
