@@ -797,7 +797,7 @@ static void upper_request_play(){
      // 115CE0: kinds 5/6 (full meter, Tricky/Super Uber timer out) need 11FEE8 == 0 (control 0) and play 318 with the animator's
      // current mask (+0x20 = -1, all bones): only kinds 1..4 load the rider+0x8C8 mask (PS2 uber-super-expire 460).
      if(semantic>=0&&!graph.enter(semantic,-1,semantic==318?~uint64_t(0):riderMask8C8))throw std::runtime_error("Missing upper reaction request animation");}
-    upperRequest358=0;upperRequestTick354=-1;}}
+    upperRequest358=0;upperRequestTick354=-1;}}}
 }
 static void ground_upper_reactions(int jumpHeld){
  //115B58 (131868), then 115D48.

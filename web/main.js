@@ -27,7 +27,8 @@ import {
   feedContextWorld,
   feedEventRails,
   initWorldStepped,
-  framePause
+  framePause,
+  nextFrame as loadFrame
 } from './load-slices.js';
 import { createCutscenes, playCutscene, COURSE_CODES, heatSteps } from './cutscenes.js';
 import { heatResetWorld, heatRows, requireHeatCore } from './event-heat.js';
@@ -218,7 +219,7 @@ import { createWeatherRenderer } from './weather-renderer.js';
 import { createTerrainSparkle } from './terrain-sparkle.js';
 // pad vibration (FE Controller Settings > Vibration 1P): the original 0x125B18 motor model
 import { Rumble } from './rumble.js';
-import { STAGE_MS } from './load-meter.js';
+import { STAGE_MS, PENDING } from './load-meter.js';
 const rumble = new Rumble();
 // Ubertrick Setup preview: web/fe-screens.js
 // Select Character FE preview: camera, placement, FE clips (web/character-select.js)
@@ -343,7 +344,7 @@ const ui = new OriginalUI({
   // weighted by its share left, then the rider, the lineup and the warm-up
   loadStages: () => {
     const left = lazyPending() ? 1 - (globalThis.ssxBoot?.courseProgress?.target().fraction ?? 0) : 0;
-    const course = left > 0 ? [['course', Math.round(STAGE_MS.course * left)]] : [];
+    const course = left > 0 ? [['course', Math.round(STAGE_MS.lazyCourse * left)]] : [];
     return [...course, 'rider', 'lineup', 'warm'];
   },
   // FE rider speech (web/rider-speech.js)
@@ -3646,6 +3647,41 @@ function applyPresentationFast() {
     n.core._set_fx_reset_kicker?.(spray);
   }
 }
+// pv riderCull (docs/web-render-performance.md "Computer riders outside the view"): a computer rider's race model (5-7 skinned meshes,
+// each drawn in one or two passes, frustumCulled false: their bounds are the bind pose) is drawn even when the rider is behind the camera
+// or far down the course. Here a rider whose sphere of RIDER_CULL_RADIUS around its world position (core rider_world_state, the drawn
+// tick's) lies wholly outside the camera's frustum is hidden for this frame's draw. Its shadow, trail, wake and spray are untouched, and
+// so is every capture (skin palettes, lighting): presentation only, the same pixels. Returns the groups hidden (shown again after the
+// draw), or null.
+const RIDER_CULL_RADIUS = 5;
+const cullQa = new URL(location.href).searchParams.has('qa');
+const cullFrustum = new T.Frustum(),
+  cullMatrix = new T.Matrix4(),
+  cullSphere = new T.Sphere();
+function cullOffscreenRiders() {
+  const entries = aiRace?.renderer?.entries,
+    opponents = aiRace?.opponents;
+  if (!pv('riderCull') || !entries?.length || !opponents) return null;
+  camera.updateMatrixWorld();
+  cullFrustum.setFromProjectionMatrix(cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  let hidden = null;
+  for (let i = 0; i < entries.length; i++) {
+    const g = entries[i].group,
+      c = opponents[i]?.core;
+    if (!g.visible || !c?._rider_world_state) continue;
+    // the core's centimetres, Z up -> the scene's metres, Y up (as web/rival-beam.js places the icons); read in place (no view per call)
+    const H = c.HEAPF32,
+      k = c._rider_world_state() >> 2;
+    cullSphere.center.set(H[k] * 0.01 - origin.x, H[k + 2] * 0.01 - origin.y, -H[k + 1] * 0.01 - origin.z);
+    cullSphere.radius = RIDER_CULL_RADIUS;
+    if (cullFrustum.intersectsSphere(cullSphere)) continue;
+    g.visible = false;
+    (hidden ??= []).push(g);
+  }
+  // QA: how many were left out of the last draw
+  if (cullQa) window.__riderCulled = hidden ? hidden.length : 0;
+  return hidden;
+}
 function frame(ms) {
   if (!live) {
     if (feStage) feFrame(ms);
@@ -4080,10 +4116,13 @@ function frame(ms) {
     riderShadows.update(camera, warming, warmShadowLimit);
     fogRenderer.update(core);
     if (warming) warmView.apply();
+    // pv riderCull: computer riders outside the view are not drawn this frame (after their shadows took their silhouettes)
+    const culled = warming ? null : cullOffscreenRiders();
     try {
       fogRenderer.render();
     } finally {
       if (warming) warmView.restore();
+      if (culled) for (const g of culled) g.visible = true;
     }
   } else if (['game', 'results', 'ctm-results', 'ctm-award', 'ctm-records'].includes(ui.screen) && skyScene) {
     renderer.autoClear = true;
@@ -4265,14 +4304,22 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
     pipeline (WebGL links programs synchronously; Safari/Metal compiles are slow), at most 30 more frames. */
   // textures swapped in at run time (snow flipbook frames) upload now; post passes that only draw with something in view (sun Z query,
   // light glows) draw once
+  // (pv loadSmooth: WARM_TEXTURES a frame, after the post passes)
+  const warmTextures = [];
   scene.traverse((o) => {
-    for (const t of o.userData.warmTextures ?? []) renderer.initTexture(t);
+    for (const t of o.userData.warmTextures ?? []) warmTextures.push(t);
   });
-  if (sunFlare) sunFlare.warm = true;
-  if (lightGlow) lightGlow.warm = true;
-  // the glare pass and the glow query (web/glare-pass.js, light-glow.js)
-  if (glarePass) glarePass.warm = true;
-  if (lightGlow) lightGlow.warmQuery = true;
+  if (!pv('loadSmooth')) for (const t of warmTextures) renderer.initTexture(t);
+  // the glare pass and the glow query (web/glare-pass.js, light-glow.js); pv loadSmooth: one of them a frame (below), not all in the
+  // first warm frame with the fog composite
+  const postWarms = [
+    sunFlare && (() => (sunFlare.warm = true)),
+    lightGlow && (() => (lightGlow.warm = true)),
+    glarePass && (() => (glarePass.warm = true)),
+    lightGlow && (() => (lightGlow.warmQuery = true))
+  ].filter(Boolean);
+  const smooth = pv('loadSmooth');
+  if (!smooth) for (const on of postWarms) on();
   warming = true;
   const pipelineCount = () => renderer._pipelines?.caches?.size ?? 0;
   try {
@@ -4306,6 +4353,18 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       warmShadowLimit = 0;
       await nextFrame();
       alive();
+      if (smooth) {
+        for (const on of postWarms) {
+          on();
+          await nextFrame();
+          alive();
+        }
+        for (let k = 0; k < warmTextures.length; k += WARM_TEXTURES) {
+          for (const t of warmTextures.slice(k, k + WARM_TEXTURES)) renderer.initTexture(t);
+          await nextFrame();
+          alive();
+        }
+      }
       /* then, a step a frame: three sky meshes, a rider's shadow silhouettes (web/rider-shadow.js) and one shared vertex buffer */
       for (
         let step = 1, steps = Math.max(riderShadows?.entryCount ?? 0, Math.ceil(skyMeshes.length / 3), big.length);
@@ -4338,6 +4397,10 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
     // desktop)
     // the first slice builds one, then its measured cost sets the rate
     let newLimit = 1;
+    // pv loadSmooth: the drawables a slice reveals shrink when a frame's work ran over SLICE_BUDGET_MS (a new variant can mean several
+    // node builds: one per pass and geometry layout) and grow back once frames are light
+    let sliceSize = warmSlice;
+    const budget = smooth ? SLICE_BUDGET_MS : 40;
 
     // on a gated tier (30 fps: a drawn frame every 2nd animation frame) a drawn frame takes that many animation frames'
     // slices, and the new-material rate follows the drawn frame's own work (frame(), not the wait for it)
@@ -4346,7 +4409,7 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       const per = perNow(),
         slice = [];
       let fresh = 0;
-      for (const end = i + warmSlice * per; i < drawables.length && i < end && fresh < newLimit; i++) {
+      for (const end = i + (smooth ? sliceSize : warmSlice) * per; i < drawables.length && i < end && fresh < newLimit; i++) {
         const k = variant(drawables[i]);
         if (!built.has(k)) {
           built.add(k);
@@ -4359,15 +4422,20 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       const f0 = performance.now();
       const work = await nextFrame();
       alive();
+      const spent = work > 0 ? work : performance.now() - f0;
       if (fresh)
         newLimit = Math.max(
           1,
           Math.min(
             cap * per,
             // cap: pv worldWarm passes more (their pipelines were compiled first: a new variant costs its render object)
-            Math.floor((40 * per) / ((work > 0 ? work : performance.now() - f0) / fresh))
+            Math.floor((budget * per) / (spent / fresh))
           )
         );
+      if (smooth && spent > budget * per) {
+        sliceSize = Math.max(1, Math.floor(sliceSize / 2));
+        newLimit = 1;
+      } else if (smooth && spent < (budget * per) / 2) sliceSize = Math.min(warmSlice, Math.ceil(sliceSize * 1.5));
       for (const o of slice) o.visible = false;
       progress?.(WARM_SHARE.pre + ((WARM_SHARE.slices - WARM_SHARE.pre) * i) / drawables.length);
     }
@@ -4433,8 +4501,11 @@ const gpuIdle = () => {
 };
 // pv loadMeter: where each part of the warm-up ends, as a share of its time (measured, docs/loading-screen.md "The honest meter"):
 // the post passes / sky / shadow / vertex-buffer steps, the slices, the whole-scene frames; the GPU wait is the rest
-const WARM_SHARE = { pre: 0.1, slices: 0.85, frames: 0.97 };
+const WARM_SHARE = { pre: 0.06, slices: 0.95, frames: 0.99 };
 // per warm-up frame: drawables revealed, new material variants built
+// pv loadSmooth: a warm slice frame's work (frame(), ms) before its slices shrink; run-time textures uploaded a warm frame
+const SLICE_BUDGET_MS = 24,
+  WARM_TEXTURES = 16;
 const warmSlice = 60,
   warmNewMaterials = 3;
 // ---- Course lifecycle and in-app navigation (docs/course-switch.md) ----------------------------------------------------- A course /
@@ -4650,7 +4721,16 @@ async function switchCourse(job) {
     const rideStage = pv('rideWarm') && next.freeRide && after === 'autostart',
       worldStage = pv('worldWarm') && next.freeRide && after === 'autostart' && !params.has('peakMode'),
       gcStage = pv('switchGC') && isJavaScriptCore();
-    ui.loading.plan(['unload', 'course', ...(rideStage ? ['ride'] : []), ...(worldStage ? ['world'] : []), ...(gcStage ? ['gc'] : [])]);
+    // an event course with its event to follow (afterSwitch: ui.loadEvent) keeps a share for the event load's own stages
+    const eventStage = after === 'autostart' && !next.freeRide;
+    ui.loading.plan([
+      'unload',
+      'course',
+      ...(rideStage ? ['ride'] : []),
+      ...(worldStage ? ['world'] : []),
+      ...(gcStage ? ['gc'] : []),
+      ...(eventStage ? [PENDING] : [])
+    ]);
     ui.loading.begin('unload');
     const released = await unloadCourse(),
       t1 = performance.now();
@@ -4914,7 +4994,7 @@ async function compileFor(list, sides = false) {
 // are (skip); under the Transport's visible held loop (load screen world mode) a compile of those objects only, no frame. The simulation is
 // not touched (nothing ticks).
 // pv loadMeter: the compiles' share of warmWorld's time (measured, docs/loading-screen.md "The honest meter"); the warm-up's frames are the rest
-const WORLD_WARM_SHARE = 0.6;
+const WORLD_WARM_SHARE = 0.85;
 async function warmWorld(job, riderReady = null) {
   const gen = courseGen,
     mine = () => gen === courseGen && switchTarget === job,
@@ -4976,14 +5056,19 @@ function afterSwitch({ after, screen, url }) {
   }
   if (after === 'autostart') {
     /* as a page loaded with ?autostart=1: a career round / world resumes at its objectives (web/career-ui.js), else the event loads */
-    const cu = ui.careerUI;
-    // career screens as on a fresh page: the pending round or world sets them up
-    if (cu?.career?.save?.pending) cu.freeRide = null;
-    if (!cu?.resume())
-      ui.loadEvent(() => {
-        ui.set('game');
-        startRun();
-      });
+    const go = () => {
+      const cu = ui.careerUI;
+      // career screens as on a fresh page: the pending round or world sets them up
+      if (cu?.career?.save?.pending) cu.freeRide = null;
+      if (!cu?.resume())
+        ui.loadEvent(() => {
+          ui.set('game');
+          startRun();
+        });
+    };
+    // pv loadMeter: a world load ends on 100% and the screen's fade, as an event load does, before its arrival cut or ride
+    if (course?.freeRide && ui.loading.finish?.(go)) return;
+    go();
     return;
   }
   // the host's start came during the load: its event load takes the load screen over
@@ -5258,6 +5343,22 @@ async function unloadCourse() {
 /* One course / world in the page (Single Event course, the streamed Peak 1 world, an online lobby's course): everything below is
    per course; unloadCourse releases it (GPU objects via three's dispose events, the wasm core instance, workers, audio world).
    The renderer, scene/camera objects, UI, audio engine, input, cutscene player and online session stay for the page. */
+// pv loadMeter: the course build's milestones, as the share of loadCourse's time each one ends (measured, docs/loading-screen.md "The
+// honest meter"), reported to the load screen's 'course' stage
+// (an event course: Chrome / WebKit, ARA1; a streamed world: PEAK1, whose start row's locations are most of it). within: the share
+// of the way from this milestone to the next one (the start row's locations).
+const COURSE_SHARE = {
+  event: { core: 0.04, world: 0.28, sky: 0.29, environment: 0.35, collision: 0.64, stream: 0.64, riders: 0.98 },
+  world: { core: 0.02, world: 0.06, sky: 0.08, environment: 0.14, collision: 0.16, stream: 0.99, riders: 0.995 }
+};
+const COURSE_ORDER = ['core', 'world', 'sky', 'environment', 'collision', 'stream', 'riders'];
+function courseMilestone(name, within = 0) {
+  const share = COURSE_SHARE[course?.freeRide ? 'world' : 'event'];
+  if (!within) performance.mark('course:' + name);
+  const next = share[COURSE_ORDER[COURSE_ORDER.indexOf(name) + 1]] ?? 1;
+  // the stage creeps towards the next milestone meanwhile
+  ui.loading.step('course', share[name] + (next - share[name]) * within, next);
+}
 async function loadCourse(next) {
   const load = guardedLoad;
   // backgroundCourse: a load abandoned for another course stops at its next file
@@ -5275,6 +5376,7 @@ async function loadCourse(next) {
   coreLoading = true;
   // switchGate
   core = await newCore();
+  courseMilestone('core');
   // race_end asks it at a freestyle finish (0x239230 / 0x23A05C, fsCelebrate)
   core.finishHost = { place: (score) => gameHost.freestylePlace(score) ?? -1 };
   coreRefs.push(new WeakRef(core));
@@ -5330,6 +5432,7 @@ async function loadCourse(next) {
   // the event world's static batches in frustum-culled cells, same draws (web/static-world.js; streamed locations:
   // web/peak-set-pieces.js)
   if (!course.freeRide) organizeStaticWorld(worldScene);
+  courseMilestone('world');
   sky = await asset('SKY', false, course.sky);
   sky.traverse((o) => {
     if (o.isMesh) {
@@ -5348,6 +5451,7 @@ async function loadCourse(next) {
   const skySettings = await load(course.sky + 'world.json'),
     fog = skySettings.fog.painted[skySettings.fog.start?.entry ?? 0];
   scene.fog = new T.Fog(new T.Color().setRGB(...fog.color), fog.near_cm / 100, fog.far_cm / 100);
+  courseMilestone('sky');
   sam = await asset(bootRider().package, true);
   // RIDER_ZOE
   sam.traverse((o) => {
@@ -5364,6 +5468,7 @@ async function loadCourse(next) {
   const environmentMeta = await load((course.environmentRoot || course.root) + 'environment.json'),
     environmentBytes = new Uint8Array(await load((course.environmentRoot || course.root) + 'environment.bin', 'buffer'));
   await initEnvironmentSliced(core, (course.environmentRoot || course.root) + 'environment.json', environmentBytes);
+  courseMilestone('environment');
   riderLightingUpdate = createRiderLightingUpdate(core, environmentMeta.irradiance);
   Object.assign(mpLighting, { configuration: environmentMeta.irradiance, meta: environmentMeta, bytes: environmentBytes });
   boardTrail = await createBoardTrail(origin);
@@ -5437,9 +5542,12 @@ async function loadCourse(next) {
   } else {
     if (baseWorld) core._init_world_collision(worldRaw ? worldRaw.ptr : allocString(worldPackage), hashPtr);
     if (courseLoadGuard) await courseLoadYield();
+    // pv loadSmooth: under the load screen as well (a frame in between: it draws)
+    else if (pv('loadSmooth')) await loadFrame();
     // behind the menus: two tasks, not one
     if (baseWorld) core._init_body_terrain(terrainRaw ? terrainRaw.ptr : allocString(terrainPackage));
   }
+  courseMilestone('collision');
   core._init_fog(allocString(await load(course.root + 'fog-tree.json')));
   // the Weather painter, snowfall layers, camera splash, lightning (web/weather.inc; ?weather=0: none)
   if (core._init_weather) {
@@ -5499,8 +5607,11 @@ async function loadCourse(next) {
       kind: course.freeRide.kind,
       mode: course.freeRide.mode,
       // the peak run's rows (web/peak-run.js): the whole mountain prefetches along it
-      route: course.freeRide.route
+      route: course.freeRide.route,
+      // pv loadMeter: the start row's locations, between the collision and stream milestones
+      progress: (f) => courseMilestone('collision', f)
     });
+    courseMilestone('stream');
     {
       const s = course.freeRide.spawn ?? freeRide.arrivalFor(course.freeRide.course, { grid: course.freeRide.grid });
       if (s) spawn = s;
@@ -5849,6 +5960,7 @@ async function loadCourse(next) {
     };
   }
   for (const p of allocations) core._free(p);
+  courseMilestone('riders');
   snowRenderer = await createSnowRenderer(origin, core, { startfire: !!course.startfire });
   scene.add(snowRenderer.group);
   wakeRenderer = await createWakeRenderer(origin);

@@ -34,6 +34,7 @@ struct BrowserCrashHost {
 // The crash motion probes and body queries share the rider contact caches rider+0x864 (138960, as 13A7B0 and ground contact)
 // and rider+0x868 (137860/138640 body queries, as 13F488/13AA48); entering control 8 does not clear them (metro-mix-glide 1096).
 terrain_original::ContactCache& browser_rider_terrain_cache();terrain_original::ContactCache& browser_rider_body_cache(); // web/world_bridge.cpp
+const terrain_original::RiderScope* browser_rider_scope(); // web/world_bridge.cpp: rider+0x860, null before the first refresh
 struct BrowserCrashRuntime {
  OriginalCrashActorState actor;OriginalCrashMotionState motion;OriginalCrashControlState control;
  OriginalAirTrajectory trajectory;
@@ -88,7 +89,7 @@ struct BrowserCrashRuntime {
    const int surface=std::clamp(actor.surface,0,18);const auto& material=materials[surface];
    auto alignment=originalCrashSlidingForces(material.surface,motion,actor,actor.surfaceVelocity,host.clip().animationClass,originalOrientationBasis(actor.quaternion).forward);
    actor.quaternion=originalRebuildOrientation(originalAirAlignment(actor.quaternion,alignment.normal,alignment.heading,alignment.gain,alignment.maximumRate).quaternion).quaternion;
-   OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world());auto hit=queries.motionHit(queries.terrainContact({actor.position,actor.groundNormal},&browser_rider_terrain_cache()));
+   OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world(),browser_rider_scope());auto hit=queries.motionHit(queries.terrainContact({actor.position,actor.groundNormal},&browser_rider_terrain_cache()));
    auto effects=originalCrashSlidingContact(motion,actor,hit,landing.bodyScale,landing.materials[surface].depth3,alignment.relativeVelocityBeforeForces);
    if(effects.impact)host.collisionImpact(effects.impactSpeed);if(effects.requestReset)host.requestReset(1);if(effects.beginPredictor)beginPredictor(effects.predictorSpeedLimit);
   }else originalCrashAirFirstPhase(motion,actor,trajectory,[&](auto end,auto start,int mode){
@@ -111,7 +112,7 @@ struct BrowserCrashRuntime {
    else if(reaction.kind==OriginalCollisionReactionKind::RagdollImpact){control.impactPending54=1;control.impactVelocity60=before;if(reaction.resetPredictor){if(!host.speedLimit)throw std::runtime_error("Crash predictor restart needs rider+0x2E4");beginPredictor(host.speedLimit());}} //105D98 (motion 2, owner+0x30 == 1): 1135B8 = 113198 + 113618, a full restart, not 113618 alone
   }
  void contacts(BodyCollisionVolume& volume,const CollisionWorld& terrain,const WorldBodyCollision& world,const OriginalLandingProfile& landing,const std::function<int(int)>& property,OriginalCollisionProfile& profile,OriginalCollisionHistory& history){
-  terrain_original::Rounding rounding;OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world());const bool wasSliding=motion.submode==0;contactTranslation={};
+  terrain_original::Rounding rounding;OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world(),browser_rider_scope());const bool wasSliding=motion.submode==0;contactTranslation={};
   //106538 accumulates the same displacement into rider+9D0, which 121750/310530 commits to the cached pose.
   auto translate=[&](auto delta){for(unsigned k=0;k<3;k++){contactTranslation[k]=terrain_original::add(contactTranslation[k],delta[k]);volume.broadCenterCm[k]=terrain_original::add(volume.broadCenterCm[k],delta[k]);for(unsigned i=0;i<volume.count;i++)volume.spheres[i].centerCm[k]=terrain_original::add(volume.spheres[i].centerCm[k],delta[k]);}};
   auto impact=[&](const WorldBodyHit& hit,const ObstacleResponse& response,terrain_original::Vector before){impactReaction(hit,response,before,property,profile,history);};

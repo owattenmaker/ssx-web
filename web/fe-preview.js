@@ -21,9 +21,20 @@ import { wardrobeFile } from './wardrobe.js';   // Equip Gear outfits: generated
 import { packageTextureBlob, texelTexture, bcTexture, textureDecodeConfig } from './texture-archive.js';   // rider texture archives (docs/asset-formats.md)
 import { createGuardedWorker, workerUrl } from './worker-guard.js';   // build handshake + main-thread fallback (docs/workers.md)
 import { prepareFrontEndPreview, decodeTextureBlob } from './fe-preview-prepare.js';
+import { pv } from './pv-flags.js';
 import { quality, onQualityChange } from './quality.js';   // rider texture set (retexture)
 // the next animation frame (a timer when frames stop: a hidden tab)
 const nextFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; globalThis.requestAnimationFrame?.(go); setTimeout(go, 50); });
+// pv loadSmooth: the builds and compiles of every preview (the cutscene cast is one preview each) take turns, so a frame runs one
+// model's ~16 ms of builds, not one per model at once
+let buildTurn = Promise.resolve();
+function takeTurn() {
+  let release;
+  const mine = new Promise((r) => (release = r));
+  const ready = buildTurn;
+  buildTurn = buildTurn.then(() => mine);
+  return ready.then(() => release);
+}
 const FE_PREVIEW_WORKER = workerUrl((Worker) => new Worker(new URL('./fe-preview-worker.js', import.meta.url), { type: 'module' }));
 
 const DEG = Math.PI / 180;
@@ -233,33 +244,20 @@ export class FrontEndPreview {
       };
       mark('fetch');
       const prepared = await (prepareInWorker(root) || prepareHere(root));
-      mark('build');
-      const model = this.build(T, root, prepared);
-      mark('compile');
+      const release = pv('loadSmooth') ? await takeTurn() : null;
+      let model;
+      const pending = [];
+      try {
+        mark('build');
+        model = this.build(T, root, prepared);
+        mark('compile');
+        if (release) await nextFrame();
+        if (this.compile) await this.compileParts(model, pending);
+      } finally {
+        release?.();
+      }
       if (this.compile) {
-        // compileAsync skips invisible objects: compile it visible, then hide it until it is swapped in
-        model.group.visible = true;
-        // The meshes compiled part by part with frames between (a part's node material build is 40-110 ms at 4x CPU;
-        // the whole model in one compile was one 300-500 ms task: on the character select after its Cross, under a load screen for the
-        // cutscene cast). Each part rides in a detached group for its call (listed as its only child: it keeps its parent and place).
         try {
-          // each part's builds run in its call; the pipelines compile on and are awaited together; a frame once ~16 ms of builds ran
-          const one = new model.group.constructor(),
-            pending = [];
-          let t0 = performance.now();
-          for (const mesh of model.meshes) {
-            one.children.length = 0;
-            one.children.push(mesh);
-            try {
-              pending.push(Promise.resolve(this.compile(one)));
-            } finally {
-              one.children.length = 0;
-            }
-            if (performance.now() - t0 > 16) {
-              await nextFrame();
-              t0 = performance.now();
-            }
-          }
           await Promise.all(pending);
         } catch (error) {
           console.warn('FE preview compile', error);
@@ -272,6 +270,34 @@ export class FrontEndPreview {
     })().finally(() => this.pending.delete(root));
     this.pending.set(root, job);
     return job;
+  }
+  // The model's meshes compiled part by part with frames between (a part's node material build is 40-110 ms at 4x CPU; the whole
+  // model in one compile was one 300-500 ms task: on the character select after its Cross, under a load screen for the cutscene
+  // cast). Each part rides in a detached group for its call (listed as its only child: it keeps its parent and place). Its
+  // pipelines go to pending (awaited by fetch).
+  async compileParts(model, pending) {
+    // compileAsync skips invisible objects: compile it visible, then hide it until it is swapped in (fetch)
+    model.group.visible = true;
+    try {
+      // each part's builds run in its call; the pipelines compile on and are awaited together; a frame once ~16 ms of builds ran
+      const one = new model.group.constructor();
+      let t0 = performance.now();
+      for (const mesh of model.meshes) {
+        one.children.length = 0;
+        one.children.push(mesh);
+        try {
+          pending.push(Promise.resolve(this.compile(one)));
+        } finally {
+          one.children.length = 0;
+        }
+        if (performance.now() - t0 > 16) {
+          await nextFrame();
+          t0 = performance.now();
+        }
+      }
+    } catch (error) {
+      console.warn('FE preview compile', error);
+    }
   }
   // active(): feCompileSpread, the owner's screen still wants the roster (web/character-select.js); the prefetch stops once it does
   // not (it went on under the CTM world load: nine riders' builds on the load screen) and resolves false.

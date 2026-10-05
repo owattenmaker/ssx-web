@@ -169,10 +169,20 @@ export class LoadingScreen {
   }
   // pv loadMeter: the stages of the load from here (web/load-meter.js STAGE_MS ids, or [id, ms]), and their progress. Without a
   // session or the switch they do nothing.
-  plan(stages) { this.session?.meter?.plan(stages); }
+  plan(stages) { this.session?.meter?.plan(stages, { showing: (this.session.shownPercent ?? 0) / 99 }); }
   begin(id) { this.session?.meter?.begin(id); }
-  step(id, fraction) { this.session?.meter?.step(id, fraction); }
+  step(id, fraction, ceiling = 0) { this.session?.meter?.step(id, fraction, ceiling); }
   done(id) { this.session?.meter?.done(id); }
+  // pv loadMeter: a load that opened the screen without a continuation (a world load) ends here: 100% and the fade out as soon as
+  // its work has settled (no minimum), then next(). false: nothing to finish (no session, world mode, the switch off), so the
+  // caller goes on at once.
+  finish(next) {
+    const s = this.session;
+    if (!s?.meter || s.world || s.next) return false;
+    s.next = next;
+    s.minMs = 0;
+    return true;
+  }
   // Load-event entry point: show the screen (if not already up) and call next() when it has finished.
   run(next, work = []) {
     if (!this.open(work)) { next(); return; }
@@ -189,12 +199,20 @@ export class LoadingScreen {
     // (up to 90% for the download, the rest is the warm-up the curve already covers), and it never goes backwards.
     let percent;
     if (s.meter?.planned) {
-      // pv loadMeter: the curve paces the number up to 98% over the minimum, the load's work caps it (99% at most until every
-      // promise has settled), so 100% is the load done
+      // pv loadMeter: the curve paces the number up to 98% over the minimum and the load's work caps it, so it stays at 98% or
+      // below until every promise has settled: 100% is the load done
       const work = s.doneAt ? null : this.workFraction?.();
       if (work != null) s.meter.step('course', work);
-      percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt, true);
-      if (!s.doneAt) percent = Math.min(percent, Math.floor(99 * s.meter.value(now)));
+      // the pace applies once the session waits for its minimum (run() gave it a continuation): from the number shown then, it
+      // reaches 98% as the minimum ends. Before (a world load that may close into a cutscene), only the work.
+      let limit = 98;
+      if (s.next && s.minMs > 0) {
+        const c = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, false, true);
+        s.pace ??= { c0: c, v0: s.shownPercent ?? 0 };
+        const { c0, v0 } = s.pace;
+        limit = v0 <= c0 ? c : v0 + ((98 - v0) * Math.max(0, c - c0)) / Math.max(1, 98 - c0);
+      }
+      percent = s.doneAt ? 100 : Math.min(Math.floor(limit), Math.floor(99 * s.meter.value(now)));
     } else {
       percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt);
       const dl = downloadProgress();

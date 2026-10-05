@@ -6,7 +6,7 @@ RIDER_LOCAL extern uint16_t browserPatchFlags; // rider+0x2D4 (web/core.cpp)
 #include "../engine/soft_collision_control.hpp"
 extern void retain_jump_camera(const OriginalJumpState&);
 // Ordinary authored-rail controller/motion adapter. Included after graph/crash/reset setup.
-RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
+RIDER_LOCAL extern void (*browserRailTickBegin)();RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool browserRailBoostTicked;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
 RIDER_LOCAL extern OriginalBoostProfile boostProfile;RIDER_LOCAL extern bool boostHeld;bool soft_animation_finished();
 void publish_rail_rider(const OriginalRailRider&,bool);void leave_rail_motion();void publish_rail_charge(float);void retain_rail_crouch(float);RIDER_LOCAL extern uint32_t groundFocusTick;
 void advance_pickup_timers(uint32_t);void dispatch_pickup_contacts(const BodyCollisionVolume&);
@@ -150,7 +150,7 @@ static bool step_rails(float steering,int jump,int brake,int boost){
  return consumed;
 }
 static bool step_rails_tick(float steering,int jump,int brake,int boost){
- railReleaseFrame=false;railQueryOffset={};railUpperReactions=false; //121020 clears companion translation each motion tick.
+ railReleaseFrame=false;railQueryOffset={};railUpperReactions=false;browserRailBoostTicked=false; //121020 clears companion translation each motion tick.
  if(!physicsAttached||crash.active||browserResetActive||cachedCrashWorld.size()<=23)return false;
  auto view=rail_view();auto access=rail_access();bool attached=false;
  if(!railOwned||(physicsState.controlState==12&&!browserRailActive)){
@@ -255,7 +255,9 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
  railPreviousJump=jump;browser_boost_tick(boostState,boostProfile,physicsState.timeScale,browserRailActive?4:1,physicsState.controlState);view.boost=physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;physicsState.boostTierCounter=boostState.tier;boostHeld=boost;
  for(auto* control:{&view.turn,&view.animationTurn,&view.extraLean,&view.brake,&view.crouch,&view.steer22C,&view.balance,&view.presentationRoll,&view.tolerance25C,&view.balance280})groundControlApproach(*control);
  for(auto* control:{&physicsState.adjustment28C,&physicsState.adjustment298,&physicsState.boardAlignment,&physicsState.presentationLift})groundControlApproach(*control); //1211F8 approaches every triplet (+0x28C/+0x298/+0x2BC/+0x2C8 too)
- if(!browserRailActive){rail_apply(view);return false;}
+ // control 7 after the rail motion lost the rail (motion 1): this tick's controller and 1200D0 ran here; step_rider must not run them again
+ // (PS2 hl-rail-10 702 / 703: one meter decay a tick, the port drained twice)
+ if(!browserRailActive){rail_apply(view);browserRailBoostTicked=true;return false;}
  view.controlState=physicsState.controlState;view.motionMode=4;originalRailMotionStep(railMotion,view,access);rail_apply(view);publish_rail_charge(railHeldJump?view.crouch.current:0);++railTicks;railPostPending=!railMotion.lostRail;
  if(railMotion.lostRail){OriginalJumpState passive;passive.position=view.position;passive.velocity=view.velocity;passive.normal=view.contactNormal;passive.takeoffNormal=physicsState.previousNormal;passive.forward=view.surfaceForward;passive.boardUp=view.up;passive.speedLimit=view.speedLimit;passive.charge=-1;passive.ticksSinceGroundFocus=motionTick-groundFocusTick;passive.flags=browserPatchFlags;passive.motionMode=4;originalJumpTakeoff(passive);retain_jump_camera(passive);if(passive.groundLeaveSentinel)lastGroundLeave=0xffffffffu;view.position=passive.position;view.velocity=passive.velocity;rail_score_takeoff(passive.rampTakeoff/*114298 s1 (ramp branch) -> 119E38 a2*/);originalRailMotionLeave(railMotion,view,access);++railExits;if(crash.active||browserResetActive){physicsState.velocity=view.velocity;if(crash.active)crash.actor.velocity=view.velocity;commit_rider_physics();detach_rail_for_crash();return true;}rail_apply(view);rail_motion_exit();leave_rail_motion();if(browserSoftActive){railOwned=false;railReleaseFrame=true;}if(railHeldJump){railOwned=railHeldJump=false;railReleaseFrame=true;heldAirMode=true;passiveMode=false;gs.controlState=physicsState.controlState=2;retain_rail_crouch(view.crouch.current);}}
  return true;
@@ -278,7 +280,8 @@ static std::array<float,3> rail_motion_post(){
  originalRailMotionLeave(railMotion,view,access);if(!crash.active&&!browserResetActive){rail_apply(view);publish_rail_charge(railHeldJump?view.crouch.current:0);} //rail_apply republishes the rider; keep the step's crouch charge
  std::array<float,3> moved;for(unsigned k=0;k<3;k++)moved[k]=railQueryOffset[k]-before[k];return moved;
 }
-static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;}
+static void rail_tick_begin(){railReleaseFrame=false;}
+static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;browserRailTickBegin=rail_tick_begin;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_debug(){return railExitDebug.data();}
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_info(){RIDER_LOCAL static float out[4];out[0]=railExitPasses;out[1]=railExitHits;out[2]=railExitIncomplete;out[3]=railExitReactions;return out;}

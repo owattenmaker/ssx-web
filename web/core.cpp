@@ -185,7 +185,9 @@ void browser_controller_takeoff(float takeoffCharge){
 }
 bool browser_rail_uber_control();
 RIDER_LOCAL bool browserStarting=false,browserStartFrame=false,browserStartFrozen=false;RIDER_LOCAL bool (*browserStartControl)()=nullptr;RIDER_LOCAL void (*browserStartClear)()=nullptr;
-RIDER_LOCAL bool browserRailActive=false;RIDER_LOCAL bool (*browserRailStep)(float,int,int,int)=nullptr;RIDER_LOCAL void (*browserRailReset)()=nullptr;
+RIDER_LOCAL void (*browserRailTickBegin)()=nullptr; // clears the rail step's per-tick flags whether or not it runs (web/rail_gameplay.inc)
+RIDER_LOCAL bool browserRailActive=false;RIDER_LOCAL bool browserRailBoostTicked=false; // the rail step ran this tick's 114130 / 1200D0 and handed the tick back (web/rail_gameplay.inc)
+RIDER_LOCAL bool (*browserRailStep)(float,int,int,int)=nullptr;RIDER_LOCAL void (*browserRailReset)()=nullptr;
 // Handplant control11/motion5 (web/handplant_gameplay.inc): runs before rail attach; a failed cruise attempt edits the cruise inputs and skips 0x106848.
 // Attacks 0x1163B0 (web/attack_gameplay.inc): natural air runs it before 0x107578/0x106848; cruise clamps its turn to +-0.5.
 RIDER_LOCAL bool (*browserAttackAir)()=nullptr;RIDER_LOCAL void (*browserAttackCruise)(float&)=nullptr;RIDER_LOCAL void (*browserAttackReset)()=nullptr;
@@ -778,10 +780,14 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   groundControlApproach(physicsState.animationTurn);
  }
 
+ // a tick the rail step does not reach (an attack held in passive air, 12F7AC) is not a rail release tick: the flag set by the
+ // previous tick's Stop::Airborne kept animation_tick from running 12F730 for the rest of the flight (PS2 hl-rail-15 721: control 5)
+ if(browserRailTickBegin)browserRailTickBegin();
  bool handplantSkipsRail=false;
  const bool attackHoldsAir=browserAttackAir&&!browserCrashExitFrame&&browserAttackAir(); //12F7AC returns before 0x107578/0x106848
  if(!attackHoldsAir&&browserHandplantStep&&!browserCrashExitFrame&&browserHandplantStep(steering,crouchTarget,brakeTarget,handplantSkipsRail)){++motionTick;distanceRun+=std::hypot(position.x-old.x,position.z-old.z);publish_motion();return output;}
  railStepConsumed=false; // the rail motion (motion 4) owned this tick, including the tick it loses the rail
+ browserRailBoostTicked=false;
  if(browserRailStep&&!browserCrashExitFrame&&!handplantSkipsRail&&!attackHoldsAir&&browserRailStep(steering,jump,brake,boost)){railStepConsumed=true;++motionTick;distanceRun+=std::hypot(position.x-old.x,position.z-old.z);publish_motion();return output;}
  browserBoardPressFrame=(browserFinishStep&&!browserCrashExitFrame&&!attackHoldsAir&&browserFinishStep()!=0)||(browserBoardPressStep&&!browserCrashExitFrame&&!attackHoldsAir&&browserBoardPressStep()!=0); /*control 10 also owns the controller slot*/ //0x1161D0 entry or 0x12FC80 (runs its own 0x114130)
  if(browserBoardPressFrame&&browserCrashActive){ //0x130DD0 -> 0x10EB30 crash in the controller slot: 0x1200D0, 0x1211F8, then motion 2 this tick
@@ -821,14 +827,15 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  // 12E9B8 (control 2) with JumpHeld (word0 0x2000) calls 114130(rider, BoostHeld, 0) at 0x12EB58 whatever the motion: Cross held
  // through a passive departure keeps the boost (and its drain) in the air (PS2 hl-glide-3 1430). Released, it never calls 114130.
  const bool airCrouch=!grounded&&physicsState.controlState==2&&held;
- if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&grounded&&bool(jump)==held&&!browserBoardPressFrame)
+ if(browserRailBoostTicked){}
+ else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&grounded&&bool(jump)==held&&!browserBoardPressFrame)
   originalBoostControl(boostState,boostProfile,boost,!held&&boost&&!boostHeld);
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&airCrouch){if(jump)originalBoostControl(boostState,boostProfile,boost,false);}
  // In the air, control 0 (131620 on the ride-off tick) only requests control 4 and returns before its boost dispatch; the
  // passive controller 12F730 stops the boost in the next tick (tech-speedcap-groomed 421: amount still 1 on the PS2).
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!grounded&&!airControl0Request) originalBoostControl(boostState,boostProfile,false,false);
  boostHeld=boost;
- browser_boost_tick(boostState,boostProfile,physicsState.timeScale,grounded?0:1,(browserStartFrame||uberFrame||browserSoftFrame||browserCrashExitFrame||browserBoardPressFrame)?physicsState.controlState:grounded?(jump?2:0):5);
+ if(!browserRailBoostTicked)browser_boost_tick(boostState,boostProfile,physicsState.timeScale,grounded?0:1,(browserStartFrame||uberFrame||browserSoftFrame||browserCrashExitFrame||browserBoardPressFrame)?physicsState.controlState:grounded?(jump?2:0):5);
  physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;
  physicsState.boostTierCounter=boostState.tier;
  Vec3 f={0,0,1};

@@ -6,9 +6,10 @@ struct OriginalCrashContactProbe {terrain_original::Vector positionCm{},normal{0
 // normal, unlike13A7B0's animated board center/presentation up. Both use the
 // original kind2 refined segment and the shared rider+864 contact cache.
 inline OriginalWorldSegmentHit originalCrashContact(const CollisionWorld& terrain,const WorldBodyCollision* world,
-        const OriginalCrashContactProbe& probe,terrain_original::ContactCache* cache=nullptr) {
+        const OriginalCrashContactProbe& probe,terrain_original::ContactCache* cache=nullptr,const terrain_original::RiderScope* scope=nullptr) {
     using namespace terrain_original;Rounding rounding;Vector start,end;
     for(unsigned k=0;k<3;++k){float delta=mul(probe.normal[k],200);start[k]=sub(probe.positionCm[k],delta);end[k]=add(probe.positionCm[k],delta);}
-    return queryOriginalWorldSegment(terrain,world,start,end,0,.574999988079071f,true,cache);
+    // 138960 passes the rider's scope list +0x860 with cache +0x864 (0x138A18 / 0x138A20)
+    return queryOriginalWorldSegment(terrain,world,start,end,0,.574999988079071f,true,cache,scope);
 }
 }

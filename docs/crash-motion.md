@@ -133,3 +133,81 @@ impact handling.
   attackbail/ko-attack-moby: ko-attack re-captured with Moby's score object 0x5D6600 watched (--watch 0x5d6600:0x1d0; records
   byte-equal to ko-attack before the watch window); web/ai-score-compare.mjs (a compare-ai-capture TICK_HOOK) compares it: Moby's
   +0x12C at 265 (+0x124 on the old core) and the whole object exact for all 368 ticks; the human's KO (+0x128) as in ko-attack.
+
+## High-level play (2026-10-04, physics-jank agent)
+
+Playtest report (an SSX speedrunner on Windows Firefox 157, xinput pad): "bailing and getting flung in weird directions
+whenever I attempt high-level play".
+
+- **Field data** (host diag.log, sessions 71f4ne0n and lgotfd1d, read on the host only): no bail events existed in the
+  diagnostics. Every event race ran at about 40 fps (2,390-2,460 frames a minute, frames alternating 1 and 2 ticks). The free
+  ride before the first event ran at 60. The drop is the event phase with the five computer riders, handed to performance.
+- **Seeded aggressive pads** (local/ps2-capture/hl-gen.py; hl-capture.sh builds and runs one, hl-compare.sh compares one).
+  The moves: tucked boosting, diagonal (0.7071, an XInput stick's circular gate) and hard carves, charged jumps into long
+  spins / flips / grabs held into the landing, re-jumps, presses, plants and punches. `--rail` adds rail moves after a
+  `--prefix` that reaches the Snow Jam glide rail; `--uber` adds Uber chords (run with the full meter and Tricky poked).
+  The captures are in local/ps2-capture/runs/hl. The port was compared on every one, isolated and with the computer riders.
+- **Found and fixed (exact, by address):**
+  - **A soft collision during a board press** (hl-glide-3 682). 108388 in control 1 (0x1083D8..0x1083EC) first runs 131348
+    on the control-1 object: the pivot spring 1313A8, the finalise 131428 (which can flip +0x320 back) and the end score
+    119A38 -> 10E098(rider, f, 1). Then it picks the clip, reading +0x320 after the cancel, and plays it. 11FEC8(3) then
+    runs the exit 12FE98.
+    - The port judged the hit with control 0 and dropped the soft reaction. The rider stayed in the press, kept hitting the
+      object (4 contact responses against the PS2's 1) and was pushed upward: vy +165 against +60, 29 m off by the end.
+    - Now: engine/collision_event.hpp `OriginalCollisionContext::cancelControlOne` (131348; returns +0x320). It is set by
+      core.cpp dispatch_body_event for control 1, by the standalone 108388 instance path and by the pair path.
+    - web/boardpress_gameplay.inc `board_press_soft_cancel` / `board_press_soft_enter` run the cancel, then the soft clip,
+      then 12FE98. The event control is 1 while the press owns the controller, and begin_soft_control takes control 1 from
+      that path only.
+  - **The boost through a crouched departure** (hl-glide-3 1430). 12E9B8 with JumpHeld (word0 0x2000) calls 114130(BoostHeld,
+    0) at 0x12EB58 whatever the motion, so Cross + Square held through a passive departure keeps boosting and draining in the
+    air. The port stopped it.
+    - Also: the first air tick after a charged release is control 5 (133308, which stops the boost), not control 0's ride-off
+      (hl-sj-1 2596, hl-sj-2 913). Fix in core.cpp's controller boost dispatch (`airCrouch`, `releasedLastTick`).
+  - **One meter decay a tick after a rail loss** (hl-rail-10 702 / 703). Control 7 in the air ran 114130 / 1200D0 in the rail
+    step and step_rider ran them again. `browserRailBoostTicked` skips the second.
+  - **12F730 after a rail release with an attack held** (hl-rail-15 711..721). The rail step's Stop::Airborne flag
+    (railReleaseFrame) was only cleared inside the rail step. An attack held in passive air (12F7AC) skips the rail step, so
+    the flag stayed set, and animation_tick never ran 12F730 again for that flight. The PS2 enters control 5 at 721; the port
+    kept passive air, so no tricks, and it landed 36 cm off. Fix: core.cpp clears it every tick (`browserRailTickBegin`).
+  - **115B58 in a board press** (hl-ai-9 1265). 12FC80 calls 115B58 at 0x12FDF4 before 115D48, so a crash get-up's pending
+    314 (+0x358 = 4) plays in a press, with its 311710 variant draw. The port's control 1 skipped it (`upper_request_play`).
+  - **The crash queries use the rider's scope list.** 137860 / 138640 / 138960 pass rider+0x860 to 3342D0 (0x1378D8, 0x13869C,
+    0x138A20). OriginalCrashWorldQueries now takes the scope (web/crash_runtime.hpp, `browser_rider_scope`). No capture has
+    shown a difference from this yet.
+- **Gates** (`ps2-captures hl/*`): hl-glide-3, -5 (Uber), -6, -7, hl-sj-1, -2, hl-metro-4, hl-metroglide-8, hl-rail-10, -13,
+  -14 (Uber), -15 exact to the end in physics, score and boost; hl-ai-9 and hl-ai-16 (not isolated) exact for the human, the
+  five computer riders, the RNG, ranks and pair records.
+- **Open:**
+  - hl-aimetro-17 2495: the human's second airborne crash body contact in a row (instance 64528) pushes 0.88 cm less upward on
+    the PS2, with equal velocity; the human-only replay shows the same. The gate holds the human through 2494.
+  - Posed root ~1 cm off (physics exact) on the departure tick out of a rail loss into control 4 (hl-glide-3 2426) and out of a
+    nose press (hl-rail-15 1932); bones are gated through the tick before.
+
+### Field bail reports (web/diag-bail.js)
+
+game-tick.js calls host.bailTick after every live tick (not in replays). The watch only reads crash_info, reset_info, the
+score object's +0x12C and rider_state, and sends a small diag event:
+
+- `bail` on each crash serial increase: tick, sem, impact, sub, attacked, vIn / speedIn (m/s over the tick before), vOut (mean
+  over the 15 ticks after), turnDeg / turnHDeg, placed (a reset or rescue inside the window), the last 8 pads ([buttons mask,
+  lx, ly, rx, ry as -100..100, ticks left in that drawn frame]) and multi (catch-up ticks among them);
+- `reset` {tick, reason} on each forced placement.
+
+60 a session at most, inside the diagnostics budget. test-diag-bail.mjs.
+
+### pv padRing (off; web/pad-ring.js)
+
+The PS2's catch-up updates each take their own vblank's pad sample (0x326B88 ring, 0x326B48). The page read the gamepad once a
+frame, so at 40 fps about a third of the ticks repeated the tick before's pad (the keyboard already had per-tick keys,
+stallKeyInput).
+
+- With the switch, a poller (every 4 ms during a visible ride) keeps each changed pad sample with its time in a 64-slot ring.
+- stallKeyInput gives each earlier tick of a multi-tick frame the newest sample at or before its tick time, and the frame's
+  last tick the live pad, so no latency is added (test-pad-ring.mjs).
+- Both browsers refresh pads every 4 ms off the main thread: Chromium gamepad_provider.cc kPollingIntervalMilliseconds, Firefox
+  WindowsGamepad.cpp kWindowsGamepadPollInterval (no deadzone; triggers /255).
+- Firefox updates content Gamepad objects through main-thread IPC events, so the poller only helps when the main thread is
+  free between frames.
+- To decide: the pad-rate probe (rAF against a poller, with an optional per-frame busy load) with a real pad in Firefox and
+  Chrome.

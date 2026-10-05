@@ -12,6 +12,9 @@ class OriginalCrashWorldQueries {
     // partialEntities: dynamic entities without callbacks (unsupported instances, air-trajectory cause 2) are left out of the
     // query instead of failing it (the browser's streamed worlds, which seed no scripted instances: web/crash_runtime.hpp).
     bool partialEntities=false;
+    // The rider's query scope list (rider+0x860, 332DB8): 137860 / 138640 / 138960 pass it to 3342D0 (0x1378D8, 0x13869C, 0x138A20),
+    // so they see only the patches of the last refresh. Null: the whole world (the native engine).
+    const terrain_original::RiderScope* scope=nullptr;
     WorldBodyQuery requireComplete(WorldBodyQuery result)const {
         if(!result.complete()&&!(partialEntities&&!result.candidateLimitExceeded))throw OriginalCrashWorldUnavailable("Crash body query intersects unsupported native collision resources/callbacks");
         return result;
@@ -19,12 +22,12 @@ class OriginalCrashWorldQueries {
     bool segmentUsable(const OriginalWorldSegmentHit& hit)const{return hit.complete||(partialEntities&&hit.unavailableCause==2);}
 public:
     OriginalCrashWorldQueries(const CollisionWorld& terrainWorld,const WorldBodyCollision& bodyWorld,
-                             std::function<int(int)> propertyLookup,bool partial=false)
-        :terrain(terrainWorld),world(bodyWorld),surfaceProperty44(std::move(propertyLookup)),partialEntities(partial) {
+                             std::function<int(int)> propertyLookup,bool partial=false,const terrain_original::RiderScope* riderScope=nullptr)
+        :terrain(terrainWorld),world(bodyWorld),surfaceProperty44(std::move(propertyLookup)),partialEntities(partial),scope(riderScope) {
         if(!surfaceProperty44)throw std::runtime_error("Crash surface property catalog is unavailable");
     }
     OriginalWorldSegmentHit terrainContact(const OriginalCrashContactProbe& probe,terrain_original::ContactCache* cache864)const {
-        auto hit=originalCrashContact(terrain,&world,probe,cache864);
+        auto hit=originalCrashContact(terrain,&world,probe,cache864,scope);
         if(!segmentUsable(hit))throw OriginalCrashWorldUnavailable("Crash terrain probe intersects unsupported native collision resources/callbacks");
         return hit;
     }
@@ -38,11 +41,11 @@ public:
     }
     WorldBodyQuery slidingBody(const BodyCollisionVolume& body,terrain_original::Vector groundNormal,
                                terrain_original::ContactCache* cache868)const {
-        return requireComplete(world.query(body,groundNormal,nullptr,false,2,cache868)); //138640: always coarse.
+        return requireComplete(world.query(body,groundNormal,nullptr,false,2,cache868,scope)); //138640: always coarse.
     }
     WorldBodyQuery airborneBody(const BodyCollisionVolume& body,bool human,
                                 terrain_original::ContactCache* cache868)const {
-        return requireComplete(world.query(body,{},nullptr,human,2,cache868)); //137860: no normal filter.
+        return requireComplete(world.query(body,{},nullptr,human,2,cache868,scope)); //137860: no normal filter.
     }
     WorldBodyQuery detachedBody(const BodyCollisionVolume& body)const {
         return requireComplete(world.query(body,{},nullptr,false,2,nullptr)); //137138:336850, no rider cache.

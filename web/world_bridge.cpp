@@ -327,7 +327,8 @@ EMSCRIPTEN_KEEPALIVE int* world_collision_info(){
 
 // Rider contact caches shared with the crash runtime (web/crash_runtime.hpp): rider+0x868 body, rider+0x864 terrain (core.cpp).
 RIDER_LOCAL extern ssx::terrain_original::ContactCache groundCache;
-namespace ssx {terrain_original::ContactCache& browser_rider_body_cache(){return bodyContactCache;}terrain_original::ContactCache& browser_rider_terrain_cache(){return groundCache;}}
+namespace ssx {const terrain_original::RiderScope* browser_rider_scope(){return riderScope?&*riderScope:nullptr;}
+terrain_original::ContactCache& browser_rider_body_cache(){return bodyContactCache;}terrain_original::ContactCache& browser_rider_terrain_cache(){return groundCache;}}
 #include "peak_world.inc" // streamed Peak 1 locations (docs/peak-mountain.md)
 // Per rider context (web/rider_context.cpp): construct this translation unit's RIDER_LOCAL_LAZY containers.
 void rider_statics_world(){rider_touch(&peak_stream::residency);}

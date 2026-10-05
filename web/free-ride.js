@@ -619,7 +619,9 @@ export async function createFreeRide({
         kind = FREE_RIDE_KIND,
         mode = kind === FREE_RIDE_KIND ? 12 : kind === TIME_CHALLENGE_KIND ? 6 : 9,
         step = nextFrame,
-        route: runRoute = null
+        route: runRoute = null,
+        // progress(f): the share of the start row's locations in (main.js: the load screen's meter, pv loadMeter)
+        progress = null
       } = {}
     ) {
       // a frame between the feed slices (the load screen draws)
@@ -630,7 +632,12 @@ export async function createFreeRide({
       freshPending = true;
       const startCodes = row.locations;
       for (const code of startCodes) peak.requestEnv(code);
-      const first = Promise.all(startCodes.map(requestCore));
+      let settled = 0;
+      const counted = (p) => {
+        p.finally(() => progress?.(++settled / startCodes.length)).catch(() => {});
+        return p;
+      };
+      const first = Promise.all(startCodes.map((code) => counted(requestCore(code))));
       let done = false;
       first.then(
         () => {
