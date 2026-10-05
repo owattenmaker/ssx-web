@@ -1,3 +1,109 @@
+> **The gondola cabin seen from outside: pv setBlendClass (new, off) (2026-10-04, gondola agent; recorded by the coordinator):** see visual-parity.md section 46. The TRANSP cabin (one class-2 material, word +0x0C 0x70001) was drawn as one blended pass without depth writes, so from outside (gond_inair #150) the far walls covered the near ones. PS2 37E238: class from +0x0C & 0x660000 (0x20000 ATST GREATER 92; 0x40000 / 0x60000 ATST GREATER 20), Z written (ZMSK only for additive model headers), class 2 sorted per node by the node origin's view depth (37F6E8, key 364240), so the far side draws first. Port: tools/export_cutscene_sets.py splits class-2 batches per node with `blend` / `sort_pivot`; cutscenes.js draws the course renderer's two passes with the switch on. Data copied in (coordinator): CUTSCENES/SETS/TRANSP/world.json (binaries unchanged; old file backed up in the coordinator scratchpad). Checked in Chrome against PS2 ctm-parity/runs/to-final; WebKit owed (screen locked). Open: the heli / plane sets' class-2 windows.
+
+> **Deployed 2026-10-04 (coordinator): core3 with board + hand morphs (inert), assets in.** web/runtime core.wasm `5b247d6a…`, core.js `920f941b…` from local/board-flex/core3 (276 clean; includes the rider_context snapshot_qa fix). Copied into web/public/assets: RIDER_*/board-flex.{json,bin} (29 packages, 524 KB) and RIDER_*/hand-morphs.{json,bin} (29 packages, 1.4 MB; RIDER_NWLEGEND has hands only, its board has no morphs). Still off, waiting on a WebKit check with the screen unlocked: boardFlex, finishHudHide, eventRiderWarm, setBlendClass (gondola; needs a TRANSP re-export copy); tickLock awaits the user's decision.
+
+> **Board flex and hand morphs: the board bends and the hands grip, bit-exact weights (2026-10-04, playtester-bugs agent; pv `boardFlex`, off until the WebKit visual check):** see [characters.md](characters.md) "Board flex". Playtest report: "boardflex doesn't work".
+> - **Cause:** the board (board_BoardFlex<X>, file 2, 8 morphs) and the race hands (HandsX, file 7, 18 morphs) are morph-target parts. The PS2's pose blender 30F2B0 (from 312598) blends their weights from the clips' file-2 / file-7 streams into *(geometry+0x3C), with the bones' layer weights:
+>   - the first covering layer writes; later layers blend (1 - w) out + w s;
+>   - a mirrored layer reads part+0x40 = the MNF morph_ids;
+>   - the slot bit is the slot count + the morph index;
+>   - with no covering layer, the weights are zeroed (0x3100D0).
+>   The port computed none of these and its race packages had no morph targets, so the board was always straight and the hands always open.
+> - **What the PS2 does:** the board bends in board presses (morph 5 at 0.99), rail presses, grinds and some landings. It does not bend on plain rail balance: Zoe's rail semantics 68 / 18 have no file-2 stream. The hands are non-zero on most ticks (bar grip at the gate, grabs).
+> - **Core** (inert unless configured, nothing in the simulation reads it):
+>   - engine/animation_motion.cpp `originalAnimationMorphWeights`;
+>   - web/animation_bridge.cpp `board_morph_configure` / `morph_part_add` / `morph_upper_bit` / `board_morph_slot` / `board_morph_count` / `board_morph_weights`;
+>   - sampled with every pose: the tick, the 11D660 placement (via the stage teleport), the mission placement.
+>   - Scratch core local/board-flex/core3, to install.
+> - **Page:**
+>   - web/board-flex.js loads `board-flex.json/.bin` and `hand-morphs.json/.bin` and configures the core after each init_animation: the human in main.js, a computer rider at its capture in opponent-riders.js. The hands' bit comes from rider+0x8C0 (11C298).
+>   - web/rider-skinning.js adds sum(w x delta) before each palette's skin: 26 columns, one shader for every rider; the shadow uses the same node.
+>   - web/wardrobe.js builds both pairs for outfits (GameCube deltas).
+> - **Assets** (tools/export_board_flex.py): the deltas come from the PS2 MPF morph packets (VIF UNPACK V4-8, 4 mm units), assigned to morphs in order.
+>   - Board A equals an independent decode (0.0 cm). The GameCube twins are within 0.8 cm (board) and 0.39 cm (hands).
+>   - board-flex: in web/public/assets (coordinator, 2026-10-04).
+>   - hand-morphs: also in web/public/assets (coordinator, 2026-10-04; 29 packages; RIDER_NWLEGEND has hands only, its BoardFlexD has no morphs).
+> - **Evidence:**
+>   - 4 new ARMSX2 captures watching 0x5DC000: local/board-flex/runs/bf-{boardpress-nose,boardpress-rail,rail-balance-lr,tech-land-mid}, linked as runs/boardflex.
+>   - Gates `ps2-captures boardflex/*` (web/board-flex-compare.mjs): board and hand weights bit-equal on every tick (239 / 499 / 800 / 274).
+>   - PS2 frames: local/board-flex/snaps.
+>   - Chrome: local/board-flex/shots, side-chrome.png and hands-side-chrome.png (off | on; the tail curls in a nose press) and nose438-chrome.png (PS2 | off | on).
+>   - WebKit: the weights and the renderer's uniforms are equal to Chrome's (shots/bf-boardpress-nose.wk-data.json). WebKit frames are not taken: the screen was locked (CGSSessionScreenIsLocked), so the WKWebView is hidden and rAF is stalled.
+> - **Tests:** test-board-flex (new, in test:all), rider-skinning, opponent-riders, wardrobe, sam-gear, line-length and comment-code pass. Full ps2-captures on core3: 276 clean (wasm 5b247d6a…, js 920f941b…).
+> - **To turn on:**
+>   - install core3;
+>   - a WebKit look with the screen unlocked: `RUNS=$PWD/local/board-flex/runs/ node local/board-flex/qa/vpshot.mjs bf-boardpress-nose OUT 438 --pin --side 2.6 --up 0.9 --calib 400 --browser wk --params pv=boardFlex` against `local/board-flex/qa/overlay.mjs`, or the live dev server once the core and assets are in;
+>   - then set `boardFlex` true.
+>   Online remote riders draw the rest shape.
+
+> **Finish HUD: everything but the banner goes on the finish tick (2026-10-04, finish-HUD agent; pv `finishHudHide`, off until the WebKit check):** see [visual-parity.md](visual-parity.md) section 45. Playtest report: "The game HUD doesn't disappear when the FINISH text appears."
+> - **PS2 (dis.pkl):**
+>   - Once rider+0x470 >= 0 (FINISH or TIME'S UP; not event type 4), 1EB9E8 sets the per-player mask +0x80 = 0xFFEFFFFF (0x1EB9FC).
+>   - Once every human has finished, 12A250 (0x1EB91C) cuts owner+0x3CC to 0x170000.
+>   - The draw 0x1ECB04 (flags = 0x3CC & ~mask | +0x84) then leaves only 0x100000, the banner 21F660.
+>   - The clock, meter (gp-0x994), mail icon, place, gauge (0x200000), trick slots, "S" and hints cut out on the finish tick, with no fade.
+> - **Evidence:**
+>   - setpieces/full re-run with per-tick snapshots (local/ps2-capture/runs/finishhud/, 12,306 records byte-equal): +0x470 first >= 0 at tick 12297; snapshot 12297 shows the full HUD, 12300 onward the banner alone.
+>   - Also ctm-parity race-f 14341 / 14351 and race-q 13720 / 13741.
+>   - Peak runs follow the same code (no PS2 frame).
+> - **Port:**
+>   - web/ui.js `finishHide` gates the collect counter, place, clock, score fallback, speed, progress meter, boost gauge / orb / letters and "S", and passes flags & 0x100000 to the trick-slot frame.
+>   - web/career-messages.js `drawHud(c, racing, draw)` keeps the mail icon's timer running while it is hidden (mailFreeze timing).
+>   - web/main.js `ui.freeRideHud(c, level, finishHide)` cuts the peak-run clock / split.
+>   - Freestyle was already right.
+> - **Checks:**
+>   - Chrome, real Single Event flow (modeshot.mjs setpieces/full, position error 0): with the switch on, full HUD at 12296 and the banner alone from 12297, as on the PS2; with it off, the bug.
+>   - Staged finish / TIME'S UP (fin.mjs): banner only.
+>   - WebKit not done (screen locked): run `modeshot.mjs setpieces/full OUT 12297,12298,12300 --browser wk --extra '&pv=finishHudHide'`, then flip `finishHudHide` to true.
+> - **Tests:** test-visual-parity R37 (new); visual-parity, messages, fe-screens, ctm-flow, ctm-left, peak-mountain, career-rider pass.
+> - **Left:** the PS2's "Loading..." caption from about finish + 6 ticks (S+0x94 bit 4, ctm-decomp-world-states.md rank 7).
+
+> **The in-world card freeze, the riders' warm-up, tickLock, the diag gpu tag (2026-10-04, lag agent):** see [ctm-events-in-world.md](ctm-events-in-world.md) "The card freeze", [workers.md](workers.md) "One tick per drawn frame at 60 Hz", [mobile.md](mobile.md) "Hardware acceleration".
+> - **Report:** a Windows **Firefox** playtester (diag 71f4ne0n, the only in-world session since 10-01) at the Snow Jam qualifier card.
+>   - The main thread was blocked for 19.45 s, from 0.8 s after the card opened (hangWatch).
+>   - Then a 9.2 s frame gap at GO: 9 pipelines, 58 builds, 66 textures.
+> - **Cause 1, fixed (core2, installed 2026-10-04):** the countdown snapshot's QA heap attribution.
+>   - The first save of each slot called dlmalloc mallinfo() twice per holder, and each call walks the whole heap (1.1 ms on 156 MB).
+>   - That cost 3.8-4.3 s at 1x and 17.4 s at Chrome 4x on the old core.
+>   - web/rider_context.cpp: the attribution now runs only with snapshot_qa. core2 wasm 062e4076…, js 3b34df40… (it carries the board-flex agent's inert board-morph exports). Full ps2-captures: 272 clean.
+> - **Cause 2 (pv eventRiderWarm, new, off):** the computer riders' race models were first built at GO (53 builds and 7 pipelines: 0.23 s at 1x, 1.0 s at 4x on core2).
+>   - main.js warmEventRiders compiles them mesh by mesh under the approach and the card. cutscenes.js playEventIntro got an optional onStep.
+>   - Chrome, cold profile, core2 + switch: the worst frame of Continue +5 s is 17 ms at 1x (225 without the switch) and 125 ms at 4x (992 without), with no main-thread block.
+>   - Fly-over and card frames are unchanged.
+>   - **Proposed on** after a WebKit smoke. WebKit was not checked (screen locked). Firefox could not be launched here (macOS privacy blocks ~/Library/Application Support/Firefox from the agent shell).
+> - **Input latency:**
+>   - The port reads input, ticks and draws in one animation frame, adds no queue of its own and pages the catch-up as the PS2's frame loop does.
+>   - The added lag is the render interpolation (alpha = leftover x 60): 0..16.7 ms, mean 5-10 ms on recorded rAF times. The PS2 draws its newest update with no interpolation.
+>   - **pv tickLock (new, off; web/tick-lock.js, test-tick-lock.mjs in test:all):** a ~60 Hz frame runs exactly one tick and draws it (alpha 1). The real-time debt is paid a tick at a time past 4 ticks. Online and the replay clock are untouched.
+>   - Chrome ?simtrace: identical on and off over 1406 ticks. WebKit not checked.
+>   - Not confirmed from the code: the PS2's draw-to-display depth (game vt+0x3C's GS kick / display-buffer swap).
+> - **30 fps:** no cap (the user's decision). PS2 facts:
+>   - The game runs one update per vblank (app +0x10 = 60 Hz, +0x14 = 1/60) and has no 30 Hz mode in 0x316F00.
+>   - A frame that takes 2 vblanks runs 2 updates before the next draw (the stall savestates, ps2-frame-pacing.js). So a "framelimited" Metro City on the PS2 is the draw falling to 30 fps while the game stays at 60 updates a second, which is what the port does.
+> - **Diag:** the renderer event and every heartbeat carry `gpu` ("webgpu nvidia/lovelace", "… fallback …", "… software …", "compat"). Firefox, with its empty adapter info, makes one more requestAdapter for its isFallbackAdapter and sends 'gpu-adapter'.
+>   - Field data: every Windows WebGPU session so far was on a real GPU. The tester's Firefox adapter had BC, f16 and timestamps, at 17 ms free-ride frames.
+> - **Left (4x):**
+>   - aiRace.prepare's install configures the 5 riders in one task: 441 ms at the fly-over -> approach join. Spreading it needs an exactness check, since the free ride ticks between the riders.
+>   - The cast's FE builds: 150-400 ms frames.
+>   - Opponent lighting init: 121 ms.
+>   - Levers not tried: WebGPURenderer's powerPreference (unset: a dual-GPU laptop may get the integrated GPU) and the canvas's alpha: true.
+> - QA: local/lag-latency/qa (cardprobe.mjs: the cold-profile gate -> card -> Continue probe, BROWSER=chrome|webkit THROTTLE=4 PV= QX=; recorder.js, sum.mjs, builds.mjs, prof.mjs; latprobe.mjs: the tickLock A/B; the runs' JSON), local/lag-latency/core2 and its capture log.
+
+> **No pause on focus loss; the FAQ's way out (2026-10-04, focus-pause agent):** see [pause-contexts.md](pause-contexts.md) section 5.
+> - **Removed (no switch):** main.js opened the pause overlay on window blur and on visibilitychange to hidden. Playtesters hit it in the Transport ride, the gondola and NIS cuts, where the PS2 takes no Start (WS10 / WS11 / WS14, local/transport-stall/ps2/run1). They got the pause menu over the gondola while the race started without them, and a stuck camera when a cutscene's start was paused.
+> - **Now, on blur or hidden:** main.js `releaseInput()` runs clearInput() (keys, the touch deck, the key log) and web/gamepad.js `setPadsFocused(false)`.
+>   - While unfocused, pollPads returns a neutral pad: no reads, no 'use' events. Chromium kept feeding the pad to a visible unfocused window.
+>   - On 'focus' the pad comes back. Its first poll re-reads the rest state, so a button already down counts as held, not as a new press.
+> - **On show:** `last = performance.now()`. The first frame back no longer runs ps2FrameTime of the hidden seconds (up to 12 ticks).
+> - **Unchanged:** the audio's hidden suspend (audio-engine.js installAudioUnlock), and the online race's worker ticks while hidden (server-paced, neutral input). `?perf=1` keeps the input as before.
+> - **Every other way into the overlay** (pad / keyboard / touch Start through startOpensPause with cutscene || transporting and the stack's HOLD contexts; the FAQ and station opens) was checked. None opens during WS1 / WS10 / WS11 / WS14. The countdown keeps Start, as on the PS2.
+> - **FAQ "?" stuck:** the cause was career-ui.js back() (the hotfix below). The FAQ view's list can only be left with Triangle, and Back did nothing there.
+> - **Tests:**
+>   - test-pause-contexts "losing focus never pauses": the blur / focus / visibility / pagehide listeners of every page module open no screen and push no context, and main.js releases the input and resyncs the clock;
+>   - test-gamepad: the unfocused pad;
+>   - test-ctm-flow "The FAQ can be left": Triangle from the FAQ view, and each of its three buttons then Back, return to the ride with one resume, and the folder closes again.
+> - **Browser:** scratchpad focusprobe.mjs (blur + hidden + visibilitychange, rAF held as in a hidden tab, then back) in Chrome: 22/22. It covered the new career's arrival cut, free ride, an MCOMM Transport ride to 18, the round card, the countdown and a race. In each: no pause, the stack unchanged, after the return 1 tick per 16.7 ms frame, arrival at 18 with nothing held. WebKit could not run: the screen was locked (visibilityState 'hidden' from the load).
+
 > **Deployed 2026-10-04 (coordinator): the in-world card freeze fix and no pause on focus loss.** Core local/lag-latency/core2 (wasm `062e4076…`, core.js `3b34df40…`, 272 clean): rider_context.cpp snapshot_save runs the mallinfo heap attribution only with snapshot_qa (it walked the whole heap 3192 times at the in-world Continue: 4.3 s at 1x, 17.4 s at 4x, the tester's 18.4 s on Windows Firefox; now ~225 ms). It also carries the board-flex agent's inert board-morph exports (used only behind pv boardFlex, off). main.js: blur / visibilitychange no longer open the pause; they release input (gamepad.js setPadsFocused) and resync the frame clock on return (user decision; Chrome probe 22/22, WebKit owed: the screen was locked). diagnostics.js tags the GPU adapter (fallback / software) in the heartbeats.
 
 > **Audit for swallowed statements: none left (2026-10-04, cleanup agent):** started after the career-ui back() hotfix (next entry).

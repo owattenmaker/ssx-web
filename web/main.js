@@ -92,6 +92,7 @@ import { updateMovingInstances } from './moving-instances.js';
 import { createSetPieceRenderer } from './set-pieces-renderer.js';
 let padPtr = 0;
 const simulation = new FixedStepClock();
+const tickLock = createTickLock();
 import createCore from './runtime/core.js';
 import { createAiRace } from './ai-race.js';
 import { syncWorldNodes } from './ai-racers.js';
@@ -104,6 +105,8 @@ import { installYieldShim, yieldBudget } from './yield-shim.js';
 import { startGcWatchdog, isJavaScriptCore } from './gc-watchdog.js';
 import { collectBefore, collectNow, coreTracker } from './switch-gc.js';
 import { ps2FrameTime } from './ps2-frame-pacing.js';
+// pv tickLock: one tick per ~60 Hz drawn frame, drawn without interpolation
+import { createTickLock } from './tick-lock.js';
 import { organizeStaticWorld } from './static-world.js';
 import { registerGpuRestore, restoreGpuCopies, fetchBuffer, releaseWorldCopies, forgetGpuRestore } from './gpu-copies.js';
 import { abortCompiles } from './compile-abort.js';
@@ -3653,21 +3656,32 @@ function frame(ms) {
       // pv padCarry: the finished ride reads the pad as the PS2's (its control 10 ignores it; the finish tick's control 0 still crouches on
       // a held Cross: c0a-ret2 1700)
       const tickInput = (finished && !pv('padCarry')) || simHeld ? NEUTRAL_PAD : input;
+      // pv tickLock (web/tick-lock.js): offline, a ~60 Hz frame runs exactly its ticks (1; 0 or 2 to pay the real-time debt) and draws
+      // the newest one (alpha 1), as the PS2 draws every vblank's update; null: not a 60 Hz frame, the pacing below
+      const lockedTicks = !online && pv('tickLock') ? tickLock.frame(dt) : null;
+      if (lockedTicks != null) simulation.pending = 0;
       gameTick.advance(
         simulation,
         // offline, the PS2 frame loop's pacing (web/ps2-frame-pacing.js): at most 12 updates a drawn frame and the backlog
         // dropped, not replayed at 12 a frame (a Safari stall mid-rotation fast-forwarded the air auto-complete) low tier: a frame slower
         // than 4 ticks drops the excess (slow motion, never a catch-up spiral); web/quality.js
-        online ? mpGame.pace(dt, simulation.pending) : Math.min(ps2FrameTime(dt), quality.maxFrameDt),
+        lockedTicks != null
+          ? lockedTicks / 60
+          : online
+            ? mpGame.pace(dt, simulation.pending)
+            : Math.min(ps2FrameTime(dt), quality.maxFrameDt),
         stallKeyInput(tickInput, ms, dt, steerSnap, online || finished || simHeld)
       );
-      acc = simulation.pending;
+      // a locked frame draws its newest tick (renderAlpha 1); its leftover is 0
+      acc = lockedTicks != null ? 1 / 60 : simulation.pending;
       flushHumanSkin();
       padCarryAcc = 0;
     } else {
       keyBase = new Set(keys);
       keyLog.length = 0;
       padCarryFeed(input, dt);
+      // pv tickLock: no debt carried across a hold
+      tickLock.reset();
     }
     mpGame?.afterFrame();
     replayFrame(dt);

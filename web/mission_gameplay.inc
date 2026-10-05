@@ -386,7 +386,7 @@ static void mission_rider_teleport(const std::array<float,16>& mat){
   const auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,placedLayers);RiderRootPresentation rs;rs.turn=gs.turn.current;rs.brake=gs.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
   AnimationTransform boardRoot;const auto bodyRoot=originalRiderRootPresentation({physicsState.position,physicsState.quaternion},local.at(22).position,graph.scale,rs,&boardRoot);
   cachedCrashWorld=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});clear_skin_matrices();
-  boardMorphDrawn=board_morph_sample(placedLayers);
+  riderMorphDrawn=board_morph_sample(placedLayers);
   set_presented_frame(originalRiderCollisionFrame(boardRoot));}
  // control 6: the start controller entry (12BE20, web/start_gameplay.inc start_event without the clock / route). 0x12357C writes
  // 2 into the start controller's phase (+0x77C +0x290) before 11FEC8(rider, 6): the MANUAL start - the rider waits in the start

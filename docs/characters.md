@@ -1427,6 +1427,70 @@ The multiplayer agent owns `web/net/*`; nothing there was changed. The interface
 - Cheat skins' own FE packages stay the FE agent's rule assembly. The original never draws a cheat preview; its
   bucket would include both head variants.
 
+## Board flex (2026-10-04)
+
+Playtester report: the board never bends (board presses, rail leans). It is a morph-target part, not bones.
+- **PS2 (SLUS_207.72, gp 0x4A30F0):**
+  - The board, `board_BoardFlex<X>` (part file 2), has 8 morph targets.
+  - Their weights are an output of the pose blender 30F2B0 (from 312598, geometry = animator+0x54), in the same pass as the
+    bones: the clip's file-2 stream (8 channels; 177 clips have one: BP_* presses, RSFS/RSBS rail balance, grinds, L_*
+    landings, grabs, Ubers) goes into `*(geometry+0x3C) + part+0x8`.
+  - Geometry part (0x58 stride): +0x8 weight offset, +0xC morph index (-1 without morphs), +0x10 slot mask, +0x40 mirror
+    table, +0x4C morph count. The morph slot bit is geometry+0x10 (slot count) + the morph index. The board is always index
+    0 (files 0 / 1 have no morphs), so the channel-1 upper-body masks (+0x8C0 / +0x8C8) never cover it.
+  - Per layer (0x30F7E0..0x30F97C), the weight is the bones' coverage weight. A layer only covers the slot when its clip has
+    a file-2 stream (0x30F4B0) and its mask has the bit. Weight 1 samples straight into the weights (311318) and marks the
+    part written. A smaller weight blends `(1 - w) out + w s` (sub.s / mul.s / mul.s / add.s). A mirrored layer (+0x40)
+    takes channel `mirror[i]`, with part+0x40 = the MNF morph_ids, [4,5,6,7,0,1,2,3] on every board.
+  - A part no layer wrote at weight 1 is zeroed (0x3100A4..0x3100D0).
+  - 11EB60 passes rider+0xB1C, which ANDs the slots with geometry+0x158 (bones 0..23: no morphs, no hair). 0x122570 sets
+    it when the rider is not drawn (+0xB18 = 0) or is at LOD 2 (+0x898). The human is 0 in play. The port computes the
+    weights whatever the LOD, a difference that cannot be seen.
+  - Snow Jam Zoe: geometry 0x5DC600, slot count 29, weights at 0x5DC000 (board 0..7, NIS head 8..43, hands 44..61).
+- **Morph targets:** the PS2 MPF keeps a chunk's morphs after its positions, one UNPACK V4-8 (VIF 0x6E) per morph:
+  {count,0,0,0}, then count x {dx,dy,dz,slot} in 4 mm units, with slot = 3 x the chunk vertex.
+  - A chunk lists only the morphs that move it, in morph order and without an index. `tools/export_board_flex.py`
+    therefore gives each packet the increasing morph whose GameCube deltas fit it best, and keeps the PS2 values.
+  - The GameCube MNF twins (int8 mm) differ from the PS2's by up to 0.8 cm (board A; 1.03 cm on N; fit 0.987).
+  - BoardFlexB (Gutless) has unmorphed and morphed copies at one position, so it keeps the GameCube deltas.
+  - Board A's export equals an independent packet decode (local/board-flex/qa/check_deltas.py): 808 entries, 0.0 cm.
+- **Port (pv `boardFlex`, off until the WebKit visual check):**
+  - Assets: `python3 tools/export_board_flex.py OUT` -> RIDER_<X>/board-flex.{json,bin} (29 packages, in web/public/assets since
+    2026-10-04) and hand-morphs.{json,bin} (29 packages, also in web/public/assets). Without them (or off) the rest shape.
+  - Core: `engine/animation_motion.cpp` `originalAnimationMorphWeights` and `web/animation_bridge.cpp`
+    `board_morph_configure(slotBit, count, mirror)` / `board_morph_slot` / `board_morph_count` / `board_morph_weights`.
+    The weights are sampled with every pose: the tick's pose, the 11D660 reset placement (shown by the stage teleport),
+    the mission placement. `init_animation` clears the configuration. Nothing in the simulation reads them.
+  - Page: `web/board-flex.js` loads `RIDER_<X>/board-flex.json` + `.bin` and configures the human's core after each
+    init_animation (main.js), and a computer rider's at its capture (opponent-riders.js).
+  - `web/rider-skinning.js` adds `sum(w x delta)` to the source position before each palette's skin, with that palette's
+    weights (the previous and current ticks, interpolated like the palette). The shadow uses the same node.
+  - Wardrobe outfits: `web/wardrobe.js` builds the same files from WARDROBE parts.bin (GameCube deltas, within 1.05 cm).
+  - Online remote riders (web/net) draw the rest shape.
+- **Evidence:**
+  - New captures `local/board-flex/runs/bf-{boardpress-nose,boardpress-rail,rail-balance-lr,tech-land-mid}` (`--watch
+    0x5dc000:256`, linked as runs/boardflex). Gates `ps2-captures boardflex/*` (`web/board-flex-compare.mjs`): the 8
+    weights are bit-equal on every tick (239 / 499 / 800 / 274; 179 / 74 / 17 / 0 non-zero ticks).
+  - In those runs the PS2 board bends during presses (nose press ~1.07 summed, morph 5 at 0.99) and in rail presses. It
+    does not bend on the plain rails of rail-balance-lr (semantics 68 / 18 have no file-2 stream). It bends on that run's
+    landing clip (semantic 62).
+  - PS2 frames `local/board-flex/snaps/{nose,rail}.tick*.png`; Chrome / WebKit side and chase frames under
+    `local/board-flex/shots`.
+  - `web/test-board-flex.mjs` checks package files, wardrobe parity and the wiring.
+- **The race hands (2026-10-04, same switch):** HandsX (file 7, 18 morphs: fists, grab and bar grips) are blended the same
+  way from the clips' file-7 stream (292 clips). Snow Jam Zoe: morph index 2 (the NIS head, file 5, is 1), slot bit 31, weights
+  +44, part+0x40 = [9..17, 0..8]. Their bit is in the upper-body masks, so the channel-1 reactions cover them (unlike the board).
+  - Core: `morph_part_add(file, slotBit, count, mirror)` adds a part after `board_morph_configure` (which clears).
+    `morph_upper_bit(slotCount)` is the lowest rider+0x8C0 bit at or above the slot count: 11C298 ORs the file-7 "morph" bit
+    into it (Zoe 31, Allegra / Moby 33). `board_morph_weights` returns every part's weights in order.
+  - Assets: `hand-morphs.json / .bin` (same format, 29 packages). The PS2 packets cover only some morphs per chunk (Zoe HandsB:
+    95 packets over 7 chunks), so `assign_packets` assigns them in order by dynamic programming against the GameCube deltas. The
+    fit is within 0.39 cm on every hand (Gutless's skel_HandsA keeps the GameCube deltas, as its board does).
+  - Renderer: 26 weight columns (board 0..7, hands 8..25) in one delta texture and seven vec4 uniforms per palette, so every
+    rider keeps one shader. `flex.layout` maps the core's weight order onto the columns.
+  - Gates: the same 4 captures, hands bit-exact on every tick (195 / 305 / 461 / 197 non-zero ticks), in ps2-captures
+    boardflex/* (summary `handMorphs`).
+
 ## Race rider texels (PS2 domain)
 
 (Restored: this section was lost when the file was overwritten concurrently.)

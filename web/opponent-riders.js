@@ -1,5 +1,5 @@
 import {createOriginalRiderSkinning} from './rider-skinning.js';
-import {loadBoardFlex,configureBoardFlex} from './board-flex.js';
+import {loadBoardFlex,configureBoardFlex,boardFlexUnconfigured} from './board-flex.js';
 import {createRiderLightingMaterial,riderDrawState} from './rider-material.js';import {frameTextureSpace} from './frame-space.js';
 import {createControllerLights} from './rider-controller-lights.js';
 import {packageTexture} from './texture-archive.js';
@@ -160,8 +160,9 @@ export async function createOpponentRiders({T,scene,load,loader,origin,packages,
    if(lighting?.viewCore){const p=lighting.viewCore._camera_render_view();if(p){view.set(new Float32Array(lighting.viewCore.HEAPF32.buffer,p,16));viewReady=view.every(Number.isFinite);}}
    entries.forEach((entry,i)=>{
     const o=opponents[i],core=o?.core;if(!core||!core._rider_skin_palette_count())return;
-    // init_animation (web/ai-racers.js configureRider) clears the board morph configuration: set it again
-    if(entry.boardFlex&&core._board_morph_slot&&core._board_morph_slot()<0)configureBoardFlex(core,entry.boardFlex.flex,{source_bone_slot_count:entry.boardFlex.slots});
+    // init_animation (web/ai-racers.js configureRider) clears the morph parts: set them again (the upper-body mask the hands' bit
+    // comes from is the computer rider's own, npc_configure)
+    if(entry.boardFlex&&boardFlexUnconfigured(core))configureBoardFlex(core,entry.boardFlex.flex,{source_bone_slot_count:entry.boardFlex.slots});
     entry.skin.capture(core,!!o.reset);entry.captured=true;entry.group.userData.shadowCore=core;
     if(!lighting||!viewReady)return;
     if(entry.updateCore!==core){entry.update?.dispose();entry.update=null;entry.updateCore=core;if(lightingAvailable(core))entry.update=createLightingUpdate(core,lighting.configuration);}

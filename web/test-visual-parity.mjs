@@ -754,5 +754,27 @@ else {
       .test(sourceOf('main.js'))
     && gates.every((g) => u.includes(g)) && /drawHud\(c,racing=true,draw=true\)\{/.test(m) && /if\(!color\)\{this\.hud=null;return;\}if\(!draw\)return;/.test(m),
     `finish HUD: every race element but the banner goes on the finish tick (slots ${live.length} -> ${done.length}; finishHudHide ${PV_DEFAULTS.finishHudHide ? 'on' : 'off'})`); }
+// R38. The cutscene sets' static-model classes (pv setBlendClass, section 46): a set batch of class 1 / 2 (material word +0x0C &
+//      0x660000, 37F2A4..37F7E0) draws ATST GREATER 92 / 20 with AFAIL FB_ONLY and Z written, in the two passes of world-material.js;
+//      class 2 per node, sorted back to front by the node's world origin (the render-list depth key, 37F6E8). PS2 ctm-parity to-final
+//      s60 / s100: the TRANSP gondola's near walls are solid and its far windows show through the near ones.
+{ const cs = sourceOf('cutscenes.js');
+  const ex = fs.readFileSync(new URL('../tools/export_cutscene_sets.py', import.meta.url), 'utf8');
+  const wired = cs.includes('const SET_AREF=[0,92,20];')
+    && cs.includes('m.transparent=true;m.depthWrite=true;m.alphaTest=reference;')
+    && cs.includes('fringe.depthWrite=false;fringe.maskNode=alpha.lessThanEqual(reference);')
+    && cs.includes("const aref=b.has_alpha&&pv('setBlendClass')?(SET_AREF[b.blend]??0):0;")
+    && cs.includes('if(b.sort_pivot)g.boundingSphere=sortSphere(T,b.sort_pivot,inter.array,g.index.array);');
+  const exported = ex.includes('return {0x20000: 1, 0x40000: 2, 0x60000: 2}.get(word & 0x660000, 0)')
+    && ex.includes('sort_node = (number, owner[m]) if blend >= 2 else None');
+  const set = JSON.parse(fs.readFileSync(new URL('public/assets/CUTSCENES/SETS/TRANSP/world.json', import.meta.url), 'utf8'));
+  const cabin = set.batches.filter((b) => b.texture === 10);
+  const split = cabin.some((b) => b.sort_pivot);
+  const pivots = new Set(cabin.map((b) => (b.sort_pivot || []).join()));
+  const packaged = !split || (cabin.length === 14 && cabin.every((b) => b.blend === 2 && b.has_alpha) && pivots.size === 14
+    && cabin.reduce((n, b) => n + b.index_count, 0) === 987);
+  check('setBlendClass' in PV_DEFAULTS && wired && exported && packaged,
+    `cutscene sets: class 1 / 2 batches alpha-tested with Z written, class 2 sorted per node (TRANSP ${split ? '14 cabin nodes' : 're-export pending'}; ` +
+    `setBlendClass ${PV_DEFAULTS.setBlendClass ? 'on' : 'off'})`); }
 if (failed) { console.error(`${failed} visual-parity check(s) failed`); process.exit(1); }
 console.log('visual parity: all checks passed');

@@ -658,6 +658,17 @@ Report format: every event has `screen` and `course`; errors repeat at most 3 ti
 then every minute; `pipeline-failed` carries the pipeline label, material (`FogComposite#417`, `GlareFinal#...`),
 object and the WGSL private sizes; events after pagehide have `unloading: true`.
 
+**Hardware acceleration (2026-10-04).** The `renderer` event and every `frames` / `memory` heartbeat carry `gpu`: the backend, then
+`fallback` (WebGPU isFallbackAdapter) or `software` (a SwiftShader / WARP / llvmpipe / "Microsoft Basic Render Driver" adapter or
+WebGL renderer string), then `compat` (no core-features-and-limits), then the vendor / architecture. Examples: "webgpu apple/metal-3",
+"webgpu fallback google/swiftshader". The `renderer` event also has `adapter.fallback`, `compat` and WebGL's unmasked renderer
+string. Firefox reports an empty adapter info. There one more requestAdapter() reads the adapter's own flag and sends `gpu-adapter`
+{fallback}.
+- Field data before this (diag.log, 2026-10-04): every Windows WebGPU session had core features and a named NVIDIA or Intel GPU,
+  except Firefox (empty info).
+- The Windows Firefox playtester's adapter had BC, shader-f16 and timestamp-query, and ran free ride at 17 ms frames: hardware, not a
+  fallback.
+
 ## Trying it on an iPhone
 
 1. Open the hosted site (docs/hosting.md) in Safari and log in (portrait).

@@ -1001,6 +1001,47 @@ for one release.
 4. Keep the event-package CTM path for one release as the fallback. Then drop `rideIntoEvent`'s switch branch and `goWorld`'s
    same-world reload.
 
+### The card freeze and the riders' warm-up under the approach (2026-10-04, lag agent)
+
+A playtester (Windows Firefox) froze for about 18 s at the Snow Jam qualifier's card, then got 1 fps for a while. This was the first
+in-world event since the 10-01 deploy. Field diag (hangWatch) shows the page's main thread blocked for 19.45 s, starting 0.8 s after the
+card opened. Then a 9.2 s frame gap at GO, in which 9 pipelines, 58 node builds and 66 textures were made.
+
+Measured on a cold Chrome profile (scratch probe: new career -> Snow Jam -> the gate -> card -> Continue -> 12 s of race):
+
+| | Chrome 1x | Chrome 4x CPU |
+|---|---|---|
+| Continue: the main thread blocked (old core 4e80f70b) | 3.8-4.3 s | 17.4 s |
+| core2 (snapshot fix) | 234 ms (the race's first frame) | 1.0 s (the race's first frame) |
+| core2 + pv eventRiderWarm, worst frame in Continue +5 s | 17 ms | 125 ms, no main-thread block over 150 ms |
+
+**1. The countdown snapshot (fixed in core2, live 2026-10-04).**
+- The chain: startRun -> replay.liveStart -> inWorldCountdownSave -> core snapshot_save.
+- The first save of each slot measured each holder's heap with dlmalloc mallinfo(), twice per holder. That is a QA-only attribution,
+  snapshot_entry_heap.
+- mallinfo walks the whole heap: 1.1 ms on the streamed world's 156 MB. With 133 holders x 2 calls x 6 contexts x 2 slots, that is
+  3.6 s of one wasm function at 1x.
+- web/rider_context.cpp now attributes only with snapshot_qa (compare-ai-capture and ?qa pages). The saved state is identical.
+- Full ps2-captures on the build: 272 clean.
+
+**2. The riders' race models (pv eventRiderWarm, off).**
+- An in-world event has no event load, so nothing built the computer riders' race models before GO. Their first frame made 53 node
+  materials and 7 pipelines (0.23 s at 1x, 1.0-1.3 s at 4x).
+- web/main.js warmEventRiders compiles them, plus their trails, wake, spray and fx, for the world pass (fog-renderer compileObject).
+  It does this one mesh at a time, with a frame after every ~10 ms of builds.
+- It starts at the approach's first step (cutscenes.js playEventIntro onStep), after the cast's FE models are built.
+- It stops at the race start (aiActive) or when the event goes.
+- Timing: 196 ms at 1x, 2.2 s at 4x, well inside the approach and the card. No frame of the fly-over or card got worse.
+- Left at GO: 45 builds of small meshes (34 ms at 1x, 0.1 s at 4x).
+- Not checked: WebKit (the screen was locked), Firefox (macOS privacy blocks launching it from the agent shell).
+
+**Left (4x, in the fly-over):**
+- aiRace.prepare's lineup install configures the five riders in one task, ai-racers.js setDocument -> configureRider: 441 ms at the
+  fly-over -> approach join. The PS2 makes one rider step per tick (1296F8).
+- Spreading it touches the riders' setup order while the free ride ticks, so it needs its own exactness check.
+- createAiRace's opponent lighting init: 121 ms. createAiRacers: 91 ms.
+- The cast's FE builds: 150-400 ms frames.
+
 ## 5. Risks and unknowns
 
 | # | unknown / risk | how to settle it |

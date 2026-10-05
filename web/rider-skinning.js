@@ -2,13 +2,12 @@ import {DataTexture,RGBAFormat,FloatType,NearestFilter,NoColorSpace,BufferAttrib
 import {Fn,attribute,textureLoad,ivec2,vec4,uniform,select,mix,modelViewProjection,cameraProjectionMatrix,cameraViewMatrix} from 'three/tsl';
 import {riderTransformPositionNode,riderTransformNormalNode} from './rider-lighting-nodes.js';
 import {pv} from './pv-flags.js';
-import {boardFlexWeights} from './board-flex.js';
-// Board flex (pv boardFlex, web/board-flex.js): up to 8 board morph targets, added to the source position before skinning.
-const FLEX_MORPHS=8;
+import {boardFlexWeights,MORPH_COLUMN_COUNT} from './board-flex.js';
+// Rider morphs (pv boardFlex, web/board-flex.js): the board's and the hands' morph targets, added to the source position before skinning.
 // Source world-space matrices already include pose, body scale, inverse bind and weights.
 // The source path bypasses modelViewProjection's model transform, while menus
 // retain Three's existing posed skeleton. Interpolation is presentation-only.
-// flex: web/board-flex.js loadBoardFlex's {meta, deltas}, or null (the rest shape).
+// flex: web/board-flex.js loadBoardFlex's {parts} (with configureBoardFlex's layout), or null (the rest shape).
 export function createOriginalRiderSkinning(rig,vertices,origin,flex=null){
  if(!rig.source_bind_matrix_words||!rig.source_skin)return null;
  const boneCount=rig.bones.length,count=vertices.length/10;
@@ -152,57 +151,65 @@ export function createOriginalRiderSkinning(rig,vertices,origin,flex=null){
  };
 }
 
-// The board flex nodes of one rider: a delta texture (column = morph, row = 1 + board vertex, PS2 cm Z up; row 0 zeros), a per-vertex
-// row attribute and the weights of the two palettes (previous, current), each as two vec4 uniforms.
+// The morph nodes of one rider: a delta texture (column = weight column: the board's 0..7, the hands' 8..25; row = 1 + morph vertex,
+// PS2 cm Z up; row 0 zeros), a per-vertex row attribute and the weights of the two palettes (previous, current) as vec4 uniforms.
 function createBoardFlex(flex, vertexCount) {
-  const meta = flex?.meta;
-  const usable = meta && meta.morph_count <= FLEX_MORPHS && meta.first_vertex + meta.vertex_count <= vertexCount;
-  const boardVertices = usable ? meta.vertex_count : 0;
-  const data = new Float32Array(FLEX_MORPHS * (boardVertices + 1) * 4);
+  const parts = (flex?.parts || []).filter((p) => p.meta.first_vertex + p.meta.vertex_count <= vertexCount);
+  const morphVertices = parts.reduce((n, p) => n + p.meta.vertex_count, 0);
+  const data = new Float32Array(MORPH_COLUMN_COUNT * (morphVertices + 1) * 4);
   const rows = new Float32Array(vertexCount);
-  if (usable) {
+  let row = 1;
+  for (const part of parts) {
+    const { meta, deltas, column } = part;
     for (let m = 0; m < meta.morph_count; m++) {
       const at = meta.offsets[m] / 4;
-      for (let k = 0; k < boardVertices; k++) {
-        const d = flex.deltas.subarray(at + k * 3, at + k * 3 + 3);
+      for (let k = 0; k < meta.vertex_count; k++) {
+        const d = deltas.subarray(at + k * 3, at + k * 3 + 3);
         // vertices.bin frame (Y up, metres) -> sourcePosition (PS2 cm, Z up), as the positions above
-        data.set([d[0] * 100, -d[2] * 100, d[1] * 100, 0], ((k + 1) * FLEX_MORPHS + m) * 4);
+        data.set([d[0] * 100, -d[2] * 100, d[1] * 100, 0], ((row + k) * MORPH_COLUMN_COUNT + column + m) * 4);
       }
     }
-    for (let k = 0; k < boardVertices; k++) rows[meta.first_vertex + k] = k + 1;
+    for (let k = 0; k < meta.vertex_count; k++) rows[meta.first_vertex + k] = row + k;
+    row += meta.vertex_count;
   }
-  const texture = new DataTexture(data, FLEX_MORPHS, boardVertices + 1, RGBAFormat, FloatType);
+  const texture = new DataTexture(data, MORPH_COLUMN_COUNT, morphVertices + 1, RGBAFormat, FloatType);
   texture.minFilter = texture.magFilter = NearestFilter;
   texture.generateMipmaps = false;
   texture.colorSpace = NoColorSpace;
   texture.needsUpdate = true;
-  const count = usable ? meta.morph_count : 0;
-  const values = [new Float32Array(FLEX_MORPHS), new Float32Array(FLEX_MORPHS)];
-  const weights = [0, 1].map(() => [uniform(new Vector4()), uniform(new Vector4())]);
+  const lanes = Math.ceil(MORPH_COLUMN_COUNT / 4);
+  const values = [new Float32Array(lanes * 4), new Float32Array(lanes * 4)];
+  const weights = [0, 1].map(() => Array.from({ length: lanes }, () => uniform(new Vector4())));
   const upload = () => {
-    for (let p = 0; p < 2; p++) {
-      weights[p][0].value.fromArray(values[p], 0);
-      weights[p][1].value.fromArray(values[p], 4);
-    }
+    for (let p = 0; p < 2; p++) for (let l = 0; l < lanes; l++) weights[p][l].value.fromArray(values[p], l * 4);
   };
   return {
     rows,
     // point + sum of weight x delta, palette p (0 previous, 1 current)
     morphed(point, p) {
-      const row = attribute('sourceFlexRow', 'float');
+      const at = attribute('sourceFlexRow', 'float');
       let sum = vec4(0, 0, 0, 0);
-      for (let m = 0; m < FLEX_MORPHS; m++) {
+      for (let m = 0; m < MORPH_COLUMN_COUNT; m++) {
         const weight = weights[p][m >> 2][['x', 'y', 'z', 'w'][m & 3]];
-        sum = sum.add(textureLoad(texture, ivec2(m, row)).mul(weight));
+        sum = sum.add(textureLoad(texture, ivec2(m, at)).mul(weight));
       }
       return point.add(sum);
     },
-    // a new palette: the current weights become the previous ones (keep), or both are the new ones
+    // a new palette: the current weights become the previous ones (keep), or both are the new ones. The core's weights come in
+    // flex.layout's order (web/board-flex.js configureBoardFlex), each part into its columns.
     capture(core, keep) {
-      const live = count ? boardFlexWeights(core, count) : null;
+      const layout = flex?.layout || [];
+      const total = layout.reduce((n, l) => n + l.count, 0);
+      const live = total ? boardFlexWeights(core, total) : null;
       if (keep) values[0].set(values[1]);
       values[1].fill(0);
-      if (live) values[1].set(live);
+      if (live) {
+        let at = 0;
+        for (const l of layout) {
+          values[1].set(live.subarray(at, at + l.count), l.column);
+          at += l.count;
+        }
+      }
       if (!keep) values[0].set(values[1]);
       upload();
     },
@@ -216,4 +223,3 @@ function createBoardFlex(flex, vertexCount) {
     }
   };
 }
-

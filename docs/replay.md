@@ -223,6 +223,8 @@ so they are not restored but reset), camera state words (the cameras are re-deri
   web/ai-racers.js saveState / restoreState carry the riders' orchestrator; web/ai-race.js replayRestore the relationship tables.
 - **Sizes and memory.** The page, six contexts: the results-time copy frees 4.05 MB when dropped (the heap in use 162.64 -> 158.59
   MB at the map); snapshot_bytes 3.3 MB for both slots (it does not see containers inside user structs; mallinfo is the measure).
+  The per-variable heap attribution (snapshot_entry_heap / snapshot_slot_heap) is made only with snapshot_qa: mallinfo walks the
+  whole heap, and without qa it cost 3.6 s at the page's first countdown save (2026-10-04, ctm-events-in-world.md "The card freeze").
   The copies hold references (a rider's rig and clips through its animation graph), so two rules keep the memory flat: the
   countdown save also overwrites slot 1 (snapshotCountdown: the last event's results copy no longer keeps its data through this
   race), and the event's end drops the rider contexts' copies (snapshotReleaseRiders, at the riders' leave; the next countdown save

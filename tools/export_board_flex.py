@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Board flex morph targets for the race rider packages (docs/characters.md "Board flex").
+"""Board flex and hand morph targets for the race rider packages (docs/characters.md "Board flex").
 
 The PS2 board (board_BoardFlex<X>, part file 2) is a morph-target part: 8 morphs whose weights the pose blender
 30F2B0 writes from the clip's file-2 stream (8 channels) into *(geometry+0x3C) + part+0x8. The race packages
@@ -16,11 +16,14 @@ UNPACK V4-8 (VIF cmd 0x6E) {count,0,0,0} then count x {dx,dy,dz,slot}, slot = 3 
 (docs/characters.md "Morph units"). The GameCube MNF twin's deltas (int8 mm) differ from them by up to 0.8 cm (a 0.987 fit
 on board A); `gc_check` reports that difference. A PS2 delta lands on every package vertex at its chunk vertex's position.
 
-The board's place in vertices.bin is found by decoding the package's parts in order (tools/export_characters.py
+hand-morphs.json / .bin: the same for the race hands (HandsX, part file 7, 18 morphs: fists and grab poses), whose
+weights 30F2B0 blends the same way from the clips' file-7 stream (Snow Jam Zoe: weights +44, part+0x40 = [9..17, 0..8]).
+
+The part's place in vertices.bin is found by decoding the package's parts in order (tools/export_characters.py
 build_package concatenates them) and checked vertex by vertex against vertices.bin.
 
 python3 tools/export_board_flex.py OUT_DIR [--package RIDER_ZOE ...]
-Reads web/public/assets (never writes there); writes OUT_DIR/RIDER_<X>/board-flex.{json,bin}.
+Reads web/public/assets (never writes there); writes OUT_DIR/RIDER_<X>/{board-flex,hand-morphs}.{json,bin}.
 """
 import argparse
 import json
@@ -102,22 +105,38 @@ def ps2_morphs(raw):
 
 def assign_packets(packets, gc_of, morph_count):
     """The morphs of a chunk's packets: they come in morph order with no index (a chunk lists only the morphs that move
-    it), so each takes the morph, in increasing order, whose GameCube deltas at its vertices are nearest."""
-    from itertools import combinations
-    best = None
-    for choice in combinations(range(morph_count), len(packets)):
-        cost = 0.0
-        for packet, m in zip(packets, choice):
-            for vertex, d in packet.items():
-                g = gc_of(vertex, m)
-                cost += sum((g[j] - d[j]) ** 2 for j in range(3))
-        if best is None or cost < best[0]:
-            best = (cost, choice)
-    return best[1]
+    it), so each takes the morph, in increasing order, whose GameCube deltas at its vertices are nearest (an ordered
+    assignment by dynamic programming)."""
+    def cost(packet, m):
+        total = 0.0
+        for vertex, d in packet.items():
+            g = gc_of(vertex, m)
+            total += sum((g[j] - d[j]) ** 2 for j in range(3))
+        return total
+    n = len(packets)
+    if n > morph_count:
+        raise ValueError(f'{n} morph packets for {morph_count} morphs')
+    inf = float('inf')
+    # best[i][m]: the cost of packets i.. with packet i at morph >= m
+    best = [[inf] * (morph_count + 1) for _ in range(n + 1)]
+    for m in range(morph_count + 1):
+        best[n][m] = 0.0
+    for i in range(n - 1, -1, -1):
+        for m in range(morph_count - 1, -1, -1):
+            take = cost(packets[i], m) + best[i + 1][m + 1]
+            best[i][m] = min(take, best[i][m + 1])
+    choice = []
+    m = 0
+    for i in range(n):
+        while best[i][m] != cost(packets[i], m) + best[i + 1][m + 1]:
+            m += 1
+        choice.append(m)
+        m += 1
+    return choice
 
 
 def ps2_dense(package, raw, model, vertices, base, n):
-    """The PS2 deltas, dense per package board vertex (vertices.bin frame), from the MPF's morph packets."""
+    """The PS2 deltas, dense per package vertex of the part (vertices.bin frame), from the MPF's morph packets."""
     chunks = ps2_morphs(raw)
     morph_count = len(model['morphs'])
     points = []
@@ -140,19 +159,24 @@ def ps2_dense(package, raw, model, vertices, base, n):
             row = {m: packet[v] for packet, m in zip(packets, morphs) if v in packet}
             for k in owner:
                 if seen[k] is not None and seen[k] != row:
-                    raise ValueError(f'{package}: board vertex {k}: PS2 chunk vertices disagree')
+                    raise ValueError(f'{package}: vertex {k}: PS2 chunk vertices disagree')
                 seen[k] = row
                 for m, (dx, dy, dz) in row.items():
                     # PS2 cm Z up -> vertices.bin Y-up metres
                     dense[m][3 * k:3 * k + 3] = [dx / 100, dz / 100, -dy / 100]
     if any(r is None for r in seen):
-        raise ValueError(f'{package}: a board vertex is in no PS2 chunk')
+        raise ValueError(f'{package}: a vertex is in no PS2 chunk')
     return dense
 
 
 def package_vertex(model_vertex):
     v = model_vertex
     return [v[0], v[2], -v[1]]
+
+
+# The morph parts the race packages draw: the board (file 2, morph index 0 -> slot bit = the slot count) and the race hands (file 7,
+# their slot bit in the upper-body masks: web/board-flex.js). Output file stem per part.
+MORPH_PARTS = (('board', BOARD_FILE, 'board-flex'), ('upper', 7, 'hand-morphs'))
 
 
 def export(package, members, ps2_members, out):
@@ -166,29 +190,38 @@ def export(package, members, ps2_members, out):
             family = 'board' if part['part'].startswith(('Bindings', 'BoardFlex')) else prefix
             part['resource'] = f'{family}_{part["part"]}.mnf'
     parts = [p for p in parts if p.get('resource')]
-    board = [p for p in parts if p.get('morph_count') and Path(p['resource']).stem.lower().startswith('board_boardflex')]
-    if not board:
-        return f'{package}: no morphing board part'
+    if len(parts) != len(rig.get('parts') or []):
+        return f'{package}: parts without a resource'
     vertices = Path(folder / 'vertices.bin').read_bytes()
     count = len(vertices) // 40
+    models = [gc_model(members, part['resource']) for part in parts]
+    bases = []
     base = 0
-    for part in parts:
-        model = gc_model(members, part['resource'])
-        if part is board[0]:
-            break
+    for model in models:
+        bases.append(base)
         base += len(model['vertices'])
-    if model['file'] != BOARD_FILE:
-        raise ValueError(f'{package}: board part file {model["file"]}')
+    if base != count:
+        return f'{package}: vertices.bin is not the parts in order ({base} vs {count})'
+    lines = []
+    for slot, file, stem in MORPH_PARTS:
+        found = [i for i, m in enumerate(models) if m['file'] == file and m['morph_count']]
+        if len(found) != 1:
+            lines.append(f'{package}: no morphing file-{file} part')
+            continue
+        i = found[0]
+        lines.append(export_part(package, parts[i], models[i], vertices, bases[i], ps2_members, out, slot, stem))
+    return '\n'.join(lines)
+
+
+def export_part(package, part, model, vertices, base, ps2_members, out, slot, stem):
     n = len(model['vertices'])
-    if base + n > count:
-        raise ValueError(f'{package}: board vertices outside vertices.bin')
-    # vertex check: the package's board slice is the decoded board, converted as build_package converts it
+    # vertex check: the package's slice is the decoded part, converted as build_package converts it
     for k, v in enumerate(model['vertices']):
         stored = struct.unpack_from('<3f', vertices, (base + k) * 40)
         expected = package_vertex(v)
         if any(abs(stored[j] - struct.unpack('<f', struct.pack('<f', expected[j]))[0]) > 1e-6 for j in range(3)):
-            raise ValueError(f'{package}: vertex {base + k} is not board vertex {k}')
-    resource = board[0]['resource']
+            raise ValueError(f'{package}: vertex {base + k} is not {part["resource"]} vertex {k}')
+    resource = part['resource']
     mpf = [name for name in ps2_members if name.lower() == Path(resource).with_suffix('.mpf').name.lower()]
     if len(mpf) != 1:
         raise ValueError(f'{package}: no PS2 model for {resource}')
@@ -198,7 +231,7 @@ def export(package, members, ps2_members, out):
         dense = ps2_dense(package, ps2_members[mpf[0]], model, vertices, base, n)
     except ValueError as error:
         # BoardFlexB: package vertices at one position whose PS2 chunk vertices differ (a morphed and an unmorphed copy)
-        print(f'{package}: GameCube deltas ({error})')
+        print(f'{package}: {resource}: GameCube deltas ({error})')
         source = 'GameCube MNF twin (int8 mm): ' + str(error)
         dense = [[0.0] * (3 * n) for _ in range(morph_count)]
         for m, row in enumerate(gc_dense(model)):
@@ -211,14 +244,14 @@ def export(package, members, ps2_members, out):
     for row in dense:
         offsets.append(len(blob))
         blob.extend(struct.pack(f'<{len(row)}f', *row))
-    meta = dict(version=1, resource=board[0]['resource'], file=BOARD_FILE, first_vertex=base, vertex_count=n,
+    meta = dict(version=1, resource=resource, file=model['file'], first_vertex=base, vertex_count=n,
                 morph_count=morph_count, mirror=[m['channel'] for m in model['morphs']], offsets=offsets,
-                source_sha256=board[0].get('source_sha256'), frame='vertices.bin (Y-up metres)', deltas=source)
+                source_sha256=part.get('source_sha256'), frame='vertices.bin (Y-up metres)', deltas=source)
     dest = out / package
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / 'board-flex.json').write_text(json.dumps(meta) + '\n')
-    (dest / 'board-flex.bin').write_bytes(bytes(blob))
-    return f'{package}: {meta["resource"]} vertices {base}..{base + n} morphs {morph_count} mirror {meta["mirror"]} GC twin within {gc_worst:.2f} cm'
+    (dest / f'{stem}.json').write_text(json.dumps(meta) + '\n')
+    (dest / f'{stem}.bin').write_bytes(bytes(blob))
+    return f'{package}: {resource} vertices {base}..{base + n} morphs {morph_count} mirror {meta["mirror"]} GC twin within {gc_worst:.2f} cm'
 
 
 def gc_dense(model):

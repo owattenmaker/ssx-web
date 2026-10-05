@@ -190,6 +190,34 @@ catch-up tick the frame's one sample, so a key released during a stall acted fro
   Without the switch it leaves at 700: the release acted 4 ticks early.
 - Simple mode gives the same run with and without the stall.
 
+## One tick per drawn frame at 60 Hz (pv tickLock, off; 2026-10-04, lag agent)
+
+**Input-to-display path, as the page runs it:**
+- frame(ms) runs from the animation frame. It reads the pad and keys first (inputs()), then runs the game ticks, then draws, in the same
+  callback. The page does not wait on anything in the frame, and it queues no frames of its own. The browser's compositor adds its
+  usual vsync.
+- A slow frame runs at most 12 ticks and drops the backlog (stallCap). This is the PS2 frame loop 0x316F00 / 0x317188, above.
+- The page draws between the last two ticks at alpha = the clock's leftover x 60 (main.js renderAlpha, for the rider and the camera).
+  So the view shows a state 0..1 tick older than the newest tick.
+  - The leftover's phase is set by when the run started. Replaying the clock on recorded rAF times gives a mean of 5-10 ms of extra
+    display lag, and up to 16.7 ms.
+  - When the phase sits near a tick boundary, rAF jitter alternates 0- and 2-tick frames.
+- The PS2 runs one update per vblank pad sample and draws that update. It does not interpolate.
+- Not confirmed from the code: how many vblanks the PS2's draw (game vt+0x3C after the updates) takes to reach the screen, that is, its
+  GS kick and display-buffer swap.
+
+**pv tickLock (web/tick-lock.js):**
+- Offline, a frame of 0.75..1.25 ticks runs exactly one tick and draws it (alpha 1).
+- The real-time debt is kept. Past 4 ticks of debt, one frame runs 2 ticks (or 0). A 59.94 Hz display gets one extra tick about every
+  70 s.
+- Any other frame (120 / 144 Hz, a missed vsync, a stall) takes the normal pacing.
+- Online races (mpGame.pace) and the replay clock are untouched.
+- Checks:
+  - web/test-tick-lock.mjs: 60 Hz, 59.94 / 60.06 Hz drift, unlocked frames.
+  - Chrome, Snow Jam Single Event with the neutral pad: the ?simtrace hashes are identical on and off for all 1406 ticks.
+- WebKit not checked.
+- Expected gain: the interpolation's 0..16.7 ms (mean ~8 ms), and no 0/2-tick judder at 60 Hz.
+
 # Simulation worker: scrapped (2026-09-26)
 
 Pieces 2 and 3 moved the race's simulation into a module worker. A run started on the page as usual. The core's memory

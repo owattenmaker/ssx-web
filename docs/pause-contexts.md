@@ -167,7 +167,8 @@ countdown).
 Tests: test-pause-contexts (the listeners of every module), test-gamepad (the unfocused pad), test-ctm-flow (the FAQ's way out).
 Browser (scratchpad focusprobe.mjs; blur + hidden + visibilitychange with rAF held, as a hidden tab): the new career's arrival
 cutscene, free ride, an MCOMM Transport ride, the round card, the countdown and a race: no pause, the stack unchanged, the ride ticking,
-the frames after the return running one tick per 16.7 ms (no catch-up); Chrome 22/22.
+the frames after the return running one tick per 16.7 ms (no catch-up); Chrome 22/22. WebKit not run yet: the screen was locked
+(the driver's page loads with visibilityState 'hidden').
 
 The FAQ "?" that could not be left was a separate bug: career-ui.js back() had lost its Message Center / lodge / Big Challenge dispatch
 to a reformat (it sat inside a comment), so Triangle / Escape / the touch deck's triangle did nothing on ctm-messages / ctm-message,

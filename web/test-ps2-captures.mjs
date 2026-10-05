@@ -65,8 +65,8 @@ const cases = [
   { name: 'boardpress-air', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail press in the air (+0x330 = 2, air adjust 0x28C/0x298), landing into control 1 (34)' },
   { name: 'boardpress-pivot-ollie', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail pivot then R3 ollie from a pivot (35), landing' },
   { name: 'boardpress-rail', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'press on a rail: control 7 -> 1161D0 (131E80), control 1 with motion 4, rail lost, 12FFF8; 821 106F78 hips/rail hard crash, 13F358 clamp after the contacts' },
-  // boardFlex (docs/characters.md "Board flex"): the core's board morph weights (board_morph_weights) bit-equal to the PS2's
-  // *(geometry 0x5DC600 + 0x3C)[0..7] on every tick (web/board-flex-compare.mjs); captures in local/board-flex/runs (--watch 0x5dc000:256).
+  // boardFlex (docs/characters.md "Board flex"): the core's morph weights (board_morph_weights) bit-equal to the PS2's
+  // *(geometry 0x5DC600 + 0x3C) on every tick: the board [0..7] and the race hands [44..61] (web/board-flex-compare.mjs); captures in local/board-flex/runs (--watch 0x5dc000:256).
   { name: 'boardflex/bf-boardpress-nose', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a nose press (BP_* file-2 streams)' },
   { name: 'boardflex/bf-boardpress-rail', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a press on a rail, the landing' },
   { name: 'boardflex/bf-rail-balance-lr', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: rails with balance, a landing' },
@@ -457,11 +457,14 @@ const check = ({ c, error, stderr, report }) => {
   if (summary.firstBoostMismatch && summary.firstBoostMismatch.tick <= Math.min(c.boostThrough ?? exactThrough, exactThrough, firstBadTick - 1)) throw new Error(`${c.name}: boost state left the original at ${summary.firstBoostMismatch.tick} (web ${JSON.stringify(summary.firstBoostMismatch.web)}, PS2 ${JSON.stringify(summary.firstBoostMismatch.ps2)})`);
   // Sound / speech dispatch (c.audio: web/uber-audio-compare.mjs against the capture's tools/ps2_audio_log.py call log).
   // Board flex (c.boardFlex): every compared tick's 8 weights bit-equal; a core without board_morph_configure skips the check.
+  // The race hands (handMorphs, file 7) the same, with a core that has morph_part_add.
   if (c.boardFlex) {
-    const f = summary.boardFlex;
-    if (!f) throw new Error(`${c.name}: no board flex summary`);
-    if (!f.skipped && f.first) throw new Error(`${c.name}: board morph weights left the PS2 at ${f.first.tick} (web ${f.first.web}, PS2 ${f.first.ps2})`);
-    if (!f.skipped && f.exact !== f.ticks) throw new Error(`${c.name}: board morph weights exact on ${f.exact} of ${f.ticks} ticks`);
+    for (const key of ['boardFlex', 'handMorphs']) {
+      const f = summary[key];
+      if (!f) throw new Error(`${c.name}: no ${key} summary`);
+      if (!f.skipped && f.first) throw new Error(`${c.name}: ${key} weights left the PS2 at ${f.first.tick} (web ${f.first.web}, PS2 ${f.first.ps2})`);
+      if (!f.skipped && f.exact !== f.ticks) throw new Error(`${c.name}: ${key} weights exact on ${f.exact} of ${f.ticks} ticks`);
+    }
   }
   if (c.audio) { const a = summary.audio; if (!a) throw new Error(`${c.name}: no audio call log (capture with ps2_capture.py build --audio-log)`);
     const bad = (a.audioMismatches || []).find((x) => x.tick <= through(c.audioThrough ?? c.exactThrough));

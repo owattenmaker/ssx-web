@@ -2263,10 +2263,63 @@ career-ui.js draws only the banner, and ui.js returns early.
 **Check (Chrome, the real Single Event flow, `tools/modeshot.mjs setpieces/full`, position error 0 at every shot):** with the
 switch on, the page shows the full HUD at record 12296 and the banner alone from record 12297, the PS2's finish record. With the
 switch off, the same frames show the banner over the clock, score, meter, gauge, speed and 'S' (`local/browser-validation/visual-parity/fixes/finish-hud/finish-hud-cmp-chrome.png`:
-PS2 12297 / 12300, off, on). The staged finish / TIME'S UP (`tools/fin.mjs`) in Chrome and WebKit: only the banner is left on the
-UI canvas.
+PS2 12297 / 12300, off, on). In the staged finish / TIME'S UP (`tools/fin.mjs`, Chrome) only the banner is left on the UI canvas.
+
+**Switch state: off.** The WebKit check is still to do. While this was done the machine's screen was locked, so the WebKit driver's
+page stayed `visibilityState` hidden (no rAF) and never got past the course load screen (fin.mjs and modeshot `--browser wk`).
+To check: `node modeshot.mjs setpieces/full OUT 12297,12298,12300 --browser wk --extra '&pv=finishHudHide'`. Record 12296
+should show the full HUD and 12297 the banner alone. Then flip `finishHudHide` to true in PV_DEFAULTS.
 
 **Left (not this switch):** the PS2 also draws "Loading..." bottom right from about 6 ticks after the finish (S+0x94 bit 4,
 ctm-decomp-world-states.md rank 7). The page has no caption there yet.
 
 Test: `test-visual-parity.mjs` R37.
+
+## 46. The gondola cabin seen from outside: the cutscene sets' static-model classes (pv `setBlendClass`, off)
+
+**Report** (playtester): "The gondola texture is transparent from the outside." It is the TRANSP gondola cabin
+(`mdl_TRANSP_gondola_full_version_inair`, CUTSCENES/SETS/TRANSP) in `gond_inair` #150, the exterior shot of every gondola
+ride (the Transport and the between-heats ride-up). From outside, the inside of the far wall (benches, window frames, the
+rider's legs) was drawn over the near wall's lower panels. The world's gondolas (ARA1 `tramlores`, the hubs' `depart_gond`)
+draw through `world-material.js` and are not affected (ARA1 cars checked from 4 sides and inside).
+
+**Cause.** The cabin's walls *and* windows are one texture (TRANSP 9-10: walls GS alpha 128, windows 72..74) in one
+class-2 material (word +0x0C 0x70001). `cutscenes.js ensureSet` drew every set batch with alpha as one blended pass with
+no depth write, in index order: the far walls, later in the order, covered the near ones.
+
+**PS2 rules** (the static-model draw 37E238; the sets' instances are world static models):
+- Class from material word +0x0C (group flag bit 3 adds 0x40000) & 0x660000, as `prepare.py mesh_blend`: 0x20000 class 1
+  (37F604: ALPHA enum 5 = 0x44, test mode 3 = GREATER, AREF 92); 0x40000 / 0x60000 class 2 (37F6B8 -> 37F750..37F7E0:
+  ALPHA 0x44, GREATER, AREF 20 from the 0x14000 at 37F208, word1 bits 0..1 = 2: depth sorted). Depth mode 1 = ZTST GEQUAL,
+  AFAIL FB_ONLY (TEST builder 3626D8).
+- Z is written: word1 bit 22 (ZMSK, 363C20 -> 362660) is set only for an additive model (header +0x10 bit 3, 37ECA0..37ED18).
+  So window texels (74 > 20) write depth too.
+- The sort key (word2 bits 10..28) is the view depth of row 3 of the matrix at sp+0x158 (37F6E8 / 37F398 -> 37F708..37F750),
+  which the node loop (37ED40..37F1BC) fills per node: node matrix x instance matrix (37ED9C..37EDD8), scaled (37F000..37F078).
+  The render-list key 364240 is inverted and radix-sorted (364050), so a model's class-2 nodes draw back to front. Records of
+  equal state and textures share a bucket, appended in submission order (362978). The cabin is 14 nodes (1..14, one wall
+  panel each, pivots 4-5 m out along the panel normal), so the far side draws first.
+
+**Port.**
+- `tools/export_cutscene_sets.py` (`export_set`): `static_model_class` per mesh; class-2 meshes go into one batch per
+  (instance, node) with `blend` and `sort_pivot` (the node origin in native metres; `model_node_pivots`). `--out` now reaches
+  `export_set`. The TRANSP binaries are byte-identical; only world.json changes (10 + 14 batches instead of 11).
+- `cutscenes.js ensureSet` (pv `setBlendClass`): a batch with alpha and `blend` 1 / 2 draws the two passes of
+  `world-material.js` (texels above AREF blend and write depth, the fringe blends without), and a `sort_pivot` batch gets its
+  bounding sphere centred on the node origin, the point three's transparent sort uses. An export without `blend` (the live
+  package until the copy, the heli / plane sets) keeps the old pass.
+- Draw-order evidence before the export: reversing the cabin batch's mesh order (or its triangles) in the page reproduced the
+  PS2's view through the windows; the near-first order showed the sky through them.
+
+**Frames** (PS2 `local/ps2-capture/ctm-parity/runs/to-final` sample00060 / 00100 = #150 t29 / t69, sample00200 / 00300 = #146
+t49 / t149, camera alternative 2; scratchpad `gondola/`): `sbs-out-t29-chrome.png`, `sbs-out-t69-chrome.png`,
+`crop2-t69.png` (PS2 | before | after): the near walls are solid and the far windows' frames and frost show through the near
+windows, as on the PS2. Inside (`sbs-in-t49-chrome.png`, `sbs-in-t149-chrome.png`): the windows show the sky dome, frosted;
+the sun glare through the left window is gone (the window now holds depth), and the PS2 frame has none. WebKit: not
+captured yet. Its windows were hidden in this session (requestAnimationFrame 0, visibilityState 'hidden', offscreen too), so
+the page drew nothing. The switch stays off until WebKit is checked. Still different: Zoe's outfit colours (the worn outfit), the #146 camera a little further back than the PS2's.
+
+**Not done:** the heli / plane sets (`export_plane_set`, batches per LiveComp node) carry no `blend` / `sort_pivot` yet; their
+texture-40 windows are the same class 2 and would need the same export.
+
+Test: `test-visual-parity.mjs` R38 (the package part runs once the re-export is in).

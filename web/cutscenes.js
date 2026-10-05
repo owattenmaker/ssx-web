@@ -128,7 +128,7 @@ export function litVertexColour(lighting, [x, y, z]) {
   }
   return out;
 }
-// pv setBlendClass (docs/visual-parity.md section 47): a cutscene set's instances are world static models, drawn by 37E238 with the
+// pv setBlendClass (docs/visual-parity.md section 46): a cutscene set's instances are world static models, drawn by 37E238 with the
 // material state of 37F2A4..37F7E0. tools/export_cutscene_sets.py static_model_class gives a batch its class (`blend`, as
 // web/prepare.py does for the world): material word +0x0C (group flag bit 3 adds 0x40000) & 0x660000 =
 // - 0x20000, class 1: ALPHA 0x44, ATST GREATER 92 (37F604);

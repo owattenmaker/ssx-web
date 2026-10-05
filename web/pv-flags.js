@@ -164,7 +164,10 @@
 // eventRiderWarm (lag agent, docs/ctm-events-in-world.md "The riders' warm-up under the approach"): an in-world event's computer riders'
 // race models (and trails / wake / spray) compile for the world pass under the approach and the card (main.js warmEventRiders), as the
 // event-load path's warm-up does under its load screen. Off: the race's first frame builds them (0.25 s here, 1.6 s at 4x CPU).
-// setBlendClass (playtester report "the gondola is transparent from the outside", docs/visual-parity.md section 47): a cutscene set's
+// tickLock (lag agent, docs/workers.md "One tick per drawn frame at 60 Hz"; web/tick-lock.js): offline, a ~60 Hz drawn frame runs
+// exactly one tick and draws it (no interpolation between the last two ticks), as the PS2 draws its newest update every vblank. Off: the
+// view lags the newest tick by 0..1 tick (mean ~8 ms) and rAF jitter near a tick boundary alternates 0- and 2-tick frames.
+// setBlendClass (playtester report "the gondola is transparent from the outside", docs/visual-parity.md section 46): a cutscene set's
 // blended batch (web/cutscenes.js ensureSet: TRANSP's gondola cabin, the heli sets' windows) draws its static-model class as
 // 37F2A4..37F7E0 sets it (material word +0x0C & 0x660000: ATST GREATER 92 / 20, AFAIL FB_ONLY, Z written), in the two passes of
 // world-material.js. Off: one blended pass without depth writes, so the cabin's far walls covered its near walls.
@@ -213,6 +216,7 @@ export const PV_DEFAULTS = Object.freeze({
   semiFresh: true,
   boardFlex: false,
   eventRiderWarm: false,
+  tickLock: false,
   setBlendClass: false
 });
 const overrides = new Map();
