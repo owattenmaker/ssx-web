@@ -251,7 +251,9 @@ export function geometryMasks(w,asm){
  const morph7=bits(7,['morph']),hex=v=>'0x'+v.toString(16);
  // morph_bits: each morph part's slot bit (slot count + its morph index), as 30F2B0's morph slots
  const morph_bits=new Map([...table].filter(([,v])=>v.morph>=0).map(([k,v])=>[k,count+v.morph]));
- return {slot_count:count,morph_bits,base:new Map([...table].map(([k,v])=>[k,v.base])),upper_mask8c0:hex(bits(0,LIST_8C0)|morph7),upper_mask8c8:hex(bits(0,LIST_8C8)|morph7),upper_mask8d0:hex(bits(0,LIST_8D0))};
+ const base=new Map([...table].map(([k,v])=>[k,v.base]));
+ const upper_mask8c0=hex(bits(0,LIST_8C0)|morph7),upper_mask8c8=hex(bits(0,LIST_8C8)|morph7),upper_mask8d0=hex(bits(0,LIST_8D0));
+ return {slot_count:count,morph_bits,base,upper_mask8c0,upper_mask8c8,upper_mask8d0};
 }
 
 // ---- the rider package of an outfit (the tools/export_characters.py build_package + web_package layout) ------
@@ -377,8 +379,9 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
  const morphs=new Float32Array(morphBytes/4);let at=0;for(const c of morphChunks){morphs.set(c,at);at+=c.length;}
  return {world,rig,vertices,indices,colors,settings,morphs,morphParts};
 }
-// A race morph part's targets in board-flex.json / .bin form (the board, file 2; the race hands, file 7; Stretch's SpecialA, file 46): the dense deltas of the part's vertices (the FE package's layout),
-// the mirror table = the MNF morph_ids (the geometry's part+0x40).
+// A race morph part's targets in board-flex.json / .bin form (the board, file 2; the race hands, file 7; Stretch's SpecialA,
+// file 46): the dense deltas of the part's vertices (the FE package's layout), the mirror table = the MNF morph_ids (the
+// geometry's part+0x40).
 function raceBoardFlex(w, part, firstVertex) {
   const bytes = part.vertex_count * 12;
   const bin = new Float32Array(part.morphs.length * part.vertex_count * 3);

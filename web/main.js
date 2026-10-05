@@ -3,8 +3,9 @@ let lastResetPlacement = 0;
 globalThis.ssxBoot?.step('js', 1);
 onDownloadBytes((url, got, total) => globalThis.ssxBoot?.bytes(url, got, total));
 // first: field diagnostics for real devices (web/diagnostics.js)
-import { diagnoseRenderer, diagnose, diagRide } from './diagnostics.js';
+import { diagnoseRenderer, diagnose, diagRide, diagPadRate } from './diagnostics.js';
 import { createBailWatch } from './diag-bail.js';
+import { createPadRateWatch } from './diag-pad-rate.js';
 import { installDeviceRecovery } from './gpu-recovery.js';
 // first: game-data fetch sharing + download bar (web/downloads.js)
 import { onDownloadBytes, prefetchDownload, peekDownload, downloadProgress } from './downloads.js';
@@ -84,7 +85,7 @@ import {
   RESULTS_TICKS_TIME_UP
 } from './game-tick.js';
 import { buildPad, createKeyboardContext, loadKeyboardMode, saveKeyboardMode } from './pad-input.js';
-import { pollPads, setPadsFocused } from './gamepad.js';
+import { pollPads, setPadsFocused, activeEntry, padSummary } from './gamepad.js';
 import { installPadMenus } from './gamepad-menus.js';
 import { createTouchControls } from './touch-controls.js';
 // phones: touch deck + presentation quality (docs/mobile.md)
@@ -95,6 +96,14 @@ let padPtr = 0;
 const simulation = new FixedStepClock();
 // field bail reports (web/diag-bail.js, docs/crash-motion.md "Field bail reports")
 const bailWatch = createBailWatch((kind, data) => diagnose(kind, data));
+// field pad update rate (web/diag-pad-rate.js): the raw pad as read this frame, while the window has focus
+const padRateWatch = createPadRateWatch((kind, data) => diagnose(kind, data), diagPadRate);
+function padRateFrame(dt) {
+  if (document.hidden || !document.hasFocus()) return;
+  const entry = activeEntry();
+  if (!entry) return;
+  padRateWatch.frame(entry.raw, () => padSummary(entry), dt * 1000);
+}
 const tickLock = createTickLock();
 import createCore from './runtime/core.js';
 import { createAiRace } from './ai-race.js';
@@ -3740,6 +3749,7 @@ function frame(ms) {
     applyPresentationFast();
     const steerSnap = [new Map(keyboardPad.steering ?? []), keyboardPad.serial];
     let input = inputs();
+    padRateFrame(dt);
     const startDown = input[1] > 0;
     // the pad's Start opens the pause from the ride only (0x230A34); in a menu it is the menu's accept
     // (web/gamepad-menus.js)

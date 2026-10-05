@@ -1027,7 +1027,8 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
    const bool heldAirUpdate=!airReleaseTick&&!previousGround;
    if(heldAirUpdate&&physicsAttached){gs.velocity=physicsState.velocity;gs.forward=physicsState.forward;groundCrouchBrakeTargets(gs.crouch,gs.brake,1,0,terrain_original::dot(physicsState.velocity,physicsState.forward),gs.turn.current);}
    OriginalAirPrewindContext context{0,gs.animationClass,gs.animationIndex,0,false};originalAirPrewindTargets(prewind,rideLatched?rideSpin:turn,rideLatched?rideFlip:flip,context);
-   if(heldAirUpdate&&physicsAttached)groundTurnTarget(gs.turn,turn,physicsState.velocity,physicsProfile.surface.id);
+   // (with +0x328 set, after a rail, 12E9B8 steers the rail triplet +0x22C instead: web/rail_gameplay.inc step_rails)
+   if(heldAirUpdate&&physicsAttached&&gs.prewindStyle==0)groundTurnTarget(gs.turn,turn,physicsState.velocity,physicsProfile.surface.id);
    RiderInput input;input.turn=turn;input.crouch=1;input.brake=braking;originalSelectGroundAnimation(gp,gs,input,prewind.spin.current,prewind.flip.current,[](){return rng.next();});if(gs.animationIndex!=graph.requestedSemantics[2])graph.enter(gs.animationIndex);
    if(heldAirUpdate&&physicsAttached){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);}}
 

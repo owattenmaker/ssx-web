@@ -6,7 +6,7 @@ RIDER_LOCAL extern uint16_t browserPatchFlags; // rider+0x2D4 (web/core.cpp)
 #include "../engine/soft_collision_control.hpp"
 extern void retain_jump_camera(const OriginalJumpState&);
 // Ordinary authored-rail controller/motion adapter. Included after graph/crash/reset setup.
-RIDER_LOCAL extern void (*browserRailTickBegin)();RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool browserRailBoostTicked;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
+RIDER_LOCAL extern void (*browserRailTickBegin)();RIDER_LOCAL extern bool browserRailJumpRelease;RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool browserRailBoostTicked;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
 RIDER_LOCAL extern OriginalBoostProfile boostProfile;RIDER_LOCAL extern bool boostHeld;bool soft_animation_finished();
 void publish_rail_rider(const OriginalRailRider&,bool);void leave_rail_motion();void publish_rail_charge(float);void retain_rail_crouch(float);RIDER_LOCAL extern uint32_t groundFocusTick;
 void advance_pickup_timers(uint32_t);void dispatch_pickup_contacts(const BodyCollisionVolume&);
@@ -143,7 +143,11 @@ RIDER_LOCAL static bool railHeldRelease=false; //12E9B8's jump release left the 
 // triplets too (tech-select-rail 925: the 18..20 cycle blend keeps reading +0x238 through the reset).
 void browser_rail_idle_approach(){if(railOwned)return;for(auto* control:{&railSteer,&railBalance,&railTolerance})groundControlApproach(*control);graph.railBalance=railBalance.current;}
 static bool step_rails(float steering,int jump,int brake,int boost){
- const bool owned=railOwned;railControlAirborne=railHeldRelease=false;const bool consumed=step_rails_tick(steering,jump,brake,boost);
+ const bool owned=railOwned;railControlAirborne=railHeldRelease=false;
+ // 12E9B8 in the air after the rail was lost with Cross held: +0x328 (the rail style) is still set, so it steers +0x22C through
+ // 113F38 with RailBalance (12EC1C / 12EDF0), not the turn 113E80; 1211F8 then approaches it (PS2 hl2/rail-fence 707..: turn 0)
+ if(!owned&&heldAirMode&&jump&&physicsState.prewindStyle!=0&&!::grounded){auto view=rail_view();originalRailSteerTarget(view,rail_held_balance(steering));railSteer=view.steer22C;}
+ const bool consumed=step_rails_tick(steering,jump,brake,boost);
  // 1211F8 approaches +0x22C / +0x238 / +0x25C after 12E9B8's release too (PS2 R&B Moby 5033: steer -0.5877 -> -0.6504, the attach
  // tolerance -0.25 -> -0.2167; the next tick's re-attach slid 0.21 cm short without it)
  if((!owned||railControlAirborne||railHeldRelease)&&!railOwned){for(auto* control:{&railSteer,&railBalance,&railTolerance})groundControlApproach(*control);graph.railBalance=railBalance.current;} //a fading rail cycle 18..20 (three-way kind) keeps reading +0x238 off the rail; control 7 leaving for the air (motion already airborne) still reaches 1211F8 this tick
@@ -192,7 +196,7 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
    originalJumpTakeoff(takeoff);retain_jump_camera(takeoff);browser_controller_takeoff_wind(takeoff.velocity);rail_score_takeoff(takeoff.rampTakeoff/*114298 passes s1 = its ramp branch to 119E38 (a2), docs/peak2.md*/);view.position=takeoff.position;view.velocity=takeoff.velocity;originalRailMotionLeave(railMotion,view,access);++railJumps;++railExits;
    if(crash.active||browserResetActive){physicsState.velocity=view.velocity;if(crash.active)crash.actor.velocity=view.velocity;commit_rider_physics();detach_rail_for_crash();return true;}
   }
-  originalRailControlLeave(view);browserRailActive=railOwned=railHeldJump=railPreviousJump=false;railReleaseFrame=true;railHeldRelease=true;rail_apply(view);if(onRail){rail_motion_exit();leave_rail_motion();}
+  originalRailControlLeave(view);browserRailActive=railOwned=railHeldJump=railPreviousJump=false;railReleaseFrame=true;railHeldRelease=true;browserRailJumpRelease=true;rail_apply(view);if(onRail){rail_motion_exit();leave_rail_motion();}
   gs=physicsState;gp=physicsProfile;if(browserSoftActive)return false;release_air_control();physicsState.controlState=5;physicsState.turn=gs.turn;physicsState.crouch=gs.crouch;physicsState.brake=gs.brake;physicsState.prewindStyle=0;return false;
  }
  if(view.controlState==12){
@@ -280,7 +284,7 @@ static std::array<float,3> rail_motion_post(){
  originalRailMotionLeave(railMotion,view,access);if(!crash.active&&!browserResetActive){rail_apply(view);publish_rail_charge(railHeldJump?view.crouch.current:0);} //rail_apply republishes the rider; keep the step's crouch charge
  std::array<float,3> moved;for(unsigned k=0;k<3;k++)moved[k]=railQueryOffset[k]-before[k];return moved;
 }
-static void rail_tick_begin(){railReleaseFrame=false;}
+static void rail_tick_begin(){railReleaseFrame=false;browserRailJumpRelease=false;}
 static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;browserRailTickBegin=rail_tick_begin;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_debug(){return railExitDebug.data();}

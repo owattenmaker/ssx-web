@@ -186,6 +186,8 @@ void browser_controller_takeoff(float takeoffCharge){
 bool browser_rail_uber_control();
 RIDER_LOCAL bool browserStarting=false,browserStartFrame=false,browserStartFrozen=false;RIDER_LOCAL bool (*browserStartControl)()=nullptr;RIDER_LOCAL void (*browserStartClear)()=nullptr;
 RIDER_LOCAL void (*browserRailTickBegin)()=nullptr; // clears the rail step's per-tick flags whether or not it runs (web/rail_gameplay.inc)
+// 12E9B8's jump release left a rail this tick: it returns before 114130, so the boost runs on into the first air tick (web/rail_gameplay.inc)
+RIDER_LOCAL bool browserRailJumpRelease=false;
 RIDER_LOCAL bool browserRailActive=false;RIDER_LOCAL bool browserRailBoostTicked=false; // the rail step ran this tick's 114130 / 1200D0 and handed the tick back (web/rail_gameplay.inc)
 RIDER_LOCAL bool (*browserRailStep)(float,int,int,int)=nullptr;RIDER_LOCAL void (*browserRailReset)()=nullptr;
 // Handplant control11/motion5 (web/handplant_gameplay.inc): runs before rail attach; a failed cruise attempt edits the cruise inputs and skips 0x106848.
@@ -833,7 +835,7 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&airCrouch){if(jump)originalBoostControl(boostState,boostProfile,boost,false);}
  // In the air, control 0 (131620 on the ride-off tick) only requests control 4 and returns before its boost dispatch; the
  // passive controller 12F730 stops the boost in the next tick (tech-speedcap-groomed 421: amount still 1 on the PS2).
- else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!grounded&&!airControl0Request) originalBoostControl(boostState,boostProfile,false,false);
+ else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!grounded&&!airControl0Request&&!browserRailJumpRelease) originalBoostControl(boostState,boostProfile,false,false); /*PS2 hl2/rail-slide 737: +0x2FC still 0.25 on a rail jump release*/
  boostHeld=boost;
  if(!browserRailBoostTicked)browser_boost_tick(boostState,boostProfile,physicsState.timeScale,grounded?0:1,(browserStartFrame||uberFrame||browserSoftFrame||browserCrashExitFrame||browserBoardPressFrame)?physicsState.controlState:grounded?(jump?2:0):5);
  physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;

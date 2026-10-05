@@ -337,7 +337,9 @@ push('pagehide', { persisted: e.persisted || undefined, ...memory(), audio: audi
           audio,
           distM,
           // hardware acceleration (gpuSummary): backend, fallback / software adapter, vendor / architecture
-          gpu: gpuTag || undefined
+          gpu: gpuTag || undefined,
+          // the pad's update rate as the page sees it (web/diag-pad-rate.js)
+          pad: padRate || undefined
         });
         frames = [];
       } else push('memory', { ...memory(), audio, gpu: gpuTag || undefined }); // hidden / no frames: memory only
@@ -668,3 +670,6 @@ export function diagnoseRenderer(renderer, { recovered = false } = {}) {
   }, 2000);
 }
 export function diagnose(kind, data) { push(kind, data); }
+// The pad update rate (web/diag-pad-rate.js), carried by the heartbeats once measured.
+let padRate = null;
+export function diagPadRate(summary) { padRate = summary; }
