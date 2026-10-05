@@ -65,6 +65,12 @@ const cases = [
   { name: 'boardpress-air', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail press in the air (+0x330 = 2, air adjust 0x28C/0x298), landing into control 1 (34)' },
   { name: 'boardpress-pivot-ollie', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail pivot then R3 ollie from a pivot (35), landing' },
   { name: 'boardpress-rail', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'press on a rail: control 7 -> 1161D0 (131E80), control 1 with motion 4, rail lost, 12FFF8; 821 106F78 hips/rail hard crash, 13F358 clamp after the contacts' },
+  // boardFlex (docs/characters.md "Board flex"): the core's board morph weights (board_morph_weights) bit-equal to the PS2's
+  // *(geometry 0x5DC600 + 0x3C)[0..7] on every tick (web/board-flex-compare.mjs); captures in local/board-flex/runs (--watch 0x5dc000:256).
+  { name: 'boardflex/bf-boardpress-nose', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a nose press (BP_* file-2 streams)' },
+  { name: 'boardflex/bf-boardpress-rail', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a press on a rail, the landing' },
+  { name: 'boardflex/bf-rail-balance-lr', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: rails with balance, a landing' },
+  { name: 'boardflex/bf-tech-land-mid', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a jump and landing (all weights 0)' },
   { name: 'boardpress-railair', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail press in the air onto a rail: 106D9C (34, control 1), phase 1 on the rail, 12FFF8; 792 air instance contact' },
   { name: 'boardpress-railjump', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'rail press then Cross: control 2 on the rail (245), jump off; 825 ground rail re-attach (108A48 with the 1211F8-approached +0x25C tolerance)' },
   // Left-stick air adjust (AirAdjRotLR/FB, control 5 0x133308): bonesThrough also requires all 24 body/board world
@@ -415,7 +421,7 @@ const run1 = (c) => new Promise((resolve) => {
   if (c.name.startsWith('booth/') && !coreHasBooth) return resolve({ c, skip: true, why: 'the core predates stage_contact_inject (web/stage_teleport.inc)' });
   if (c.coreHas && !coreWasmText.includes(c.coreHas)) return resolve({ c, skip: true, why: `the core has no ${c.coreHas} seed` });
   const report = reportPath(c.name, 'regression.json');
-  const env = { ...process.env, ...(c.boardPress ? { BP_ALL_SEMANTICS: '1' } : {}), ...(c.stageWorld ? { STAGE_WORLD: '1' } : {}), ...(c.audio ? { TICK_HOOK: 'uber-audio-compare.mjs' } : {}), ...(c.keepCheck && coreJsText.includes('_snapshot_save') ? { SNAPSHOT_KEEP_CHECK: '1' } : {}), BONE_SCAN: '1', BONE_SCAN_MAX: '29' }; // stageWorld: sections + stage programs as the browser (web/stage_world.inc)
+  const env = { ...process.env, ...(c.boardPress ? { BP_ALL_SEMANTICS: '1' } : {}), ...(c.stageWorld ? { STAGE_WORLD: '1' } : {}), ...(c.audio ? { TICK_HOOK: 'uber-audio-compare.mjs' } : {}), ...(c.boardFlex ? { TICK_HOOK: 'board-flex-compare.mjs' } : {}), ...(c.keepCheck && coreJsText.includes('_snapshot_save') ? { SNAPSHOT_KEEP_CHECK: '1' } : {}), BONE_SCAN: '1', BONE_SCAN_MAX: '29' }; // stageWorld: sections + stage programs as the browser (web/stage_world.inc)
   execFile(process.execPath, ['compare-ps2-capture.mjs', bin, '--pad', '--sync-rng', '--report', report, ...c.args, ...(c.boardPress ? ['--board-press'] : [])], { cwd, env, encoding: 'utf8', maxBuffer: 1 << 28 }, (error, _stdout, stderr) => resolve({ c, error, stderr, report }));
 });
 const check = ({ c, error, stderr, report }) => {
@@ -450,6 +456,13 @@ const check = ({ c, error, stderr, report }) => {
   // Boost / Tricky / Uber tier words (rider +0x2F8 meter, +0x2FC amount, +0x2F4 tier, +0x2F0 Tricky time) on every compared tick.
   if (summary.firstBoostMismatch && summary.firstBoostMismatch.tick <= Math.min(c.boostThrough ?? exactThrough, exactThrough, firstBadTick - 1)) throw new Error(`${c.name}: boost state left the original at ${summary.firstBoostMismatch.tick} (web ${JSON.stringify(summary.firstBoostMismatch.web)}, PS2 ${JSON.stringify(summary.firstBoostMismatch.ps2)})`);
   // Sound / speech dispatch (c.audio: web/uber-audio-compare.mjs against the capture's tools/ps2_audio_log.py call log).
+  // Board flex (c.boardFlex): every compared tick's 8 weights bit-equal; a core without board_morph_configure skips the check.
+  if (c.boardFlex) {
+    const f = summary.boardFlex;
+    if (!f) throw new Error(`${c.name}: no board flex summary`);
+    if (!f.skipped && f.first) throw new Error(`${c.name}: board morph weights left the PS2 at ${f.first.tick} (web ${f.first.web}, PS2 ${f.first.ps2})`);
+    if (!f.skipped && f.exact !== f.ticks) throw new Error(`${c.name}: board morph weights exact on ${f.exact} of ${f.ticks} ticks`);
+  }
   if (c.audio) { const a = summary.audio; if (!a) throw new Error(`${c.name}: no audio call log (capture with ps2_capture.py build --audio-log)`);
     const bad = (a.audioMismatches || []).find((x) => x.tick <= through(c.audioThrough ?? c.exactThrough));
     if (bad) throw new Error(`${c.name}: sound/speech dispatch differs at ${bad.tick} (web ${JSON.stringify(bad.web)}, PS2 ${JSON.stringify(bad.ps2)})`); }

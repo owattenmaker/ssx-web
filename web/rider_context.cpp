@@ -65,7 +65,10 @@ EMSCRIPTEN_KEEPALIVE uint32_t snapshot_init(){
 EMSCRIPTEN_KEEPALIVE const char* snapshot_missing(uint32_t k){uint32_t n=0;for(const auto& e:ssx_snapshot::registry())if(!e.trivial&&!e.keep&&!e.make){if(n==k)return e.name;++n;}return nullptr;}
 EMSCRIPTEN_KEEPALIVE int snapshot_save(uint32_t slot){
  if(!snapshotContext||slot>1)return 0;auto* tls=static_cast<const uint8_t*>(__builtin_wasm_tls_base());std::memcpy(snapshotContext->raw[slot].data(),tls,tlsSize);
- const auto& reg=ssx_snapshot::registry();auto& fh=snapshotContext->firstHeap[slot];const bool first=fh.empty();if(first)fh.assign(reg.size()+1,0);
+ // The first save's per-variable heap attribution (snapshot_entry_heap / snapshot_slot_heap) is QA only (snapshot_qa): each mallinfo()
+ // walks the whole dlmalloc heap, ~1 ms on a streamed world's 150 MB, and two per holder made the first countdown save 3.6 s on the page
+ // (6 contexts x 2 slots x 133 holders; 18 s on a slower PC, the in-world card's freeze). The saved state is the same either way.
+ const auto& reg=ssx_snapshot::registry();auto& fh=snapshotContext->firstHeap[slot];const bool first=ssx_snapshot::qa&&fh.empty();if(first)fh.assign(reg.size()+1,0);
  for(size_t k=0;k<reg.size();++k)if(auto& h=snapshotContext->holders[k]){const auto before=first?mallinfo().uordblks:0;h->save(tls+reg[k].offset,slot);if(first)fh[k]=uint32_t(mallinfo().uordblks-before);}
  if(first){const auto before=mallinfo().uordblks;for(const auto& hk:ssx_snapshot::hooks())hk.save(slot);fh[reg.size()]=uint32_t(mallinfo().uordblks-before);}
  auto& kh=snapshotContext->keepHash[slot];kh.assign(reg.size(),0);if(ssx_snapshot::qa)for(size_t k=0;k<reg.size();++k)if(reg[k].keep&&!reg[k].own)kh[k]=keep_hash(reg[k]);

@@ -25,7 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from world_assets import world_chunks, records, locations, texture_rgba, world_vertex_to_native, world_resource_names  # noqa: E402
-from world_models import decode_model, decode_instance, transform  # noqa: E402
+from world_models import decode_model, decode_instance, transform, multiply, IDENTITY  # noqa: E402
+from export_livecomp import mesh_nodes  # noqa: E402
 from import_sky import chunk_range  # noqa: E402
 from export_world_textures import world_entry  # noqa: E402
 
@@ -33,11 +34,41 @@ SOURCE = ROOT / 'local/assets/source/ps2'
 OUT = ROOT / 'web/public/assets/CUTSCENES/SETS'
 
 
+# The static-model draw class (37E238, material state 37F2A4..37F7E0; web/prepare.py mesh_blend): model header +0x10 bit 3 =
+# additive (3); else material word +0x0C (group flag bit 3 adds 0x40000) & 0x660000: 0x20000 = 1 (ATST GREATER 92), 0x40000 /
+# 0x60000 = 2 (ATST GREATER 20, depth sorted), anything else 0 (opaque). Classes 2 and 3 key their render-list records by the
+# view depth of the node's world origin (the node matrix x instance matrix at 37ED9C..37F078, row 3 at 37F6E8 / 37F398).
+def static_model_class(header, material, group_flags):
+    if header & 8:
+        return 3
+    word = (material[6] & 0xFFFF) | ((material[7] & 0xFFFF) << 16)
+    if group_flags & 8:
+        word |= 0x40000
+    return {0x20000: 1, 0x40000: 2, 0x60000: 2}.get(word & 0x660000, 0)
+
+
+# The model-space origin of every MDR node (its matrix composed with its parents', as world_models.decode_model applies).
+def model_node_pivots(data):
+    count, table = struct.unpack_from('<2I', data, 4)
+    nodes = [struct.unpack_from('<4I', data, table + 16 * i) for i in range(count)]
+    composed = {}
+    def node_matrix(i):
+        if i in composed:
+            return composed[i]
+        parent, _, _, at = nodes[i]
+        matrix = struct.unpack_from('<16f', data, at) if at not in (0, 0xFFFFFFFF) else IDENTITY
+        if parent != 0xFFFFFFFF:
+            matrix = multiply(matrix, node_matrix(parent))
+        composed[i] = matrix
+        return matrix
+    return [list(node_matrix(i)[12:15]) for i in range(count)]
+
+
 def export_set(code, source=SOURCE, out=OUT):
     locs = locations(source / 'bam.sdb')
     index, begin, end = chunk_range(locs, code)
     names = world_resource_names((source / 'bam.phm').read_bytes(), (source / 'bam.psm').read_bytes())
-    textures, materials, models, instances = {}, {}, {}, []
+    textures, materials, models, raw_models, instances = {}, {}, {}, {}, []
     for i, chunk in enumerate(world_chunks(source / 'bam.ssb')):
         if i > end:
             break
@@ -51,11 +82,13 @@ def export_set(code, source=SOURCE, out=OUT):
                 materials[track, rid] = struct.unpack_from('<10h', data)
             elif kind == 2 and own:
                 models[track, rid] = decode_model(data)
+                raw_models[track, rid] = data
             elif kind == 3 and own:
                 instances.append((track, rid, decode_instance(data)))
     batches = defaultdict(lambda: ([], [], [], []))
+    pivots = {}
     placed = []
-    for track, rid, (model_id, matrix, baked, scale) in instances:
+    for number, (track, rid, (model_id, matrix, baked, scale)) in enumerate(instances):
         model = models.get(model_id)
         if model is None:
             continue
@@ -63,14 +96,24 @@ def export_set(code, source=SOURCE, out=OUT):
         if 'trig' in name.lower():   # authored trigger helpers are not drawn (docs/asset-formats.md)
             continue
         placed.append(dict(track=track, rid=rid, name=name, model=list(model_id), position_cm=list(matrix[12:15])))
-        for mesh in model:
+        owner = mesh_nodes(raw_models[model_id])
+        node_pivots = model_node_pivots(raw_models[model_id])
+        header = struct.unpack_from('<I', raw_models[model_id], 16)[0]
+        for m, mesh in enumerate(model):
             material = materials.get(tuple(mesh['material']))
             if material is None:
                 continue
             tex = material[0]
             if tex not in textures:
                 continue
-            vs, ix, colors, _ = batches[(tex, material[7])]
+            blend = static_model_class(header, material, mesh['group_flags'])
+            # the depth-sorted classes draw per node, back to front by the node's origin (37F6B8 / 37F36C -> 37F708..37F750)
+            sort_node = (number, owner[m]) if blend >= 2 else None
+            key = (tex, material[7], blend, sort_node)
+            if sort_node is not None and key not in pivots:
+                pivot = [a / 100 for a in transform([x * scale for x in node_pivots[owner[m]]], matrix)]
+                pivots[key] = world_vertex_to_native(pivot + [0.0] * 7)[:3]
+            vs, ix, colors, _ = batches[key]
             base = len(vs)
             ix.extend(base + k for k in mesh['indices'])
             for k, v in enumerate(mesh['vertices']):
@@ -86,13 +129,20 @@ def export_set(code, source=SOURCE, out=OUT):
                 index_format='uint32', vertex_color_unity=16 / 31, textures={}, batches=[], instances=placed)
     vertex_count = index_count = 0
     with (folder / 'vertices.bin').open('wb') as vf, (folder / 'indices.bin').open('wb') as xf, (folder / 'colors.bin').open('wb') as cf:
-        for (tex, flags), (vertices, indices, colors, _) in sorted(batches.items()):
+        for key, (vertices, indices, colors, _) in sorted(batches.items(), key=lambda kv: (kv[0][:3], kv[0][3] or (-1, -1))):
+            tex, flags, blend, sort_node = key
             vf.write(b''.join(struct.pack('<10f', *v) for v in vertices))
             cf.write(b''.join(struct.pack('<4f', *c) for c in colors))
             xf.write(struct.pack(f'<{len(indices)}I', *(k + vertex_count for k in indices)))
-            meta['batches'].append(dict(first_index=index_count, index_count=len(indices), texture=tex, material_flags=flags))
+            batch = dict(first_index=index_count, index_count=len(indices), texture=tex, material_flags=flags)
+            if blend:
+                batch['blend'] = blend
+            if sort_node is not None:
+                batch['sort_node'] = list(sort_node)
+                batch['sort_pivot'] = pivots[key]
+            meta['batches'].append(batch)
             vertex_count += len(vertices); index_count += len(indices)
-    for tex in sorted({t for t, _ in batches}):
+    for tex in sorted({k[0] for k in batches}):
         w, h, rgba = texture_rgba(textures[tex])
         alpha = any(rgba[k] != 255 for k in range(3, len(rgba), 4))
         # A world texture (global kind-9 id): a reference into the shared world texture library, no PNG copy.
@@ -249,7 +299,7 @@ def main():
             print(f"{spec['set']}: {m['vertex_count']} vertices, {len(m['batches'])} batches, {len(m['textures'])} textures, world copy {m['world_copy']}")
         return
     for code in a.location or ['TRANSP']:
-        m = export_set(code)
+        m = export_set(code, out=a.out)
         print(f"{code}: {len(m['instances'])} instances, {m['vertex_count']} vertices, {len(m['batches'])} batches, {len(m['textures'])} textures")
         for i in m['instances']:
             print('  ', i['name'], [round(x) for x in i['position_cm']])

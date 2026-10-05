@@ -59,6 +59,7 @@ let boardTrail;
 import { captureRiderFrame, applyRiderFrame } from './rider-frame.js';
 import { originalRiderBoneInverses } from './rider-bind.js';
 import { createOriginalRiderSkinning } from './rider-skinning.js';
+import { loadBoardFlex, configureBoardFlex } from './board-flex.js';
 import { createTerrainRefinement } from './terrain-refinement.js';
 import { createRiderLightingMaterial, createRiderLightingUpdate, riderDrawState } from './rider-material.js';
 import { createOriginalWorldMaterials, createOriginalSkyMaterials } from './world-material.js';
@@ -293,6 +294,8 @@ const load = async (path, type = 'json') => {
   if (!r.ok) throw Error(`${path}: ${r.status}`);
   return type === 'json' ? r.json() : r.arrayBuffer();
 };
+// pv boardFlex: each rider package's board morph targets (web/board-flex.js), by its rider.json (rig)
+const riderBoardFlex = new WeakMap();
 const origin = new T.Vector3(),
   lastCamera = new T.Vector3();
 const loader = new T.TextureLoader();
@@ -906,7 +909,9 @@ async function asset(name, isRider = false, root = '/assets/' + name + '/', opts
     group.userData.riderScale = authoredScale[0];
     for (let i = 0; i < inter.array.length; i += 10) for (let k = 0; k < 3; k++) inter.array[i + k] *= authoredScale[0];
     rig = await load(root + 'rider.json');
-    group.userData.sourceSkin = createOriginalRiderSkinning(rig, sourceVertices, origin);
+    const boardFlex = await loadBoardFlex(root, rig, load, (path) => load(path, 'buffer'));
+    if (boardFlex) riderBoardFlex.set(rig, boardFlex);
+    group.userData.sourceSkin = createOriginalRiderSkinning(rig, sourceVertices, origin, boardFlex);
     if (group.userData.sourceSkin)
       group.userData.sourceLighting = createRiderLightingMaterial(
         group.userData.sourceSkin,
@@ -1168,6 +1173,7 @@ function initializeRiderAnimation() {
     const settings = json(animationResources.settings),
       packets = put(new Uint8Array(animationResources.packets));
     core._init_animation(json(animationResources.metadata), json(rig), settings, packets, animationResources.packets.byteLength);
+    configureBoardFlex(core, riderBoardFlex.get(rig), rig);
     core._init_race(settings);
     core._animation_use_physics(1);
     resetPhysics();
@@ -2156,7 +2162,17 @@ function setupCutscenes() {
             .catch((e) => console.warn('Computer-rider lineup failed', e))
         : Promise.resolve();
     lineup
-      .then(() => cutscenes.playEventIntro({ mode: 'career', cast: cutsceneCast(), location: worldEvent?.code, onIdle: go }))
+      .then(() => {
+        // pv eventRiderWarm: the race's rider models compile under the approach and the card, from the approach's first step (its cast's
+        // FE models are built by then: the two builds do not share frames); not awaited
+        let warm = pv('eventRiderWarm') && !!worldEvent?.ai && aiRace === worldEvent.ai;
+        const onStep = () => {
+          if (!warm) return;
+          warm = false;
+          warmEventRiders(aiRace);
+        };
+        return cutscenes.playEventIntro({ mode: 'career', cast: cutsceneCast(), location: worldEvent?.code, onIdle: go, onStep });
+      })
       .then(go, (e) => {
         console.warn('Event intro failed', e);
         go();
@@ -4701,6 +4717,66 @@ async function warmRideRider() {
     performance.measure('ride:compile', { start: t1 });
   } catch {}
 }
+// pv eventRiderWarm (docs/ctm-events-in-world.md "The riders' warm-up under the approach"): an in-world event has no event load, so
+// nothing built the computer riders' race models (and their trails / wake / spray) before GO: the race's first frame built them all
+// (53 node materials and 7 pipelines: 0.25 s on this Mac, 1.6 s at 4x CPU). The event-load path builds them under its load screen
+// (warmupRender). Here they compile for the world pass (fog-renderer compileObject) one mesh at a time while the approach and the card
+// play, a frame after every ~10 ms of builds; the pipelines compile asynchronously. Nothing is drawn or ticked: presentation only.
+async function warmEventRiders(race) {
+  const fr = fogRenderer;
+  if (!fr?.compileObject || !race) return;
+  const t0 = performance.now();
+  const meshes = [];
+  const add = (root) =>
+    root?.traverse((o) => {
+      if (o.isMesh || o.isPoints || o.isLine) meshes.push(o);
+    });
+  for (const e of race.renderer?.entries ?? []) add(e.group);
+  for (const e of opponentFx?.entries ?? []) {
+    add(e.trail?.group);
+    add(e.wake?.mesh);
+    add(e.snow?.group);
+    add(e.fxGroup);
+  }
+  // the warm stops once the race starts (aiActive: the free ride runs under the approach) or the event goes
+  const live = () => !!worldEvent && worldEvent.ai === race && aiRace === race && !aiActive && !!fogRenderer;
+  const one = new T.Group();
+  let slice = performance.now();
+  for (const mesh of meshes) {
+    if (!live()) break;
+    const culled = mesh.frustumCulled;
+    mesh.frustumCulled = false;
+    one.children.length = 0;
+    one.children.push(mesh);
+    let p = null;
+    try {
+      p = fr.compileObject(one);
+    } catch (e) {
+      console.warn('Event rider warm', e);
+    } finally {
+      one.children.length = 0;
+      mesh.frustumCulled = culled;
+    }
+    p?.catch((e) => console.warn('Event rider warm', e));
+    if (performance.now() - slice > 10) {
+      await new Promise((r) => {
+        let done = false;
+        const go = () => {
+          if (!done) {
+            done = true;
+            r();
+          }
+        };
+        requestAnimationFrame(go);
+        setTimeout(go, 50);
+      });
+      slice = performance.now();
+    }
+  }
+  try {
+    performance.measure('warm:event-riders', { start: t0 });
+  } catch {}
+}
 // pv worldWarm (docs/course-switch.md "World arrivals warm under the load screen"): objects compiled for the world pass as one call
 // (fog-renderer compileObject: its target, MRT and call depth), unculled for the call's listing. sides: a transparent DoubleSide material
 // draws in two passes (BackSide, then FrontSide: three renderObject), so it is compiled once per side; only while nothing shows the frame
@@ -5226,6 +5302,7 @@ async function loadCourse(next) {
   core.HEAPU8.set(new Uint8Array(packets), packetPtr);
   const settingsPtr = allocString(settings);
   core._init_animation(allocString(metadata), allocString(rig), settingsPtr, packetPtr, packets.byteLength);
+  configureBoardFlex(core, riderBoardFlex.get(rig), rig);
   core._init_race(settingsPtr);
   core._animation_use_physics(1);
   // the packages' own text (the node gates' input, web/ai-race-node.mjs), so the computer riders' contexts, which pass the
@@ -5575,11 +5652,12 @@ async function loadCourse(next) {
       overlay.station ??= contexts.push(CTX.HOLD, { owner: 'WS14 station cut (no NIS hold)' });
       ui.set('game');
     });
-    ui.freeRideHud = (c, level) => {
+    ui.freeRideHud = (c, level, finishHide = false) => {
       if (!freeRide || worldEvent) return false;
       if (course.freeRide.kind !== 4) {
         // peak run HUD 0x1530C006|0x22: the clock counts down the tier limit, the station split for 5 s
-        if (level < 2) {
+        // (pv finishHudHide, web/ui.js: cut once the rider has finished, 1EB9E8 / 12A250)
+        if (level < 2 && !finishHide) {
           const ev = ui.careerUI?.career?.active?.ev,
             // as the core's peakSetup hook: the active event's row only when it is a peak run (a single event left active has no tier row:
             // TypeError every frame)

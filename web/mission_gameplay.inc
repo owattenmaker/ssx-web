@@ -382,9 +382,11 @@ static void mission_rider_teleport(const std::array<float,16>& mat){
  {const bool stance=physicsState.reverseStance;graph.sequences.clear();graph.sampledLocal.reset();graph.requestedSemantics.fill(438);graph.nextRate=1;graph.defaultMirror=stance;graph.defaultRoot={};
   const auto sc5=originalSinCos((stance?-3.1415927410125732f:-0.f)*.5f);graph.defaultRoot.rotation={0.f*sc5[0],0.f*sc5[0],sc5[0],sc5[1]};
   if(!graph.enter(5,-1,~uint64_t(0),true))throw std::runtime_error("Missing original reset animation");{auto step=gs;step.timeScale=1;graph.advance(step,prewind.spin.current,prewind.flip.current);graph.completeSequences();}
-  const auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,originalAnimationLayers(graph.sequences));RiderRootPresentation rs;rs.turn=gs.turn.current;rs.brake=gs.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
+  const auto placedLayers=originalAnimationLayers(graph.sequences);
+  const auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,placedLayers);RiderRootPresentation rs;rs.turn=gs.turn.current;rs.brake=gs.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
   AnimationTransform boardRoot;const auto bodyRoot=originalRiderRootPresentation({physicsState.position,physicsState.quaternion},local.at(22).position,graph.scale,rs,&boardRoot);
   cachedCrashWorld=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});clear_skin_matrices();
+  boardMorphDrawn=board_morph_sample(placedLayers);
   set_presented_frame(originalRiderCollisionFrame(boardRoot));}
  // control 6: the start controller entry (12BE20, web/start_gameplay.inc start_event without the clock / route). 0x12357C writes
  // 2 into the start controller's phase (+0x77C +0x290) before 11FEC8(rider, 6): the MANUAL start - the rider waits in the start

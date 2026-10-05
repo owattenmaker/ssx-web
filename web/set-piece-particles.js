@@ -46,7 +46,6 @@ export async function createSetPieceParticles({
   group.name = 'set-piece particles';
   group.position.set(-origin[0], -origin[1], -origin[2]); // sprite centres are course coordinates (source cm / 100, (x, z, -y))
   const meshes = new Map();
-  let order = 0;
   // One instanced quad batch per combination; the vertex stage builds the camera-facing sprite (centre, capped half extent).
   function build({ texture: id, blend, kind }, capacity = 1024) {
     const tex = maps.get(id);

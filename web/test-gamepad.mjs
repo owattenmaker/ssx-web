@@ -254,4 +254,27 @@ const channel = (pad, name) => buildPad(() => false, pad)[PAD_BUTTONS.indexOf(na
   assert.equal(F.padName({ id: '054c-0ce6-Wireless Controller' }), 'PlayStation pad'); assert.equal(F.padName(null), 'None');
   const p = M.newStandardPad(); p.buttons[0].pressed = true; p.buttons[12].pressed = true; assert.equal(F.heldText(p), 'Cross Up');
 }
+{ // an unfocused window takes no pad input (web/main.js blur / focus -> setPadsFocused): Chromium keeps feeding a visible but
+  // unfocused window, so a player alt-tabbed to another program was still steering the race
+  const pad = xinput(0); reset([pad]);
+  const uses = []; const off = G.onPads((type) => { if (type === 'use') uses.push(now); });
+  pad.press(0); assert.ok(channel(poll(), 'Cross') > 0.99, 'focused: Cross reaches the game');
+  G.setPadsFocused(false);
+  const n = uses.length;
+  const blurred = poll();
+  assert.ok(blurred, 'the pad stays known');
+  assert.equal(channel(blurred, 'Cross'), 0, 'unfocused: the held Cross reads released');
+  pad.release(0).press(1).axis(0, -1);
+  const moved = poll();
+  assert.equal(channel(moved, 'Circle'), 0, 'unfocused: a new press does not reach the game');
+  assert.equal(buildPad(() => false, moved)[20], 0, 'unfocused: nor the stick');
+  assert.equal(uses.length, n, 'unfocused: no use events (audio unlock, active pad)');
+  G.setPadsFocused(true);
+  const back = poll();
+  assert.ok(channel(back, 'Circle') > 0.99, 'focus back: the button held now reads held');
+  assert.equal(uses.length, n, 'focus back: a button already down is not a new use');
+  pad.release(1); poll(); pad.press(1); poll();
+  assert.equal(uses.length, n + 1, 'a press after focus returns is a use');
+  off();
+}
 console.log('gamepad tests passed');

@@ -333,10 +333,12 @@ push('pagehide', { persisted: e.persisted || undefined, ...memory(), audio: audi
           ...memory(),
           dropped: dropped || undefined,
           audio,
-          distM
+          distM,
+          // hardware acceleration (gpuSummary): backend, fallback / software adapter, vendor / architecture
+          gpu: gpuTag || undefined
         });
         frames = [];
-      } else push('memory', { ...memory(), audio }); // hidden / no frames: memory only
+      } else push('memory', { ...memory(), audio, gpu: gpuTag || undefined }); // hidden / no frames: memory only
     }
     remember();
   }, 10000);
@@ -519,6 +521,36 @@ function ownerOf(renderObject) {
   return { material: `${material?.name || material?.type}#${material?.id}`, object: name(object), parent: name(object?.parent), geometry: geometry?.name || undefined,
     vsPrivate: vs?.privateBytes, fsPrivate: fs?.privateBytes, vsChars: vs?.chars, fsChars: fs?.chars, fsFunction: fs?.functionBytes };
 }
+// Hardware acceleration, for the heartbeat ('frames' / 'memory' gpu): backend, vendor / architecture, and whether the browser runs on a
+// software or fallback adapter (WebGPU isFallbackAdapter; a SwiftShader / WARP / llvmpipe adapter or WebGL renderer string), e.g.
+// "webgpu nvidia/lovelace", "webgpu fallback google/swiftshader", "webgl software ANGLE (Google, Vulkan (SwiftShader ...))".
+// Firefox reports an empty adapter info: there the adapter's own isFallbackAdapter is asked once (a second adapter request, no device).
+const SOFTWARE = /swiftshader|llvmpipe|lavapipe|softpipe|microsoft basic render|\bwarp\b|software/i;
+let gpuTag = '';
+function gpuSummary(info, adapter) {
+  const parts = [info.backend];
+  const name = adapter ? [adapter.vendor, adapter.architecture].filter(Boolean).join('/') : '';
+  const text = adapter ? `${adapter.vendor} ${adapter.architecture} ${adapter.device} ${adapter.description}` : `${info.gl?.unmasked ?? ''} ${info.gl?.renderer ?? ''}`;
+  const fallback = !!adapter?.isFallbackAdapter;
+  if (fallback) parts.push('fallback');
+  else if (SOFTWARE.test(text)) parts.push('software');
+  if (info.compat) parts.push('compat');
+  parts.push(name || (info.gl ? clip(info.gl.unmasked || info.gl.renderer, 60) : 'unknown'));
+  gpuTag = parts.join(' ');
+  info.gpu = gpuTag;
+  // no adapter info (Firefox): the adapter's own flag (GPUAdapter.isFallbackAdapter, or its info's)
+  if (info.backend === 'webgpu' && !name && !fallback && navigator.gpu?.requestAdapter)
+    navigator.gpu
+      .requestAdapter({ featureLevel: 'compatibility' })
+      .then((a) => {
+        if (!a) return;
+        const fb = a.info?.isFallbackAdapter ?? a.isFallbackAdapter;
+        if (fb === undefined) return;
+        if (fb) gpuTag = gpuTag.replace(/^webgpu /, 'webgpu fallback ');
+        push('gpu-adapter', { fallback: !!fb, gpu: gpuTag });
+      })
+      .catch(() => {});
+}
 function pipelineFailed(label, message) { push('pipeline-failed', { label, ...(owners.get(label) ?? {}), message: clip(message, 300) }); }
 function watchPipelines(renderer) {
   const utils = renderer.backend?.pipelineUtils; if (!utils?.createRenderPipeline || utils.__ssxDiag) return;
@@ -565,12 +597,27 @@ export function diagnoseRenderer(renderer, { recovered = false } = {}) {
         vendor: adapter.vendor,
         architecture: adapter.architecture,
         device: adapter.device,
-        description: adapter.description
+        description: adapter.description,
+        // GPUAdapterInfo.isFallbackAdapter (Chrome 136+): a software / fallback adapter (SwiftShader, WARP)
+        fallback: adapter.isFallbackAdapter || undefined
       };
+    // the device's feature level: three asks for a compatibility adapter (WebGPUBackend featureLevel 'compatibility')
+    info.compat = !device.features.has('core-features-and-limits') || undefined;
+    gpuSummary(info, adapter);
     device.addEventListener?.('uncapturederror', (e) => push('gpu-error', { type: e.error?.constructor?.name, message: clip(e.error?.message, 1500) }));
     device.lost?.then((l) => { push('gpu-device-lost', { reason: l.reason, message: clip(l.message, 800), hidden: document.visibilityState === 'hidden', ...memory() }); remember(); flush(true); });
   } else if (!device) {
-    const gl = backend?.gl; if (gl) info.gl = { renderer: clip(gl.getParameter(gl.RENDERER), 120), maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) };
+    const gl = backend?.gl;
+    if (gl) {
+      // the unmasked renderer string (the masked one is only "WebKit WebGL" in some browsers)
+      let unmasked;
+      try {
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        if (ext) unmasked = clip(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL), 160);
+      } catch {}
+      info.gl = { renderer: clip(gl.getParameter(gl.RENDERER), 120), unmasked, maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) };
+    }
+    gpuSummary(info, null);
   }
   push('renderer', info);
   if (renderer.__ssxDiagProbe) return; renderer.__ssxDiagProbe = true;

@@ -208,8 +208,22 @@ RIDER_LOCAL static unsigned sourceSkinMatrixTick=0xffffffffu,sourcePaletteTick=0
 RIDER_LOCAL static std::vector<OriginalSkinWeights> sourceSkinGroups;
 RIDER_LOCAL static std::vector<uint32_t> sourceSkinIndices;
 RIDER_LOCAL static std::vector<OriginalSkinMatrix> sourcePalette;RIDER_LOCAL static bool sourcePaletteFast=false;RIDER_LOCAL static std::vector<std::array<float,16>> fastSkinBones;
+// Board flex (docs/characters.md "Board flex"): the board part (file 2) is a morph-target part. 30F2B0 blends its 8 weights
+// into *(geometry+0x3C) with the bones' layer weights (engine/animation_motion.cpp originalAnimationMorphWeights). Set by
+// board_morph_configure (the page, from the package's board-flex.json) after init_animation; no configuration, no weights.
+RIDER_LOCAL static int boardMorphSlotBit=-1;
+RIDER_LOCAL static std::vector<uint8_t> boardMorphMirror;
+// The weights of the drawn pose (with cachedCrashWorld) and of an 11D660 placement's pose (with resetStaleWorld).
+RIDER_LOCAL static std::vector<float> boardMorphDrawn;
+RIDER_LOCAL static std::vector<float> boardMorphPosed;
+RIDER_LOCAL static std::vector<float> boardMorphReset;
 static void clear_skin_matrices(){sourceSkinMatrices.clear();sourceSkinMatrixTick=0xffffffffu;sourcePaletteTick=0xffffffffu;sourcePalette.clear();}
+static std::vector<float> board_morph_sample(const std::vector<AnimationLayer>& layers){
+ if(boardMorphSlotBit<0||boardMorphMirror.empty())return {};
+ return originalAnimationMorphWeights(graph.rig->clips,layers,2,unsigned(boardMorphSlotBit),unsigned(boardMorphMirror.size()),boardMorphMirror);
+}
 static void setup_skin_bind(const json& rig){
+ boardMorphSlotBit=-1;boardMorphMirror.clear();boardMorphDrawn.clear();boardMorphPosed.clear();boardMorphReset.clear();
  cachedCrashWorld.clear();sourceSkinBind.clear();sourceSkinGroups.clear();sourceSkinIndices.clear();clear_skin_matrices();
  if(!rig.contains("source_bind_matrix_words"))return;
  if(rig.at("source_bind_matrix_space")!="source-centimeters-Z-up"||rig.at("source_bind_matrix_words").size()!=rig.at("bones").size())throw std::runtime_error("Invalid source skin bind package");
@@ -604,7 +618,7 @@ static void reset_place_at(const terrain_original::Vector& point,const terrain_o
   physicsState.animationIndex=semantic;physicsState.animationClass=graph.currentClass(2);++resetPlacements;
   // 11D660 -> 11EB60/11EB98: the placement poses the rider at the new spot (cached world +0x2C) before 1211F8, so this
   // tick's 120378 selects the secondary motion from the placed pose (score-uber 739: 416, not the pre-reset pose's 417).
-  {const auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,originalAnimationLayers(graph.sequences));RiderRootPresentation rs;rs.turn=gs.turn.current;rs.brake=gs.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
+  {const auto placedLayers=originalAnimationLayers(graph.sequences);boardMorphReset=board_morph_sample(placedLayers);const auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,placedLayers);RiderRootPresentation rs;rs.turn=gs.turn.current;rs.brake=gs.brake.current;rs.extraLean=physicsState.extraLean.current;rs.roll=physicsState.presentationRoll.current;rs.liftCm=physicsState.presentationLift.current;rs.lateral=physicsState.lateral;rs.controlState=physicsState.controlState;
    AnimationTransform boardRoot;const auto bodyRoot=originalRiderRootPresentation({physicsState.position,physicsState.quaternion},local.at(22).position,graph.scale,rs,&boardRoot);resetPlacedBoardRoot=boardRoot;resetStaleWorld=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});
    if(contactPose){poseContact.normal=physicsState.normal;poseContact.boardDirection=browserBoardNormalForPose;poseContact.boardLiftCm=physicsState.boardLift;poseContact.boardAlignment=physicsState.boardAlignment.current;legWeight=originalGrabLegWeight(legWeight,graph.currentClass(2));poseContact.legWeight=legWeight;originalRiderPoseContact(resetStaleWorld,local,graph.scale,poseContact);}}
 }
@@ -1026,7 +1040,7 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  if(!railFrame)originalAirPrewindApproach(prewind); //1211F8 approaches the prewind pair every tick, after controller selection.
  attack_control_changes(browser_control_state()); //0x131C30/0x12FB68 upper-attack exit
  if(physicsAttached){gs.adjustment28C=physicsState.adjustment28C;gs.adjustment298=physicsState.adjustment298;} //1043F8 (kind 11) reads rider+0x28C/+0x298, also while a landed air adjust fades out
- graph.advance(gs,prewind.spin.current,prewind.flip.current);audio_animation_events(graph);auto layers=originalAnimationLayers(graph.sequences);auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,layers);graph.sampledLocal=local;currentPivot=(startFrame||railFrame||grounded||heldAirMode||passiveMode)?std::array<float,3>{}:local.at(pivotBone).position;{terrain_original::Rounding rounding;for(unsigned k=0;k<3;++k)currentPivot[k]=terrain_original::mul(currentPivot[k],graph.scale[k]);} /*134DD0 scales the pivot with EE mul.s (chop)*/const bool airControlPose=!(softFrame||board_press_air_frame()); /*11EB98 applies 134DD0 only while 11FEE8 reports control 5 (not soft control 3 or board-press control 1 in the air)*/auto presentation=(startFrame||resetFrame||crashFrame||railFrame||grounded||heldAirMode||passiveMode||!airControlPose)?originalAirPresentationCurrent(air,{{0,0,0},{0,0,0,1}},currentPivot):originalAirPresentation(air,{{0,0,0},{0,0,0,1}},currentPivot);for(unsigned i=0;i<3;i++)info[16+i]=presentation.position[i];RiderRootPresentation rootState;rootState.controlState=(startFrame||resetFrame||crashFrame||railFrame||browserCrashExitFrame)?physicsState.controlState:softFrame?physicsState.controlState:grounded?(jumpHeld?2:0):heldAirMode?2:passiveMode?4:5;rootState.turn=gs.turn.current;rootState.brake=gs.brake.current;rootState.lateral={1,0,0};poseContact=initialPoseContact;
+ graph.advance(gs,prewind.spin.current,prewind.flip.current);audio_animation_events(graph);auto layers=originalAnimationLayers(graph.sequences);auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,layers);boardMorphPosed=board_morph_sample(layers);graph.sampledLocal=local;currentPivot=(startFrame||railFrame||grounded||heldAirMode||passiveMode)?std::array<float,3>{}:local.at(pivotBone).position;{terrain_original::Rounding rounding;for(unsigned k=0;k<3;++k)currentPivot[k]=terrain_original::mul(currentPivot[k],graph.scale[k]);} /*134DD0 scales the pivot with EE mul.s (chop)*/const bool airControlPose=!(softFrame||board_press_air_frame()); /*11EB98 applies 134DD0 only while 11FEE8 reports control 5 (not soft control 3 or board-press control 1 in the air)*/auto presentation=(startFrame||resetFrame||crashFrame||railFrame||grounded||heldAirMode||passiveMode||!airControlPose)?originalAirPresentationCurrent(air,{{0,0,0},{0,0,0,1}},currentPivot):originalAirPresentation(air,{{0,0,0},{0,0,0,1}},currentPivot);for(unsigned i=0;i<3;i++)info[16+i]=presentation.position[i];RiderRootPresentation rootState;rootState.controlState=(startFrame||resetFrame||crashFrame||railFrame||browserCrashExitFrame)?physicsState.controlState:softFrame?physicsState.controlState:grounded?(jumpHeld?2:0):heldAirMode?2:passiveMode?4:5;rootState.turn=gs.turn.current;rootState.brake=gs.brake.current;rootState.lateral={1,0,0};poseContact=initialPoseContact;
  // 11EB98 runs FK from the physical root in world space (control5 first applies 134DD0
  // around the animated pivot), with world-space lateral/contact vectors. Building the
  // pose relative to the presented root and composing afterwards differs by several ulps.
@@ -1076,6 +1090,7 @@ if(!(riderHostFlags&4)){AnimationTransform toPresented;if(physicsAttached){const
   physicsState.animationTurn=gs.animationTurn;physicsState.animationIndex=graph.requestedSemantics[2];physicsState.animationClass=graph.currentClass(2);
   const AnimationTransform physical{physicsState.position,physicsState.quaternion};
   cachedCrashWorld=worldPose;
+  boardMorphDrawn=boardMorphPosed;
   const auto worldHead=worldPose.at(0).position;
   for(unsigned i=0;i<3;i++){posedPhysical[i]=physical.position[i];posedPhysical[9+i]=worldHead[i];}
   for(unsigned i=0;i<4;i++)posedPhysical[3+i]=physical.rotation[i];posedPhysical[7]=1;posedPhysical[8]=grounded;
@@ -1443,6 +1458,19 @@ EMSCRIPTEN_KEEPALIVE float* rider_skin_matrices(){
 // receiver rebuilds the palette from world_pose_bones exactly.
 EMSCRIPTEN_KEEPALIVE float* rider_skin_scale(){RIDER_LOCAL static float v[3];for(unsigned i=0;i<3;++i)v[i]=graph.scale[i];return v;}
 EMSCRIPTEN_KEEPALIVE int rider_skin_palette_count(){return rider_skin_matrix_count()?int(sourceSkinGroups.size()):0;}
+// Board flex (pv boardFlex, web/rider-skinning.js): the board's morph slot bit (the geometry's slot count + morph index 0: files 0
+// and 1 have none) and its mirror table (part+0x40 = the MNF morph_ids, board-flex.json `mirror`).
+EMSCRIPTEN_KEEPALIVE void board_morph_configure(int slotBit,int count,const uint8_t* mirror){
+ boardMorphSlotBit=-1;boardMorphMirror.clear();boardMorphDrawn.clear();boardMorphPosed.clear();boardMorphReset.clear();
+ if(slotBit<0||slotBit>=64||count<=0||count>32||!mirror)return;
+ for(int i=0;i<count;++i){if(mirror[i]>=count)throw std::runtime_error("Invalid board morph mirror");boardMorphMirror.push_back(mirror[i]);}
+ boardMorphSlotBit=slotBit;
+}
+// The drawn pose's board morph weights (*(geometry+0x3C) + 0), or null without a configuration or a pose.
+// The configured slot bit (-1: none; init_animation clears it).
+EMSCRIPTEN_KEEPALIVE int board_morph_slot(){return boardMorphSlotBit;}
+EMSCRIPTEN_KEEPALIVE int board_morph_count(){return boardMorphDrawn.empty()?0:int(boardMorphDrawn.size());}
+EMSCRIPTEN_KEEPALIVE float* board_morph_weights(){return boardMorphDrawn.empty()?nullptr:boardMorphDrawn.data();}
 EMSCRIPTEN_KEEPALIVE uint32_t* rider_skin_palette_indices(){return sourceSkinIndices.empty()?nullptr:sourceSkinIndices.data();}
 EMSCRIPTEN_KEEPALIVE float* rider_skin_palette(){
  if(!rider_skin_palette_count())return nullptr;

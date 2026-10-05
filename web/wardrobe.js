@@ -302,6 +302,7 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
  let vertexCount=0,indexCount=0;for(const {part} of visible){vertexCount+=part.vertex_count;indexCount+=part.index_count;}
  const vertices=new Float32Array(vertexCount*10),indices=new Uint32Array(indexCount),colors=new Float32Array(vertexCount*4).fill(1);
  const skin=[],sourceSkin=[],batches=[],parts=[],view=new DataView(w.bin),morphChunks=[];let vbase=0,ibase=0,morphBytes=0;
+ let boardFlex=null;
  for(const {resource,part} of visible){
   vertices.set(new Float32Array(w.bin,part.vertex_offset,part.vertex_count*10),vbase*10);
   const local=new Uint32Array(w.bin,part.index_offset,part.index_count);
@@ -327,6 +328,8 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
    });
    Object.assign(entry,{file:part.slot,first_vertex:vbase,vertex_count:part.vertex_count,first_index:ibase,index_count:part.index_count,board:/^board_/i.test(part.resource),morphs});
   }
+  // board flex (web/board-flex.js, tools/export_board_flex.py's board-flex.json / .bin): the race board's 8 morph targets
+  if (!fe && /^board_boardflex/i.test(part.resource) && part.morphs?.length) boardFlex = raceBoardFlex(w, part, vbase);
   parts.push(entry);
   vbase+=part.vertex_count;ibase+=part.index_count;
  }
@@ -363,7 +366,29 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
   identity:{upper_mask8c0:geometry.upper_mask8c0,upper_mask8c8:geometry.upper_mask8c8,upper_mask8d0:geometry.upper_mask8d0}};
  if(fe){rig.fe=w.fe||null;world.location+='/fe';}
  const morphs=new Float32Array(morphBytes/4);let at=0;for(const c of morphChunks){morphs.set(c,at);at+=c.length;}
- return {world,rig,vertices,indices,colors,settings,morphs};
+ return {world,rig,vertices,indices,colors,settings,morphs,boardFlex};
+}
+// The board part's morph targets in board-flex.json / .bin form: the dense deltas of the part's vertices (the FE package's layout),
+// the mirror table = the MNF morph_ids (the geometry's part+0x40).
+function raceBoardFlex(w, part, firstVertex) {
+  const bytes = part.vertex_count * 12;
+  const bin = new Float32Array(part.morphs.length * part.vertex_count * 3);
+  const offsets = [];
+  part.morphs.forEach((m, i) => {
+    bin.set(new Float32Array(w.bin.slice(m.offset, m.offset + bytes)), i * part.vertex_count * 3);
+    offsets.push(i * bytes);
+  });
+  const meta = {
+    version: 1,
+    resource: part.resource,
+    file: 2,
+    first_vertex: firstVertex,
+    vertex_count: part.vertex_count,
+    morph_count: part.morphs.length,
+    mirror: part.morphs.map((m) => m.channel),
+    offsets
+  };
+  return { meta, bin };
 }
 
 // ---- virtual package files (main.js load() consults wardrobeFile first) ----------------------------------
@@ -490,6 +515,10 @@ async function raceRoot(w,wd,rider,fetcher=globalThis.fetch){
   virtual.set(root+'world.json',JSON.stringify(pkg.world));virtual.set(root+'rider.json',JSON.stringify(pkg.rig));
   virtual.set(root+'vertices.bin',pkg.vertices.buffer);virtual.set(root+'indices.bin',pkg.indices.buffer);virtual.set(root+'colors.bin',pkg.colors.buffer);
   virtual.set(root+'animation-samples.json',samples);virtual.set(root+'settings',JSON.stringify(pkg.settings));
+  if (pkg.boardFlex) {
+   virtual.set(root + 'board-flex.json', JSON.stringify(pkg.boardFlex.meta));
+   virtual.set(root + 'board-flex.bin', pkg.boardFlex.bin.buffer);
+  }
  }
  return {root,key};
 }

@@ -164,4 +164,43 @@ const run = (p, n) => { for (let k = 0; k < n; k++) p.step(); };
   f(3); pad.buttons[13].pressed = false; pad.buttons[13].value = 0; f(4); pad.buttons[13].pressed = true; pad.buttons[13].value = 1; f(1);
   assert.deepEqual(seen.at(-1), ['ArrowDown', 68, true], 'a later press after the lock (+61) is taken');
 }
+// ---- losing focus never pauses (removed 2026-10-04): blur / visibilitychange release the input and resync the frame clock --------------
+// The auto-pause opened the pause menu over Transports, NIS cuts and the countdown (the PS2 takes no Start in WS10 / WS11 / WS14) and left
+// the ride stuck behind them. Every page module's focus / visibility listener is read here: none may open a menu or push a context.
+{
+  // the handler text of each `addEventListener(event, handler)` in a compact source; a named handler resolves to its function body
+  const listeners = (src, events) => {
+    const out = [];
+    const re = /addEventListener\?{0,1}\.{0,1}\(['"]([a-z]+)['"],/g;
+    for (let m; (m = re.exec(src)); ) {
+      if (!events.includes(m[1])) continue;
+      let depth = 1, i = re.lastIndex;
+      for (; i < src.length && depth; i++) depth += src[i] === '(' ? 1 : src[i] === ')' ? -1 : 0;
+      let body = src.slice(re.lastIndex, i - 1);
+      const named = /^([A-Za-z_$][\w$]*)(?:,|$)/.exec(body);
+      if (named) {
+        const at = src.indexOf(`function ${named[1]}(`);
+        if (at >= 0) body = src.slice(at, src.indexOf('}', at) + 1);
+      }
+      out.push([m[1], body]);
+    }
+    return out;
+  };
+  const FOCUS = ['blur', 'focus', 'visibilitychange', 'pagehide', 'freeze'];
+  const OPENS = /overlay\.open|contexts\.push|\.set\(['"](?:pause|ctm-pause|ctm-mcomm|ctm-bcpause)['"]\)/;
+  const main = sourceOf('main.js');
+  const mine = listeners(main, FOCUS);
+  assert.ok(mine.some(([e]) => e === 'blur') && mine.some(([e]) => e === 'visibilitychange'), 'main.js still listens for blur and visibility');
+  for (const [e, body] of mine) assert.doesNotMatch(body, OPENS, `main.js ${e}: no pause`);
+  const blur = mine.find(([e]) => e === 'blur')[1];
+  assert.match(blur, /clearInput\(\);setPadsFocused\(false\);/, 'blur lets go of the held keys / touches and the pad');
+  const vis = mine.find(([e]) => e === 'visibilitychange')[1];
+  assert.match(vis, /if\(document\.hidden\)\{releaseInput\(\);return;\}last=performance\.now\(\);/, 'hidden: input released; shown: the frame clock restarts from now');
+  assert.doesNotMatch(main, /perfNoFocusPause/, 'no focus-pause switch left');
+  for (const file of fs.readdirSync(new URL('.', import.meta.url))) {
+    if (!/\.js$/.test(file) || file.startsWith('test-')) continue;
+    const src = sourceOf(file);
+    for (const [e, body] of listeners(src, FOCUS)) assert.doesNotMatch(body, OPENS, `${file} ${e}: no pause`);
+  }
+}
 console.log('pause contexts ok');

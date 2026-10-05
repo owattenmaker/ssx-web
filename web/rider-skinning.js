@@ -1,10 +1,15 @@
-import {DataTexture,RGBAFormat,FloatType,NearestFilter,NoColorSpace,BufferAttribute,Vector3} from 'three';
+import {DataTexture,RGBAFormat,FloatType,NearestFilter,NoColorSpace,BufferAttribute,Vector3,Vector4} from 'three';
 import {Fn,attribute,textureLoad,ivec2,vec4,uniform,select,mix,modelViewProjection,cameraProjectionMatrix,cameraViewMatrix} from 'three/tsl';
 import {riderTransformPositionNode,riderTransformNormalNode} from './rider-lighting-nodes.js';
+import {pv} from './pv-flags.js';
+import {boardFlexWeights} from './board-flex.js';
+// Board flex (pv boardFlex, web/board-flex.js): up to 8 board morph targets, added to the source position before skinning.
+const FLEX_MORPHS=8;
 // Source world-space matrices already include pose, body scale, inverse bind and weights.
 // The source path bypasses modelViewProjection's model transform, while menus
 // retain Three's existing posed skeleton. Interpolation is presentation-only.
-export function createOriginalRiderSkinning(rig,vertices,origin){
+// flex: web/board-flex.js loadBoardFlex's {meta, deltas}, or null (the rest shape).
+export function createOriginalRiderSkinning(rig,vertices,origin,flex=null){
  if(!rig.source_bind_matrix_words||!rig.source_skin)return null;
  const boneCount=rig.bones.length,count=vertices.length/10;
  if(rig.source_skin_weight_units!=='integer-percent'||rig.source_skin.length!==count)throw Error('Invalid source skin attributes');
@@ -30,14 +35,18 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
  // Row of the previous palette (= the rider's group count): a uniform, not a literal, so every rider (the human, the computer
  // riders, their shadows) shares one shader and one pipeline (docs/firefox-load.md). Same integer value, same texel.
  const previousRows=uniform(groupCount);
+ // Board flex: every rider gets the same nodes while the switch is on (one shader); a rider without board morphs reads row 0 (zeros).
+ const boardFlex=pv('boardFlex')?createBoardFlex(flex,count):null;
  // Source world position (PS2 cm, Z up, homogeneous) of the interpolated palette; also used by web/rider-shadow.js.
  const worldNode=Fn(()=>{
   const slot=attribute('sourceSkinGroup','float').toVar(),point=vec4(attribute('sourcePosition','vec3'),1);
-  const worldAt=offset=>{
+  const worldAt=(offset,at)=>{
    const columns=Array.from({length:4},(_,col)=>textureLoad(texture,ivec2(col,slot.add(offset))));
-   return riderTransformPositionNode(point,columns);
+   return riderTransformPositionNode(at,columns);
   };
-  return mix(worldAt(0),worldAt(previousRows),alpha);
+  if(!boardFlex)return mix(worldAt(0,point),worldAt(previousRows,point),alpha);
+  // each palette with its own tick's weights: the previous palette (row 0) with the previous weights
+  return mix(worldAt(0,boardFlex.morphed(point,0)),worldAt(previousRows,boardFlex.morphed(point,1)),alpha);
  })();
  const vertexNode=Fn(()=>{
   const world=worldNode.toVar();
@@ -61,6 +70,7 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
      geometry.setAttribute('sourcePosition', new BufferAttribute(positions, 3));
      geometry.setAttribute('sourceNormal', new BufferAttribute(normals, 3));
      geometry.setAttribute('sourceSkinGroup', new BufferAttribute(slots, 1));
+     if (boardFlex) geometry.setAttribute('sourceFlexRow', new BufferAttribute(boardFlex.rows, 1));
    },
    // A tick with no pose (count 0, no palette: the core cleared its cached world pose, rider+0x2C, and has not posed since: the
    // mission builtin 64 teleport 300948 -> 1234D0 poses at the next tick) draws the last palette again, as the PS2 draws +0x2C as it
@@ -73,6 +83,7 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
        if (available) {
          data.copyWithin(0, stride);
          texture.needsUpdate = true;
+         boardFlex?.hold();
          if (poseBones[1] && poseBones[0]?.length === poseBones[1].length) poseBones[0].set(poseBones[1]);
        }
        return false;
@@ -91,6 +102,7 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
      if (available && !reset) data.copyWithin(0, stride);
      else data.set(current, 0);
      data.set(current, stride);
+     boardFlex?.capture(core, available && !reset);
      available = true;
      texture.needsUpdate = true;
      if (core._world_pose_bones && core._pose_physical) {
@@ -135,6 +147,73 @@ export function createOriginalRiderSkinning(rig,vertices,origin){
    },
    dispose() {
      texture.dispose();
+     boardFlex?.dispose();
    }
  };
 }
+
+// The board flex nodes of one rider: a delta texture (column = morph, row = 1 + board vertex, PS2 cm Z up; row 0 zeros), a per-vertex
+// row attribute and the weights of the two palettes (previous, current), each as two vec4 uniforms.
+function createBoardFlex(flex, vertexCount) {
+  const meta = flex?.meta;
+  const usable = meta && meta.morph_count <= FLEX_MORPHS && meta.first_vertex + meta.vertex_count <= vertexCount;
+  const boardVertices = usable ? meta.vertex_count : 0;
+  const data = new Float32Array(FLEX_MORPHS * (boardVertices + 1) * 4);
+  const rows = new Float32Array(vertexCount);
+  if (usable) {
+    for (let m = 0; m < meta.morph_count; m++) {
+      const at = meta.offsets[m] / 4;
+      for (let k = 0; k < boardVertices; k++) {
+        const d = flex.deltas.subarray(at + k * 3, at + k * 3 + 3);
+        // vertices.bin frame (Y up, metres) -> sourcePosition (PS2 cm, Z up), as the positions above
+        data.set([d[0] * 100, -d[2] * 100, d[1] * 100, 0], ((k + 1) * FLEX_MORPHS + m) * 4);
+      }
+    }
+    for (let k = 0; k < boardVertices; k++) rows[meta.first_vertex + k] = k + 1;
+  }
+  const texture = new DataTexture(data, FLEX_MORPHS, boardVertices + 1, RGBAFormat, FloatType);
+  texture.minFilter = texture.magFilter = NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = NoColorSpace;
+  texture.needsUpdate = true;
+  const count = usable ? meta.morph_count : 0;
+  const values = [new Float32Array(FLEX_MORPHS), new Float32Array(FLEX_MORPHS)];
+  const weights = [0, 1].map(() => [uniform(new Vector4()), uniform(new Vector4())]);
+  const upload = () => {
+    for (let p = 0; p < 2; p++) {
+      weights[p][0].value.fromArray(values[p], 0);
+      weights[p][1].value.fromArray(values[p], 4);
+    }
+  };
+  return {
+    rows,
+    // point + sum of weight x delta, palette p (0 previous, 1 current)
+    morphed(point, p) {
+      const row = attribute('sourceFlexRow', 'float');
+      let sum = vec4(0, 0, 0, 0);
+      for (let m = 0; m < FLEX_MORPHS; m++) {
+        const weight = weights[p][m >> 2][['x', 'y', 'z', 'w'][m & 3]];
+        sum = sum.add(textureLoad(texture, ivec2(m, row)).mul(weight));
+      }
+      return point.add(sum);
+    },
+    // a new palette: the current weights become the previous ones (keep), or both are the new ones
+    capture(core, keep) {
+      const live = count ? boardFlexWeights(core, count) : null;
+      if (keep) values[0].set(values[1]);
+      values[1].fill(0);
+      if (live) values[1].set(live);
+      if (!keep) values[0].set(values[1]);
+      upload();
+    },
+    // a tick without a pose draws the last palette again (rider-skinning capture)
+    hold() {
+      values[0].set(values[1]);
+      upload();
+    },
+    dispose() {
+      texture.dispose();
+    }
+  };
+}
+

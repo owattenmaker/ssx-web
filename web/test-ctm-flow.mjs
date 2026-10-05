@@ -14,6 +14,7 @@ import { createPauseContexts } from './pause-contexts.js';
 import { createScreenPhases } from './screen-phases.js';
 import { freeRideWorldOf } from './free-ride.js';
 import { switchesWorld } from './ctm-transport.js';
+import { sourceOf } from './test-source.mjs';
 
 globalThis.location ??= { href: 'http://localhost/' };   // career-ui.js reads ?qa
 const ps2 = JSON.parse(fs.readFileSync(new URL('./ctm-flow-ps2.json', import.meta.url)));
@@ -485,5 +486,49 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
     }
   }
   console.log('ps2MenuInput: Yes / No outros and the pause intro stepped in UI frames');
+}
+// ---- The FAQ "?" can be left (playtest: "none of the buttons could escape it") ---------------------------------------
+// Green Base Station's "?" opens the Message Center on FAQ 1 (0x2309A4 -> 1E3C00). Previous / Keep go to the list, and the list is
+// left with Triangle (Escape: the keyboard, the pad's Triangle in web/gamepad-menus.js, the touch deck's triangle). career-ui.js back()
+// had lost its Message Center / lodge / Big Challenge dispatch to a reformat, so Back did nothing there.
+{
+  const { ui, cs, log } = page();
+  cs.messages.data = JSON.parse(fs.readFileSync(new URL('./public/assets/CAREER/messages.json', import.meta.url)));
+  cs.messages.hook(cs.career);
+  assert.ok(cs.me, 'a rider record');
+  const resumed = () => log.filter((e) => e[0] === 'resume').length;
+  const openFaq = () => {
+    ui.set('game');
+    cs.messages.openFaq(() => {
+      ui.set('game');
+      ui.cb.resume();
+    });
+    assert.equal(ui.screen, 'ctm-message', 'the FAQ view');
+    assert.ok(cs.owns('ctm-message') && cs.owns('ctm-messages'), 'ui.js back() hands both screens to career-ui');
+  };
+  // Triangle on the FAQ view: the list; Triangle on the list: the ride
+  openFaq();
+  const r0 = resumed();
+  cs.back();
+  assert.equal(ui.screen, 'ctm-messages', 'Triangle on the FAQ view shows the list');
+  cs.back();
+  assert.equal(ui.screen, 'game', 'Triangle on the list returns to the ride');
+  assert.equal(resumed(), r0 + 1, 'and resumes it (main.js overlay.close)');
+  assert.ok(!cs.messages.inbox().posted(7), 'the folder the FAQ opened is closed again');
+  // each of the view's buttons (Previous, Delete, Keep: a tap or Cross) reaches the list, which Back leaves
+  for (const i of [0, 1, 2]) {
+    openFaq();
+    const r = resumed();
+    cs.choose(i);
+    assert.equal(ui.screen, 'ctm-messages', `button ${i} shows the list`);
+    cs.back();
+    assert.equal(ui.screen, 'game', `then Back leaves (button ${i})`);
+    assert.equal(resumed(), r + 1);
+  }
+  // the same dispatch serves the Big Challenge prompt and the lodge screens
+  const src = sourceOf('career-ui.js');
+  assert.match(src, /back\(\)\{const ui=this\.ui,s=ui\.screen;if\(this\.lodgeFlashing\(s\)\)return;if\(this\.online\.keyboardOpen\(\)\)\{ui\.feScreens\.back\(\);return;\}if\(this\.lodge\.owns\(s\)\)return this\.lodge\.back\(\);if\(this\.messages\.owns\(s\)\)return this\.messages\.goBack\(\);if\(ui\.bigChallenges\?\.owns\(s\)\)return ui\.bigChallenges\.back\(\);/,
+    'career-ui.js back() dispatches the lodge, the Message Center and the Big Challenge prompt');
+  console.log('FAQ: Triangle, Previous, Delete and Keep all lead back to the ride');
 }
 console.log('test-ctm-flow: CTM flow matches the PS2 trace (%d runs, %d observed screens)', Object.keys(ps2.runs).length, ps2.observed.length);

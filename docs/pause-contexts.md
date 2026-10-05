@@ -48,10 +48,11 @@ The view update (render, camera output, view fades) is never masked: a paused fr
 
 **The overlay (context 2)** covers the pause menu, the MCOMM, the station prompt / map and the FAQ. For the FAQ, whether overlay 0x22 pushes a context is not read yet.
 - `open(screen)` pushes and sets the screen:
-  - Start from the pad, the keyboard or the touch deck;
-  - blur and visibility;
+  - Start from the pad, the keyboard or the touch deck (all three through `startOpensPause`: the ride only, no cutscene, no
+    `transporting`, not finished, nothing on the stack; the touch deck also not in an online race);
   - the 'station' prompt and the end of a transport's enterlodge;
-  - the FAQ.
+  - the FAQ (faqOpen / the 'faq' contact: free ride, not paused, screen 'game', and for the deferred path no cutscene or Transport).
+- Losing focus or visibility opens nothing (section 5).
 - `close()` pops and returns to the ride: `cb.resume`, Give Up, and the in-world Transport's Yes (transportInWorld, before the ride).
 - `drop()` pops when the menu goes with its world:
   - `cb.quit` (Quit, and the career Restart's quit);
@@ -137,3 +138,37 @@ Phases: 2 build, 4 wait for the 0x42 activate record, 3 show / cursor restore, 5
       - key-made changes are logged on the frame the key met;
       - the first MCOMM check now presses at Start + 60 (it pressed at +61).
     - "session" / "quit-save" were real port bugs (section 3).
+
+## 5. Focus loss (2026-10-04): no auto-pause
+The port used to open the pause menu on window `blur` and on `visibilitychange` to hidden. The PS2 has no such thing, and the
+playtesters hit it where the PS2 takes no Start at all (WS10 / WS11 / WS14: the Transport ride, the gondola, NIS cuts; PS2 run
+local/transport-stall/ps2/run1): the pause menu over the gondola with the race starting without the player, a stuck camera when a
+cutscene's start was paused, the FAQ "jumping" to the pause menu. The user decided to remove it; the code path is deleted (no switch).
+
+What main.js does on focus loss now (`releaseInput`):
+- **blur, or hidden:** `clearInput()` (held keys, the touch deck, the key log) and `setPadsFocused(false)` (web/gamepad.js: every poll reads
+  a neutral pad, no 'use' events, until focus returns; Chromium keeps feeding pad input to a visible unfocused window). gamepad-menus.js
+  and cutscenes.js release their own held keys on blur as before. `?perf=1` keeps the input (automation windows lose focus).
+- **focus:** `setPadsFocused(true)`. The first poll after it re-reads the rest state, so a button already down is held, not a new press.
+- **shown again:** `last = performance.now()`: the frame clock restarts from now. A hidden tab gets no animation frames; without this
+  the first frame back would run `ps2FrameTime` of the whole hidden time (up to 12 ticks, a PS2 stall rule that is not meant for this).
+- **audio:** unchanged: web/audio-engine.js installAudioUnlock suspends the context while hidden (`suspend('hidden')`) and resumes it on
+  show; a blurred visible window plays on.
+- **online:** unchanged: a hidden tab's race keeps ticking from mp-game.js's worker timer (neutral input, since the keys and the pad are
+  released) and follows the server clock (`pace`), so it does not desync or drop. Before, the blur pause put the online pause menu up
+  over the running race with a neutral pad.
+
+Every way into the pause overlay was checked against WS10 / WS11 / WS14: pad, keyboard and touch Start all go through
+`startOpensPause` with `cutscene: cutscenes.active || transporting` and the stack's `paused` (WS1 / WS10 / WS11 HOLD contexts), the FAQ
+and station opens are guarded as above, and no focus / visibility listener in any page module opens a screen or pushes a context
+(test-pause-contexts "losing focus never pauses"). The countdown still takes Start, as on the PS2 (startprobe: Start pauses in the
+countdown).
+
+Tests: test-pause-contexts (the listeners of every module), test-gamepad (the unfocused pad), test-ctm-flow (the FAQ's way out).
+Browser (scratchpad focusprobe.mjs; blur + hidden + visibilitychange with rAF held, as a hidden tab): the new career's arrival
+cutscene, free ride, an MCOMM Transport ride, the round card, the countdown and a race: no pause, the stack unchanged, the ride ticking,
+the frames after the return running one tick per 16.7 ms (no catch-up); Chrome 22/22.
+
+The FAQ "?" that could not be left was a separate bug: career-ui.js back() had lost its Message Center / lodge / Big Challenge dispatch
+to a reformat (it sat inside a comment), so Triangle / Escape / the touch deck's triangle did nothing on ctm-messages / ctm-message,
+every lodge screen and the Big Challenge prompts. The FAQ view's list can only be left with Back. Restored.

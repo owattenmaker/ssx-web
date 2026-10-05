@@ -1051,8 +1051,13 @@ export class OriginalUI {
       if (hudLevel < 2) this.careerUI?.hud(c, s);
       // freestyle (career-ui.js freestyleHud): its own clock/standings, no progress meter, banner only once finished
       const fs = !!this.careerUI?.freestyleHud?.();
+      // pv finishHudHide: once the rider has finished (rider+0x470 >= 0; TIME'S UP too) 1EB9E8 sets the per-player mask +0x80 = 0xFFEFFFFF
+      // (0x1EB9FC; 0x1ECB04 draws owner+0x3CC & ~mask), and 12A250 (every human finished, 0x1EB91C) cuts owner+0x3CC to 0x170000: every
+      // element but the 0x100000 banner goes on the finish tick, a cut (PS2 setpieces/full, ctm-parity race-f / race-q). Races and peak
+      // runs; free ride (event type 4, excluded at 0x1EB9C0) never finishes.
+      const finishHide = !fs && !!s.message && pv('finishHudHide');
       // free ride (web/free-ride-hud.js via main.js): collectibles and cash, no clock/score/progress
-      const frFlags = this.freeRideHud?.(c, hudLevel),
+      const frFlags = this.freeRideHud?.(c, hudLevel, finishHide),
         fr = !!frFlags,
         frHud = typeof frFlags === 'number' ? frFlags : 0x1530c380;
       // 0x1EBA10 clears the hints bit 0x1000000 (the RECOVER = button label, the Uber hint) once the rider's profile visited mask (+0xACC)
@@ -1065,15 +1070,15 @@ export class OriginalUI {
       // +$ n' popup lives, place/standings (0x8400031) hide
       const collecting = !fr && hudLevel < 2 && !!s.trickSlots?.some((x) => x && x.type === 0x31),
         act = this.careerUI?.career?.active;
-      if (collecting && act && act.ev?.course >= 0 && act.ev.course < COLLECTIBLE_TOTALS.length)
+      if (collecting && !finishHide && act && act.ev?.course >= 0 && act.ev.course < COLLECTIBLE_TOTALS.length)
         drawCollectCounter(this, c, this.careerUI.career.collectCount(act.id, act.ev.course), COLLECTIBLE_TOTALS[act.ev.course]);
-      if (s.racePlace && hudLevel < 2 && !collecting) drawRacePlace(this, c, s.racePlace);
-      // career new-message icon (web/career-messages.js)
-      if (hudLevel < 2) this.careerUI?.messages?.drawHud(c);
+      if (s.racePlace && hudLevel < 2 && !collecting && !finishHide) drawRacePlace(this, c, s.racePlace);
+      // career new-message icon (web/career-messages.js); under the finish HUD its timer 1EB6E4 runs, the draw (owner bit 0x80000) is cut
+      if (hudLevel < 2) this.careerUI?.messages?.drawHud(c, true, !finishHide);
       const raceHud = this.trickHud && this.trickHudRenderer ? [] : null;
       // the race clock 0x1F16C0 and the speed widget 0x2200C0 through the original HUD text (web/trick-hud.js raceClock /
       // speed, docs/visual-parity.md)
-      if (!fs && !fr && hudLevel < 2) {
+      if (!fs && !fr && hudLevel < 2 && !finishHide) {
         const ticks = s.raceTicks ?? Math.round(Math.max(0, s.seconds || 0) * 60);
         if (raceHud) {
           const t = Math.trunc(Math.fround(Math.fround(ticks) * Math.fround(0.01666666753590107)));
@@ -1083,9 +1088,9 @@ export class OriginalUI {
           this.text(c, time, 320, 20, 21, '#eef5ee', 'HUDFONT', 'center');
         }
       }
-      if (!fr && (!s.trickSlots || !this.trickHud) && hudLevel < 2)
+      if (!fr && (!s.trickSlots || !this.trickHud) && hudLevel < 2 && !finishHide)
         this.text(c, String(Math.round(s.score || 0)), 602, 20, 24, '#edf5e8', 'HUDFONT', 'right');
-      if (hudLevel < 1) {
+      if (hudLevel < 1 && !finishHide) {
         if (raceHud) this.trickHud.speed(raceHud, (s.speed || 0) * 100, kmh);
         else {
           this.text(c, String(Math.round((s.speed || 0) * (kmh ? 3.6 : 2.237))), 32, 391, 27, '#edf5e8', 'HUDFONT', 'center');
@@ -1094,17 +1099,17 @@ export class OriginalUI {
       }
       if (raceHud?.length) this.trickHudRenderer.render(c, raceHud);
       // 0x220260: km/h = cm/s x 0.036, profile 0x535610 bit 19
-      if ((!fs || this.careerUI?.slopeHud?.()) && !fr && hudLevel < 1) {
+      if ((!fs || this.careerUI?.slopeHud?.()) && !fr && hudLevel < 1 && !finishHide) {
         // slope style keeps the progress meter (0x40, flags 0x1D31C047): the original 0x20EDA0 (web/progress-meter-hud.js, fed per tick by
         // main.js)
         this.progressMeter?.draw(this, c);
       }
-      if (hudLevel < 2) {
+      if (hudLevel < 2 && !finishHide) {
         this.boostGauge?.drawOrb(c, s.boostFlashPhase ?? -1, s.boostFlashPaletteTier ?? 0);
         this.boostGauge?.draw(c, s.boostPreview ?? 0, s.boostStored ?? 0, s.boostFlashPhase ?? -1, s.boostFlashPaletteTier ?? 0);
         this.drawBoostLetters(s);
       }
-      if (hudLevel < 2 && this.trickHud && this.trickHudRenderer) {
+      if (hudLevel < 2 && !finishHide && this.trickHud && this.trickHudRenderer) {
         // The switch-stance 'S' under the meter (web/trick-hud.js switchIcon, HUD flags 0x10000000)
         const flags =
           hudLevel === 1
@@ -1127,21 +1132,24 @@ export class OriginalUI {
         this.sprite('OV_1-3', ...glyph, 320 - glyph[2] / 2, 112, glyph[2], glyph[3]);
       }
       if (hudLevel < 2) {
-        if (s.trickSlots && this.trickHud)
-          // finished: 0x1EB9FC masks the per-player flags (no Uber hint)
+        if (s.trickSlots && this.trickHud) {
+          let slotFlags =
+            hudLevel === 1
+              ? this.feScreens.minimalHudFlags(fr || hintsOff ? baseFlags : this.trickHud.flags)
+              : fr || hintsOff
+                ? baseFlags
+                : this.trickHud.flags;
+          // finished: 0x1EB9FC masks the per-player flags (pv finishHudHide: to 0x100000 alone; before, only the Uber hint went)
+          if (finishHide) slotFlags = (slotFlags & 0x100000) >>> 0;
           this.trickHudRenderer.render(
             c,
             this.trickHud.frame(s.trickSlots, {
-              ...(hudLevel === 1
-                ? { flags: this.feScreens.minimalHudFlags(fr || hintsOff ? baseFlags : this.trickHud.flags) }
-                : fr || hintsOff
-                  ? { flags: baseFlags }
-                  : {}),
+              flags: slotFlags,
               finished: !!s.message || !!s.timedOut,
               keys: inputDevice() === 'keyboard' ? (b) => keyFor(b, { context: 'race', mode: this.keyboardMode }) : null
             })
           );
-        else if (s.trick && hudLevel < 1) this.text(c, s.trick, 320, 399, 17, '#ecec13', 'HUDFONT', 'center');
+        } else if (s.trick && hudLevel < 1 && !finishHide) this.text(c, s.trick, 320, 399, 17, '#ecec13', 'HUDFONT', 'center');
       }
       if (s.message && !fs) {
         // TIME'S UP (+0x480: pause Give Up) is the 'timeup' banner sprite (21F660, same as freestyle) for 3 s of +0x470, then nothing until

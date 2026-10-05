@@ -2216,3 +2216,57 @@ front.
 cause is elsewhere: the frame phase of the animator, or the glass layers over it. Open.
 
 Tools: `local/browser-validation/blend-space/crowd/`.
+
+## 45. The race HUD at the finish (pv `finishHudHide`)
+
+Playtest report: "The game HUD doesn't disappear when the FINISH text appears."
+
+**Original (dis.pkl):**
+- The HUD owner update 1EA930, per player state s0 (stride 0x8C from owner+0x48), each tick:
+  - 0x1EB91C: when 12A250 is true (every human's rider+0x470 >= 0), owner+0x3CC &= 0x170000. That cuts the owner-level
+    elements: the clock 0x4 (single-player draw at 0x1F0EB0), the mail icon 0x80000 (0x1F0F3C) and the progress meter 0x40
+    (gp-0x994 = owner+0x3CC bit 6 at 0x1EC1A0, read by 0x20EDA0).
+  - 0x1EB9C0: unless the event type 0x535C10 is 4 (free ride), once rider+0x470 >= 0 (the finish routine 125108 has run;
+    FINISH and TIME'S UP alike), state+0x88 = rider+0x480 ? 2 : 1 and **state+0x80 = 0xFFEFFFFF** (0x1EB9FC), then it skips the
+    rest of the player's update (to 0x1EC14C; +0x84 stays 0).
+  - 0x1EC164: +0x80 / +0x84 / +0x88 are cleared for the next player, so the mask is rebuilt every tick.
+- The draw 1EC3F8, per player (0x1ECB04): flags = (owner+0x3CC & ~state+0x80) | state+0x84. At the finish this leaves only
+  0x100000, the banner bit: 0x1ECB28 draws 21F660 ('fini' or 'timeup'). Every other element is gated by a cleared bit: the place
+  0x1, the boost gauge (slot case 6 at 0x1ECD60 needs 0x200000), the trick slots (0x4000000 / 0x402), the switch 'S' 0x10000000,
+  the hints 0x1000000, the collect counter (+0x84 0x80).
+- So the whole HUD goes on the tick the banner comes, and stays gone until the results (+0x470 keeps counting). It is a cut,
+  not a fade: nothing in this path ramps an alpha.
+
+**PS2 evidence:**
+- `setpieces/full` (Snow Jam race from the countdown anchor) re-run from its built state with per-tick snaps
+  (`runs/finishhud/fin-hud.json` and its `tick*.png`: 12,306 records, every one byte-equal to `runs/setpieces/full.bin`, so the
+  .bin is not kept). rider+0x470 is -1 through
+  record tick 12296 and 0.0167 at 12297 (the finish). Snap 12297: the full HUD (2ND/6, 00:03:21, 860, the meter at 100 %, the
+  gauge, 47 MPH, 'S') and no banner. Snap 12300 and on: FINISH! 00:03:21 alone. No frame shows the banner with any HUD element,
+  or any element part-faded.
+- `ctm-parity/runs/race-f` (10-frame samples): sample14341 (total tick 14308) the full HUD; sample14351 (14319) the banner alone.
+  The clock phase turns 5 (finished) at total tick 14311. `race-q` sample13720 / 13741: the same.
+- Peak runs (event types 5 / 6) take the same path from the code. No PS2 frame of a peak-run banner was found.
+
+**Before:** in races the page drew the banner over the clock, the score, the progress meter, the boost gauge and orb, the speed,
+the 'S' and the trick slots. Only the place was gone (main.js passes no racePlace once finished). Freestyle was already right:
+career-ui.js draws only the banner, and ui.js returns early.
+
+**Fix (pv `finishHudHide`):**
+- `web/ui.js`: `finishHide` = not freestyle, `s.message` set (the port's rider+0x470 >= 0: FINISH and TIME'S UP), and the switch.
+  It gates the collect counter, the place, the clock, the score fallback, the speed, the progress meter, the boost gauge, orb and
+  letters, the 'S', and the trick slot frame. The slot frame gets the per-player flags & 0x100000, as 0x1ECB04 computes them.
+- `web/career-messages.js drawHud(c, racing, draw)`: with draw = false the mail icon's timer (1EB6E4) runs and nothing is
+  drawn, so pv mailFreeze's timing holds.
+- `web/main.js ui.freeRideHud(c, level, finishHide)`: the peak run's clock and split are cut the same way.
+
+**Check (Chrome, the real Single Event flow, `tools/modeshot.mjs setpieces/full`, position error 0 at every shot):** with the
+switch on, the page shows the full HUD at record 12296 and the banner alone from record 12297, the PS2's finish record. With the
+switch off, the same frames show the banner over the clock, score, meter, gauge, speed and 'S' (`local/browser-validation/visual-parity/fixes/finish-hud/finish-hud-cmp-chrome.png`:
+PS2 12297 / 12300, off, on). The staged finish / TIME'S UP (`tools/fin.mjs`) in Chrome and WebKit: only the banner is left on the
+UI canvas.
+
+**Left (not this switch):** the PS2 also draws "Loading..." bottom right from about 6 ticks after the finish (S+0x94 bit 4,
+ctm-decomp-world-states.md rank 7). The page has no caption there yet.
+
+Test: `test-visual-parity.mjs` R37.

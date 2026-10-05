@@ -104,6 +104,61 @@ std::vector<AnimationTransform> originalAnimationLocalPose(const std::vector<Ani
         }
     }return result;
 }
+// 30F2B0 per layer: the layer's weight in the slot's group is the bones' (0x30F604..0x30F664: (1 - covered) x w / total,
+// < 0.03 -> skipped, >= 0.97 -> 1), over the layers whose clip has the part (0x30F4B0) and whose mask has the slot bit.
+// Weight 1 samples straight into the weights (311318, channels 0..count) and marks the part written (sp+0x820);
+// a smaller weight blends: out = (1 - w) out + w s (sub.s, mul.s, mul.s, add.s at 0x30F944..0x30F970).
+// A mirrored layer (+0x40) samples into a scratch row and takes channel mirror[i] (part+0x40, 0x30F898).
+// A part no layer wrote at weight 1 is cleared (0x3100A4..0x3100D0: memset of the part's weights).
+std::vector<float> originalAnimationMorphWeights(const std::vector<AnimationClip>& clips,const std::vector<AnimationLayer>& layers,int part,unsigned slotBit,unsigned count,const std::vector<uint8_t>& mirror) {
+    Round round;
+    std::vector<float> out(count,0.f);
+    if(slotBit>=64||!count)return out;
+    bool written=false;
+    float covered=0;
+    float total=0;
+    int priority=layers.empty()?0:layers.front().priority;
+    for(const auto& layer:layers){
+        if(layer.priority>priority)throw std::runtime_error("Animation priorities must descend");
+        if(layer.priority<priority){
+            float remaining=originalScalarSubtract(1.f,covered);
+            remaining=terrain_original::mul(remaining,total);
+            covered=std::min(1.f,originalScalarAdd(covered,remaining));
+            total=0;
+            priority=layer.priority;
+        }
+        if(!(layer.mask&(uint64_t(1)<<slotBit))||layer.weight<.03f)continue;
+        const auto found=std::find_if(clips.begin(),clips.end(),[&](const auto& c){return c.id==layer.clip;});
+        if(found==clips.end())throw std::runtime_error("Missing original animation clip");
+        const auto scalar=found->sample(part,layer.time);
+        if(scalar.empty())continue;
+        float remaining=originalScalarSubtract(1.f,covered);
+        float numerator=terrain_original::mul(remaining,layer.weight);
+        total=originalScalarAdd(total,layer.weight);
+        float weight=originalScalarDivide(numerator,total);
+        if(weight<.03f)continue;
+        if(weight>=.97f)weight=1;
+        std::vector<float> sampled(count,0.f);
+        for(unsigned i=0;i<count;++i){
+            const unsigned channel=layer.mirror&&i<mirror.size()?mirror[i]:i;
+            if(channel>=scalar.size())throw std::runtime_error("Animation morph channel extent");
+            sampled[i]=scalar[channel];
+        }
+        if(weight==1){
+            out=sampled;
+            written=true;
+            continue;
+        }
+        const float keep=originalScalarSubtract(1.f,weight);
+        for(unsigned i=0;i<count;++i){
+            const float old=terrain_original::mul(keep,out[i]);
+            const float add=terrain_original::mul(weight,sampled[i]);
+            out[i]=originalScalarAdd(old,add);
+        }
+    }
+    if(!written)std::fill(out.begin(),out.end(),0.f);
+    return out;
+}
 std::vector<AnimationTransform> originalAnimationWorldPose(const std::vector<AnimationBone>& bones,const std::vector<AnimationTransform>& local,AnimationTransform root,AnimationVector scale,const std::vector<AnimationTransform>& roots) {
     if(bones.size()!=local.size())throw std::runtime_error("Animation pose extent");std::vector<AnimationTransform> world;size_t rootIndex=0;
     for(size_t i=0;i<bones.size();++i){int parent=bones[i].parent;if(parent>=int(i))throw std::runtime_error("Animation bones must be parent ordered");world.push_back(originalAnimationCompose(parent<0?(roots.empty()?root:roots.at(rootIndex++)):world[parent],local[i],scale));}return world;

@@ -736,5 +736,23 @@ else {
   check(building && early && first && next && reload && /preloadGear\(\)\{/.test(lui) && /this\.lodge\.preloadGear\?\.\(\)/.test(cui) &&
     /case '0b777dd4':return settled\?null:\{hidden:true\}/.test(war),
     'Equip Gear load: the screen at the switch, "Loading..." until the rider draws from phase 3, no help until the outfit is in'); }
+// R37. The race HUD at the finish (pv finishHudHide, section 45): once rider+0x470 >= 0 (FINISH or TIME'S UP), 1EB9E8 sets the per-player
+//      mask +0x80 = 0xFFEFFFFF (0x1EB9FC) and 12A250 cuts owner+0x3CC to 0x170000 (0x1EB91C): only the banner 0x100000 is drawn, a cut on the
+//      finish tick (races and peak runs). PS2 setpieces/full (re-run, records byte-equal): snap 12297 full HUD, 12300 banner alone.
+{ const slots = [{ type: 7, maximum: 1, value: 1, points: 1234 }, { type: 1, maximum: 1, value: 0.5, arg: 0, points: 0, text: 'BACKFLIP' },
+    { type: 4, maximum: 1, value: 1, points: 2, text: '2' }];
+  const live = hud.frame(slots, { flags: hud.flags, bigMessage: false });
+  const done = hud.frame(slots, { flags: (hud.flags & 0x100000) >>> 0, finished: true, bigMessage: false });
+  const u = sourceOf('ui.js'), m = sourceOf('career-messages.js');
+  const gates = ['if(collecting&&!finishHide&&', '!collecting&&!finishHide)drawRacePlace', 'drawHud(c,true,!finishHide)', 'if(!fs&&!fr&&hudLevel<2&&!finishHide){',
+    'hudLevel<2&&!finishHide)this.text(c,String(Math.round(s.score||0))', 'if(hudLevel<1&&!finishHide){if(raceHud)this.trickHud.speed(',
+    '&&!fr&&hudLevel<1&&!finishHide){this.progressMeter?.draw(', 'if(hudLevel<2&&!finishHide){this.boostGauge?.drawOrb(',
+    'if(hudLevel<2&&!finishHide&&this.trickHud&&this.trickHudRenderer){', 'if(finishHide)slotFlags=(slotFlags&0x100000)>>>0;', '{flags:slotFlags,finished:'];
+  check('finishHudHide' in PV_DEFAULTS && live.length > 0 && done.length === 0 && /const finishHide=!fs&&!!s\.message&&pv\('finishHudHide'\);/.test(u)
+    && u.includes('this.freeRideHud?.(c,hudLevel,finishHide)')
+    && /freeRideHud=\(c,level,finishHide=false\)=>\{if\(!freeRide\|\|worldEvent\)return false;if\(course\.freeRide\.kind!==4\)\{if\(level<2&&!finishHide\)\{/
+      .test(sourceOf('main.js'))
+    && gates.every((g) => u.includes(g)) && /drawHud\(c,racing=true,draw=true\)\{/.test(m) && /if\(!color\)\{this\.hud=null;return;\}if\(!draw\)return;/.test(m),
+    `finish HUD: every race element but the banner goes on the finish tick (slots ${live.length} -> ${done.length}; finishHudHide ${PV_DEFAULTS.finishHudHide ? 'on' : 'off'})`); }
 if (failed) { console.error(`${failed} visual-parity check(s) failed`); process.exit(1); }
 console.log('visual parity: all checks passed');

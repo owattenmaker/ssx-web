@@ -67,6 +67,9 @@
 // ends a running challenge; world state 10's enter (0x2356A8 -> 309030 / 308988) clears the active challenge, its HUD and the offers.
 // finishSkip (web/game-tick.js): a new Cross from the finish + 228 closes the finish panel at once (the PS2's 1E8160 event 5); the
 // port always waited 408 / 288 ticks.
+// finishHudHide (web/ui.js, docs/visual-parity.md section 45): at a race / peak-run finish (TIME'S UP too) the race HUD goes, only the
+// banner 21F660 stays: 1EB9E8 sets the per-player mask +0x80 = 0xFFEFFFFF (every flag but 0x100000) once rider+0x470 >= 0, and 12A250
+// (every human finished) cuts the owner flags +0x3CC to 0x170000 (the clock, the progress meter gp-0x994, the mail icon 0x80000).
 // postEventDj (web/game-audio.js finish / hubChatter): the post-event record 2A45C0 / 2A4660 at every CTM finish (place, course, KOs +0x128
 // in races, Ubers +0x114; reset at round 1, armed at the final or a one-round event) and the commentary 2A4770 at the next hub chatter
 // (2A2E50): Char_Progress 0x2102 (1st), Aggression 0x212E (>= 5 KOs), High_Trick_Score 0x212F (>= 27 Ubers, 24 in Big Air / backcountry),
@@ -154,6 +157,17 @@
 // careerLevel (career-rival agent, docs/ai-racers.md "Difficulty by race level"): a career race's computer riders take +0xDF8 / +0xDFC from
 // the human's race level (0x10C4F8 by slot and level 0 / 1 / 2, then 0x10C758's course factor; web/lineup.js npcDifficulty). Off: every
 // career race rides lineups.json's slot tables, which hold level 1 (a Single Event's, and a fresh career's).
+// boardFlex (playtester report, docs/characters.md "Board flex"): the board (board_BoardFlex<X>, part file 2) bends with its 8 morph
+// targets, weighted by the core's board_morph_weights (30F2B0's morph path: the clip's file-2 stream with the bones' layer weights;
+// bit-exact against the PS2's *(geometry+0x3C) in 4 captures) and applied before skinning (web/rider-skinning.js), from the
+// package's board-flex.json / .bin (tools/export_board_flex.py). Off, or without the files or the core export: the rest shape.
+// eventRiderWarm (lag agent, docs/ctm-events-in-world.md "The riders' warm-up under the approach"): an in-world event's computer riders'
+// race models (and trails / wake / spray) compile for the world pass under the approach and the card (main.js warmEventRiders), as the
+// event-load path's warm-up does under its load screen. Off: the race's first frame builds them (0.25 s here, 1.6 s at 4x CPU).
+// setBlendClass (playtester report "the gondola is transparent from the outside", docs/visual-parity.md section 47): a cutscene set's
+// blended batch (web/cutscenes.js ensureSet: TRANSP's gondola cabin, the heli sets' windows) draws its static-model class as
+// 37F2A4..37F7E0 sets it (material word +0x0C & 0x660000: ATST GREATER 92 / 20, AFAIL FB_ONLY, Z written), in the two passes of
+// world-material.js. Off: one blended pass without depth writes, so the cabin's far walls covered its near walls.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -173,6 +187,7 @@ export const PV_DEFAULTS = Object.freeze({
   ws13Rebuild: true,
   bcDecline: false,
   finishSkip: false,
+  finishHudHide: false,
   postEventDj: false,
   djVisited: false,
   djQueueRules: false,
@@ -195,7 +210,10 @@ export const PV_DEFAULTS = Object.freeze({
   onlineRecords: true,
   careerRival: true,
   careerLevel: true,
-  semiFresh: true
+  semiFresh: true,
+  boardFlex: false,
+  eventRiderWarm: false,
+  setBlendClass: false
 });
 const overrides = new Map();
 function fromQuery() {

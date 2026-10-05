@@ -677,7 +677,8 @@ export class CareerMessages {
     });
   }
   // In-race mail icon (HUD event 8): white while the 1 s phase <= 0.5, orange after; 5 s; paused with the race.
-  drawHud(c, racing = true) {
+  // draw = false: the timer 1EB6E4 runs, the icon 0x1F0F3C is not drawn (owner+0x3CC bit 0x80000 cut, ui.js pv finishHudHide).
+  drawHud(c, racing = true, draw = true) {
     const h = this.hud;
     if (!h || !this.data) return;
     const now = performance.now();
@@ -691,6 +692,7 @@ export class CareerMessages {
       this.hud = null;
       return;
     }
+    if (!draw) return;
     const s = this.data.sprites.mail_icon,
       key = color.join();
     this.tinted ??= new Map();

@@ -1,4 +1,5 @@
 import {createOriginalRiderSkinning} from './rider-skinning.js';
+import {loadBoardFlex,configureBoardFlex} from './board-flex.js';
 import {createRiderLightingMaterial,riderDrawState} from './rider-material.js';import {frameTextureSpace} from './frame-space.js';
 import {createControllerLights} from './rider-controller-lights.js';
 import {packageTexture} from './texture-archive.js';
@@ -107,7 +108,9 @@ async function loadOpponent({T,load,loader,origin,root,renderOrder,sceneFog},nam
  if(!rig.source_skin||!rig.source_bind_matrix_words)throw Error(`${name}: rider.json lacks source skin/bind rows (tools/export_opponent_packages.py)`);
  const vertices=new Float32Array(vb),indices=new Uint32Array(ib),colors=new Float32Array(cb),count=vertices.length/10;
  if(!Number.isInteger(count)||rig.source_skin.length!==count||colors.length!==count*4)throw Error(`${name}: vertex/skin/colour counts differ`);
- const skin=createOriginalRiderSkinning(rig,vertices,origin),lighting=createRiderLightingMaterial(skin,colors.some((v,i)=>i%4<3&&v!==1));
+ // pv boardFlex (web/board-flex.js): the board's morph targets; the rider's core is configured at its first capture
+ const boardFlex=await loadBoardFlex(base,rig,load,(path)=>load(path,'buffer'));
+ const skin=createOriginalRiderSkinning(rig,vertices,origin,boardFlex),lighting=createRiderLightingMaterial(skin,colors.some((v,i)=>i%4<3&&v!==1));
  const textures={};
  await Promise.all(Object.entries(manifest.textures).map(async([key,t])=>{const texture=await packageTexture(loader,base,t);
  // rider texture archive entry (web/texture-archive.js) or PNG file
@@ -132,7 +135,10 @@ texture.flipY=false;texture.wrapS=texture.wrapT=T.RepeatWrapping;texture.colorSp
  group.userData.shadowRider={skin,batches:manifest.batches,indices,core:()=>group.userData.shadowCore}; // web/rider-shadow.js
 
  // the parsed rider.json (~16k small arrays per rider) is only needed to build the skin: not kept on the entry
-return {name,group,skin,lighting,materials,textures,paletteGroups:new Set(rig.source_skin.map(g=>JSON.stringify(g))).size,update:null,updateCore:null,captured:false};
+const paletteGroups=new Set(rig.source_skin.map(g=>JSON.stringify(g))).size;
+ // pv boardFlex: what the capture's configure needs (web/board-flex.js configureBoardFlex)
+ const flexEntry=boardFlex&&{flex:boardFlex,slots:rig.source_bone_slot_count};
+ return {name,group,skin,lighting,materials,textures,boardFlex:flexEntry,paletteGroups,update:null,updateCore:null,captured:false};
 }
 /*
  createOpponentRiders({T, scene, load, loader, origin, packages, root='/assets/', renderOrder=600,
@@ -154,6 +160,8 @@ export async function createOpponentRiders({T,scene,load,loader,origin,packages,
    if(lighting?.viewCore){const p=lighting.viewCore._camera_render_view();if(p){view.set(new Float32Array(lighting.viewCore.HEAPF32.buffer,p,16));viewReady=view.every(Number.isFinite);}}
    entries.forEach((entry,i)=>{
     const o=opponents[i],core=o?.core;if(!core||!core._rider_skin_palette_count())return;
+    // init_animation (web/ai-racers.js configureRider) clears the board morph configuration: set it again
+    if(entry.boardFlex&&core._board_morph_slot&&core._board_morph_slot()<0)configureBoardFlex(core,entry.boardFlex.flex,{source_bone_slot_count:entry.boardFlex.slots});
     entry.skin.capture(core,!!o.reset);entry.captured=true;entry.group.userData.shadowCore=core;
     if(!lighting||!viewReady)return;
     if(entry.updateCore!==core){entry.update?.dispose();entry.update=null;entry.updateCore=core;if(lightingAvailable(core))entry.update=createLightingUpdate(core,lighting.configuration);}

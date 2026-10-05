@@ -56,7 +56,7 @@ static void stage_teleport_rider(const std::array<float,16>& m){
  chaseReady=cameraBuilt;physicsState.depth1=depth1;physicsState.depth3=depth3;
  // 11E150 cached the placed pose (rider+0x2C) and its board frame (+0x170 / +0x180): the next tick's contacts and this tick's skin
  // palette read them (the reset control places before this tick's pose; the teleport comes after it, inside 121818).
- if(!resetStaleWorld.empty()){cachedCrashWorld=resetStaleWorld;clear_skin_matrices();
+ if(!resetStaleWorld.empty()){cachedCrashWorld=resetStaleWorld;boardMorphDrawn=boardMorphReset;clear_skin_matrices();
   const auto frame=originalRiderCollisionFrame(resetPlacedBoardRoot);physicsState.presentationUp=frame.up;presentationForward170=frame.forward;}
  {const float limit=physicsProfile.speedLimit;physicsProfile=physicsMaterials[0];physicsProfile.speedLimit=limit;}
  physicsState.controlState=gs.controlState=0;::grounded=true;previousGround=true;previousHeld=false;

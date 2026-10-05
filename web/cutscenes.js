@@ -128,6 +128,45 @@ export function litVertexColour(lighting, [x, y, z]) {
   }
   return out;
 }
+// pv setBlendClass (docs/visual-parity.md section 47): a cutscene set's instances are world static models, drawn by 37E238 with the
+// material state of 37F2A4..37F7E0. tools/export_cutscene_sets.py static_model_class gives a batch its class (`blend`, as
+// web/prepare.py does for the world): material word +0x0C (group flag bit 3 adds 0x40000) & 0x660000 =
+// - 0x20000, class 1: ALPHA 0x44, ATST GREATER 92 (37F604);
+// - 0x40000 / 0x60000, class 2: ALPHA 0x44, ATST GREATER 20 (37F6B8 -> 37F750..37F7E0, AREF from the 0x14000 at 37F208);
+// - every test is AFAIL FB_ONLY and ZTST GEQUAL, and Z is written: ZMSK is set only for an additive model (header +0x10 bit 3,
+//   37ECA0..37ED18), which no set has.
+// Class 2 is depth sorted per node: the render-list key (word2 bits 10..28, 364240) is the view depth of the node's world origin (the
+// node x instance matrix of 37ED9C..37F078, row 3 read at 37F6E8), so a model's panels draw back to front. The export splits such a
+// batch per node with that origin (`sort_pivot`); the mesh's bounding sphere is centred there, which is the point three sorts by.
+// The TRANSP gondola cabin's walls and windows are 14 class-2 nodes (texture 10, word 0x70001; walls alpha 128, windows 74).
+// Without this the batch drew in one blended pass without depth writes, so from outside its far walls covered the near ones.
+const SET_AREF = [0, 92, 20];
+// The two passes of web/world-material.js: texels above AREF blend and write depth; the fringe at or below it blends without depth.
+function setBlendPasses(m, aref) {
+  const reference = aref / 128;
+  const alpha = m.colorNode.a;
+  m.transparent = true;
+  m.depthWrite = true;
+  m.alphaTest = reference;
+  const fringe = m.clone();
+  fringe.colorNode = m.colorNode;
+  fringe.alphaTest = 0;
+  fringe.depthWrite = false;
+  fringe.maskNode = alpha.lessThanEqual(reference);
+  return [m, fringe];
+}
+// The sort point of a depth-sorted node batch: its node origin, with the radius of the batch's vertices around it.
+function sortSphere(T, pivot, vertices, indices) {
+  const centre = new T.Vector3(...pivot);
+  let radius = 0;
+  for (const k of indices) {
+    const dx = vertices[k * 10] - centre.x;
+    const dy = vertices[k * 10 + 1] - centre.y;
+    const dz = vertices[k * 10 + 2] - centre.z;
+    radius = Math.max(radius, Math.hypot(dx, dy, dz));
+  }
+  return new T.Sphere(centre, radius);
+}
 // The static-model MODULATE on GS bytes (web/world-material.js modelColour): Cs = T x (c5 << 3) >> 7, c5 = colour x 31.
 const modulateBytes = (tex, col) => toFrame(clamp(floor(round(tex.rgb.mul(255)).mul(round(col.rgb.mul(31)).mul(8)).div(128)), 0, 255).div(255));
 export function litInstanceColour(tex, lighting) {
@@ -480,7 +519,16 @@ export function createCutscenes(host) {
         const m = new T.MeshBasicNodeMaterial({ side: T.DoubleSide, transparent: !!b.has_alpha, alphaTest: b.has_alpha ? 0.02 : 0, fog: false, depthWrite: !b.has_alpha });
         if (d.lighting && staged) { map.colorSpace = T.NoColorSpace; m.colorNode = litInstanceColour(tslTexture(map), d.lighting); }   // a lit instance (the backcountry heli)
         else { const tex = tslTexture(map), col = attribute('color', 'vec4'); m.colorNode = vec4(modulateBytes(tex, col), tex.a.mul(col.a)); }
-        const mesh = new T.Mesh(g, m); mesh.frustumCulled = false; mesh.renderOrder = 500; group.add(mesh);
+        // pv setBlendClass: the batch's static-model class (classes 1 / 2; an export without `blend` keeps the one blended pass)
+        const aref = b.has_alpha && pv('setBlendClass') ? (SET_AREF[b.blend] ?? 0) : 0;
+        let drawn = m;
+        if (aref) {
+          drawn = setBlendPasses(m, aref);
+          g.addGroup(0, b.index_count, 0);
+          g.addGroup(0, b.index_count, 1);
+          if (b.sort_pivot) g.boundingSphere = sortSphere(T, b.sort_pivot, inter.array, g.index.array);
+        }
+        const mesh = new T.Mesh(g, drawn); mesh.frustumCulled = false; mesh.renderOrder = 500; group.add(mesh);
         if (staged && b.livecomp_resource !== undefined) { mesh.userData.liveComp = [b.livecomp_resource, b.livecomp_node]; meshes.push(mesh); }
       }
       if (staged) { group.userData.meta = d; group.userData.stage = createStageSet(d, meshes); }
@@ -1325,7 +1373,8 @@ export function createCutscenes(host) {
     },
     // Event intro (world state 10 -> 1 -> 2): onIdle when the start-gate idle loop begins (the objectives card
     // then opens over it); resolves {played:false} when the location has no intro lists (free ride, backcountry).
-    playEventIntro({ mode = 'single', cast, location, onIdle = null }) {
+    // onStep(step, at): each list step's start (main.js pv eventRiderWarm: the warm begins once the approach draws, its cast built)
+    playEventIntro({ mode = 'single', cast, location, onIdle = null, onStep = null }) {
       // the fly-over already played in free ride; the approach continues its list: its fade-in comes from the fly-over's
       // fade-out record (every sga fly-over: in 0), so it starts bright (PS2 s1045)
       if (mode === 'career' && host.ui?.careerUI?.active?.rideIn)
@@ -1336,9 +1385,10 @@ export function createCutscenes(host) {
           kind: 'intro',
           onIdle,
           prevFadeOut: { type: 1, colour: 'black', in_ticks: 0 },
-          barsFull: true
+          barsFull: true,
+          onStep
         });
-      return play({ steps: introSteps(mode), cast, location, kind: 'intro', onIdle });
+      return play({ steps: introSteps(mode), cast, location, kind: 'intro', onIdle, onStep });
     },
     // The scripts and animation banks of a list (fetched once per page, like prepare's): riderPrefetch loads the event intro's
     // under the warm-up, before prepare() (its actors) runs.
