@@ -9,7 +9,7 @@
 // and the motion update. step_rider calls board_press_step in the controller slot, before
 // its cruise boost/target work, and skips the cruise controller for the tick it ran.
 #include "../engine/board_press.hpp"
-RIDER_LOCAL extern int (*browserBoardPressStep)();RIDER_LOCAL extern void (*browserBoardPressReset)();
+RIDER_LOCAL extern int (*browserBoardPressStep)();RIDER_LOCAL extern void (*browserBoardPressReset)();RIDER_LOCAL extern int (*browserBoardPressCancel)();
 RIDER_LOCAL extern bool browserBoardPressFrame;RIDER_LOCAL extern double airtime,charge;RIDER_LOCAL extern bool held,airbornePrewind;
 void browser_controller_takeoff(float charge);
 
@@ -152,6 +152,21 @@ static void board_press_rail_update(){
  const auto result=originalBoardPressUpdate(bpControl,r,w0,w1,a);bpLastStop=int(result.stop);bp_apply(r);bp_publish_graph();
  bpRailTick=!railOwned; //the R3 ollie released the rail: step_rider continues this tick without another controller
 }
+// ---- A soft collision during a board press (108388 from control 1) ----
+// 108388 (0x1083D8..0x1083EC): in control 1 it first calls 131348 on the control-1 object (owner+0x1D0): the pivot spring
+// 1313A8, the pivot finalise 131428 (which can flip the stance back, 12FEC8) and, for a nose / tail press, the end score
+// 119A38 -> 10E098(rider, f, 1). Then it picks the clip (reading +0x320 after the cancel), plays it and calls 11FEC8(rider, 3),
+// which runs the control-1 exit 12FE98 before control 3 enters. Before this the port ignored the collision and stayed in control 1.
+static int board_press_soft_cancel(){
+ if(!bpActive||physicsState.controlState!=1)return -1;
+ auto r=bp_view();auto a=bp_access(r);originalBoardPressJumpOut(r,a);bp_apply(r);bp_publish_graph();
+ return physicsState.reverseStance?1:0;
+}
+// After a reaction whose cancel ran: the soft clip and control 3 (begin_soft_control accepts control 1), then 12FE98.
+static void board_press_soft_enter(int semantic,float spin){
+ soft_collision_begin(semantic,spin);
+ auto r=bp_view();originalBoardPressExit(r);bp_apply(r);bpActive=false;bpLastExitControl=3;++bpExits;bp_publish_graph();
+}
 // Landing 0x13A5D4: a pending +0x330 re-enters control 1 with 26/34 (control 1 itself keeps
 // running) instead of 0x115640, the reverse turn and the landing animation. Returns true
 // when the board-press branch handled the landing.
@@ -165,7 +180,7 @@ static bool board_press_landing(){
 // Air controller 0x133308: +0x330 from the BoardPress step before the air step.
 static void board_press_air_style(int step,float adjustFlip){bp330=originalBoardPressAirStyle(step,adjustFlip);graph.boardPress330=bp330;}
 
-static void setup_board_press(){browserBoardPressStep=board_press_step;browserBoardPressReset=clear_board_press;}
+static void setup_board_press(){browserBoardPressStep=board_press_step;browserBoardPressReset=clear_board_press;browserBoardPressCancel=board_press_soft_cancel;}
 // setup_board_press(): per rider context, rider_statics_animation (web/animation_bridge.cpp)
 
 // ground_state_dump pairs (rider offset, value) for the float board-press fields.

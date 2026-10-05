@@ -12,6 +12,8 @@ void publish_rail_rider(const OriginalRailRider&,bool);void leave_rail_motion();
 void advance_pickup_timers(uint32_t);void dispatch_pickup_contacts(const BodyCollisionVolume&);
 OriginalCollisionReaction dispatch_body_event(const OriginalCollisionEvent&,const BodyCollisionVolume&,std::array<float,3>,int,int,const CollisionRandom&);
 extern "C" void soft_collision_begin(int,float);
+// 108388 from control 1 (web/boardpress_gameplay.inc, included later)
+static void board_press_soft_enter(int,float);
 static float rail_held_balance(float steering); // control 2 RailBalance (web/input_bridge.inc)
 RIDER_LOCAL static unsigned railExitPasses=0,railExitHits=0,railExitIncomplete=0,railExitReactions=0;
 RIDER_LOCAL static OriginalRailUberState railUber;RIDER_LOCAL static int railShoulderMask=0;RIDER_LOCAL static unsigned railUberEntries=0,railUberCompletions=0,railUberUnavailable=0;
@@ -78,7 +80,8 @@ static void rail_exit_contacts(OriginalRailRider& r){
    auto reaction=dispatch_body_event(event,*browserBodyVolume,r.velocity,4,r.controlState,[](){return rng.nextMotion();});++railExitReactions;
    // 108388's 11FEC8(3) runs the control-7 exit 132048 (+0x238 target 0, rate 1/15): take the rider back from the globals so the
    // pair phase's rail_apply below does not restore the pre-reaction triplets (PS2 Kick Doubt Moby 2944: +0x238 0.4636 -> 0.3969 -> 0.3303).
-   if(reaction.kind==OriginalCollisionReactionKind::Soft&&!reaction.cancelControlOne){soft_collision_begin(reaction.animation,reaction.manualSpin);r=rail_view();}
+   if(reaction.controlOneCancelled){board_press_soft_enter(reaction.animation,reaction.manualSpin);r=rail_view();} /*a press on the rail (control 1, motion 4)*/
+   else if(reaction.kind==OriginalCollisionReactionKind::Soft&&!reaction.cancelControlOne){soft_collision_begin(reaction.animation,reaction.manualSpin);r=rail_view();}
   }
  },[&]{
   //107888 rider-pair dispatch (13C098) through the race host (web/ai-racers.js); single-rider: nothing.

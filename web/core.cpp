@@ -60,6 +60,7 @@ RIDER_LOCAL std::optional<std::array<float,3>> browserDeparturePrePosition; // r
 RIDER_LOCAL bool browserGroundResetPending=false;RIDER_LOCAL bool browserGroundCrashPending=false; // 13F1C8: a ground contact on surface 18 (web/animation_bridge.cpp post)
 RIDER_LOCAL static bool airControl0Request=false; // first airborne tick of control 0 (it only requests control 4)
 RIDER_LOCAL static bool wasAirControl0=false; // step_rider's control 0 in the air last tick (file scope: the rider-context snapshot restores it)
+RIDER_LOCAL static bool releasedLastTick=false; // last tick released a charged jump on the ground (12E9B8 -> 114298, control 5 requested)
 RIDER_LOCAL bool browserCrashAir=false; // crash motion 2 submode 1 (publish_crash_actor), for the 1210B0 crash-air timers
 RIDER_LOCAL int browserCrashSurface=0; // crash actor surface: motion 2 contacts write rider+0x438 (camera surfaceId, pipe-air 793)
 // rider+0x434 (physicsState.riderType): location id of the contacted patch. 1218D0 (per-rider pass from 128AC0, after
@@ -191,7 +192,10 @@ RIDER_LOCAL bool (*browserAttackAir)()=nullptr;RIDER_LOCAL void (*browserAttackC
 RIDER_LOCAL bool (*browserHandplantStep)(float&,float&,float&,bool&)=nullptr;RIDER_LOCAL void (*browserHandplantReset)()=nullptr;
 // Board press control 1 (web/boardpress_gameplay.inc): 0x1161D0 cruise entry / 0x12FC80 update in the controller slot; the tick skips the cruise controller.
 RIDER_LOCAL int (*browserFinishStep)()=nullptr; // web/finish_gameplay.inc: control 10 (0x116378 entry, 0x12C678)
-RIDER_LOCAL int (*browserBoardPressStep)()=nullptr;RIDER_LOCAL void (*browserBoardPressReset)()=nullptr;RIDER_LOCAL bool browserBoardPressFrame=false;
+RIDER_LOCAL int (*browserBoardPressStep)()=nullptr;RIDER_LOCAL void (*browserBoardPressReset)()=nullptr;
+// 108388's control-1 cancel 131348 (web/boardpress_gameplay.inc board_press_soft_cancel): +0x320 after it, -1 without a live control 1
+RIDER_LOCAL int (*browserBoardPressCancel)()=nullptr;
+RIDER_LOCAL bool browserBoardPressFrame=false;
 RIDER_LOCAL int browserAirModeFlag=0;RIDER_LOCAL bool browserHandplantMotion5=false; //air motion+0: entered from motion5 (0x1399E0)
 struct RideCommand{bool active=false;float turn=0,crouch=0,brake=0,board=0,spin=0,flip=0;int jump=0,boost=0,grab=0,applyTargets=1;};
 RIDER_LOCAL RideCommand rideCommand;RIDER_LOCAL float rideAxes[12]{};
@@ -355,6 +359,7 @@ OriginalCollisionReaction dispatch_body_event(const OriginalCollisionEvent& even
  if(volume.reactionFrame)context.presentation=*volume.reactionFrame;
  context.physical={physical.right,physical.forward,physical.up,physicsState.position};context.velocityCmps=eventVelocity;
  context.motionMode=motion;context.controlState=controlState;
+ if(controlState==1&&browserBoardPressCancel)context.cancelControlOne=browserBoardPressCancel;
  context.animationClass=volume.mainAnimation?volume.mainAnimation->animationClass:physicsState.animationClass;context.reverseStance=physicsState.reverseStance;context.manualSpin=physicsState.manualSpin;
  auto result=originalCollisionReaction(collisionProfile,collisionHistory,context,event,random);collisionReaction=result;++collisionSerial;if(context.controlState!=9&&result.kind!=OriginalCollisionReactionKind::SurfaceReset)audio_event(AE_RUMBLE_IMPACT,event.closingSpeedCmps); /*105E7C: owner +0xDFC rumble*/
  // 105D98 (105EEC/105F50) restarts the flight with 1135B8 = 113198 (clears hit/heading/normal/times) + 113618, not 113618 alone.
@@ -373,8 +378,10 @@ OriginalCollisionReaction classify_body_contact(const WorldBodyHit& hit,const Ob
 }
 
 bool begin_soft_control(int semantic,float spin){
- // Callers gate on the motion mode (108388); a passive departure this tick has already cleared `grounded`.
- if((physicsState.controlState!=0&&physicsState.controlState!=2&&!(browserRailActive&&physicsState.controlState==7))||semantic<55||semantic>60||!std::isfinite(spin))return false;
+ // Callers gate on the motion mode (108388); a passive departure this tick has already cleared `grounded`. Control 1 comes only
+ // through web/boardpress_gameplay.inc board_press_soft_enter, after 108388's cancel 131348 ran.
+ const int c=physicsState.controlState;
+ if((c!=0&&c!=1&&c!=2&&!(browserRailActive&&c==7))||semantic<55||semantic>60||!std::isfinite(spin))return false;
  browserSoftActive=true;softComplete=false;softTransition=-1;held=false;charge=0;
  physicsState.controlState=3;physicsState.animationIndex=semantic;physicsState.animationClass=6;physicsState.manualSpin=spin;return true;
 }
@@ -807,9 +814,16 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  // 114130 controller dispatch precedes the 1200D0 timer stage. Cruise
  // jump-entry and crouch-release return before boost dispatch; airborne
  // Square is a tweak input, not permission to thrust.
- {const bool airControl0=!grounded&&physicsState.controlState==0;airControl0Request=airControl0&&!wasAirControl0;wasAirControl0=airControl0;}
+ // The first air tick after a charged release runs control 5 (133308, which stops the boost), not a ride-off's control 0 (the
+ // port's controlState still reads 0 there; PS2 hl-sj-2 913: +0x2FC 0 on the first air tick).
+ {const bool airControl0=!grounded&&physicsState.controlState==0;airControl0Request=airControl0&&!wasAirControl0&&!releasedLastTick;wasAirControl0=airControl0;}
+ releasedLastTick=chargedRelease;
+ // 12E9B8 (control 2) with JumpHeld (word0 0x2000) calls 114130(rider, BoostHeld, 0) at 0x12EB58 whatever the motion: Cross held
+ // through a passive departure keeps the boost (and its drain) in the air (PS2 hl-glide-3 1430). Released, it never calls 114130.
+ const bool airCrouch=!grounded&&physicsState.controlState==2&&held;
  if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&grounded&&bool(jump)==held&&!browserBoardPressFrame)
   originalBoostControl(boostState,boostProfile,boost,!held&&boost&&!boostHeld);
+ else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&airCrouch){if(jump)originalBoostControl(boostState,boostProfile,boost,false);}
  // In the air, control 0 (131620 on the ride-off tick) only requests control 4 and returns before its boost dispatch; the
  // passive controller 12F730 stops the boost in the next tick (tech-speedcap-groomed 421: amount still 1 on the PS2).
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&!grounded&&!airControl0Request) originalBoostControl(boostState,boostProfile,false,false);

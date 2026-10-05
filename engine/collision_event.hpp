@@ -19,6 +19,9 @@ struct OriginalCollisionContext {
     int motionMode=0,controlState=0,animationClass=0,ragdollSubmode=0;
     bool reverseStance=false;
     float manualSpin=0;
+    // 108388 in control 1 (0x1083D8..0x1083EC): 131348 on the control-1 object (owner+0x1D0) runs before the clip is chosen; it can
+    // flip +0x320 back from a pivot (131428 -> 12FEC8). Returns +0x320 afterwards, or -1 when no control-1 object is live.
+    std::function<int()> cancelControlOne;
 };
 struct OriginalCollisionProfile {
     float upwardNormal=.800000011920929f;
@@ -37,6 +40,8 @@ struct OriginalCollisionReaction {
     int animation=-1,nextControlState=-1;
     float manualSpin=0;
     bool resetPredictor=false,ragdollCollisionFlag=false,cancelControlOne=false,strongSoftImpact=false;
+    // the context's cancelControlOne ran (131348): the caller enters control 3 and runs the control-1 exit 12FE98 (11FEC8(3))
+    bool controlOneCancelled=false;
     unsigned randomDraws=0;
 };
 using CollisionRandom=std::function<uint32_t()>;
@@ -72,11 +77,16 @@ inline OriginalCollisionReaction originalSoftCollisionReaction(const OriginalCol
     if(c.motionMode!=0&&c.motionMode!=4)return result;
     if(c.controlState!=0&&c.controlState!=1&&c.controlState!=2&&c.controlState!=7)return result;
     result.cancelControlOne=c.controlState==1;
+    bool reverseStance=c.reverseStance;
+    if(result.cancelControlOne&&c.cancelControlOne) {
+        const int after=c.cancelControlOne();
+        if(after>=0){reverseStance=after!=0;result.controlOneCancelled=true;}
+    }
     float physicalForward=dot(c.physical.forward,event.normal);
     if(p.softFront<physicalForward)animation=55;
     else if(physicalForward<p.softBack)animation=56;
     else {
-        float side=dot(c.physical.right,event.normal);if(c.reverseStance)side=-side;
+        float side=dot(c.physical.right,event.normal);if(reverseStance)side=-side;
         float speed=terrain_original::sqrt(dot(c.velocityCmps,c.velocityCmps));
         bool strong=event.closingSpeedCmps<p.softImpact&&p.softSpeed<speed&&c.motionMode!=4;
         if(strong) {

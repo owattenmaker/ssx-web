@@ -4,7 +4,8 @@
 // adapter's limits, screen changes (loading -> game ...), a frame-time / memory heartbeat, and a crash marker: the last
 // known state and the last few events are kept in localStorage while the page runs, so after the browser kills the tab
 // (iOS out of memory, a discarded background tab) the next load reports where and how the previous session ended.
-// Nothing personal is sent (no ids beyond a random per-load session, no input, no names); ?diag=0 turns it off.
+// Nothing personal is sent (no ids beyond a random per-load session, no names, no typed text; the only input is the game pad's
+// decoded channels of the last 8 ticks before a bail, web/diag-bail.js); ?diag=0 turns it off.
 //
 // Every event carries the screen (#stage data-screen) and the course (?course / &peakCourse / &peakMode). Repeats of
 // one error are sent 3 times, then counted ('repeat' events), so a broken frame loop cannot use up the budget.

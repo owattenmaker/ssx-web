@@ -124,6 +124,8 @@ export function createGameTick(host, { trace = null } = {}) {
       }
     }
     if (!s.replay?.active) s.rideTick?.(s.state, !!(rec.placement || rec.rescue)); // field stats: distance ridden (main.js gameHost -> diagnostics.js diagRide; reads only)
+    // field bail reports: one diag event per crash / forced reset (main.js gameHost -> web/diag-bail.js; reads only)
+    if (!s.replay?.active) s.bailTick?.(core, s.state, input, ticksLeft);
     s.freeRide?.tick(); s.bigChallenges?.tick(); s.faqTick?.();
     // (pv eventInWorldAi: the event's riders held at their NIS actors under WS1, main.js) // world state 4: the offer read 0x230890, then
     // the deferred FAQ 0x2309A4 (pv faqDefer)

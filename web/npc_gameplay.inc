@@ -308,7 +308,9 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pair_react(int kind,int animation,int attac
  if(browserBodyVolume&&browserBodyVolume->reactionFrame)context.presentation=*browserBodyVolume->reactionFrame;
  context.physical={physical.right,physical.forward,physical.up,physicsState.position};context.velocityCmps=physicsState.velocity;
  context.motionMode=npc_motion_mode();context.controlState=browser_control_state();context.reverseStance=physicsState.reverseStance;context.manualSpin=physicsState.manualSpin;
+ if(context.controlState==1)context.cancelControlOne=board_press_soft_cancel; // 108388's 131348 (web/boardpress_gameplay.inc)
  auto reaction=originalSoftCollisionReaction(collisionProfile,context,event,[](){return rng.nextMotion();});
+ if(reaction.controlOneCancelled){board_press_soft_enter(reaction.animation,reaction.manualSpin);return;}
  if(reaction.kind==OriginalCollisionReactionKind::Soft&&::grounded&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7)))soft_collision_begin(reaction.animation,reaction.manualSpin);
 }
 // Feature marker for web/test-ps2-captures.mjs: this core passes the attack flag into 10EB30 (attacked bails, +0x12C).
