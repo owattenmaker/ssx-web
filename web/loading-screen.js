@@ -11,6 +11,8 @@
 import { downloadProgress } from './downloads.js';
 import { inputDevice, drawKeyCap, LUI_STRETCH } from './input-glyphs.js';
 import { SPRITE_2D } from './sprite-canvas.js'; // offscreen sprite canvas kind (software in Firefox, docs/firefox-load.md)
+import { pv } from './pv-flags.js';
+import { createLoadMeter } from './load-meter.js';
 const ROOT = '/assets/LOADING/';
 export const LOADING_FPS = 60;
 export const HINT_COUNT = 15;
@@ -54,10 +56,13 @@ export function animationProps(anim, frame, mode) {
 
 // Displayed percentage: the original Snow Jam load curve (frames -> percent, 0..98) stretched over the minimum
 // display time; it holds at 98% until the work is done (the original also sits at 98% while the event starts).
-export function loadingPercent(curve, frame, minFrames, originalFrames, done) {
+// climb (pv loadMeter): the curve up to its first 98% is stretched over the minimum instead, so it is a pace limit that reaches
+// 98% as the minimum ends; the work (web/load-meter.js) decides the rest.
+export function loadingPercent(curve, frame, minFrames, originalFrames, done, climb = false) {
   const hold = curve.filter(([, p]) => p <= 98);
   const lastFrame = hold[hold.length - 1][0];
-  const f = frame * lastFrame / Math.max(1, minFrames * lastFrame / originalFrames);
+  const top = hold.find(([, p]) => p >= 98)?.[0] ?? lastFrame;
+  const f = climb ? frame * top / Math.max(1, minFrames) : frame * lastFrame / Math.max(1, minFrames * lastFrame / originalFrames);
   let p = hold[hold.length - 1][1];
   for (let i = 0; i < hold.length - 1; i++) {
     const [f0, p0] = hold[i], [f1, p1] = hold[i + 1];
@@ -130,7 +135,9 @@ export class LoadingScreen {
         doneAt: 0,
         hint: this.data.hints.find((h) => h.index === hint),
         minMs: this.world ? 0 : this.params().minMs,
-        world: this.world || null
+        world: this.world || null,
+        // pv loadMeter: the load's stages (plan / begin / step / done below), weighted by their measured time
+        meter: pv('loadMeter') ? createLoadMeter() : null
       };
       // The race canvas is hidden under the load screen (style.css), except in world mode where the world shows: the warm-up
       // frames drawn there never reach the compositor (Firefox held its frames behind every pipeline build, docs/firefox-load.md).
@@ -160,6 +167,12 @@ export class LoadingScreen {
     const s = this.session; if (!s || !promise?.then) return;
     s.pending++; promise.catch(() => {}).finally(() => { s.pending--; });
   }
+  // pv loadMeter: the stages of the load from here (web/load-meter.js STAGE_MS ids, or [id, ms]), and their progress. Without a
+  // session or the switch they do nothing.
+  plan(stages) { this.session?.meter?.plan(stages); }
+  begin(id) { this.session?.meter?.begin(id); }
+  step(id, fraction) { this.session?.meter?.step(id, fraction); }
+  done(id) { this.session?.meter?.done(id); }
   // Load-event entry point: show the screen (if not already up) and call next() when it has finished.
   run(next, work = []) {
     if (!this.open(work)) { next(); return; }
@@ -174,12 +187,22 @@ export class LoadingScreen {
     const t = this.data.timing;
     // The original curve paces the number; while game data is still downloading it cannot run ahead of the transfer
     // (up to 90% for the download, the rest is the warm-up the curve already covers), and it never goes backwards.
-    let percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt);
-    const dl = downloadProgress();
-    if (!s.doneAt && dl.active) percent = Math.min(percent, Math.floor(dl.fraction * 90));
-    // the page's first course still loading behind the menus (pv lazyCourse, web/main.js backgroundCourse): nor ahead of its work
-    const work = s.doneAt ? null : this.workFraction?.();
-    if (work != null) percent = Math.min(percent, Math.floor(work * 90));
+    let percent;
+    if (s.meter?.planned) {
+      // pv loadMeter: the curve paces the number up to 98% over the minimum, the load's work caps it (99% at most until every
+      // promise has settled), so 100% is the load done
+      const work = s.doneAt ? null : this.workFraction?.();
+      if (work != null) s.meter.step('course', work);
+      percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt, true);
+      if (!s.doneAt) percent = Math.min(percent, Math.floor(99 * s.meter.value(now)));
+    } else {
+      percent = loadingPercent(t.percent_curve, frame, minFrames, t.original_frames, !!s.doneAt);
+      const dl = downloadProgress();
+      if (!s.doneAt && dl.active) percent = Math.min(percent, Math.floor(dl.fraction * 90));
+      // the page's first course still loading behind the menus (pv lazyCourse, web/main.js backgroundCourse): nor ahead of its work
+      const work = s.doneAt ? null : this.workFraction?.();
+      if (work != null) percent = Math.min(percent, Math.floor(work * 90));
+    }
     percent = s.shownPercent = Math.max(s.shownPercent ?? 0, percent);
     let black = Math.max(0, 1 - frame / FADE_FRAMES);
     if (s.doneAt && s.world) { const next = s.next; this.session = null; this.world = null; next(); return null; }

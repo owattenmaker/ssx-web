@@ -218,6 +218,7 @@ import { createWeatherRenderer } from './weather-renderer.js';
 import { createTerrainSparkle } from './terrain-sparkle.js';
 // pad vibration (FE Controller Settings > Vibration 1P): the original 0x125B18 motor model
 import { Rumble } from './rumble.js';
+import { STAGE_MS } from './load-meter.js';
 const rumble = new Rumble();
 // Ubertrick Setup preview: web/fe-screens.js
 // Select Character FE preview: camera, placement, FE clips (web/character-select.js)
@@ -312,22 +313,38 @@ const ui = new OriginalUI({
     // lazy first course first: pv lazyCourse). riderPrefetch: the rider's files from the pick, the lineup planned (and downloading)
     // before the rider loads, the intro's data under the warm-up
     prefetchEventRider();
+    // pv loadMeter: each stage's start and end for the load screen's meter (ui.loadEvent plans them: cb.loadStages)
+    const meter = ui.loading;
     return (lazyPending() ? courseLive() : Promise.resolve())
       .then(async () => {
+        meter.done('course');
+        meter.begin('rider');
         if (riderStale()) await selectRider(selectedRider.entry);
         // ensureRider's first step, before the plan
         prefetchLineup(eventOf());
         return ensureRider();
       })
-      .then(() =>
-        aiRace && (mpGame?.aiAllowed() ?? true)
-          ? aiRace.prepare({ rider: selectedRider, event: eventOf() }).catch((e) => console.warn('Computer-rider lineup failed', e))
-          : Promise.resolve()
-      )
       .then(() => {
+        meter.done('rider');
+        meter.begin('lineup');
+        return aiRace && (mpGame?.aiAllowed() ?? true)
+          ? aiRace.prepare({ rider: selectedRider, event: eventOf() }).catch((e) => console.warn('Computer-rider lineup failed', e))
+          : Promise.resolve();
+      })
+      .then(() => {
+        meter.done('lineup');
+        meter.begin('warm');
         prefetchIntro();
-        return warmupRender(ui.warmFramesDone);
-      });
+        return warmupRender(ui.warmFramesDone, { progress: (f) => meter.step('warm', f) });
+      })
+      .finally(() => meter.done('warm'));
+  },
+  // pv loadMeter: the event load's stages before the intro's (web/load-meter.js STAGE_MS): the course still loading behind the menus,
+  // weighted by its share left, then the rider, the lineup and the warm-up
+  loadStages: () => {
+    const left = lazyPending() ? 1 - (globalThis.ssxBoot?.courseProgress?.target().fraction ?? 0) : 0;
+    const course = left > 0 ? [['course', Math.round(STAGE_MS.course * left)]] : [];
+    return [...course, 'rider', 'lineup', 'warm'];
   },
   // FE rider speech (web/rider-speech.js)
   speech: (bank, options) => gameAudio.speak(bank, options),
@@ -4154,9 +4171,11 @@ function renderAcross() {
 }
 // skip(o): a subtree the warm-up leaves as it is (pv worldWarm: the streamed locations, compiled by their own rewarm); cap: new material
 // variants a slice (the adaptive rate's ceiling)
-async function warmupRender(framesDone = null, { skip = null, cap = warmNewMaterials } = {}) {
+// progress(f): the share done for the load screen's meter (pv loadMeter), by the parts' measured times (WARM_SHARE)
+async function warmupRender(framesDone = null, { skip = null, cap = warmNewMaterials, progress = null } = {}) {
   if (warmed || !renderer || !worldScene) {
     framesDone?.();
+    progress?.(1);
     return;
   }
   warmed = true;
@@ -4303,10 +4322,13 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
           );
         await nextFrame();
         alive();
+        progress?.((WARM_SHARE.pre * step) / steps);
       }
       warmShadowLimit = Infinity;
       for (const o of skyMeshes) o.visible = true;
     }
+    performance.mark('warm:pre');
+    progress?.(WARM_SHARE.pre);
     const built = new Set(),
       variant = (o) =>
         `${Array.isArray(o.material) ? o.material.map((m) => m.id).join(',') : o.material?.id}|${o.isSkinnedMesh ? 1 : 0}|${o.isInstancedMesh ? 1 : 0}`;
@@ -4347,6 +4369,7 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
           )
         );
       for (const o of slice) o.visible = false;
+      progress?.(WARM_SHARE.pre + ((WARM_SHARE.slices - WARM_SHARE.pre) * i) / drawables.length);
     }
     for (const o of drawables) o.visible = true;
     // then the whole scene together (draw-order and pass combinations)
@@ -4369,7 +4392,9 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       const now = pipelineCount();
       quiet = now === last ? quiet + 1 : 0;
       last = now;
+      progress?.(WARM_SHARE.slices + ((WARM_SHARE.frames - WARM_SHARE.slices) * (n + 1)) / 30);
     }
+    progress?.(WARM_SHARE.frames);
     worldScene.userData.releaseGeometryArrays?.();
     worldScene.userData.releaseGeometryArrays = null;
     worldScene.userData.releaseGpuCopies?.({ geometry: false });
@@ -4406,6 +4431,9 @@ const gpuIdle = () => {
   const q = renderer?.backend?.device?.queue;
   return q ? Promise.race([q.onSubmittedWorkDone().catch(() => {}), new Promise((r) => setTimeout(r, 30000))]) : Promise.resolve();
 };
+// pv loadMeter: where each part of the warm-up ends, as a share of its time (measured, docs/loading-screen.md "The honest meter"):
+// the post passes / sky / shadow / vertex-buffer steps, the slices, the whole-scene frames; the GPU wait is the rest
+const WARM_SHARE = { pre: 0.1, slices: 0.85, frames: 0.97 };
 // per warm-up frame: drawables revealed, new material variants built
 const warmSlice = 60,
   warmNewMaterials = 3;
@@ -4618,13 +4646,22 @@ async function switchCourse(job) {
       ui.loading.cancel?.();
       ui.loading.open();
     }
+    // pv loadMeter: the world load's stages (an event load after it plans its own over what is left)
+    const rideStage = pv('rideWarm') && next.freeRide && after === 'autostart',
+      worldStage = pv('worldWarm') && next.freeRide && after === 'autostart' && !params.has('peakMode'),
+      gcStage = pv('switchGC') && isJavaScriptCore();
+    ui.loading.plan(['unload', 'course', ...(rideStage ? ['ride'] : []), ...(worldStage ? ['world'] : []), ...(gcStage ? ['gc'] : [])]);
+    ui.loading.begin('unload');
     const released = await unloadCourse(),
       t1 = performance.now();
+    ui.loading.done('unload');
     // the held draw hides what the new course adds (renderAcross): only what is still in the scene matters; the released course's objects
     // were kept, and through their closures its core, until the new course went live (WebKit: its 128 MB wasm memory resident beside the
     // new core's through the whole load, docs/mobile.md "Load spikes")
     if (acrossBefore) acrossBefore = new Set(scene.children.filter((o) => acrossBefore.has(o)));
+    ui.loading.begin('course');
     await loadCourse(next);
+    ui.loading.done('course');
     loadedKey = job.key;
     const t2 = performance.now();
     // the boot model is RIDER_SAM on the course's initial settings (as on a first load); the chosen rider loads with the event
@@ -4634,17 +4671,25 @@ async function switchCourse(job) {
     // the ride's rider under the load screen
     const rideJob =
       pv('rideWarm') && next.freeRide && after === 'autostart' && switchTarget === job
-        ? warmRideRider().catch((e) => console.warn('Ride rider warm-up failed', e))
+        ? warmRideRider()
+            .catch((e) => console.warn('Ride rider warm-up failed', e))
+            .finally(() => ui.loading.done('ride'))
         : null;
+    if (rideJob) ui.loading.begin('ride');
     // pv worldWarm: the world's pipelines before the ride starts (its compiles alongside the rider's)
-    if (pv('worldWarm') && next.freeRide && after === 'autostart' && !params.has('peakMode') && switchTarget === job)
+    if (pv('worldWarm') && next.freeRide && after === 'autostart' && !params.has('peakMode') && switchTarget === job) {
+      ui.loading.begin('world');
       await warmWorld(job, rideJob).catch((e) => console.warn('World warm-up failed', e));
+    }
+    ui.loading.done('world');
     await rideJob;
     // pv switchGC (web/switch-gc.js): one full collection before the ride / event starts, under the load screen
     if (pv('switchGC') && isJavaScriptCore() && switchTarget === job) {
+      ui.loading.begin('gc');
       const r = await collectNow();
       window.__switchGC = [...(window.__switchGC || []).slice(-19), { after: job.key, ...r }];
     }
+    ui.loading.done('gc');
     ready = true;
     ui.ready = true;
     ui.sync();
@@ -4868,6 +4913,8 @@ async function compileFor(list, sides = false) {
 // terrain sparkle, rider shadows, the post passes): behind the opaque load screen the race warm-up's frames with the locations left as they
 // are (skip); under the Transport's visible held loop (load screen world mode) a compile of those objects only, no frame. The simulation is
 // not touched (nothing ticks).
+// pv loadMeter: the compiles' share of warmWorld's time (measured, docs/loading-screen.md "The honest meter"); the warm-up's frames are the rest
+const WORLD_WARM_SHARE = 0.6;
 async function warmWorld(job, riderReady = null) {
   const gen = courseGen,
     mine = () => gen === courseGen && switchTarget === job,
@@ -4897,14 +4944,21 @@ async function warmWorld(job, riderReady = null) {
     for (let i = 0; i < rest.length; i += per) pre.push(compileFor(rest.slice(i, i + per), !shown));
     // the start row's part (web/free-ride.js rewarm)
     const rw = freeRide?.rewarmLead ?? worldRewarm;
+    // pv loadMeter: the compiles' share of the world stage counts up as they settle
+    let settled = 0;
+    const calls = [rw, ...pre].filter((p) => p?.then);
+    for (const p of calls)
+      p.finally(() => ui.loading.step('world', (WORLD_WARM_SHARE * ++settled) / calls.length)).catch(() => {});
     await Promise.race([Promise.all([rw, ...pre]), new Promise((r) => setTimeout(r, 30000))]);
     await riderReady;
     if (!mine()) return;
+    ui.loading.step('world', WORLD_WARM_SHARE);
     const t1 = performance.now();
     // behind the opaque load screen: the race warm-up's frames for what only a draw builds (the sky pass, post passes, rider shadows, the
     // encoded effects, a two-pass material's BackSide render object); the locations are left as they are (skip: their rewarm compiled every
     // pass, the DoubleSide one included)
-    if (!shown) await warmupRender(null, { skip: isLoc, cap: warmSlice });
+    const progress = (f) => ui.loading.step('world', WORLD_WARM_SHARE + (1 - WORLD_WARM_SHARE) * f);
+    if (!shown) await warmupRender(null, { skip: isLoc, cap: warmSlice, progress });
     else await gpuIdle();
     try {
       performance.measure('world:rewarm', { start: t0, end: t1 });

@@ -107,8 +107,10 @@ static OriginalBoardPressAccess bp_access(OriginalBoardPressRider& r){
  a.crouchBrake=[](float crouch,float brake){groundCrouchBrakeTargets(physicsState.crouch,physicsState.brake,crouch,brake,0,physicsState.turn.current);};
  a.turnTarget=[](float turn){groundTurnTarget(physicsState.turn,turn,physicsState.velocity,physicsProfile.surface.id);};
  a.railTurn=[](float balance){auto view=rail_view();originalRailSteerTarget(view,balance);rail_apply(view);}; //0x113F38
- a.upperReactions=[](){ //0x115B58 (no opponent events) then 0x115D48
+ a.upperReactions=[](){ //0x115B58 then 0x115D48
   ControllerDraws controllerDraws; // controller-phase draws (pass 121068)
+  // 0x12FDF4: 115B58 plays a pending reaction first (a crash get-up's 314 into a press: PS2 hl-ai-9 1265, its 311710 variant draw)
+  upper_request_play();
   OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick+1,riderMask8C0,riderMask8D0};
   auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);};
  return a;

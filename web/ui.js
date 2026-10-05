@@ -303,9 +303,19 @@ export class OriginalUI {
     // then the event's intro cutscene (world state 10 -> 1, web/cutscenes.js): scripts and actor models load under the load screen, from
     // the end of the warm-up's frames (its GPU wait runs alongside, docs/firefox-load.md)
     const intro = this.cb.introPrepare
-      ? frames.then(() => this.cb.introPrepare()).catch((e) => console.warn('Intro cutscene prep failed', e))
+      ? frames
+          .then(() => {
+            this.loading.begin('intro');
+            return this.cb.introPrepare();
+          })
+          .catch((e) => console.warn('Intro cutscene prep failed', e))
+          .finally(() => this.loading.done('intro'))
       : null;
     this.loading.run(this.cb.intro ? () => this.cb.intro(next) : next, [...work, warm, intro].filter(Boolean));
+    // pv loadMeter: the event load's stages (main.js cb.loadStages: the course still loading, the rider, the lineup, the warm-up), then
+    // the intro's preparation
+    const stages = this.cb.loadStages?.() ?? ['rider', 'lineup', 'warm'];
+    this.loading.plan(intro ? [...stages, 'intro'] : stages);
   }
   get rider() {
     return this.riders[this.riderIndex] || { name: 'Sam', card: [], bio: '' };

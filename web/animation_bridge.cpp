@@ -788,15 +788,20 @@ static void select_ground_animation(bool jumpHeld,float turn,float charge,float 
 // channel-1 class and the stance of before the turn (c0a-ws13 Allegra 9368: the turn's clip reset +0x35C a tick early in the port).
 // core.cpp calls browser_ground_upper_reactions ahead of its reverse-turn check; browser_ground_controller_animation runs them otherwise.
 RIDER_LOCAL static bool groundUpperDone=false;
-static void ground_upper_reactions(int jumpHeld){
- //115B58 (131868) plays a pending 10E028 reaction on channel1 with the rider+8C8 mask, then 115D48.
- if(!jumpHeld&&upperRequest358&&upperRequestHeldTick!=int32_t(controllerGround.logicTick)){const int mainClass=graph.currentClass(2);
+// 115B58: plays a pending 10E028 reaction on channel 1 with the rider+8C8 mask. Called by control 0 (131620 at 0x131868) and
+// control 1 (12FC80 at 0x12FDF4, web/boardpress_gameplay.inc).
+static void upper_request_play(){
+ if(upperRequest358&&upperRequestHeldTick!=int32_t(controllerGround.logicTick)){const int mainClass=graph.currentClass(2);
   if(mainClass!=5&&graph.currentClass(1)==0&&mainClass!=10){const int32_t age=std::bit_cast<int32_t>(controllerGround.logicTick-uint32_t(upperRequestTick354));
    if(age>=0){if(age<180){const int kind=upperRequest358;if(kind==1||kind==2)audio_event(AE_TRICK_SPEECH,float(kind-1)); /*115C44/115C90: 29FF80(rider, 0 easy / 1 difficult)*/int semantic=kind>=1&&kind<=3?315:kind==4?314:(kind==5||kind==6)&&std::abs(physicsState.animationTurn.current)<.75f&&physicsState.controlState==0?318:-1;
      // 115CE0: kinds 5/6 (full meter, Tricky/Super Uber timer out) need 11FEE8 == 0 (control 0) and play 318 with the animator's
      // current mask (+0x20 = -1, all bones): only kinds 1..4 load the rider+0x8C8 mask (PS2 uber-super-expire 460).
      if(semantic>=0&&!graph.enter(semantic,-1,semantic==318?~uint64_t(0):riderMask8C8))throw std::runtime_error("Missing upper reaction request animation");}
-    upperRequest358=0;upperRequestTick354=-1;}}}
+    upperRequest358=0;upperRequestTick354=-1;}}
+}
+static void ground_upper_reactions(int jumpHeld){
+ //115B58 (131868), then 115D48.
+ if(!jumpHeld)upper_request_play();
  //115D48 runs at131870 before main-animation selection; both draw from the shared RNG.
  if(!jumpHeld){OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick+1,riderMask8C0,riderMask8D0};auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);}
 }

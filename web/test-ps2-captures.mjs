@@ -73,6 +73,13 @@ const cases = [
   { name: 'boardflex/bf-tech-land-mid', args: ['--zoe'], boardFlex: true, exactThrough: END, why: 'board flex: a jump and landing (all weights 0)' },
   { name: 'boardpress-railair', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'tail press in the air onto a rail: 106D9C (34, control 1), phase 1 on the rail, 12FFF8; 792 air instance contact' },
   { name: 'boardpress-railjump', args: ['--zoe'], boardPress: true, exactThrough: END, why: 'rail press then Cross: control 2 on the rail (245), jump off; 825 ground rail re-attach (108A48 with the 1211F8-approached +0x25C tolerance)' },
+  // High-level play (playtester report "flung in weird directions", docs/crash-motion.md "High-level play"): seeded aggressive pads
+  // (local/ps2-capture/hl-gen.py: tucked boosting, diagonal carves, charged jumps into long spins / flips / grabs held into the landing,
+  // re-jumps, presses, plants, punches), captured in local/ps2-capture/runs/hl (hl-capture.sh, --isolate).
+  { name: 'hl/hl-glide-3', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'Snow Jam glide, seed 3: 682 a tail press hits an object; 108388 cancels control 1 through 131348 and enters control 3 (the port stayed in the press and was pushed upward, 29 m off by the end); 1430 Cross + Square held through a passive departure keeps the boost in the air (12E9B8 0x12EB58 114130(BoostHeld, 0))' },
+  { name: 'hl/hl-sj-1', args: ['--zoe', '--event'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'Snow Jam race from the grid, seed 1: 2596 the first air tick after a charged release with Square runs control 5, which clears +0x2FC (not a control-0 ride-off)' },
+  { name: 'hl/hl-sj-2', args: ['--zoe', '--event'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'Snow Jam race from the grid, seed 2: 913 the same boost clear after a charged release into a flip + spin' },
+  { name: 'hl/hl-metro-4', args: ['--zoe', '--event'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'Metro-City race from the grid, seed 4: aggressive pads end to end' },
   // Left-stick air adjust (AirAdjRotLR/FB, control 5 0x133308): bonesThrough also requires all 24 body/board world
   // bones (cached +0x2C transforms, BONE_SCAN) to be bit-identical through that tick.
   { name: 'air-steer-lr', args: ['--zoe'], exactThrough: END, why: 'charged jumps holding the left stick left/right (air adjust past ~90 deg: 0x135BE0/0x114DB8 in-flight stance switch, 288), kind-11 adjust clips 297..304 fading out after landing' },

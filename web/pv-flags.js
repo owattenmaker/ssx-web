@@ -175,6 +175,10 @@
 // ring, and a drawn frame that runs several ticks gives each earlier tick the pad as of its own tick time, as the PS2's 30-slot pad
 // ring gives each catch-up update its own vblank's sample (0x326B88 / 0x326B48). The frame's last tick still reads the live pad. Off:
 // every tick of the frame reads the frame's one sample (at 40 fps about a third of the ticks repeat the tick before's pad).
+// loadMeter (load-screen agent, docs/loading-screen.md "The honest meter"; web/load-meter.js): the event load screen's percentage is the
+// load's own work (the course, the rider, the lineup, the warm-up's slices and frames, the intro's preparation; a world load's unload,
+// course build, ride rider and world warm), each weighted by its measured time, and the PS2 curve paces it over the 7 s minimum up to
+// 98%. 100% only when everything is done. Off: the PS2 curve over the minimum, then 98% until the work promises settle.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -194,7 +198,7 @@ export const PV_DEFAULTS = Object.freeze({
   ws13Rebuild: true,
   bcDecline: false,
   finishSkip: false,
-  finishHudHide: false,
+  finishHudHide: true,
   postEventDj: false,
   djVisited: false,
   djQueueRules: false,
@@ -218,11 +222,12 @@ export const PV_DEFAULTS = Object.freeze({
   careerRival: true,
   careerLevel: true,
   semiFresh: true,
-  boardFlex: false,
+  boardFlex: true,
   eventRiderWarm: true,
   tickLock: true,
-  setBlendClass: false,
-  padRing: false
+  setBlendClass: true,
+  padRing: false,
+  loadMeter: false
 });
 const overrides = new Map();
 function fromQuery() {
