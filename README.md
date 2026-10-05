@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/cover.webp" alt="SSX 3 web: a kid surfing the web on a keyboard snowboard" width="480">
+  <img src=".github/cover.webp" alt="SSX 3 web: a kid surfing the web on a keyboard snowboard">
 </p>
 
 # SSX 3 web
