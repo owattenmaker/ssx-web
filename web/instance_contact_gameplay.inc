@@ -14,7 +14,10 @@ void reseed_prediction(OriginalAirState);void begin_prediction(OriginalAirState)
 static float surface_landing_channel_time();static void surface_landing_award(float speed,const OriginalInstanceContactPacket& hit);
 static void surface_landing_boundary(bool stanceDiffers);static void surface_landing_control(int control);
 RIDER_LOCAL static unsigned instanceContactPasses=0,instanceContactResponses=0,instanceContactNotifications=0,instanceContactSoft=0,instanceContactIncomplete=0,instanceContactUnsupported=0;
-RIDER_LOCAL static unsigned railBodyContactNotifications=0;RIDER_LOCAL static int railBodyContactStage=0;RIDER_LOCAL static std::array<float,16> instanceContactLast{};RIDER_LOCAL static std::array<float,3> instanceContactVelocity{}; /*QA: rider velocity after the last 104E70 response*/RIDER_LOCAL static uint32_t instanceContactUnsupportedInstance=0;
+RIDER_LOCAL static unsigned railBodyContactNotifications=0;RIDER_LOCAL static int railBodyContactStage=0;
+// QA (instance_contact_info [26..36]): the last 106F78 pass's hips position, rail point and incoming velocity.
+RIDER_LOCAL static std::array<float,9> railBodyContactProbe{};
+RIDER_LOCAL static std::array<float,16> instanceContactLast{};RIDER_LOCAL static std::array<float,3> instanceContactVelocity{}; /*QA: rider velocity after the last 104E70 response*/RIDER_LOCAL static uint32_t instanceContactUnsupportedInstance=0;
 void collect_pickup_contact(const WorldBodyQuery&,uint32_t resource);
 RIDER_LOCAL extern std::optional<terrain_original::RiderScope> riderScope; // web/core.cpp (rider+0x860, 120E50 -> 332DB8)
 void stage_trigger_store(const OriginalInstanceContactPacket&,const OriginalInstanceContactRecord&); // web/stage_script_gameplay.inc (rider+A30 -> 121818)
@@ -82,7 +85,9 @@ static std::array<float,3> run_instance_contacts(BodyCollisionVolume& volume,std
   bh.steer=[&](const RailVector& n){if(actor.steer){OriginalInstanceContactPacket p;p.normal=contact_quad(n);actor.steer(p);}};
   bh.rebuild=[&]{if(actor.rebuild)actor.rebuild();};
   bh.notify=[&](const OriginalInstanceContactRecord& rec,int surface){++railBodyContactNotifications;*actor.velocity=rb.velocity;if(actor.notify)actor.notify(instance_contact_event(rec,surface));};
+  const auto incoming=rb.velocity;
   auto result=originalRailSnapContact(rb,bh,browser_rail_snap_hooks());railBodyContactStage=result.stage;
+  railBodyContactProbe={rb.hipsPosition[0],rb.hipsPosition[1],rb.hipsPosition[2],result.hit.point[0],result.hit.point[1],result.hit.point[2],incoming[0],incoming[1],incoming[2]};
    };
  host.store=[&](const OriginalInstanceContactPacket& p,const OriginalInstanceContactRecord& record){browser_set_piece_contact(p.instance);stage_trigger_store(p,record);if(!browser_scripted_contact(p,record))collect_pickup_contact(*query,p.instance);}; // rider+A30 -> 121818
  host.respond=[&](const OriginalInstanceContactPacket& hit,const OriginalInstanceContactRecord& record,float depth){
@@ -164,13 +169,17 @@ static std::array<float,3> run_rider_instance_contacts(BodyCollisionVolume& volu
  }
  return moved;
 }
-extern "C" EMSCRIPTEN_KEEPALIVE float* instance_contact_info(){RIDER_LOCAL static float v[26];for(unsigned k=0;k<3;k++)v[23+k]=instanceContactVelocity[k]; /*[23..25] velocity after the last response*/v[0]=instanceContactPasses;v[1]=instanceContactResponses;v[2]=instanceContactNotifications;v[3]=instanceContactSoft;v[4]=instanceContactIncomplete;v[5]=instanceContactUnsupported;for(unsigned i=0;i<16;i++)v[6+i]=instanceContactLast[i];v[22]=float(instanceContactUnsupportedInstance);return v;}
+extern "C" EMSCRIPTEN_KEEPALIVE float* instance_contact_info(){RIDER_LOCAL static float v[37];
+ // [26] 106F78 notifications, [27] its last stage, [28..30] the hips position it used, [31..33] the rail point, [34..36] the velocity
+ v[26]=float(railBodyContactNotifications);v[27]=float(railBodyContactStage);for(unsigned k=0;k<9;k++)v[28+k]=railBodyContactProbe[k];
+for(unsigned k=0;k<3;k++)v[23+k]=instanceContactVelocity[k]; /*[23..25] velocity after the last response*/v[0]=instanceContactPasses;v[1]=instanceContactResponses;v[2]=instanceContactNotifications;v[3]=instanceContactSoft;v[4]=instanceContactIncomplete;v[5]=instanceContactUnsupported;for(unsigned i=0;i<16;i++)v[6+i]=instanceContactLast[i];v[22]=float(instanceContactUnsupportedInstance);return v;}
 // Crash motion 2 (137860 airborne / 138640 sliding): owner+0x30 is the submode.
-static void crash_instance_contacts(BodyCollisionVolume& volume,const std::function<void(std::array<float,3>)>& translate){
- BrowserInstanceActor actor;actor.motion=2;actor.controlState=8;actor.ownerWord30=crash.motion.submode;
+// The rider as the ragdoll (motion 2; owner+0x30 the submode): 105398's actor for 137860 / 138640, and for 139C88's 105398 after a
+// landing crash earlier in the same post stage (crash_post_instance_contacts).
+static void crash_contact_actor(BrowserInstanceActor& actor){
+ actor.motion=2;actor.controlState=8;actor.ownerWord30=crash.motion.submode;
  actor.position=&crash.actor.position;actor.velocity=&crash.actor.velocity;actor.quaternion=&crash.actor.quaternion;
  actor.groundNormal=crash.actor.groundNormal;actor.presentationUp=physicsState.presentationUp;
- actor.translate=[&](const std::array<float,3>& d){translate(d);};
  actor.rebuild=[&]{crash.actor.quaternion=originalRebuildOrientation(crash.actor.quaternion).quaternion;};
  actor.notify=[&](const OriginalCollisionEvent& event){
   OriginalCollisionContext context;context.motionMode=2;context.controlState=8;context.ragdollSubmode=crash.motion.submode;context.velocityCmps=crash.actor.velocity;
@@ -178,8 +187,40 @@ static void crash_instance_contacts(BodyCollisionVolume& volume,const std::funct
   if(reaction.kind==OriginalCollisionReactionKind::SurfaceReset)crash.host.requestReset(1);
   else if(reaction.kind==OriginalCollisionReactionKind::RagdollImpact){crash.control.impactPending54=1;crash.control.impactVelocity60=crash.actor.velocity;if(reaction.resetPredictor)crash.beginPredictor(physicsProfile.speedLimit);} //105D98 -> 1135B8(rider+788,pos,vel,rider+2E4): full restart (metro-mix-glide 719)
  };
+}
+static void crash_instance_contacts(BodyCollisionVolume& volume,const std::function<void(std::array<float,3>)>& translate){
+ BrowserInstanceActor actor;crash_contact_actor(actor);
+ actor.translate=[&](const std::array<float,3>& d){translate(d);};
  // 108388 ignores motion 2 (its grounded gate), so the soft path has no effect here.
  advance_pickup_timers(motionTick);instanceContactTickShared=motionTick; // same post-pose tick as the ground/air phase
  run_instance_contacts(volume,{},nullptr,actor);
+}
+// 139C88 after a landing crash in this post stage (crashInPost, web/animation_bridge.cpp): 10EB30 has switched the motion to 2, so its
+// 105398 (106F78 first) runs with the rider as the ragdoll, on the same +0x110 / +0x1E0 the crash flight then integrates. 105D98
+// dispatches a ragdoll impact (+0x54, +0x60) and restarts the crash predictor from the pushed state (PS2 hl2/uber-rail-6 1027: a
+// 106F78 rail contact after a landing crash; the port kept the predictor and the crash actor from before the push and impulse).
+// The query offset, caller direction and +0x9D0 stay the air post's.
+static std::array<float,3> crash_post_instance_contacts(BodyCollisionVolume& volume,std::array<float,3> queryOffset,const std::array<float,3>* callerDirection){
+ crash.actor.position=physicsState.position;
+ crash.actor.velocity=physicsState.velocity;
+ BrowserInstanceActor actor;crash_contact_actor(actor);
+ actor.translate=[&](const std::array<float,3>& d){
+  terrain_original::Rounding rounding;
+  for(unsigned k=0;k<3;k++){
+   instancePendingTranslation[k]=terrain_original::add(instancePendingTranslation[k],d[k]);
+   volume.broadCenterCm[k]=terrain_original::add(volume.broadCenterCm[k],d[k]);
+   for(unsigned i=0;i<volume.count;i++)volume.spheres[i].centerCm[k]=terrain_original::add(volume.spheres[i].centerCm[k],d[k]);
+  }
+ };
+ actor.offset9D0=queryOffset;
+ if(browserBodyResponse&&browserBodyResponse->accepted){
+  terrain_original::Rounding rounding;
+  for(unsigned k=0;k<3;k++)actor.offset9D0[k]=terrain_original::add(actor.offset9D0[k],browserBodyResponse->translationCm[k]);
+ }
+ auto moved=run_instance_contacts(volume,queryOffset,callerDirection,actor);
+ instancePendingTranslation={};
+ publish_crash_actor(crash.actor,crash.motion.submode);
+ sync_crash_prediction(crash.trajectory,{crash.actor.position,crash.actor.velocity},crash.motion.submode==1);
+ return moved;
 }
 // crash.host.instanceContacts=crash_instance_contacts: registered per rider context by rider_statics_animation (web/animation_bridge.cpp)

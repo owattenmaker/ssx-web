@@ -68,6 +68,16 @@ const humanBytes = await (async () => {
 })();
 core._init_animation(str('ANIMATIONS/animation-packets.json'), str(rider + '/rider.json'), put(Buffer.concat([humanBytes, Buffer.from([0])])), put(read('ANIMATIONS/animation-packets.bin')), read('ANIMATIONS/animation-packets.bin').length);
 core._init_race(humanPackage ? put(Buffer.concat([humanBytes, Buffer.from([0])])) : str(initialPath));
+// --human on a course with lineups.json: the human's own grid spot there (web/lineup.js humanGridState, as web/ai-race.js humanGrid
+// installs it); a course without one carries the Snow Jam state over (web/animation_bridge.cpp human_event_seed_for_course).
+if (humanPackage && course !== 'ARA1' && fs.existsSync(new URL(course + '/lineups.json', root))) {
+  const { humanGridState } = await import('./lineup.js');
+  const roster = json('riders.json');
+  const entry = roster.find((r) => r.package === humanPackage);
+  const baseEntry = entry.kind === 'cheat' ? roster.find((r) => r.package === (basePackage || 'RIDER_ZOE')) : entry;
+  const grid = humanGridState(json(course + '/lineups.json'), entry, baseEntry.character);
+  if (grid) core._human_grid_seed(put(Buffer.from(JSON.stringify(grid) + '\0')));
+}
 core._animation_use_physics(1);
 // --course PEAK1 (a free-ride / peak-run capture on the streamed Peak 1 world, web/peak-capture.mjs): every Peak 1
 // location is loaded after the records are read (below) and the capture's streaming rows drive the residency.

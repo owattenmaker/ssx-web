@@ -73,7 +73,9 @@ static OriginalBoardPressAccess bp_access(OriginalBoardPressRider& r){
   bp_apply(r);auto reverse=originalReverseTurn(physicsState,physicsState.balance280);
   if(reverse.reversed){++reverseTurnSerial;reverse_roots(reverse.animationRootQuaternion);publish_motion();}
   r=bp_view();return reverse.reversed;};
- a.stanceRoot=[](const HandplantQuad& q,int32_t mirror){graph.defaultRoot={};graph.defaultRoot.rotation=q;graph.defaultMirror=mirror!=0;};
+ // 12FEC8 flips +0x320 in the controller (a pivot finalised by 131428, e.g. an R3 ollie out of a pivoted press): 1211F8's 120378 reads
+ // the flipped stance (PS2 hl2/rail-cra3-s2b 1320: the hair request 415, the port's stale stance chose 412).
+ a.stanceRoot=[](const HandplantQuad& q,int32_t mirror){graph.defaultRoot={};graph.defaultRoot.rotation=q;graph.defaultMirror=mirror!=0;browser_controller_stance(mirror!=0);};
  a.jumpTakeoff=[&r](){bp_apply(r);if(browserRailActive)rail_controller_takeoff(1.f);else browser_controller_takeoff(1.f);r=bp_view();};
  a.ollieEvent=[](){++bpOllies;};
  a.rumble=[](){++bpRumbles;audio_event(AE_WHOOH);}; /*1310C0: depth +0x274 > 0.8 -> 2A1560 Whooh speech*/
@@ -97,7 +99,14 @@ static OriginalBoardPressAccess bp_access(OriginalBoardPressRider& r){
    if(semantic<0||!graph.enter(semantic))throw std::runtime_error("Missing rail crouch entry");return;}
   if(next==5){ //0x133128 air control enter; its first update runs next tick
    bpAirTransition=true;passiveMode=heldAirMode=false;passiveDeparture=0;grab={};air=originalAirControlBegin(prewind.spin.current,prewind.flip.current);
-  }else if(next!=0&&next!=2)throw std::runtime_error("Unexpected board-press control request");
+  }else if(next==2){
+   // 11FEC8(2) runs control 2's entry 12E980: +0x200 = gp-0x7794 (1/30), +0x204 = 0; 1211F8 approaches +0x1FC this tick. bp_leave already
+   // set control 2, so select_ground_animation's entry branch does not run (PS2 hl2/rail-dss2-s1 1422: a press into a held Cross).
+   for(auto* value:{&physicsState.animationTurn,&gs.animationTurn}){
+    value->target=0;
+    value->rate=std::bit_cast<float>(0x3d088889u);
+   }
+  }else if(next!=0)throw std::runtime_error("Unexpected board-press control request");
  };
  // 0x12FC80 shared cruise helpers.
  a.statusCheck=[](){return false;}; //0x116378: +0x470 finish state is not modelled (cruise skips it too)

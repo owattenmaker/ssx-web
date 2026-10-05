@@ -190,6 +190,10 @@ RIDER_LOCAL void (*browserRailTickBegin)()=nullptr; // clears the rail step's pe
 RIDER_LOCAL bool browserRailJumpRelease=false;
 // the rail controller (control 7) ran this tick's 114130 and then handed the tick to the air (web/rail_gameplay.inc Stop::Airborne)
 RIDER_LOCAL bool browserRailControllerRan=false;
+// The +0x28C / +0x298 values before this tick's presentation-filter pass (1211F8), for the first 133308 air-animation tick
+// (web/animation_bridge.cpp): its own 1211F8 approach after the new targets is the tick's only one.
+RIDER_LOCAL bool browserAdjustFiltersApproached=false;
+RIDER_LOCAL GroundControlValue browserAdjustBefore28C{},browserAdjustBefore298{};
 RIDER_LOCAL bool browserRailActive=false;RIDER_LOCAL bool browserRailBoostTicked=false; // the rail step ran this tick's 114130 / 1200D0 and handed the tick back (web/rail_gameplay.inc)
 RIDER_LOCAL bool (*browserRailStep)(float,int,int,int)=nullptr;RIDER_LOCAL void (*browserRailReset)()=nullptr;
 // Handplant control11/motion5 (web/handplant_gameplay.inc): runs before rail attach; a failed cruise attempt edits the cruise inputs and skips 0x106848.
@@ -793,6 +797,9 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  railStepConsumed=false; // the rail motion (motion 4) owned this tick, including the tick it loses the rail
  browserRailBoostTicked=false;
  if(browserRailStep&&!browserCrashExitFrame&&!handplantSkipsRail&&!attackHoldsAir&&browserRailStep(steering,jump,brake,boost)){railStepConsumed=true;++motionTick;distanceRun+=std::hypot(position.x-old.x,position.z-old.z);publish_motion();return output;}
+ // 1211F8 approaches the rail triplets +0x22C / +0x238 / +0x25C every tick, also when 12F730 returned early for an attack hold
+ // (12F7AC): a fading rail cycle 18..20 keeps reading +0x238 (PS2 hl2/rail-rnb-s1 739: L1+R1 held after leaving the rail).
+ if(attackHoldsAir&&browserRailStep&&!browserCrashExitFrame&&!handplantSkipsRail)browser_rail_idle_approach();
  browserBoardPressFrame=(browserFinishStep&&!browserCrashExitFrame&&!attackHoldsAir&&browserFinishStep()!=0)||(browserBoardPressStep&&!browserCrashExitFrame&&!attackHoldsAir&&browserBoardPressStep()!=0); /*control 10 also owns the controller slot*/ //0x1161D0 entry or 0x12FC80 (runs its own 0x114130)
  if(browserBoardPressFrame&&browserCrashActive){ //0x130DD0 -> 0x10EB30 crash in the controller slot: 0x1200D0, 0x1211F8, then motion 2 this tick
   browser_boost_tick(boostState,boostProfile,physicsState.timeScale,2,8);physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;physicsState.boostTierCounter=boostState.tier;
@@ -819,7 +826,13 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  }
  // Original1211F8 also advances presentation triplets once per tick.
  const bool chargedRelease=grounded&&held&&!jump&&!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame;
- auto advancePresentationFilters=[&](){for(auto* value:{&physicsState.presentationLift,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll,&physicsState.adjustment28C,&physicsState.adjustment298})groundControlApproach(*value);};
+ auto advancePresentationFilters=[&](){
+  browserAdjustBefore28C=physicsState.adjustment28C;
+  browserAdjustBefore298=physicsState.adjustment298;
+  browserAdjustFiltersApproached=true;
+  for(auto* value:{&physicsState.presentationLift,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll,&physicsState.adjustment28C,&physicsState.adjustment298})groundControlApproach(*value);
+ };
+ browserAdjustFiltersApproached=false;
  if(!chargedRelease)advancePresentationFilters();
  // 114130 controller dispatch precedes the 1200D0 timer stage. Cruise
  // jump-entry and crouch-release return before boost dispatch; airborne

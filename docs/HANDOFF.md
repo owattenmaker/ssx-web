@@ -1,3 +1,45 @@
+> **Deployed 2026-10-05 (coordinator): core16.** web/runtime core.wasm `ddc35182…` (core.js `920f941b…`) copied from local/physics-jank/core16 (465 clean): core15 plus 139C88's 105398 after a landing crash running as the ragdoll (uber-rail-6) and the rider-parity agent's 120378 rail-attach stance line (riders/canhuck-race). Gates hl2/uber-rail-6 and riders/canhuck-race can now go to END.
+
+> **Deployed 2026-10-05 (coordinator): core15.** web/runtime core.wasm `aecaf756…` (core.js `920f941b…`) copied from local/physics-jank/core15 (403 clean): 10EB30 clears +0x330 at crash entry; motion 1's landing 13A7B0 runs in control 7 after a rail loss; the rail-loss tick runs no air post; no second boost stop in a tick the rail controller or 12F730's attack hold already handled. 93 hl2 gates and 62 riders/* gates (every roster rider as the human; the rider-parity agent). Core16 (the crash-entry 105398 as the ragdoll, Canhuck's 120378 stance line) follows.
+
+> **Move-family coverage, batch 2: 46 more branch captures; core15 to install, core16 in test (2026-10-05, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Move-family coverage".
+> - **Captures:** the 11 lodge Uber rows with the full meter, Ubers off rails, rails (fences, slides, ice and event peaks, hard balance, side switches), presses and carves on ice and powder, crashes and resets, plants, attacks among the computer riders. 41 of 46 are exact to the end on core15.
+> - **Fixes in core15 (after core12):**
+>   - 10EB30 clears +0x330 at crash entry (rail-fence-b 811);
+>   - motion 1's landing also runs in control 7 after a rail loss, with 132048 first (uber-rail-10 2339);
+>   - the tick the rail motion loses the rail runs no air post (no landing, no contacts: rail-bra2-a 1760, carve-powder-cba2);
+>   - no second boost stop in a tick where the rail controller already ran 114130, or 12F730 returned early for an attack hold (rail-rnb-s1b, uber-row8).
+> - **Gates:** 46 new `ps2-captures hl2/*` lines (43 human, 3 among the computer riders); rail-bra2-a raised to END. 93 hl2 gates in all.
+> - **Core** local/physics-jank/core15: wasm `aecaf756…`, js `920f941b…`. Full ps2-captures on it: 403 scenarios clean. Install by copying its files.
+> - **core16 (in test):** after a landing crash in 139C88, its 105398 (106F78 rail contact first) runs with the rider as the ragdoll. The push and impulse land on the crash actor, and 105D98 restarts the crash predictor from the pushed state. The port used to keep the crash predictor from before them (uber-rail-6 1028, now exact to the end). core16 also carries the rider-parity agent's 120378 stance line (web/rail_gameplay.inc).
+> - **QA:** core `instance_contact_info` [26..36] reports the last 106F78 pass: notifications, stage, hips, rail point, incoming velocity.
+> - **Open, gated short:**
+>   - air-eba3 823;
+>   - attack-bra2 756 and attack-bra2-b 1232 (the computer riders after attacks);
+>   - rail-rnb-s1 741 (a landing off a rail with the L1+R1 block held);
+>   - bones only: plant-pipe-a 901, press-ice-cra3 4963, rail-cra3-s2b 1321, rail-dss2-s1 1422, uber-rail-3 959, uber-row6 854.
+
+> **Every roster rider against the PS2: 62 new gates, one core line (2026-10-05, rider-parity agent; core line in the tree, rides in the physics agent's next build):** see [characters.md](characters.md) "Every rider against the PS2".
+> - **Inventory:** every human gate in test-ps2-captures.mjs was Zoe, including all aiCases, careerrival and ctm-events. Other humans were only checked idle on the grid (test-lineups held-out captures: Psymon, Moby, Stretch, Kaori, Viggo, Allegra, Brodi on Psymon). nonzoe/junction-mac, lineups-ASS1 and the boardflex Stretch glides were not gated.
+> - **Stretch "from tick 1":** comparer-side only.
+>   - `compare-ps2-capture.mjs --human` without `--event` seeds Zoe's glide (39.4 cm from Stretch's glide.p2s).
+>   - BONE_SCAN mapped every rig with Zoe's eye-bone rule. It now uses the package's `rider.json source_bone_slots`, and Zoe's mapping is unchanged.
+>   - From Stretch's own countdown he was exact on the first capture.
+> - **Captures:** `local/ps2-capture/riders-capture.sh ID race|hl|uber [ai]` produced 30 riders plus Brodi on Psymon, from their own derived countdowns, isolated (runs/riders).
+> - **Fix (web/rail_gameplay.inc):** after a rail attach, 120378 reads the post-attach rider+0x320 (0x12051C / 0x1207DC / 0x120A9C). Canhuck's tail channel picked 429 instead of 428 at riders/canhuck-race 2119. Zoe never enables that channel.
+> - **RNG order:** hiro-hl / marty-hl (scale 0.75) needed rng-order.json sidecars (a computer rider draws after the crash variant). No core change.
+> - **Comparer:** `--base RIDER_Y` composes a cheat skin on its base.
+> - **Gates:** `ps2-captures riders/<id>-race|hl`, 62 cases: physics, bones, score and boost to the end.
+>   - riders/canhuck-race has bones through 2118 until a core with the stance line is live. Raise it to END then (RIDER_BONES_THROUGH in test-ps2-captures.mjs).
+> - **Builds:**
+>   - Scratch core local/rider-parity/core (the tree: core15's sources plus the line), core.wasm `92253d29…`, core.js `920f941b…`. Full test-ps2-captures on it: 403 + 62 clean.
+>   - All 62 rider gates also pass on the live core12 (`f37f278f…`).
+> - **Open:**
+>   - per-character Uber tables (the riders-uber runs reach few Ubers);
+>   - Conquer the Mountain's skin-scale rule;
+>   - non-Snow-Jam courses for non-Zoe humans;
+>   - Zoe: riders/zoe-uber is 1 ulp off in the hips at 3353 after a handplant exit, passed to the physics agent.
+
 > **Deployed 2026-10-05 (coordinator): core12 (move-family physics fixes) and Stretch's SpecialA morph.** web/runtime core.wasm `f37f278f…` (core.js `920f941b…`) copied from local/physics-jank/core12 (309 clean + 47 new hl2/* gates on this build): rail jump release keeps the boost a tick, held Cross after a rail steers the rail triplet, a collision crash in a press runs 12FE98 first, surface landings get the right stance, 12EE30 plays the release clip unforced, a press leaving the ground approaches the turn once, rail / handplant queries see only the scope list (loose octree cells). Assets: local/board-flex/export3 copied (RIDER_STRETCH/special-morphs.{json,bin} new; the board / hand jsons gain slot_bit fields). The tree's C++ already holds core13 candidates, so core12 was installed by copying, not rebuilt.
 
 > **Animation channel audit; the board bends in Ubers and tweaks; Stretch's SpecialA (2026-10-05, playtester-bugs agent; pv `boardFlex`):** see [characters.md](characters.md) "Animation channel audit".

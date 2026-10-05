@@ -256,6 +256,9 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
  }
  if(!browserRailActive&&uberControlFrame){for(auto* control:{&view.steer22C,&view.balance,&view.tolerance25C})groundControlApproach(*control);rail_apply(view);return false;}
  browser_controller_takeoff_wind(view.velocity); //1211F8 -> 120378 reads +0x1E0 after the controller (a 106848 attach bake this tick)
+ // 120378 reads +0x320 after the controller too (0x12051C / 0x1207DC / 0x120A9C): a 106848 attach switches the stance first
+ // (runs/riders/canhuck-race 2119: Canhuck's tail channel +0x9A0 picks 428 with the attach stance, 429 with the old one).
+ browser_controller_stance(view.reverseStance);
  railPreviousJump=jump;browser_boost_tick(boostState,boostProfile,physicsState.timeScale,browserRailActive?4:1,physicsState.controlState);view.boost=physicsState.boost=boostState.amount;physicsState.boostWindow=boostState.window;physicsState.boostTierCounter=boostState.tier;boostHeld=boost;
  for(auto* control:{&view.turn,&view.animationTurn,&view.extraLean,&view.brake,&view.crouch,&view.steer22C,&view.balance,&view.presentationRoll,&view.tolerance25C,&view.balance280})groundControlApproach(*control);
  for(auto* control:{&physicsState.adjustment28C,&physicsState.adjustment298,&physicsState.boardAlignment,&physicsState.presentationLift})groundControlApproach(*control); //1211F8 approaches every triplet (+0x28C/+0x298/+0x2BC/+0x2C8 too)

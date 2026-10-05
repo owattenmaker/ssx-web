@@ -1525,6 +1525,44 @@ when rider+0xB1C is set (hidden / LOD 2). Sources: Snow Jam Zoe's geometry, Stre
     - Board, hands and SpecialA weights are bit-exact for 1599 ticks; SpecialA's peak is 1.063.
   - SpecialA is a 6 cm part on bone 26 (speciala) that moves up to 7.6 cm, only during that Uber.
 
+## Every rider against the PS2 (2026-10-05, rider-parity agent)
+
+Before this, every human gate in test-ps2-captures.mjs rode Zoe. Other humans were only checked idle on the grid (test-lineups.mjs
+held-out captures: 900 ticks without input).
+
+- **Captures** (`local/ps2-capture/riders-capture.sh ID KIND [ai]`, into `local/ps2-capture/runs/riders/`):
+  - each rider's own derived Snow Jam countdown (`local/reference/pcsx2/characters/<id>/countdown.p2s`, fresh-profile attributes, raw 5);
+  - `--isolate`, silent, with `SSX3_CAPTURE_DERIVED=1` (the heap addresses differ from the audited anchor);
+  - `race`: the event-race pad (2205 frames: carves, jumps, tricks, crashes, rails);
+  - `hl`: the hl/hl-sj-1 high-level pad (2683 frames);
+  - `uber`: an Uber pad with the meter poked (scripts/riders-uber.json), not gated;
+  - `ai`: an --ai-state re-run whose `rng-order.json` sidecar orders the shared-RNG draws for `--sync-rng`.
+- **Riders:** the ten base riders, the twenty cheat skins (on Zoe, as their states are) and Brodi on Psymon (a skin on a goofy base).
+  Sam is the port's own rider and has no PS2 state.
+- **Comparer** (`web/compare-ps2-capture.mjs --event --human RIDER_X [--base RIDER_Y]`): the page's setup (character-roster.js
+  humanSettings / composeCheat, the rider's rig and grid seed).
+  - BONE_SCAN maps compiled bone b to the PS2 slot `rider.json source_bone_slots[b]`. Zoe skips her eye bones 24 / 25. Stretch has
+    none, so his bones 24..26 sit in slots 24..26. Moby's tshirt sits in 29 / 30.
+  - Without `--event`, `--human` has no glide seed of its own: it seeds Zoe's glide (ANIMATIONS/initial.json), 39.4 cm from Stretch's
+    glide.p2s on record 0. That was the "Stretch diverges from tick 1" report, together with the Zoe-only bone mapping. It was not physics.
+- **Result:** physics, all bones, score and boost exact to the end for every rider on both pads, after:
+  - **Rail attach stance into 120378** (web/rail_gameplay.inc): 1211F8's 120378 reads rider+0x320 after the controller (0x12051C /
+    0x1207DC / 0x120A9C), when 106848's attach has already switched it.
+    - Evidence: Canhuck's tail channel (+0x9A0, bone +0x89C = hips) picks 428 on the PS2 and 429 in the port at the attach
+      (riders/canhuck-race 2119).
+    - Recomputing the selection from the PS2 record's own inputs gives 428 only with the post-attach +0x320 = 0 and the rail velocity.
+    - Zoe never enables that channel, so no Zoe gate could see it.
+  - **Shared-RNG order** (hiro-hl / marty-hl, the two 0.75 riders, 752): a computer rider draws after the human's crash variant draw. The
+    count rule deferred the human's draw. Their rng-order.json files fix it; nothing changed in the core.
+- **Gates:** `ps2-captures riders/<id>-race` and `riders/<id>-hl`, 62 cases, all to the end. riders/canhuck-race gates bones through
+  2118 until a core with the stance line is live (END on local/rider-parity/core).
+- **Not covered:**
+  - each character's own Uber table (the riders-uber runs reach few Ubers);
+  - Conquer the Mountain's base-scale rule for skins (no career state with a skin);
+  - courses other than Snow Jam for non-Zoe humans (the grid seed on other courses comes from lineups.json).
+- **Seen in passing (Zoe, not character-specific):** riders/zoe-uber leaves by 1 ulp in the hips quaternion at 3353, the first control-4
+  tick after a handplant exit (control 11), and in physics at 3451. Not gated; passed to the physics agent.
+
 ## Race rider texels (PS2 domain)
 
 (Restored: this section was lost when the file was overwritten concurrently.)

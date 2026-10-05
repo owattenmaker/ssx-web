@@ -238,4 +238,18 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
     (plant-pipe-a 900).
   - Motion 1's landing 13A7B0 also runs in control 7 after the rail motion lost the rail; the landing's control request runs
     132048 first (uber-rail-10 2339).
-- **Open:** air-eba3 823, rail-bra2-a 1760, attack-bra2 756, plant-pipe-a eye bones 901 (see docs/HANDOFF.md).
+  - The tick the rail motion loses the rail runs no air post: no 13A7B0 landing and no contacts (rail-bra2-a 1760,
+    carve-powder-cba2).
+  - A boost is not stopped a second time in a tick where 12E9B8's rail controller already ran 114130 (Stop::Airborne) or where
+    12F730 returned early for an attack hold in passive air (rail-rnb-s1b, uber-row8).
+  - After a landing crash in 139C88, its 105398 (106F78 first) runs with the rider as the ragdoll: 10EB30 switched the motion
+    to 2, so the push and impulse land on the crash actor and 105D98 dispatches a ragdoll impact that restarts the crash
+    predictor from the pushed state (uber-rail-6 1027; the 13AA48 body response already did this, docs/ai-racers.md).
+- **Batch 2** (46 captures, runs/hl2/batch2.log): the 11 lodge Uber rows with the full meter, Ubers off rails, more rails
+  (fences, slides, the ice and event peaks, hard balance and side switches), presses and carves on ice and powder, crashes and
+  resets, plants on the pipe and Snow Jam, attacks among the computer riders.
+  - A branch that reaches a freestyle finish needs `--finish-place` in its job's extra_args (0x239230 sets the boost meter by
+    place): carve-powder-cba2 finishes 5th.
+- **Open:** air-eba3 823, attack-bra2 756 and attack-bra2-b 1232 (computer riders after attacks), rail-rnb-s1 741 (a landing
+  off a rail with the L1+R1 block held), plant-pipe-a eye bones 901, and bones only: press-ice-cra3 4963, rail-cra3-s2b 1321,
+  rail-dss2-s1 1422, uber-rail-3 959, uber-row6 854 (see docs/HANDOFF.md).

@@ -998,6 +998,7 @@ static bool browser_air_switch(OriginalAirControlState& control){
 // (touchdown, 13F488/13AA48, 105398, rider pairs 107888, the 13F358 clamp, rail/crash posts).
 // animation_tick runs both, with the race host's hook (the other riders' passes) in between.
 RIDER_LOCAL static std::vector<AnimationTransform> tmpPreContact; //TMPDEBUG
+RIDER_LOCAL extern bool browserAdjustFiltersApproached;RIDER_LOCAL extern GroundControlValue browserAdjustBefore28C,browserAdjustBefore298; // web/core.cpp
 RIDER_LOCAL static float tmpDebug[24]; RIDER_LOCAL static float tmpDebug2[8]; //TMPDEBUG
 EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,float charge,int grounded,int jumpHeld,int mask,int tweak,int boost,float predictedLanding,float impact,float flip){
  if(browserNisHold)return; // 121700 / 121728: rider+0xAC4 set skips 11EB60 / 11EB98; motion 3's second phase 136978 is empty
@@ -1054,6 +1055,10 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  if(physicsAttached){context.boostModifier=boostState.modifier;context.trajectoryStatus=controlPredictionStatus;context.predictedTime=controlPredictedTime;context.elapsed=controlPredictionElapsed;}
  for(auto&s:graph.sequences)if(s.channel==2)context.mainCompleted=s.completed;
  OriginalAirAnimationAccess aa;aa.duration=[](int semantic){return graph.semanticDuration(semantic);};aa.setNextRate=[](float rate){graph.nextRate=rate;};aa.play=[](int semantic,float){if(!graph.enter(semantic))throw std::runtime_error("Missing air animation semantic");}; /*the selector writes animator +0x1C (0x3158E0) and plays with it; a rate left pending also drives the next non-selector play (tech-oob-dance 2837 landing 66 at 0.7026)*/if(!airAdjustWasLive){airAnimation.adjustment28C=physicsState.adjustment28C;airAnimation.adjustment298=physicsState.adjustment298;} //one rider+0x28C/+0x298 pair: continue the ground/passive values
+ // 1211F8 approaches +0x28C / +0x298 once, after 133308's targets: undo the step's earlier filter pass on the first selector tick
+ // (PS2 hl2/uber-row6 854: a jump out of a crouch 4 ticks after landing, +0x28C still 0.38 from the last air adjust; the port went
+ // 0.383 -> 0.367 at 1/60, then -> 0.2 at 1/6, the PS2 -> 0.2167)
+ if(!airAdjustWasLive&&browserAdjustFiltersApproached){airAnimation.adjustment28C=browserAdjustBefore28C;airAnimation.adjustment298=browserAdjustBefore298;}
  originalSelectAirAnimation(air,frame,airAnimation,context,aa);groundControlApproach(airAnimation.adjustment28C);groundControlApproach(airAnimation.adjustment298); //0x1211F8 after 0x133308's targets, before the pose
  gs.adjustment28C=physicsState.adjustment28C=airAnimation.adjustment28C;gs.adjustment298=physicsState.adjustment298=airAnimation.adjustment298;airAdjustLive=true;
   }
@@ -1204,7 +1209,10 @@ static float* animation_post_phase(){
   if(postContacts){advance_pickup_timers(motionTick);instanceContactTickShared=motionTick;
    const std::optional<std::array<float,3>> caller=bodyResponseAir&&!poseLanded&&browserBodyResponse&&browserBodyResponse->bounced?std::optional(browserBodyResponse->normal):std::nullopt; //after a touchdown 105398 projects on the ground normal (motion 0) whatever a1 is
    const int eventControl=(!airMotionThisTick&&!grounded)?physicsState.controlState:(softFrame&&browserSoftActive?3:heldAirMode?2:passiveMode?4:(grounded||poseLanded)?(board_press_owned()?1:jumpHeld?2:0):5); //a touchdown earlier in this post stage (13A968) already requested control 0: 108388 accepts (tech-oob-hops 2846) //a soft clip that ended in this tick's 12E778 left control 0: 105398's 108388 re-plays it (full-course 5535)
-   const auto moved=run_rider_instance_contacts(*browserBodyVolume,browserLandingTranslation,caller?&*caller:nullptr,bodyResponseAir&&!poseLanded?1:0,eventControl,{});
+   // After a landing crash in this post stage, 105398 runs as the ragdoll's (web/instance_contact_gameplay.inc crash_post_instance_contacts).
+   const auto moved=crashInPost
+    ?crash_post_instance_contacts(*browserBodyVolume,browserLandingTranslation,caller?&*caller:nullptr)
+    :run_rider_instance_contacts(*browserBodyVolume,browserLandingTranslation,caller?&*caller:nullptr,bodyResponseAir&&!poseLanded?1:0,eventControl,{});
    terrain_original::Rounding rounding;for(unsigned k=0;k<3;k++)bodyPoseTranslation[k]=terrain_original::add(bodyPoseTranslation[k],moved[k]);}
   if(pairPost)rider_pair_point(); // 13F2A8 / 13A784: 107888 after 105398, before the 13F358 clamp
   groundDeparturePending=false; // 13F2CC: 11FE78(1) switches a departed rider to air motion
