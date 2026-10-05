@@ -349,6 +349,8 @@ static void motion_crash(){
  publish_crash_actor(crash.actor,crash.motion.submode);sync_crash_prediction(crash.trajectory,{crash.actor.position,crash.actor.velocity},crash.motion.submode==1);
 }
 extern void request_crash_camera_shake(float);
+// web/score_gameplay.inc: 12D848's air-exit 119E38
+static void score_crash_air_exit(bool stanceDiffers);
 static void setup_crash(){
  crash.host.cameraShake=request_crash_camera_shake;
  crash.host.clip=crash_clip;crash.host.play=[](int semantic){grab={};if(!graph.enter(semantic,-1,~uint64_t(0),true))throw std::runtime_error("Missing original crash animation");physicsState.animationIndex=semantic;physicsState.animationClass=graph.currentClass(2);};
@@ -360,6 +362,9 @@ static void setup_crash(){
   physicsState.controlState=gs.controlState=control;};crash.host.stanceDiffers=[](){return !physicsState.state320Equals324;};
  crash.host.leaveMotion=[](int mode){leave_crash_motion(crash.actor,mode);previousGround=mode==0;previousHeld=false;heldAirMode=passiveMode=false;prewind={};air=mode==1?originalAirControlBegin(0,0):OriginalAirControlState{};landingAirExitBaked=false;gs.controlState=mode==0?0:5;};
  crash.host.requestReset=[](int reason){if(browserResetBegin)browserResetBegin(reason);else browserCrashResetReason=reason;};crash.host.observer=[](int observer){lastCrashObserver=observer;++crashObservers;
+  // 12D848's air exit (owner+0x30 != 0): 119E38(*(rider+0x790), +0x320 != +0x324, 0) at 0x12D984 before clip 287 and control 5
+  // (engine/crash_control.hpp setAirScoringStance; runs/riders/viggo-uber-a 1892: the score's +0x30 / +0xA4).
+  if(observer==2000||observer==2001)score_crash_air_exit(observer==2001);
   // 12CD20 (phase 0 -> 2) / 12D4E8 (phase 1 -> 2) slide loops, 12D160 grunt and loop stop, 12D848 get-up thud.
   if(observer==int(OriginalCrashObserver::GroundMoving)||observer==int(OriginalCrashObserver::GroundStopped))audio_event(AE_CRASH_LOOP,float(graph.currentClass(2)),float(audioCrashPhase),observer==int(OriginalCrashObserver::GroundStopped)?1.f:0.f);
   else if(observer==int(OriginalCrashObserver::SpecialRecovery))audio_event(AE_CRASH_GRUNT,1);
@@ -673,7 +678,11 @@ static bool step_reset(){
  cb.finishDeviceFade=[](){++resetObservers;};cb.clearScoringStance=[](){score_reset_stance();++resetObservers;}; /*119E38(score,0,0)*/cb.setAnimationRate=[](float rate){graph.setRate(2,rate);};
  cb.enterControl=[](int state){if(state!=4)throw std::runtime_error("Unexpected reset control handoff");physicsState.controlState=gs.controlState=4;};
  cb.enterMotion=[](int mode){if(mode!=1)throw std::runtime_error("Unexpected reset motion handoff");leave_reset_motion();previousGround=false;previousHeld=false;heldAirMode=false;passiveMode=true;originalPassiveAirBegin(passive,gs,prewind);++resetCompletions;};
- resetInputs.timeScale=physicsState.timeScale;originalResetControlStep(resetControl,resetInputs,cb);browser_controller_takeoff_wind(physicsState.velocity); /*12F398 runs before 1211F8 -> 120378: the placement tick's wind is the resumed velocity (score-uber 739)*/return browserResetActive;
+ resetInputs.timeScale=physicsState.timeScale;originalResetControlStep(resetControl,resetInputs,cb);browser_controller_takeoff_wind(physicsState.velocity); /*12F398 runs before 1211F8 -> 120378: the placement tick's wind is the resumed velocity (score-uber 739)*/
+ // ... and the placement's stance: 120378 reads +0x320 after 12F398 (0x12051C / 0x1207DC / 0x120A9C), and the placement turns a goofy rider
+ // to +0x320 = 1 (runs/riders/moby-uber-d 2443: Moby's mop channels pick 416 / 430 with it, 414 / 431 with the old stance).
+ browser_controller_stance(physicsState.reverseStance);
+ return browserResetActive;
 }
 static void follow_rider_route(float bestRemaining,int32_t tick){
  if(!physicsAttached)return;

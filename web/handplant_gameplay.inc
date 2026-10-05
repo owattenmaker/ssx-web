@@ -116,7 +116,12 @@ static bool hp_try_entry(float& steering,float& crouch,float& brake,bool& skipRa
   if(next==13){ //old controller exit
    if(control==5){hp_apply(r);if(landing_air_exit())landingAirExitBaked=false;r=hp_view();}
    else hp_upper_exit();
-  } else if(next==11){hpActive=true;hpEntryControl=control;originalHandplantControlEnter(hpControl,r,a);physicsState.controlState=gs.controlState=11;}
+  } else if(next==11){
+   hpActive=true;hpEntryControl=control;originalHandplantControlEnter(hpControl,r,a);physicsState.controlState=gs.controlState=11;
+   // 1211F8's 120378 reads owner+0xDE4 after the controller: control 11 already (its +1000 cm/s wind term; PS2 hl2/plant-pipe-a 900:
+   // the hair request 414 on the plant tick)
+   controllerGround.controlState=11;
+  }
   else throw std::runtime_error("Unexpected handplant entry control request");
  };
  a.requestMotion=[&](int next){

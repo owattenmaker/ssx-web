@@ -189,7 +189,9 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
  if(railOwned&&physicsState.controlState==1&&!browserRailActive){railOwned=false;railReleaseFrame=true;rail_apply(view);return false;} //control 1 in motion 1: 0x12FFF8 next
  const bool uberControlFrame=view.controlState==12;
  const bool softRail=browserSoftActive&&physicsState.controlState==3;
- if(railHeldJump&&!jump&&!softRail){
+ // 12E9B8 returns right after its 106848 attaches, so a Cross released on the attach tick is released on the rail next tick (PS2
+ // riders/griff-uber-c 1730: a charged release onto a rail stays control 2 in motion 4, then leaves the rail at 1731).
+ if(railHeldJump&&!jump&&!softRail&&!attached){
   const bool onRail=browserRailActive;
   if(onRail){
    OriginalJumpState takeoff;takeoff.position=view.position;takeoff.velocity=view.velocity;takeoff.normal=view.contactNormal;takeoff.takeoffNormal=physicsState.previousNormal;takeoff.forward=view.surfaceForward;takeoff.boardUp=view.up;takeoff.speedLimit=view.speedLimit;takeoff.charge=view.crouch.current;takeoff.ticksSinceGroundFocus=motionTick-groundFocusTick;takeoff.flags=browserPatchFlags;takeoff.motionMode=4;

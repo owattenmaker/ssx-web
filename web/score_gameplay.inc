@@ -89,7 +89,9 @@ static OriginalTrickCommitResult score_landing_args(int a1,int a2,int a3){
   // 10EA28..10EAA4 (human riders): a combo paid out at this landing -> reaction 3, else committed Ubers -> 2 (Uber landing),
   // else a "great trick" (149778) -> 1 (315 + 29FF80 easy speech in 115B58; PS2 trick-stall 724).
   if(browserHumanRider){const int kind=combosBefore<scoreObject.i(0x134)?3:before<after?2:score_great_trick(scoreObject.i(0x198)-totalBefore)?1:0;
-   if(kind){upperRequest358=kind;upperRequestTick354=int32_t(motionTick);}}
+   // +0x354 = the logic tick 1298C8 of this landing's 10E910, as the other 10E028 requests: 115B58 expires the request at age 180
+   // (runs/riders/nate-uber-b: requested at 1081, expired at 1261 unplayed; motionTick, one ahead, played 315).
+   if(kind){upperRequest358=kind;upperRequestTick354=int32_t(controllerGround.logicTick);}}
  }
  return result;
 }
@@ -123,6 +125,8 @@ static float score_reset(bool penalize){push_score();const float delta=originalS
 // 11A088 (116120 for reset reasons 1 and 4): HUD text message 0x33 "Wrong Way!" (0x457888) for 1.5 s through 117AE8.
 static void score_wrong_way(){push_score();if(scoreObject.hudPresent)originalHudPostText(scoreObject,0x33,"Wrong Way!",0,1.5f);pull_score();}
 static void score_reset_stance(){auto state=capture_score();originalScoreTakeoffBoundary(state,0,0,score_commit_raw);apply_score(state);}
+// 119E38(score, +0x320 != +0x324, 0) of a crash get-up that ends in the air (12D848, 0x12D984); its meter result is unused.
+static void score_crash_air_exit(bool stanceDiffers){auto state=capture_score();originalScoreTakeoffBoundary(state,int(stanceDiffers),0,score_commit_raw);apply_score(state);}
 // 117248 construction (+1C4=1, bank cleared) then 117540 run reset (11D390 at event start):
 // statistics, history, combo and HUD bank. The typed views are reloaded from the result.
 static void score_init(){scoreObject={};scoreObject.f(0x1C4)=1;originalScoreRunReset(scoreObject);scoreCommits=scoreComboPayouts=0;scoreLastPoints=0;pull_score();}

@@ -30,16 +30,40 @@ const riderGateArgs = (id) => {
   return ['--human', `RIDER_${id.toUpperCase()}`, '--event'];
 };
 // 2026-10-05: canhuck-race 2119 was the rail attach's stance: 120378 reads +0x320 after 106848 switched it (web/rail_gameplay.inc
-// browser_controller_stance; Canhuck's tail channel +0x9A0 picks 428, not 429). Its bones are gated through 2118 until a core with that
-// line is live, then END. hiro-hl / marty-hl 752 need their rng-order.json (a computer rider's draw after the human's crash variant draw).
-const RIDER_BONES_THROUGH = { 'canhuck-race': 2118 };
+// browser_controller_stance, live since core16; Canhuck's tail channel +0x9A0 picks 428, not 429). hiro-hl / marty-hl 752 need their
+// rng-order.json (a computer rider's draw after the human's crash variant draw).
+// RIDER_BONES_THROUGH: a rider gate's bones through an earlier tick (none open).
+const RIDER_BONES_THROUGH = {};
 const riderGates = RIDER_GATE_IDS.flatMap((id) => ['race', 'hl'].map((kind) => ({
   name: `riders/${id}-${kind}`, args: riderGateArgs(id), exactThrough: END, scoreThrough: END, boostThrough: END,
   bonesThrough: RIDER_BONES_THROUGH[`${id}-${kind}`] ?? END,
   why: `${id} as the human from its own countdown, ${kind === 'race' ? 'the event-race pad' : 'the hl-sj-1 high-level pad'}: physics, bones, score and boost`,
 })));
+// Each rider's own Ubers (local/ps2-capture/uber-plan.mjs plans the pads in the port; riders-capture.sh uber-a..f): its own Snow Jam
+// countdown with the meter full and 120 s of Tricky (+0x2F8 1, +0x2F0 120, +0x2F4 tier 1 for a / b / e, 5 for c / d / f), every grab
+// slot's Uber (L1, L2, R1, R2, L1+L2, R1+R2) landed in both table bands (0x14FEA8: tier >= 5) and bailed (the Uber crash ends Tricky:
+// one bail per run, last). The ten base riders, the four Uber overrides (Stretch / Gutless / Canhuck Nose Grab, Snowballs Tail Grab),
+// Hiro (0.75) and Far East Myth (2.0). Open (the physics agent's): fareastmyth-uber-b 2479 (a rail, control 7), fareastmyth-uber-c 2149
+// (a sliding crash bounce re-requests 379 while it fades: the PS2 revives the old sequence), griff-uber-c 1731 (a jump release onto a
+// rail; fixed in core19). Waiting for a live core: nate-uber-b 1262 (the landing reaction's +0x354 tick, web/score_gameplay.inc) and
+// viggo-uber-a 2132 (the retained crash submode owner+0x30 at the board detach, web/crash_runtime.hpp).
+const RIDER_UBER_RUNS = ['zoe', 'moby', 'psymon', 'griff', 'viggo', 'elise', 'nate', 'mac', 'allegra', 'kaori', 'stretch', 'gutless', 'canhuck',
+  'snowballs', 'hiro', 'fareastmyth'].flatMap((id) => ['a', 'b', 'c', 'd'].map((k) => `${id}-uber-${k}`));
+const RIDER_UBER_OPEN = {
+  'fareastmyth-uber-b': { exactThrough: 2478, bonesThrough: 2478, scoreThrough: 2478, boostThrough: 2486 },
+  'fareastmyth-uber-c': { bonesThrough: 2148 },
+  'griff-uber-c': { exactThrough: 1730, bonesThrough: 1730, scoreThrough: 1730, boostThrough: 1731 },
+  'nate-uber-b': { bonesThrough: 1261 },
+  'viggo-uber-a': { bonesThrough: 2131 },
+};
+const riderUberGates = RIDER_UBER_RUNS.map((run) => {
+  const id = run.slice(0, run.indexOf('-uber-'));
+  return { name: `riders/${run}`, args: riderGateArgs(id), exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: END,
+    ...RIDER_UBER_OPEN[run], why: `${id}'s own Ubers (${run.slice(-1)}): landed and bailed, physics, bones, score and boost` };
+});
 const cases = [
   ...riderGates,
+  ...riderUberGates,
   // name, extra args, last tick that must stay bit-exact, [through tick, max position error cm]
   // jump-tricks (8 KiB records, same baseline and script) is retired: jump-tricks16 below replays it with the animation state recorded.
   { name: 'air-tricks', args: ['--zoe'], exactThrough: END, why: 'D-pad spins/flips, flip landing, R2 grab+tweak, chords, crash and recovery' },
@@ -189,18 +213,18 @@ const cases = [
   { name: 'hl2/uber-row9', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'uber from pipe-air at 200 (seed 419): Ubers with the full meter (Tricky poked): every chord, landed and bailed, chained' },
   { name: 'hl2/uber-row7', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'uber from peak3/much-2-much-event-tuck at 550 (seed 417): Ubers with the full meter (Tricky poked): every chord, landed and bailed, chained' },
   { name: 'hl2/uber-row8', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'uber from peak3/much-2-much-event-tuck at 550 (seed 418): Ubers with the full meter (Tricky poked): every chord, landed and bailed, chained' },
-  { name: 'hl2/uber-row6', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: 853, why: '854 (open, bones only): a skeleton bone off in Uber row 6; physics, score and boost exact to the end; uber from peak3/much-2-much-event-tuck at 550 (seed 416): Ubers with the full meter (Tricky poked): every chord, landed and bailed, chained' },
-  { name: 'hl2/uber-rail-3', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: 958, why: '959 (open, bones only): a skeleton bone off in an Uber off a rail; physics, score and boost exact to the end; rail from score-rail at 565 (seed 422): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
+  { name: 'hl2/uber-row6', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'exact to the end since core17; uber from peak3/much-2-much-event-tuck at 550 (seed 416): Ubers with the full meter (Tricky poked): every chord, landed and bailed, chained' },
+  { name: 'hl2/uber-rail-3', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'exact to the end since core17; rail from score-rail at 565 (seed 422): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/uber-rail-8', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from metro-air-tricks at 218 (seed 424): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
-  { name: 'hl2/uber-rail-6', args: ['--zoe'], exactThrough: 1027, scoreThrough: 1027, boostThrough: 1139, bonesThrough: 1027, why: '1028 until core16 is live (then END): after a landing crash, 139C88\'s 105398 (106F78 rail contact) runs as the ragdoll (motion 2), so the push and impulse land on the crash actor and 105D98 restarts the crash predictor; rail from rail-balance-slide at 302 (seed 423): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
+  { name: 'hl2/uber-rail-6', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: '1027: after a landing crash, 139C88\'s 105398 (106F78 rail contact) runs as the ragdoll (motion 2), so the push and impulse land on the crash actor and 105D98 restarts the crash predictor; rail from rail-balance-slide at 302 (seed 423): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-ara1-c', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from score-rail at 337 (seed 130): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-ara1-d', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from score-rail at 565 (seed 131): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-fence-b', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from rail-air-fence at 337 (seed 132): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-slide-b', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from rail-balance-slide at 302 (seed 133): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/uber-rail-10', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from peak1/rnb-event-tuck at 2238 (seed 425): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
-  { name: 'hl2/rail-rnb-s1', args: ['--zoe', '--event'], stageWorld: true, exactThrough: 740, scoreThrough: 740, boostThrough: END, bonesThrough: 738, why: '741 (open): the landing normal off a rail with the L1+R1 block held differs slightly (bones from 739); rail from peak1/rnb-event-tuck at 660 (seed 136): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
+  { name: 'hl2/rail-rnb-s1', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'exact to the end since core17; rail from peak1/rnb-event-tuck at 660 (seed 136): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-cra3-s2b', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: 1320, why: '1321 (open, bones only): a skeleton bone off on the rail; physics, score and boost exact to the end; rail from peak2/cra3-race-ai at 1208 (seed 134): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
-  { name: 'hl2/rail-dss2-s1', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: 1421, why: '1422 (open, bones only): a skeleton bone off on the rail; physics, score and boost exact to the end; rail from peak2/dss2-full at 947 (seed 138): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
+  { name: 'hl2/rail-dss2-s1', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'exact to the end since core17; rail from peak2/dss2-full at 947 (seed 138): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/press-ice-cba2', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'press from peak2/launch-event-tuck at 1509 (seed 207): board presses: nose / tail, pivots, circles, held past 1 s, repress, into jumps and R3 ollies, carving presses' },
   { name: 'hl2/rail-cra3-s4b', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from peak2/cra3-race-ai at 4050 (seed 135): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },
   { name: 'hl2/rail-rnb-s1b', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'rail from peak1/rnb-event-tuck at 3008 (seed 137): rails at speed: hard balance, side switches, boost, presses, ollies, jumps and spins off, grabs, punches and blocks' },

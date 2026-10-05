@@ -43,7 +43,11 @@ struct BrowserCrashRuntime {
  float resetPermission=-1;int riderCategory=1;
  void beginPredictor(float limit=3333.33349609375f){trajectory.begin({actor.position,actor.velocity},limit);}
  void beginControl(OriginalCrashActorState value,terrain_original::Vector offset9D0={}){
+  // owner+0x30 (the crash submode) survives from the previous crash until 136C40: 12CA30's 136D40 board detach reads it (an air
+  // get-up leaves 1; runs/riders/viggo-uber-a 2131 keeps the board's normal speed, owner+0x30 = 1 from 1821 to 2131).
+  const int retainedSubmode=motion.submode;
   actor=value;motion={};control={};ticks=0;
+  motion.submode=retainedSubmode;
   auto clip=host.clip();originalCrashControlBegin(control,motion,actor,clip.primary,clip.secondary,offset9D0,clip.animationClass);
  }
  void beginMotion(int previousMotion){
