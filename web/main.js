@@ -82,7 +82,7 @@ import {
   RESULTS_TICKS_TIME_UP
 } from './game-tick.js';
 import { buildPad, createKeyboardContext, loadKeyboardMode, saveKeyboardMode } from './pad-input.js';
-import { pollPads } from './gamepad.js';
+import { pollPads, setPadsFocused } from './gamepad.js';
 import { installPadMenus } from './gamepad-menus.js';
 import { createTouchControls } from './touch-controls.js';
 // phones: touch deck + presentation quality (docs/mobile.md)
@@ -1528,15 +1528,27 @@ window.addEventListener('keyup', (e) => {
   if (running && keyLog.length < 512) keyLog.push([e.timeStamp, e.code, 0]);
   keys.delete(e.code);
 });
-// ?perf=1 (profiling scripts): automation windows lose focus mid-run; keep racing (and the held keys) on blur/hide
-const perfNoFocusPause = new URL(location.href).searchParams.get('perf') === '1';
-window.addEventListener('blur', () => {
-  if (perfNoFocusPause) return;
+// Losing focus or visibility never pauses (removed 2026-10-04: the auto-pause opened the pause menu over Transports, NIS cuts and the
+// countdown, where the PS2 takes no Start, and left the ride stuck behind them; docs/pause-contexts.md). It only lets go of the input:
+// a key or touch held as the window lost focus gets no keyup, and the pad reads neutral until focus returns (web/gamepad.js).
+// ?perf=1 (profiling scripts): automation windows lose focus mid-run; keep the held keys and the pad
+const perfKeepInput = new URL(location.href).searchParams.get('perf') === '1';
+function releaseInput() {
+  if (perfKeepInput) return;
   clearInput();
-  if (running) overlay.open();
-});
+  setPadsFocused(false);
+}
+window.addEventListener('blur', releaseInput);
+window.addEventListener('focus', () => setPadsFocused(true));
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && running && !perfNoFocusPause) overlay.open();
+  if (document.hidden) {
+    releaseInput();
+    return;
+  }
+  // no animation frames ran while hidden: the first frame back starts from now instead of catching up the hidden time (an online race
+  // ticked on from its worker timer and follows the server clock: web/net/mp-game.js)
+  last = performance.now();
+  if (document.hasFocus()) setPadsFocused(true);
 });
 const keyboardPad = createKeyboardContext(loadKeyboardMode());
 function setKeyboardMode(mode) {

@@ -16,7 +16,8 @@ const REMAP_KEY = 'ssx3.padmap', POLL_MS = 2, USE_AXIS = 0.5;
 const nowMs = () => globalThis.performance?.now?.() ?? Date.now();
 function browserPads() { try { return globalThis.navigator?.getGamepads?.() || []; } catch { return []; } }
 
-const S = { source: browserPads, clock: nowMs, entries: new Map(), active: null, polledAt: -Infinity, serial: 0, listeners: new Set(), remaps: null, remapFrozen: false };
+const S = { source: browserPads, clock: nowMs, entries: new Map(), active: null, polledAt: -Infinity, serial: 0, listeners: new Set(), remaps: null, remapFrozen: false,
+  unfocused: false, rebase: false, neutral: newStandardPad() };
 
 function loadRemaps() { try { return JSON.parse(globalThis.localStorage?.getItem(REMAP_KEY) || '{}') || {}; } catch { return {}; } }
 function remaps() { return S.remaps ??= loadRemaps(); }
@@ -69,6 +70,8 @@ function choose() {
 
 // Re-read every slot (at most once per POLL_MS unless forced). Returns the active pad in the standard layout, or null.
 export function pollPads(force = false) {
+  // an unfocused window takes no pad input (setPadsFocused): a neutral pad while a pad is known, no reads, no 'use' events
+  if (S.unfocused) return S.active ? S.neutral : null;
   const now = S.clock();
   if (!force && now >= S.polledAt && now - S.polledAt < POLL_MS) return S.active?.std ?? null;
   S.polledAt = now;
@@ -81,13 +84,15 @@ export function pollPads(force = false) {
     const fresh = !e;
     if (fresh) { e = makeEntry(raw, slot); S.entries.set(slot, e); }
     e.raw = raw; calibrate(e.cal, raw);
-    e.usedNow = detectUse(e, raw);
+    // the first poll after focus returns re-reads the rest state: a button already down then is held, not a use
+    e.usedNow = detectUse(e, raw) && !S.rebase;
     if (e.usedNow) e.lastUse = ++S.serial;
     mapPad(raw, e.compiled, e.cal, e.std);
     if (fresh) emit('connect', e);
     if (e.usedNow) emit('use', e);
   }
   for (const [slot, e] of S.entries) if (!seen.has(slot)) { S.entries.delete(slot); emit('disconnect', e); }
+  S.rebase = false;
   choose();
   return S.active?.std ?? null;
 }
@@ -107,6 +112,16 @@ export function padSummary(e) {
   const { vendor, product, name } = parsePadId(e.id);
   return { slot: e.slot, name: name.slice(0, 60), vendor, product, mapping: e.raw.mapping || '', buttons: e.raw.buttons?.length ?? 0, axes: e.raw.axes?.length ?? 0,
     layout: e.layout?.name ?? '', vibration: !!(e.raw.vibrationActuator || e.raw.hapticActuators?.length) };
+}
+
+// Window focus (web/main.js blur / focus). Chromium keeps handing a visible but unfocused window the pad, so a player who
+// alt-tabbed to another program was still steering the race. While unfocused every poll reads as a neutral pad.
+export function setPadsFocused(focused) {
+  if (focused && S.unfocused) {
+    S.rebase = true;
+    S.polledAt = -Infinity;
+  }
+  S.unfocused = !focused;
 }
 
 // ---- remaps ----------------------------------------------------------------------------------------------------------
@@ -138,7 +153,7 @@ export function rawControls(entry, threshold = 0.6) {
 // ---- tests / QA ----------------------------------------------------------------------------------------------------
 // source() returns the getGamepads()-like array; clock() the time in ms.
 export function setPadSource(source = browserPads, clock = nowMs) { S.source = source; S.clock = clock; resetPads(); }
-export function resetPads() { S.entries.clear(); S.active = null; S.polledAt = -Infinity; S.serial = 0; S.remaps = null; }
+export function resetPads() { S.entries.clear(); S.active = null; S.polledAt = -Infinity; S.serial = 0; S.remaps = null; S.unfocused = false; S.rebase = false; }
 
 if (typeof addEventListener === 'function') {
   // Hot-plug: re-read at once (the next poll would see it too; this keeps the hints and the active pad current).

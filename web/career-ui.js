@@ -1498,8 +1498,12 @@ export class CareerScreens {
       ui.feScreens.back();
       return;
     }
-    // pv onlineRecordsif(this.lodge.owns(s))return this.lodge.back();if(this.messages.owns(s))return
-    // this.messages.goBack();if(ui.bigChallenges?.owns(s))return ui.bigChallenges.back();
+    // the lodge, the Message Center (its list, a message, the FAQ view) and the Big Challenge prompt take their own Triangle / Escape
+    // (a reformat had folded these three dispatches into the comment above the board's, so Back did nothing on those screens)
+    if (this.lodge.owns(s)) return this.lodge.back();
+    if (this.messages.owns(s)) return this.messages.goBack();
+    if (ui.bigChallenges?.owns(s)) return ui.bigChallenges.back();
+    // pv onlineRecords
     if (s === 'ctm-board') {
       this.online.backBoard();
       return;
