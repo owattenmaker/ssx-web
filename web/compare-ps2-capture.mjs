@@ -522,6 +522,15 @@ if (args.includes('--camera-seed') && core._camera_seed_words) {
   const wp = core._malloc(4 * CAMERA_WORDS), mp = core._malloc(CAMERA_WORDS); core.HEAPU8.set(new Uint8Array(words.buffer), wp); core.HEAPU8.set(mask, mp); core._camera_seed_words(wp, mp); core._free(wp); core._free(mp);
 }
 const webDrawsOut = []; let webSkip = 0;
+// PS2_ARITH=exact: a core with the arithmetic switch (tools/ps2-float/make_swap_tree.py) computes on the console model
+// (engine/ps2_fpu.hpp) from here, the capture's first tick. The setup above ran in mode 1, as the baseline's own history did
+// (docs/ps2-float.md "Mode-1 history").
+if (process.env.PS2_ARITH === 'exact') {
+  if (!core._ps2_arith_exact) {
+    throw new Error('PS2_ARITH=exact needs a core with ps2_arith_exact');
+  }
+  core._ps2_arith_exact(1);
+}
 // TICK_HOOK=module.mjs: an observer module (create(ctx) -> {tick(t), summary()}) run after every compared tick, e.g.
 // web/uber-audio-compare.mjs (audio dispatch vs the PS2 call log). Its summary is merged into the report.
 const tickHook = process.env.TICK_HOOK ? await import(new URL(process.env.TICK_HOOK, `file://${process.cwd()}/`).href).then((m) => m.create({ core, dv, RECORD, records, captureManifest, capturePath, args })) : null;

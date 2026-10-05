@@ -220,7 +220,13 @@ EMSCRIPTEN_KEEPALIVE float* npc_air_info(){return npcAirInfo;}
 EMSCRIPTEN_KEEPALIVE float* rider_world_state(){
  RIDER_LOCAL static float v[20];for(unsigned k=0;k<3;++k){v[k]=physicsState.position[k];v[3+k]=physicsState.velocity[k];}
  v[6]=resetRoute.pathIndex;v[7]=graph.currentClass(1);v[8]=browser_control_state();v[9]=npc_motion_mode();v[10]=browserHumanRider;
- for(unsigned k=0;k<4;++k)v[11+k]=physicsState.quaternion[k];v[15]=physicsState.timeScale;return v;
+ for(unsigned k=0;k<4;++k)v[11+k]=physicsState.quaternion[k];v[15]=physicsState.timeScale;
+ // [16..18] +0x1E0 as this tick's controller left it (a 114298 takeoff writes it; the motion has not run yet): what a later rider's
+ // provider reads live through the peer's +0x6C0 velocity getter (100F88 at 0x10105C; PS2 hl2/attack-bra2 756: Moby's ollie)
+ for(unsigned k=0;k<3;++k)v[16+k]=controllerTakeoffWind?(*controllerTakeoffWind)[k]:controllerGround.velocity[k];
+ // [19] = 1: this core fills [16..18] (web/ai-racers.js falls back to the tick-start velocity on an older core)
+ v[19]=1;
+ return v;
 }
 // Any rider instance (human too): apply the shared 0x10F560 records to its 115D48 peers.
 EMSCRIPTEN_KEEPALIVE void rider_world_peers(){npc_read_world();}

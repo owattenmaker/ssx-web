@@ -363,7 +363,19 @@ export async function createAiRacers({
   };
   function snapshot() {
     for (const r of all()) r.start = live(r);
-  } // tick-start: [pos3, vel3, path, upper class, control, motion, human, quat4, timeScale] + progress
+  }
+  // r's tick-start record with +0x1E0 as its controller left it this tick (one reused record: worldBuffer reads it at once).
+  const controllerRecord = { state: new Float32Array(16), progress: null };
+  const afterController = (r) => {
+    controllerRecord.state.set(r.start.state);
+    const now = f32(r.core, r.core._rider_world_state(), 20);
+    if (now[19] !== 1) return r.start;
+    controllerRecord.state[3] = now[16];
+    controllerRecord.state[4] = now[17];
+    controllerRecord.state[5] = now[18];
+    controllerRecord.progress = r.start.progress;
+    return controllerRecord;
+  }; // tick-start: [pos3, vel3, path, upper class, control, motion, human, quat4, timeScale] + progress
   // npc_world_buffer for `target`; view(r) picks which state of peer r the reading pass sees.
   // upperClass(r): the class word (+7) to use for peer r instead of view(r)'s, or undefined.
   function worldBuffer(target, view, worldState, upperClass = null) {
@@ -644,9 +656,11 @@ export async function createAiRacers({
     for (const n of tickingNpcs()) {
       // 121068 reads peers' positions/routes/progress at the tick start and earlier riders' upper-body classes after their controllers
       // (an earlier rider's class read now, in place: rider_world_state is a pure read).
+      // An earlier rider's velocity is read live through its +0x6C0 getter (100F88 at 0x10105C), after that rider's controller:
+      // a 114298 takeoff there already shows (rider_world_state [16..18]; PS2 hl2/attack-bra2 756).
       worldBuffer(
         n,
-        (r) => r.start,
+        (r) => (r.slot < n.slot ? afterController(r) : r.start),
         api.worldState,
         (r) => (r.slot < n.slot ? worldStateNow(r.core)[7] : undefined)
       );

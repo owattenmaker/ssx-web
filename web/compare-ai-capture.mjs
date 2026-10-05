@@ -326,6 +326,15 @@ const stageSnaps = process.env.STAGE_WORLD_PS2 ? loadSnapshots(process.env.STAGE
 const stageCompare = [];
 const stageDump = process.env.STAGE_WORLD_DUMP ? new Set(process.env.STAGE_WORLD_DUMP.split(',').map(Number)) : null;
 const particleEval = stageDump ? await import('./set-piece-particle-eval.js') : null;
+// PS2_ARITH=exact: a core with the arithmetic switch (tools/ps2-float/make_swap_tree.py) computes on the console model
+// (engine/ps2_fpu.hpp) from here, the capture's first tick. The setup above ran in mode 1, as the baseline's own history did
+// (docs/ps2-float.md "Mode-1 history").
+if (process.env.PS2_ARITH === 'exact') {
+  if (!human._ps2_arith_exact) {
+    throw new Error('PS2_ARITH=exact needs a core with ps2_arith_exact');
+  }
+  human._ps2_arith_exact(1);
+}
 // TICK_HOOK=module.mjs: an observer (create({core, racers, dv, RECORD, captureManifest}) -> {tick({i, tick, core, racers}), summary()}),
 // run after every compared tick (the human core has run record i's command; record i + 1 holds the PS2 state after it), as in
 // compare-ps2-capture.mjs. Its summary is merged into the report.

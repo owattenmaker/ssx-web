@@ -79,6 +79,8 @@ RIDER_LOCAL static OriginalGrabState grab;RIDER_LOCAL static OriginalGrabProfile
 RIDER_LOCAL static bool passiveMode=false,heldAirMode=false;RIDER_LOCAL static OriginalPassiveAirState passive;RIDER_LOCAL static OriginalAirPrewindState prewind;RIDER_LOCAL static OriginalAirControlState air;RIDER_LOCAL static bool airAdjustLive=false; //air control owned rider+0x28C/+0x298 last tick
 RIDER_LOCAL static OriginalAirAnimationState airAnimation;RIDER_LOCAL_LAZY static OriginalAirControlProfile airProfile;
 RIDER_LOCAL static bool previousGround=true,previousHeld=false;
+// The crash left to the ground this tick (12D848 get-up, control 0 / motion 0): read once by the next animation tick.
+RIDER_LOCAL static bool crashGroundGetUpTick=false;
 std::optional<WorldBodyQuery> inspect_body_contacts(const BodyCollisionVolume&,std::array<float,3>);
 void reset_body_queries();
 OriginalCollisionReaction classify_body_contact(const WorldBodyHit&,const ObstacleResponse&,const BodyCollisionVolume&,std::array<float,3>,int,const CollisionRandom&,int motion=-1);
@@ -160,6 +162,7 @@ extern std::unique_ptr<CollisionWorld> cameraTerrain;RIDER_LOCAL extern std::uni
 RIDER_LOCAL extern std::array<OriginalGroundProfile,19> physicsMaterials;RIDER_LOCAL extern OriginalLandingProfile landingProfile;RIDER_LOCAL extern OriginalCollisionProfile collisionProfile;RIDER_LOCAL extern OriginalCollisionHistory collisionHistory;
 int browser_surface_property(int);void publish_crash_actor(const OriginalCrashActorState&,int);void leave_crash_motion(OriginalCrashActorState&,int);void sync_crash_prediction(const OriginalAirTrajectory&,OriginalAirState,bool);
 RIDER_LOCAL extern uint32_t motionTick,lastGroundLeave;RIDER_LOCAL extern int landed;
+RIDER_LOCAL extern int browserGroundPatch;RIDER_LOCAL extern float browserGroundU,browserGroundV;RIDER_LOCAL extern uint16_t browserPatchFlags; // web/core.cpp: rider+0x430 / +0xAAC / +0xAB0 / +0x2D4
 static void reset_boost_fx();
 // Six-rider phase split of animation_tick (see animation_pose below).
 RIDER_LOCAL static struct {bool pending=false;int grounded=0,jumpHeld=0;bool startFrame=false,resetFrame=false,crashFrame=false,railFrame=false,softFrame=false;std::array<float,3> prePoseUp{};std::array<float,4> presentationQuaternion{};} animationPost;
@@ -283,7 +286,7 @@ static OriginalCrashClipState crash_clip(){
  value.complete=completedMain&&completedMainSemantic==value.semantic;for(const auto& sequence:graph.sequences)if(sequence.channel==2&&sequence.semantic==value.semantic)value.complete|=sequence.completed;
  value.primary=cachedCrashWorld[0];value.secondary=cachedCrashWorld[23];return value;
 }
-static void reset_crash(){auto host=std::move(crash.host);crash={};crash.host=std::move(host);crash.riderCategory=1;browserCrashActive=false;browserCrashExitFrame=false;crashSerial=crashObservers=0;lastCrashObserver=lastCrashSemantic=-1;lastCrashImpact=crashPresentation=0;}
+static void reset_crash(){auto host=std::move(crash.host);crash={};crash.host=std::move(host);crashGroundGetUpTick=false;crash.riderCategory=1;browserCrashActive=false;browserCrashExitFrame=false;crashSerial=crashObservers=0;lastCrashObserver=lastCrashSemantic=-1;lastCrashImpact=crashPresentation=0;}
 static void detach_rail_for_crash();
 // 10EB30(rider, a1 semantic, a2 attacked, a3 impact type, t0 event). a2 only reaches 119B08 (0x10EB94): attacked counts the
 // victim's score +0x12C and posts popup 0x2D, else +0x124. Only 107E70 (0x1082F4) passes a nonzero a2, its own a3, which is 1
@@ -353,14 +356,17 @@ extern void request_crash_camera_shake(float);
 static void score_crash_air_exit(bool stanceDiffers);
 static void setup_crash(){
  crash.host.cameraShake=request_crash_camera_shake;
- crash.host.clip=crash_clip;crash.host.play=[](int semantic){grab={};if(!graph.enter(semantic,-1,~uint64_t(0),true))throw std::runtime_error("Missing original crash animation");physicsState.animationIndex=semantic;physicsState.animationClass=graph.currentClass(2);};
+ crash.host.clip=crash_clip;// The crash plays (10EB30's entry, 12DCB0 / 12DD98 / 12DE80 / 12DF48 continuations and get-ups, 12E468, 12E010) all call 3128E8 with
+ // a2 = 0: a re-request of a clip still fading out continues that copy (311F00's inherit test) instead of restarting it (PS2
+ // riders/fareastmyth-uber-c 2149: a sliding bounce back into the air re-requests 379 at t 0.5).
+ crash.host.play=[](int semantic){grab={};if(!graph.enter(semantic,-1,~uint64_t(0),false))throw std::runtime_error("Missing original crash animation");physicsState.animationIndex=semantic;physicsState.animationClass=graph.currentClass(2);};
  crash.host.rate=[](float rate){graph.setRate(2,rate);};crash.host.seek=[](float time){if(!graph.seekChannel(2,time))throw std::runtime_error("Crash seek without animation sequence");};
  crash.host.enterControl=[](int control){
   //111578 exits control8 through 12E690: on even logic ticks (and when rider+80's +6C0 query succeeds, assumed true) 10E028 requests reaction4 now.
   if(physicsState.controlState==8&&control!=8)audio_event(AE_CRASH_EXIT); //12E690 -> 2A02D8 wipeout speech
   if(physicsState.controlState==8&&control!=8&&(controllerGround.logicTick&1u)==0&&browserHumanRider){/*12E6BC: +6C0 isHuman*/upperRequest358=4;upperRequestTick354=int32_t(controllerGround.logicTick);}
   physicsState.controlState=gs.controlState=control;};crash.host.stanceDiffers=[](){return !physicsState.state320Equals324;};
- crash.host.leaveMotion=[](int mode){leave_crash_motion(crash.actor,mode);previousGround=mode==0;previousHeld=false;heldAirMode=passiveMode=false;prewind={};air=mode==1?originalAirControlBegin(0,0):OriginalAirControlState{};landingAirExitBaked=false;gs.controlState=mode==0?0:5;};
+ crash.host.leaveMotion=[](int mode){leave_crash_motion(crash.actor,mode);crashGroundGetUpTick=mode==0;previousGround=mode==0;previousHeld=false;heldAirMode=passiveMode=false;prewind={};air=mode==1?originalAirControlBegin(0,0):OriginalAirControlState{};landingAirExitBaked=false;gs.controlState=mode==0?0:5;};
  crash.host.requestReset=[](int reason){if(browserResetBegin)browserResetBegin(reason);else browserCrashResetReason=reason;};crash.host.observer=[](int observer){lastCrashObserver=observer;++crashObservers;
   // 12D848's air exit (owner+0x30 != 0): 119E38(*(rider+0x790), +0x320 != +0x324, 0) at 0x12D984 before clip 287 and control 5
   // (engine/crash_control.hpp setAirScoringStance; runs/riders/viggo-uber-a 1892: the score's +0x30 / +0xA4).
@@ -373,7 +379,14 @@ static void setup_crash(){
  crash.host.collisionImpact=[](float speed){lastCrashImpact=speed;record_snow_crash(crash.actor.contactPoint,crash.actor.groundNormal,speed,crash.actor.surface);};
  crash.host.impact=[](float speed){lastCrashImpact=speed;audio_event(AE_RUMBLE_IMPACT,speed);};crash.host.presentation=[](float value){crashPresentation=value;audio_event(AE_RUMBLE_SLIDE,value);}; /*rumble: owner +0xDFC max (impacts) / +0xE00 set: the phase-2 slide 12D23C (0.5 x playback) and the phase-3 get-up 12D8E8 (2 x (1 - clip progress)); both checked against the recorded +0xE00 (local/ps2-capture/runs/rumble, web/test-rumble.mjs)*/
  crash.host.preview=[](int semantic){auto root=graph.previewRoot(semantic);if(!root)throw std::runtime_error("Missing continuation root");return *root;};crash.host.localRoot=[](){auto root=graph.scaledLocalRoot();if(!root)throw std::runtime_error("Missing crash local root");return *root;};
- crash.host.offsetRoots=[](const AnimationTransform& root){graph.offsetSequenceRoots(root);};crash.host.speedLimit=[](){return physicsProfile.speedLimit;};crash.host.random=[](){return rng.nextMotion();};crash.host.pairs=[](){rider_pair_point();};crash.riderCategory=1;
+ crash.host.offsetRoots=[](const AnimationTransform& root){graph.offsetSequenceRoots(root);};crash.host.speedLimit=[](){return physicsProfile.speedLimit;};
+ // 138960: the sliding probe's patch words; +0x2D4 bit 0x10 is 13C948's heading boost on the get-up tick (PS2 hl2/air-eba3 805: 0x51,
+ // so the 823 get-up drove at 553.9 cm/s2; the port kept the pre-crash flags and drove at 0)
+ crash.host.groundPatch=[](const OriginalWorldSegmentHit& hit){
+  if(!hit.hasPatch){browserGroundPatch=-1;return;}
+  browserGroundPatch=hit.patchId;browserGroundU=hit.patchU;browserGroundV=hit.patchV;
+  browserPatchFlags=uint16_t(hit.patchFlags);physicsState.forceHeadingBoost=(browserPatchFlags&0x10)!=0;
+ };crash.host.random=[](){return rng.nextMotion();};crash.host.pairs=[](){rider_pair_point();};crash.riderCategory=1;
  browserCrashReset=reset_crash;browserCrashControl=control_crash;browserCrashMotion=motion_crash;browserHardCrash=enter_crash;browserLandingCrash=landing_crash;
 }
 
@@ -614,7 +627,9 @@ RIDER_LOCAL static bool resetDecline=false; // begin_decline_reset: 1235F8's ent
 static void begin_reset(int reason){
  if(browserResetActive)return;if(!resetDecline){audio_event(AE_RESET,float(reason)); /*116198: 29A220 (snd 0x7B, 28F108)*/if(reason==1||reason==4)score_wrong_way();} /*116120: reasons 1/4 call 11A088 first*/clear_start();if(resetPaths.empty()&&!evictedResetPaths.empty()){resetPaths=std::move(evictedResetPaths);evictedResetPaths.clear();resetRoute=evictedResetRoute;}if(resetPaths.empty())throw std::runtime_error("Original reset route data unavailable");
  if(!crash.active&&!::grounded){if(!landingAirExitBaked)landing_air_exit();commit_rider_physics();}
- if(!crash.active&&::grounded&&!browserRailActive)originalLandingGroundLeave(physicsState,motionTick,lastGroundLeave); //116120 requestMotion(3) runs the ground exit 13F410 first: +0x208/+0x2BC/+0x2C8 decay to 0 (tech-select-ground 439)
+ // 13F410 stamps 1298C8, this tick's: a 121818 stage-trigger reset ("Wrong Way!", reason 4) comes after the step's motion tick
+ // advanced, so stamp the tick the step began with (PS2 hl2/attack-bra2 1531: the next landing's speed factor 0.98, the port's 0.97)
+ if(!crash.active&&::grounded&&!browserRailActive)originalLandingGroundLeave(physicsState,controllerGround.logicTick,lastGroundLeave); //116120 requestMotion(3) runs the ground exit 13F410 first: +0x208/+0x2BC/+0x2C8 decay to 0 (tech-select-ground 439)
  resetReason=reason;resetControl={reason>0,0};rail_reset_leave();detach_rail_for_crash();browserResetActive=true;browserCrashActive=false;crash.active=false;
  physicsState.controlState=gs.controlState=9;graph.setRate(2,0);boostState.modifier=0;boostState.window=physicsState.boostWindow=0;
  heldAirMode=passiveMode=false;prewind={};air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;
@@ -1025,6 +1040,10 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  const bool groundMotionDeparture=physicsAttached&&!grounded&&previousGround&&!(previousHeld&&!jumpHeld)&&!startFrame&&!resetFrame&&!crashFrame&&!railFrame&&!softFrame;
  groundDeparturePending=groundMotionDeparture;
  tmpDebug[0]=groundMotionDeparture;for(unsigned k=0;k<3;k++)tmpDebug[1+k]=browserDeparturePush[k];tmpDebug[4]=browserDeparturePrePosition.has_value(); //TMPDEBUG
+ // A ground get-up (12D848: control 0, motion 0) whose 13F178 leaves the ground in the same tick is a passive departure: the next tick's
+ // control 0 runs in the air and requests control 4 (PS2 hl2/attack-bra2 1374: +0x2A8 = 1/30 at 1375; the port ran the air animation
+ // selector instead)
+ if(crashGroundGetUpTick){crashGroundGetUpTick=false;if(!grounded&&!crash.active){passiveMode=true;passiveDeparture=1;}}
  if(startFrame||resetFrame||crashFrame||railFrame||railReleaseFrame||browserCrashExitFrame){gs.controlState=physicsState.controlState;gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;gs.animationTurn=physicsState.animationTurn;if(railFrame){gs.adjustment28C=physicsState.adjustment28C;gs.adjustment298=physicsState.adjustment298;}} //rail 0x1211F8 keeps approaching +0x28C/+0x298 for a fading kind-11 air adjust
  else if(softFrame){gs.animationTurn=physicsState.animationTurn;gs.controlState=physicsState.controlState;gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;gs.manualSpin=physicsState.manualSpin;}
  else if(grounded){if(!previousGround){finish_landing(jumpHeld,impact);}else if(groundControllerRan){gs.controlState=browserBoardPressFrame?physicsState.controlState:jumpHeld?2:0;}else select_ground_animation(jumpHeld,turn,charge,braking,rideLatched?rideSpin:turn,rideLatched?rideFlip:flip);}

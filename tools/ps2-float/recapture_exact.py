@@ -144,6 +144,36 @@ def finished(out_bin, records):
     return data.get('fpu_mode') == ENV_MODE and data.get('records', 0) >= records
 
 
+def run_capture(state, out_bin, records, mode, slots, status):
+    # Turbo first (the emulation is the same at any speed: a turbo ring equals the normal-speed one byte for byte), and
+    # normal speed again if turbo fails (a ring overrun on a loaded machine).
+    environment = dict(os.environ, PS2_CAPTURE_FPU=mode)
+    code = 1
+    for speed in ('turbo', 'normal'):
+        timeout = int(records / 60 * 6) + 600
+        arguments = ['nice', '-n', '10', sys.executable, str(ROOT / 'tools/ps2_capture.py'), 'run', str(state), str(out_bin),
+                     '--frames', str(records), '--timeout', str(timeout), '--speed', speed]
+        wait_for_slot(slots)
+        before = emulators_running()
+        process = subprocess.Popen(arguments, cwd=ROOT, env=environment, stdout=status, stderr=subprocess.STDOUT)
+        release_after_start(lambda: emulators_running() > before or process.poll() is not None)
+        code = process.wait()
+        if code == 0:
+            return 0
+    return code
+
+
+def reproduces_gate(job, state, out, slots, status):
+    """A rebuilt savestate without the gate's patch list is trusted once its mode-1 run equals the gate's ring."""
+    check_bin = out / '_verify' / f"{job['name']}.bin"
+    check_bin.parent.mkdir(parents=True, exist_ok=True)
+    if run_capture(state, check_bin, job['records'], 'mode1', slots, status) != 0:
+        return False
+    gate = Path(f"{job['source']}.bin").read_bytes()
+    check = check_bin.read_bytes()
+    return len(check) >= len(gate) and check[:len(gate)] == gate
+
+
 def run_one(job, out, slots, log):
     name = job['name']
     out_bin = out / f'{name}.bin'
@@ -158,24 +188,17 @@ def run_one(job, out, slots, log):
             # The rebuilt savestate must carry exactly the gate's patches (same baseline hash, same hooks and pad).
             gate_patches = Path(f"{job['source']}.patches.json")
             rebuilt_patches = state.with_suffix('.patches.json')
-            if not gate_patches.exists() or not same_patches(gate_patches, rebuilt_patches):
+            if gate_patches.exists() and not same_patches(gate_patches, rebuilt_patches):
                 return name, 'manual (rebuilt patches differ from the gate)'
+            if not gate_patches.exists() and not reproduces_gate(job, state, out, slots, status):
+                return name, 'manual (the rebuilt savestate does not reproduce the gate in mode 1)'
         else:
             state = Path(job['state'])
             manifest = dict(job['manifest'], fpu_mode=ENV_MODE)
             (out / f'{name}.capture.json').write_text(json.dumps(manifest, indent=2) + '\n')
-        timeout = int(job['records'] / 60 * 4) + 600
-        arguments = ['nice', '-n', '10', sys.executable, str(ROOT / 'tools/ps2_capture.py'), 'run', str(state), str(out_bin),
-                     '--frames', str(job['records']), '--timeout', str(timeout)]
-        wait_for_slot(slots)
-        before = emulators_running()
-        process = subprocess.Popen(arguments, cwd=ROOT, env=environment, stdout=status, stderr=subprocess.STDOUT)
-        release_after_start(lambda: emulators_running() > before or process.poll() is not None)
-        code = process.wait()
+        code = run_capture(state, out_bin, job['records'], ENV_MODE, slots, status)
     if code != 0:
         return name, f'FAILED ({code})'
-    if job['kind'] == 'rebuild':
-        shutil.copyfile(state.with_suffix('.capture.json'), out / f'{name}.capture.json')
     link_inputs(name, job['source'], out)
     log(f'{name} ok')
     if job.get('gate'):

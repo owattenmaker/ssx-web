@@ -1555,11 +1555,80 @@ held-out captures: 900 ticks without input).
   - **Shared-RNG order** (hiro-hl / marty-hl, the two 0.75 riders, 752): a computer rider draws after the human's crash variant draw. The
     count rule deferred the human's draw. Their rng-order.json files fix it; nothing changed in the core.
 - **Gates:** `ps2-captures riders/<id>-race` and `riders/<id>-hl`, 62 cases, all to the end. riders/canhuck-race gates bones through
-  2118 until a core with the stance line is live (END on local/rider-parity/core).
-- **Not covered:**
-  - each character's own Uber table (the riders-uber runs reach few Ubers);
-  - Conquer the Mountain's base-scale rule for skins (no career state with a skin);
-  - courses other than Snow Jam for non-Zoe humans (the grid seed on other courses comes from lineups.json).
+  2118 until a core with the stance line is live (END since core16).
+
+### Each rider's own Ubers (2026-10-05)
+
+- **Planner** (`local/ps2-capture/uber-plan.mjs RIDER TIER OUT --targets 0L,1L,2L,3B`): the port is exact for every rider on Snow
+  Jam, so it plans the pads ahead of the PS2.
+  - It replays the page's setup and seeds the poked meter.
+  - For each target (grab slot, landed or bailed) it searches the tuck before a 24-frame charged jump and the chord's hold, using core
+    snapshots (event-snapshot.js slots 0 / 1).
+  - The computer riders' shared-RNG draws are not modelled, so the PS2 can drift from the plan. Each capture is judged as it came out.
+- **Rules that shape the runs:**
+  - The Uber crash ends Tricky, so each run has one bail, and it comes last.
+  - Each landed Uber adds a tier, and the table band is tier >= 5 (0x14FEA8).
+  - So: a (tier 1) 0L 1L 2L 3B; b (tier 1) 3L 4L 9L 0B; c (tier 5) 0L 1L 2L 9B; d (tier 5) 3L 4L 9L 4B; e / f fill the gaps.
+  - Pokes: +0x2F8 1.0, +0x2F0 120 s, +0x2F4 tier (`riders-capture.sh ID uber-a..f`).
+- **Riders:** the ten base riders, the four Uber overrides (Stretch / Gutless / Canhuck Nose Grab, Snowballs Tail Grab), Hiro (0.75)
+  and Far East Myth (2.0). Sixty-six captures, gates `riders/<id>-uber-<k>`.
+- **Coverage on the PS2:** all 12 table entries landed for every rider, and bails in both bands. Exceptions:
+  - Kaori's band-0 R2 / L1+L2 / R1+R2 landings (kaori-uber-e's R2 bailed on the PS2);
+  - Far East Myth's band-0 R1+R2 landing (fareastmyth-uber-e was not captured: the mode-1 capture pause).
+  - The overrides use one semantic in both bands, so they count once.
+- **Port fixes found here (all in the physics agent's core19 unless noted):**
+  - **Reset placement stance into 120378** (web/animation_bridge.cpp step_reset): 120378 reads +0x320 after 12F398, and the placement
+    turns a goofy rider to +0x320 = 1. moby-uber-d 2443: the mop picks 416 / 430, not 414 / 431.
+  - **Air get-up's 119E38** (web/score_gameplay.inc `score_crash_air_exit`): the air branch of 12D848 calls
+    119E38(*(rider+0x790), +0x320 != +0x324, 0) at 0x12D984 before clip 287 / control 5. The port only recorded the observer.
+    viggo-uber-a 1892: score +0x30 / +0xA4.
+  - **Retained crash submode** (web/crash_runtime.hpp beginControl): owner+0x30 is written only by 136C40. 12CA30's 136D40 board detach
+    reads the previous crash's value: 1 after an air get-up, which keeps the board's normal speed. viggo-uber-a 2132: the board was
+    12.5 cm off along -normal.
+  - **The landing reaction's tick** (web/score_gameplay.inc score_landing_args; next core after core19): 10E028's +0x354 is the landing
+    tick's logic tick, not motionTick (one ahead). 115B58 expires a request at age 180. nate-uber-b 1262: the port played 315 one tick
+    before the expiry.
+  - **A jump release onto a rail** (the physics agent's, web/rail_gameplay.inc): griff-uber-c 1731.
+- **RNG order:** hiro-uber-a, gutless-uber-c, fareastmyth-uber-b / -c and nate-uber-b carry rng-order.json sidecars
+  (`riders-capture.sh ID KIND ai`). A computer rider's draws fall between the human's crash and landing draws.
+- **Open (the physics agent's):**
+  - fareastmyth-uber-b 2479: on a rail, control 7.
+  - fareastmyth-uber-c 2149: a sliding crash bounce re-requests 379 while it fades. The PS2 revives the old sequence; the port starts a
+    new one (BrowserAnimationGraph::enter's inherit test).
+
+### Other courses (2026-10-05)
+
+- **States** (`characters/scripts/make_course_states.py COURSE HUMANS WORKDIR`), into `characters/courses-<CODE>/<id>`:
+  - Hiro, Marty, Psymon, Allegra, Stretch and Far East Myth on Metro City (BRA2), Ruthless Ridge (CRA3) and Kick Doubt (ESS3).
+  - Built from select.p2s / setup.p2s, with the Peak 2 / 3 pass bits cleared (145F90 bits 12 / 13) and the original menu path. The
+    countdown is kept at tick 18.
+  - All 18 are checked: course, base and cheat ids.
+- **Comparer:** `--human` on a course with lineups.json seeds the human's own grid spot (lineup.js humanGridState, as ai-race.js
+  humanGrid does). Kick Doubt has no lineups.json, so the core carries the Snow Jam state over (human_event_seed_for_course, an
+  approximation from no PS2 data). The ESS3 captures will show whether it is exact.
+- **Captures** (`riders-capture.sh ID bra2-race|bra2-hl|cra3-race|cra3-hl|ess3-race|ess3-hl`, one ARMSX2 at a time through
+  riders-batch.sh): not taken yet. They will be taken in exact mode (PS2_CAPTURE_FPU=exact) once the coordinator lifts the capture pause:
+  `local/rider-parity/exact-queue.jobs` (the 36 course runs and the Uber gaps).
+- **Open, carried forward:** the Kick Doubt start spot of a non-Zoe human is an approximation (human_event_seed_for_course moves the
+  Snow Jam spot into ESS3's gate frame). Treat it as unconfirmed until riders/<id>-ess3-* pass. If they do not, it goes behind a pv
+  switch or gets its own grid data.
+- **Approved sweep (coordinator):** six riders per course spanning scale, stance, Uber table and rig (Griff 0.70, Hiro / Marty 0.75, a
+  goofy rider, Stretch 1.2, NW Legend 1.5, Far East Myth 2.0) on every peak's race and freestyle courses. Exact mode, after the pause.
+
+### Conquer the Mountain: the skin keeps the base scale (from the code)
+
+- 0x14EFA8(?, slot) is the model scale.
+  - With no cheat id (0x14A0B0: 0x535B20 + map[slot] x 0x1C + 0x12; 0x14EFE8 beqz), it returns the base rider's CHARDB scale.
+  - In Single Event (0x535C11 != 0, 0x14EFF0), it returns the skin's from jump table 0x45A660.
+  - In Conquer the Mountain (0x535C11 == 0), slot 0, the human (0x14EFFC beqz), keeps the base scale. Other slots, the computer
+    riders, keep their skin's.
+- The port: character-roster.js composeCheat({ career }) drops the human skin's scale, grid seed and pivot. Career lineups carry the
+  computer riders' skin_scale from PS2 states.
+- **No state:** a skin poked into a CTM lodge state's setup slots (0x534FE0 / 0x535B20 + 0x12) does not survive the world load.
+  - 234188 rebuilds every slot from the game-mode manager's player list (*(gp-0x488)): 0x2342C0 147338 sets the base, 0x2342D8
+    1473D0 the cheat.
+  - A real state needs the career's own skin choice (Rider Details > Cheat Characters in career), which was not derived.
+
 - **Seen in passing (Zoe, not character-specific):** riders/zoe-uber leaves by 1 ulp in the hips quaternion at 3353, the first control-4
   tick after a handplant exit (control 11), and in physics at 3451. Not gated; passed to the physics agent.
 

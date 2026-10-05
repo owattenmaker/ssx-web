@@ -26,6 +26,9 @@ struct BrowserCrashHost {
  std::function<AnimationTransform()> localRoot;
  std::function<void(const AnimationTransform&)> offsetRoots;
  std::function<float()> speedLimit; // rider+0x2E4 (105D98 passes it to 1135B8)
+ // 138960 (137D18's sliding probe): a terrain hit with a patch writes +0x430 (patch +0x150), +0xAAC / +0xAB0 (u, v) and +0x2D4 (the patch
+ // flags, which 13C948 reads as the heading-boost bit 0x10 on the get-up tick); without a patch +0x430 = -1
+ std::function<void(const OriginalWorldSegmentHit&)> groundPatch;
  CollisionRandom random;
  // 105398 after the body response (137860/138640); translate is 106538's companion update.
  std::function<void(BodyCollisionVolume&,const std::function<void(std::array<float,3>)>&)> instanceContacts;
@@ -93,7 +96,9 @@ struct BrowserCrashRuntime {
    const int surface=std::clamp(actor.surface,0,18);const auto& material=materials[surface];
    auto alignment=originalCrashSlidingForces(material.surface,motion,actor,actor.surfaceVelocity,host.clip().animationClass,originalOrientationBasis(actor.quaternion).forward);
    actor.quaternion=originalRebuildOrientation(originalAirAlignment(actor.quaternion,alignment.normal,alignment.heading,alignment.gain,alignment.maximumRate).quaternion).quaternion;
-   OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world(),browser_rider_scope());auto hit=queries.motionHit(queries.terrainContact({actor.position,actor.groundNormal},&browser_rider_terrain_cache()));
+   OriginalCrashWorldQueries queries(terrain,world,property,browser_crash_partial_world(),browser_rider_scope());const auto probe=queries.terrainContact({actor.position,actor.groundNormal},&browser_rider_terrain_cache());
+   if(host.groundPatch&&probe.fraction>=0)host.groundPatch(probe);
+   auto hit=queries.motionHit(probe);
    auto effects=originalCrashSlidingContact(motion,actor,hit,landing.bodyScale,landing.materials[surface].depth3,alignment.relativeVelocityBeforeForces);
    if(effects.impact)host.collisionImpact(effects.impactSpeed);if(effects.requestReset)host.requestReset(1);if(effects.beginPredictor)beginPredictor(effects.predictorSpeedLimit);
   }else originalCrashAirFirstPhase(motion,actor,trajectory,[&](auto end,auto start,int mode){

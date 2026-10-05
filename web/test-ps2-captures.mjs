@@ -10,7 +10,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-const runs = new URL('../local/ps2-capture/runs/', import.meta.url).pathname;
+// PS2_RUNS=dir/: gate against another capture tree, e.g. ../local/ps2-capture/runs-exact/ (ARMSX2's console-model
+// captures, docs/ps2-float.md); a gate whose capture is not in that tree yet is skipped.
+const runs = process.env.PS2_RUNS ? `${process.env.PS2_RUNS.replace(/\/$/, '')}/` : new URL('../local/ps2-capture/runs/', import.meta.url).pathname;
 // Comparer reports go to a directory of this run's own: concurrent runs (the test loop, agents' targeted runs, scratch
 // mirrors whose local/ links here) wrote the same runs/*.regression.json and could read each other's half-written files.
 const reportRoot = fs.mkdtempSync(`${os.tmpdir()}/ssx-ps2-reports-`);
@@ -40,21 +42,19 @@ const riderGates = RIDER_GATE_IDS.flatMap((id) => ['race', 'hl'].map((kind) => (
   why: `${id} as the human from its own countdown, ${kind === 'race' ? 'the event-race pad' : 'the hl-sj-1 high-level pad'}: physics, bones, score and boost`,
 })));
 // Each rider's own Ubers (local/ps2-capture/uber-plan.mjs plans the pads in the port; riders-capture.sh uber-a..f): its own Snow Jam
-// countdown with the meter full and 120 s of Tricky (+0x2F8 1, +0x2F0 120, +0x2F4 tier 1 for a / b / e, 5 for c / d / f), every grab
+// countdown with the meter full and 120 s of Tricky (+0x2F8 1, +0x2F0 120, +0x2F4 tier 1 for a / b / e, 5 for c / d), every grab
 // slot's Uber (L1, L2, R1, R2, L1+L2, R1+R2) landed in both table bands (0x14FEA8: tier >= 5) and bailed (the Uber crash ends Tricky:
 // one bail per run, last). The ten base riders, the four Uber overrides (Stretch / Gutless / Canhuck Nose Grab, Snowballs Tail Grab),
 // Hiro (0.75) and Far East Myth (2.0). Open (the physics agent's): fareastmyth-uber-b 2479 (a rail, control 7), fareastmyth-uber-c 2149
-// (a sliding crash bounce re-requests 379 while it fades: the PS2 revives the old sequence), griff-uber-c 1731 (a jump release onto a
-// rail; fixed in core19). Waiting for a live core: nate-uber-b 1262 (the landing reaction's +0x354 tick, web/score_gameplay.inc) and
-// viggo-uber-a 2132 (the retained crash submode owner+0x30 at the board detach, web/crash_runtime.hpp).
+// (a sliding crash bounce re-requests 379 while it fades: the PS2 revives the old sequence). Waiting for a live core: nate-uber-b 1262
+// (the landing reaction's +0x354 tick, web/score_gameplay.inc). Fixed in core19: griff-uber-c 1731 (a jump release onto a rail),
+// viggo-uber-a 1892 / 2132 (the get-up air exit's 119E38; the retained crash submode owner+0x30 at the board detach).
 const RIDER_UBER_RUNS = ['zoe', 'moby', 'psymon', 'griff', 'viggo', 'elise', 'nate', 'mac', 'allegra', 'kaori', 'stretch', 'gutless', 'canhuck',
-  'snowballs', 'hiro', 'fareastmyth'].flatMap((id) => ['a', 'b', 'c', 'd'].map((k) => `${id}-uber-${k}`));
+  'snowballs', 'hiro', 'fareastmyth'].flatMap((id) => ['a', 'b', 'c', 'd'].map((k) => `${id}-uber-${k}`)).concat(['viggo-uber-e', 'kaori-uber-e']);
 const RIDER_UBER_OPEN = {
   'fareastmyth-uber-b': { exactThrough: 2478, bonesThrough: 2478, scoreThrough: 2478, boostThrough: 2486 },
   'fareastmyth-uber-c': { bonesThrough: 2148 },
-  'griff-uber-c': { exactThrough: 1730, bonesThrough: 1730, scoreThrough: 1730, boostThrough: 1731 },
   'nate-uber-b': { bonesThrough: 1261 },
-  'viggo-uber-a': { bonesThrough: 2131 },
 };
 const riderUberGates = RIDER_UBER_RUNS.map((run) => {
   const id = run.slice(0, run.indexOf('-uber-'));
@@ -176,7 +176,7 @@ const cases = [
   { name: 'hl2/crash-eba3', args: ['--zoe', '--event'], stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, why: 'crash from peak3/much-2-much-event-tuck at 880 (seed 703): crashes from over-rotation, inverted landings, walls, Uber bails, long presses, Select resets; recovery mashed' },
   { name: 'hl2/crash-pipe', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'crash from pipe-air at 150 (seed 704): crashes from over-rotation, inverted landings, walls, Uber bails, long presses, Select resets; recovery mashed' },
   { name: 'hl2/plant-ara1', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'plant from handplant-ground at 200 (seed 501): handplants: plants, leans, springs, early releases, spin and air entries' },
-  { name: 'hl2/plant-pipe-a', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: 900, why: '900: the 107578 probe sees only the scope-list splines (cell rule, 334680(rider+0x860)); 901 (open) eye bones 24/25 on the plant entry tick; plant from pipe-handplant at 120 (seed 502): handplants: plants, leans, springs, early releases, spin and air entries' },
+  { name: 'hl2/plant-pipe-a', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'exact to the end since core19 (120378 sees control 11 on the plant tick); 900: the 107578 probe sees only the scope-list splines (cell rule, 334680(rider+0x860)); 901: the hair (sec_mop) request on the plant tick; plant from pipe-handplant at 120 (seed 502): handplants: plants, leans, springs, early releases, spin and air entries' },
   { name: 'hl2/plant-pipe-b', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'plant from pipe-handplant at 360 (seed 503): handplants: plants, leans, springs, early releases, spin and air entries' },
   { name: 'hl2/press-ara1', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'press from score-rail at 200 (seed 202): board presses: nose / tail, pivots, circles, held past 1 s, repress, into jumps and R3 ollies, carving presses' },
   { name: 'hl2/press-bra2', args: ['--zoe'], exactThrough: END, scoreThrough: END, boostThrough: END, why: 'press from metro-glide-neutral at 100 (seed 201): board presses: nose / tail, pivots, circles, held past 1 s, repress, into jumps and R3 ollies, carving presses' },

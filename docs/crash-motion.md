@@ -254,11 +254,27 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
     entry's control 11 (plant-pipe-a 900) count.
   - 12E9B8 returns after its 106848 attaches: a Cross released on the attach tick is released on the rail the next tick
     (riders/griff-uber-c 1730).
+  - Every crash play (10EB30's entry; 12DCB0 / 12DD98 / 12DE80 / 12DF48 continuations and get-ups; 12E468; 12E010) calls
+    3128E8 with a2 = 0: a re-request of a fading clip continues that copy when 311F00's inherit test passes (same semantic,
+    clip kind, mask +0x88, mirror +0x80, root +0x60 / +0x70) (riders/fareastmyth-uber-c 2149).
+  - 13AF28 on an entity-owned rail (query out+0x50 instance with an entity) takes +0x3D0 from the entity's vtable+0x154
+    contact velocity at the rail point: a Snow Jam log teeter swinging under the rider (riders/fareastmyth-uber-b 2478).
+  - A computer rider's provider reads an earlier rider's velocity live through its +0x6C0 getter (100F88 at 0x10105C): it sees
+    that rider's takeoff from this tick's controller (core rider_world_state [16..18], marker [19]; web/ai-racers.js stage 1 uses
+    it for earlier slots). hl2/attack-bra2 756: Griff boosts after Moby's ollie.
+  - A ground get-up (12D848: control 0 / motion 0) whose 13F178 leaves the ground in the same tick is a passive departure: the
+    next tick's control 0 requests control 4 (hl2/attack-bra2 1374).
+  - 13F410 stamps owner+0x14 with 1298C8, the tick the step began with, also for a 121818 stage-trigger reset ("Wrong Way!",
+    reason 4) that runs after the port's motion tick advanced (hl2/attack-bra2 1531: the next landing's 13F0F0 speed factor).
 - **Batch 2** (46 captures, runs/hl2/batch2.log): the 11 lodge Uber rows with the full meter, Ubers off rails, more rails
   (fences, slides, the ice and event peaks, hard balance and side switches), presses and carves on ice and powder, crashes and
   resets, plants on the pipe and Snow Jam, attacks among the computer riders.
   - A branch that reaches a freestyle finish needs `--finish-place` in its job's extra_args (0x239230 sets the boost meter by
     place): carve-powder-cba2 finishes 5th.
-- **Open:** air-eba3 823, attack-bra2 756 and attack-bra2-b 1232 (computer riders after attacks), rail-rnb-s1 741 (a landing
-  off a rail with the L1+R1 block held), plant-pipe-a eye bones 901, and bones only: press-ice-cra3 4963, rail-cra3-s2b 1321,
-  rail-dss2-s1 1422, uber-rail-3 959, uber-row6 854 (see docs/HANDOFF.md).
+- **Open:**
+  - air-eba3 823: the crash get-up tick's ground step (7 cm/s; lateral 6.5, forward 4.3, normal -3.0), from the record-822
+    velocity. A no-D-pad branch capture timed out and waits for the exact-mode re-capture.
+  - riders/fareastmyth-uber-b 2569: ground at the 13F358 limit in the linear spring regime; the PS2 has 0.37 cm/s less normal
+    velocity, with depth1/3, distance and position equal.
+  - attack-bra2-b 1232: Griff's first ground tick after a landing has 34 cm/s more forward speed on the PS2 (along +0x1B0),
+    with the command words and every compared field equal. attack-bra2 is exact to the end since core23.

@@ -1,3 +1,55 @@
+> **Move-family fixes, cores 20–24, and the EE oracle on open cases (2026-10-05, physics-jank agent; core21 live, core22 installed, core24 in test):** see [crash-motion.md](crash-motion.md) "Move-family coverage".
+> - **core20:**
+>   - Crash plays are unforced (3128E8 a2 = 0 at every crash play site): riders/fareastmyth-uber-c.
+>   - 13AF28 takes an entity rail's vtable+0x154 contact velocity as +0x3D0 (a log teeter under the rider): riders/fareastmyth-uber-b moves from 2478 to 2569.
+> - **core21:** a computer rider's provider reads an earlier rider's post-controller velocity live (100F88's +0x6C0 getter).
+>   - Core: rider_world_state [16..18], with marker [19].
+>   - web/ai-racers.js uses it for earlier slots and falls back to the tick-start velocity on older cores.
+>   - hl2/attack-bra2: Griff moves from 756 to exact.
+> - **core22:** a ground get-up that leaves the ground in the same tick is a passive departure (control 4 next tick): attack-bra2 1374.
+> - **core23:** 13F410's ground-leave stamp uses the step's logic tick for a 121818 "Wrong Way!" reset (reason 4). hl2/attack-bra2 is now exact to the end for everything.
+> - **core24:** 138960, the crash sliding probe, writes the patch words (+0x2D4 flags with the heading-boost bit 0x10, +0x430, +0xAAC/+0xAB0). hl2/air-eba3 is now exact to the end.
+> - **EE oracle (tools/ps2-float/ee_oracle, by the arithmetic agent):** `snap_at.py CAP.p2s TICK OUT.p2s --mode mode1`, then `state.py`, then `oracle --arith mode1 --call 0x128AF0 --trace-calls --trace-fpu --watch`. It gives the PS2's own call order and FPU values inside a tick.
+>   - It doesn't yet work on --ai-state captures, because their hook already patches 0x128AF0.
+>   - Debug builds go in a copy of the tree from now on. A coordinator build from the shared tree must never see debug edits.
+> - **Open:**
+>   - riders/fareastmyth-uber-b 2569: a Snow Jam stage-script boost trigger.
+>     - The PS2's 104E70 stores instance 0x10381E0 at rider+0xA30 (contact point (-173378, 32142, -272773)).
+>     - In tick 2567, 121818 fires builtin 27 (effect 1, amount 5): +0x2E8 = 5, so 13C948 drives 423 instead of 56.
+>     - The port records no instance contact there, even with STAGE_WORLD=1. This is stage-trigger / instance-query work, outside the rider gates' current setup.
+>   - hl2/attack-bra2-b 1232: Griff's first ground tick after a landing has 34 cm/s more forward speed on the PS2. It needs an AI-state oracle snapshot.
+
+> **Deployed 2026-10-05 (coordinator): core22.** web/runtime core.wasm `f5c37584…` (core.js `920f941b…`, unchanged) copied from local/physics-jank/core22-snapshot (531 clean). On top of core21: a ground crash get-up (12D848, control 0 / motion 0) whose 13F178 leaves the ground in the same tick is a passive departure (the next tick's control 0 requests control 4).
+
+> **Deployed 2026-10-05 (coordinator): core21.** web/runtime core.wasm `7b7d5225…` (core.js `920f941b…`, unchanged) copied from local/physics-jank/core21-snapshot (531 clean).
+> - Crash plays call 3128E8 with a2 = 0 (a fading clip continues): riders/fareastmyth-uber-c exact to the end.
+> - Entity-owned rails take +0x3D0 from the entity's vtable+0x154 contact velocity (13AF28): fareastmyth-uber-b 2478 -> 2569.
+> - Live peer velocity through +0x6C0 (100F88 at 0x10105C): rider_world_state [16..18], marker [19] = 1; web/ai-racers.js falls back without the marker. hl2/attack-bra2 Griff exact to the end.
+> - 10E028 logicTick (rider-parity agent).
+
+> **Every rider's own Ubers: 66 gates, 4 more core fixes; other-course states; the CTM skin-scale rule (2026-10-05, rider-parity agent):** see [characters.md](characters.md) "Each rider's own Ubers", "Other courses" and "Conquer the Mountain: the skin keeps the base scale".
+> - **Ubers:** local/ps2-capture/uber-plan.mjs plans each rider's Uber pads in the port (exact on Snow Jam), using core snapshots.
+>   - It searches the takeoff and the hold per grab slot, landed or bailed.
+>   - riders-capture.sh uber-a..f pokes the meter, Tricky time and tier.
+>   - 16 riders (ten base, four Uber overrides, Hiro, Far East Myth), 66 runs. All 12 table entries landed plus bails in both bands, except Kaori's band-0 R2 / L1+L2 / R1+R2 and Far East Myth's band-0 R1+R2.
+> - **Core fixes:**
+>   - **Reset placement stance into 120378** (animation_bridge.cpp step_reset): moby-uber-d 2443, the goofy rider's mop.
+>   - **Air get-up's 119E38** (score_gameplay.inc score_crash_air_exit, 12D848 0x12D984): viggo-uber-a 1892.
+>   - **Retained crash submode owner+0x30 at the board detach** (crash_runtime.hpp): viggo-uber-a 2132.
+>   - **Landing reaction +0x354 = the logic tick** (score_gameplay.inc): nate-uber-b 1262; in the tree, for the next build after core19.
+>   - The first three are live in core19. The physics agent fixed griff-uber-c (a jump release onto a rail) in core19.
+> - **Open (physics agent):** fareastmyth-uber-b 2479 (rail), fareastmyth-uber-c 2149 (a fading 379 revived). Both are gated through the tick before.
+> - **Gates:** riders/* = 62 race / hl + 66 Uber: 128 pass on live core19 (6bc25c7e).
+> - **Other courses:**
+>   - characters/scripts/make_course_states.py derived 18 countdowns: Hiro, Marty, Psymon, Allegra, Stretch and Far East Myth on Metro City, Ruthless Ridge and Kick Doubt.
+>   - compare-ps2-capture.mjs --human now seeds the course's lineups.json grid spot.
+>   - The captures wait for the end of the mode-1 capture pause and run in exact mode: `PS2_CAPTURE_FPU=exact local/ps2-capture/riders-batch.sh < local/rider-parity/exact-queue.jobs` (one ARMSX2 at a time, `pgrep -x`). The queue has the 36 course runs and the Uber gaps.
+>   - Open: the Kick Doubt start spot for a non-Zoe human is an approximation until riders/<id>-ess3-* pass.
+>   - Approved next: the six-rider sweep on every peak's race and freestyle courses, also in exact mode.
+> - **CTM skin scale:** a rule from the code.
+>   - 0x14EFA8: slot 0 in Conquer the Mountain (0x535C11 == 0) keeps the base CHARDB scale; computer-rider skins keep theirs. The port matches.
+>   - No state was derived: 234188 rebuilds the setup slots from the game-mode manager (0x2342C0 / 0x2342D8), so a poked skin does not survive the world load.
+
 > **Deployed 2026-10-05 (coordinator): core19.** web/runtime core.wasm `6bc25c7e…` (core.js `920f941b…`) copied from local/physics-jank/core19-snapshot (465 clean): 12E9B8 returns after its 106848 rail attach (riders/griff-uber-c), 120378 sees control 11 on the plant tick (hl2/plant-pipe-a), the rider-parity agent's Viggo crash fixes (score_crash_air_exit, the crash submode kept across beginControl).
 
 > **Move-family fixes, cores 16–19 (2026-10-05, physics-jank agent; core16–18 live, core19 to install):** see [crash-motion.md](crash-motion.md) "Move-family coverage".
