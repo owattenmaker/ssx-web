@@ -30,7 +30,8 @@ const C22 = { menu: '00053c55', option: '00000034', label: '0b7e72b0', value: '0
   arrows: '046fd665', bar: '000006ec', helps: ['0d60c562', '03656bc5', '01e46e1e', '00c57d40'], pitch: 20 };
 
 const LAYOUT_LABELS = { standard: 'Standard', generic: 'Generic', 'dualshock4-dinput': 'DualShock 4', dualshock3: 'DualShock 3', 'logitech-dinput': 'Logitech D',
-  'xbox-bt-rawinput': 'Xbox Bluetooth', 'xbox-one-s-bt': 'Xbox One S', '8bitdo-bt': '8BitDo', horipad: 'HORIPAD', 'smartjoy-ps2': 'PS2 adapter',
+  'xbox-bt-rawinput': 'Xbox Bluetooth', 'xbox-bt-firefox': 'Xbox Bluetooth', 'generic-firefox': 'Generic',
+  'xbox-one-s-bt': 'Xbox One S', '8bitdo-bt': '8BitDo', horipad: 'HORIPAD', 'smartjoy-ps2': 'PS2 adapter',
   'xgear-ps2': 'PS2 adapter', 'boom-psx': 'PSX adapter', dragonrise: 'USB gamepad', 'snes-usb': 'SNES pad' };
 export function layoutLabel(name = '') { const base = String(name).replace(/\+remap$/, ''); return /\+remap$/.test(name) ? 'Custom' : LAYOUT_LABELS[base] || base || '-'; }
 const VENDORS = { '054c': 'PlayStation', '045e': 'Xbox', '057e': 'Nintendo', '046d': 'Logitech', '2dc8': '8BitDo' };

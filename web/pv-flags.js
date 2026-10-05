@@ -176,10 +176,6 @@
 // blended batch (web/cutscenes.js ensureSet: TRANSP's gondola cabin, the heli sets' windows) draws its static-model class as
 // 37F2A4..37F7E0 sets it (material word +0x0C & 0x660000: ATST GREATER 92 / 20, AFAIL FB_ONLY, Z written), in the two passes of
 // world-material.js. Off: one blended pass without depth writes, so the cabin's far walls covered its near walls.
-// padRing (physics-jank agent, docs/crash-motion.md "High-level play"; web/pad-ring.js): a ~4 ms poller keeps the gamepad's samples in a
-// ring, and a drawn frame that runs several ticks gives each earlier tick the pad as of its own tick time, as the PS2's 30-slot pad
-// ring gives each catch-up update its own vblank's sample (0x326B88 / 0x326B48). The frame's last tick still reads the live pad. Off:
-// every tick of the frame reads the frame's one sample (at 40 fps about a third of the ticks repeat the tick before's pad).
 // loadMeter (load-screen agent, docs/loading-screen.md "The meter is the load"; web/load-meter.js, web/load-files.json): the load
 // screens' percentage is the load's real progress: the bytes it is expected to download (web/load-files.json) at the measured
 // bandwidth, and its work stages (course build, rider, lineup, warm-up, intro, world warm) by their measured time. No minimum (the
@@ -234,7 +230,6 @@ export const PV_DEFAULTS = Object.freeze({
   riderCull: true,
   fxCull: true,
   setBlendClass: true,
-  padRing: false,
   loadMeter: true
 });
 const overrides = new Map();

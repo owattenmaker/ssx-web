@@ -59,8 +59,9 @@ export const IDENTITY = Object.freeze({ buttons: Object.freeze(range(0, 17)), ax
 // Known raw layouts by vendor:product. Chromium maps most of these to 'standard' itself; they matter for browsers and
 // drivers that do not (Firefox, older Chromium, Safari HID). Filled from Chromium gamepad_standard_mappings_win.cc and
 // Firefox GamepadRemapping.cpp.
-// Raw indexing is the same in both (and in Chromium's macOS table): button = HID usage - 1, axis = usage - 0x30, so the
-// hat switch (usage 0x39) is axes[9] and a pad's right stick is usually Z / Rz (axes 2 and 5).
+// Chromium (RawInput, and its macOS table) indexes raw pads by usage: button = HID usage - 1, axis = usage - 0x30, so the hat
+// switch (usage 0x39) is axes[9] and a pad's right stick is usually Z / Rz (axes 2 and 5). Firefox does so only for the pads it
+// remaps itself (which then read as mapping 'standard'); its other pads are in descriptor order (FIREFOX_LAYOUTS below).
 export const KNOWN_LAYOUTS = new Map();
 export function defineLayout(ids, layout) { for (const id of ids) KNOWN_LAYOUTS.set(id, Object.freeze({ ...layout, known: true })); }
 const RZ = ['a0', 'a1', 'a2', 'a5'];
@@ -96,6 +97,26 @@ defineLayout(['0079:0006'], { name: 'dragonrise', buttons: [...range(0, 12), ...
 // SNES-style "2Axes 8Keys" (0079:0011): no sticks, the D-pad is axes 0/1 (the game's ground turn reads the D-pad too).
 defineLayout(['0079:0011'], { name: 'snes-usb', buttons: ['b2', 'b1', 'b3', 'b0', 'b4', 'b5', '', '', 'b8', 'b9', '', '', 'a1-', 'a1+', 'a0-', 'a0+', ''], axes: ['', '', '', ''] });
 
+// Firefox without a built-in remap (mapping ''): Gecko numbers the axes in the order the HID descriptor lists them, not by usage
+// (dom/gamepad/cocoa/CocoaGamepad.cpp Gamepad::init: `aDefaultRemapper ? int(axes.Length()) : usage - kAxisUsageMin`, the same
+// in the Windows and Linux backends), and scales each to -1..1 from its logical range: a hat (usage 0x39, range 1..8) reads
+// up = -1, clockwise in steps of 2/7, and its null state 0 = -9/7. Buttons stay in descriptor order (usage - 1 for a usage
+// range). So the usage-indexed tables above (Chromium's RawInput order) do not apply to these pads in Firefox.
+// Firefox's id is "vvvv-pppp-name" (hex, not always zero padded).
+export function firefoxPadId(id) {
+  return /^[0-9a-f]{1,4}-[0-9a-f]{1,4}-/i.test(String(id ?? ''));
+}
+export const FIREFOX_LAYOUTS = new Map();
+// Xbox Wireless Controller over Bluetooth LE (045e:0b20 / 0b21 / 0b22; Firefox remaps only 0b13 and 02e0 / 02fd): 7 axes in
+// descriptor order X, Y, Z, Rz, Brake (LT), Accelerator (RT), hat; A B _ X Y _ LB RB _ _ View Menu Xbox LS RS = b0..b14 (Gecko's
+// XboxSeriesXRemapper for the same descriptor maps buttons 0 1 3 4 6 7 10 11 12 13 14, Brake -> left trigger, Accelerator -> right).
+// Playtest (macOS Firefox 157, 045e-0b22, mapping '', 7 axes, 2026-10-05): the RawInput table read the right stick's Y from the
+// right trigger (rest -1: a board press held) and the D-pad from an axis 9 that does not exist.
+for (const id of ['045e:0b20', '045e:0b21', '045e:0b22'])
+  FIREFOX_LAYOUTS.set(id, Object.freeze({ name: 'xbox-bt-firefox', known: true, axisCount: 7,
+    buttons: Object.freeze(['b0', 'b1', 'b3', 'b4', 'b6', 'b7', 't4', 't5', 'b10', 'b11', 'b13', 'b14', ...hat(6), 'b12']),
+    axes: Object.freeze(['a0', 'a1', 'a2', 'a3']) }));
+
 // Generic fallback: what a DirectInput / HID pad without a known layout most often looks like in the browser.
 //   buttons 0..11 in the standard order (face, shoulders, triggers, Select/Start, stick clicks);
 //   D-pad: a hat on axis 9 when there are 10+ axes (Chromium / Firefox index axes by HID usage, the hat is usage 0x39),
@@ -104,16 +125,33 @@ defineLayout(['0079:0011'], { name: 'snes-usb', buttons: ['b2', 'b1', 'b3', 'b0'
 //   right stick: Z / Rz (axes 2 and 5) on usage-indexed pads, else axes 2 and 3.
 export function genericLayout(raw) {
   const nb = raw?.buttons?.length ?? 0, na = raw?.axes?.length ?? 0, usage = na >= 10;
+  // fewer than 10 axes from Firefox: descriptor order (a 10-axis pad there is a usage-indexed one: the hat at 9)
+  if (!usage && firefoxPadId(raw?.id)) return firefoxGenericLayout(raw);
   const buttons = range(0, 12);
   if (usage) { buttons[6] = 'b6|t3'; buttons[7] = 'b7|t4'; }
   buttons.push(...(usage ? hat(9) : nb >= 16 ? range(12, 4) : ['', '', '', '']), nb > 16 ? 'b16' : '');
   return { name: 'generic', buttons, axes: ['a0', 'a1', 'a2', usage ? 'a5' : 'a3'] };
 }
 
+// Firefox's descriptor-ordered axes: the sticks are the first four, the hat is the axis (index 4 or later) outside -1..1 (its null
+// state) when one is, else the D-pad is buttons 12..15; buttons as the generic layout. (The triggers' axes differ per descriptor:
+// a known layout names them.)
+function firefoxGenericLayout(raw) {
+  const nb = raw?.buttons?.length ?? 0, axes = raw?.axes || [];
+  let hatAxis = -1;
+  for (let i = 4; i < axes.length; i++) if (Math.abs(+axes[i]) > 1.05) hatAxis = i;
+  const buttons = range(0, 12);
+  buttons.push(...(hatAxis >= 0 ? hat(hatAxis) : nb >= 16 ? range(12, 4) : ['', '', '', '']), nb > 16 ? 'b16' : '');
+  return { name: 'generic-firefox', buttons, axes: ['a0', 'a1', 'a2', 'a3'] };
+}
+
 export function layoutFor(raw) {
   if (raw?.mapping === 'standard') return { name: 'standard', standard: true, ...IDENTITY };
   const { vendor, product } = parsePadId(raw?.id);
-  const known = vendor && KNOWN_LAYOUTS.get(`${vendor}:${product}`);
+  const key = vendor && `${vendor}:${product}`;
+  const ff = key && firefoxPadId(raw?.id) && FIREFOX_LAYOUTS.get(key);
+  if (ff && (raw?.axes?.length ?? 0) === ff.axisCount) return ff;
+  const known = key && KNOWN_LAYOUTS.get(key);
   if (known) return known;
   return genericLayout(raw);
 }

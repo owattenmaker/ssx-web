@@ -7,11 +7,14 @@ import { pv } from './pv-flags.js';
 import { wardrobeFile } from './wardrobe.js';
 
 // The renderer's weight columns (one shader for every rider): the board's 8, then the hands' 18.
+// Stretch's SpecialA (file 46, 1 morph: UBER_NOSE_STRETCH) last; its slot bit depends on the whole assembly, so it comes only
+// from the package's file (slot_bit, read from the live geometry by tools/export_board_flex.py).
 export const MORPH_COLUMNS = [
   { stem: 'board-flex', file: 2, column: 0, count: 8, part: /BoardFlex/i },
-  { stem: 'hand-morphs', file: 7, column: 8, count: 18, part: /^([a-z]+_)?Hands[A-Z]?(\.mnf)?$/i }
+  { stem: 'hand-morphs', file: 7, column: 8, count: 18, part: /^([a-z]+_)?Hands[A-Z]?(\.mnf)?$/i },
+  { stem: 'special-morphs', file: 46, column: 26, count: 1, part: /^([a-z]+_)?SpecialA(\.mnf)?$/i }
 ];
-export const MORPH_COLUMN_COUNT = 26;
+export const MORPH_COLUMN_COUNT = 27;
 
 async function loadPart(root, stem, fetchJson, fetchBuffer) {
   const virtualMeta = wardrobeFile(root + stem + '.json', 'json');
@@ -48,9 +51,10 @@ export async function loadBoardFlex(root, rig, fetchJson, fetchBuffer) {
   return parts.length ? { parts } : null;
 }
 
-// After the core's init_animation (which clears the parts): the board's slot bit is the geometry's slot count (source_bone_slot_count)
-// + morph index 0 (files 0 and 1 have no morphs); the hands' is the upper-body mask's bit above the slot count (morph_upper_bit:
-// rider+0x8C0 holds it, 0x11C298); the mirror table part+0x40. flex.layout: the configured parts, in the core's weight order.
+// After the core's init_animation (which clears the parts): a part's slot bit is its file's slot_bit (the live geometry's), else for the
+// board the geometry's slot count (source_bone_slot_count) + morph index 0 (files 0 and 1 have no morphs), for the hands the
+// upper-body mask's bit above the slot count (morph_upper_bit: rider+0x8C0 holds it, 0x11C298); the mirror table part+0x40.
+// flex.layout: the configured parts, in the core's weight order.
 export function configureBoardFlex(core, flex, rig) {
   if (!flex || !core?._board_morph_configure) return false;
   const slots = rig?.source_bone_slot_count;
@@ -65,18 +69,21 @@ export function configureBoardFlex(core, flex, rig) {
   const board = flex.parts.find((p) => p.meta.file === 2);
   const boardMirror = board ? board.meta.mirror : [0];
   const boardPointer = put(boardMirror);
+  const boardBit = Number.isInteger(board?.meta.slot_bit) ? board.meta.slot_bit : slots;
   try {
-    core._board_morph_configure(slots, board ? boardMirror.length : 0, boardPointer);
+    core._board_morph_configure(boardBit, board ? boardMirror.length : 0, boardPointer);
   } finally {
     core._free(boardPointer);
   }
   if (board) layout.push({ column: board.column, count: board.meta.morph_count });
-  const hands = flex.parts.find((p) => p.meta.file === 7);
-  const handsBit = hands && core._morph_part_add && core._morph_upper_bit ? core._morph_upper_bit(slots) : -1;
-  if (hands && handsBit >= 0) {
-    const pointer = put(hands.meta.mirror);
+  // the other parts after the board, in file order (the core's weights come in the order they are added)
+  for (const part of flex.parts.filter((p) => p.meta.file !== 2)) {
+    let bit = Number.isInteger(part.meta.slot_bit) ? part.meta.slot_bit : -1;
+    if (bit < 0 && part.meta.file === 7 && core._morph_upper_bit) bit = core._morph_upper_bit(slots);
+    if (bit < 0 || !core._morph_part_add) continue;
+    const pointer = put(part.meta.mirror);
     try {
-      if (core._morph_part_add(7, handsBit, hands.meta.morph_count, pointer)) layout.push({ column: hands.column, count: hands.meta.morph_count });
+      if (core._morph_part_add(part.meta.file, bit, part.meta.morph_count, pointer)) layout.push({ column: part.column, count: part.meta.morph_count });
     } finally {
       core._free(pointer);
     }

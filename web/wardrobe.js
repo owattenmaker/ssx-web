@@ -249,7 +249,9 @@ export function geometryMasks(w,asm){
    return out;
  };
  const morph7=bits(7,['morph']),hex=v=>'0x'+v.toString(16);
- return {slot_count:count,base:new Map([...table].map(([k,v])=>[k,v.base])),upper_mask8c0:hex(bits(0,LIST_8C0)|morph7),upper_mask8c8:hex(bits(0,LIST_8C8)|morph7),upper_mask8d0:hex(bits(0,LIST_8D0))};
+ // morph_bits: each morph part's slot bit (slot count + its morph index), as 30F2B0's morph slots
+ const morph_bits=new Map([...table].filter(([,v])=>v.morph>=0).map(([k,v])=>[k,count+v.morph]));
+ return {slot_count:count,morph_bits,base:new Map([...table].map(([k,v])=>[k,v.base])),upper_mask8c0:hex(bits(0,LIST_8C0)|morph7),upper_mask8c8:hex(bits(0,LIST_8C8)|morph7),upper_mask8d0:hex(bits(0,LIST_8D0))};
 }
 
 // ---- the rider package of an outfit (the tools/export_characters.py build_package + web_package layout) ------
@@ -302,7 +304,7 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
  let vertexCount=0,indexCount=0;for(const {part} of visible){vertexCount+=part.vertex_count;indexCount+=part.index_count;}
  const vertices=new Float32Array(vertexCount*10),indices=new Uint32Array(indexCount),colors=new Float32Array(vertexCount*4).fill(1);
  const skin=[],sourceSkin=[],batches=[],parts=[],view=new DataView(w.bin),morphChunks=[];let vbase=0,ibase=0,morphBytes=0;
- // the race morph parts (web/board-flex.js): the board's and the race hands' board-flex / hand-morphs files
+ // the race morph parts (web/board-flex.js): board-flex / hand-morphs / special-morphs files
  const morphParts={};
  for(const {resource,part} of visible){
   vertices.set(new Float32Array(w.bin,part.vertex_offset,part.vertex_count*10),vbase*10);
@@ -332,12 +334,17 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
   // board flex (web/board-flex.js, tools/export_board_flex.py's board-flex.json / .bin): the race board's 8 morph targets
   if (!fe && part.morphs?.length && part.slot === 2) morphParts['board-flex'] = raceBoardFlex(w, part, vbase);
   if (!fe && part.morphs?.length && part.slot === 7) morphParts['hand-morphs'] = raceBoardFlex(w, part, vbase);
+  if (!fe && part.morphs?.length && part.slot === 46) morphParts['special-morphs'] = raceBoardFlex(w, part, vbase);
   parts.push(entry);
   vbase+=part.vertex_count;ibase+=part.index_count;
  }
  if(batches.some(b=>b.texture<0))throw Error(`${riderId}: a material has no loaded texture`);
  // bone slots: the parts of every slot (hidden ones too) in slot order (geometry part +4 base)
  const geometry=geometryMasks(w,asm),count=geometry.slot_count;
+ for (const part of Object.values(morphParts)) {
+  const bit = geometry.morph_bits.get(part.meta.file);
+  if (bit !== undefined) part.meta.slot_bit = bit;
+ }
  const slots=bones.map(b=>geometry.base.get(b.file)+b.index);
  const min=[0,1,2].map(k=>Math.min(...Array.from({length:vertexCount},(_,i)=>vertices[i*10+k]))),max=[0,1,2].map(k=>Math.max(...Array.from({length:vertexCount},(_,i)=>vertices[i*10+k])));
  const hair=visible.filter(p=>p.part.bones.some(b=>b.name.startsWith('sec_'))).map(p=>p.part.resource);
@@ -370,7 +377,7 @@ export function buildPackage(w,asm,{riderId,fe=false,texturePath=stem=>`../textu
  const morphs=new Float32Array(morphBytes/4);let at=0;for(const c of morphChunks){morphs.set(c,at);at+=c.length;}
  return {world,rig,vertices,indices,colors,settings,morphs,morphParts};
 }
-// A race morph part's targets in board-flex.json / .bin form (the board, file 2; the race hands, file 7): the dense deltas of the part's vertices (the FE package's layout),
+// A race morph part's targets in board-flex.json / .bin form (the board, file 2; the race hands, file 7; Stretch's SpecialA, file 46): the dense deltas of the part's vertices (the FE package's layout),
 // the mirror table = the MNF morph_ids (the geometry's part+0x40).
 function raceBoardFlex(w, part, firstVertex) {
   const bytes = part.vertex_count * 12;

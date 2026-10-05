@@ -196,18 +196,19 @@ score object's +0x12C and rider_state, and sends a small diag event:
 
 60 a session at most, inside the diagnostics budget. test-diag-bail.mjs.
 
-### pv padRing (off; web/pad-ring.js)
+### pv padRing (removed 2026-10-05) and the pad report rate
 
-The PS2's catch-up updates each take their own vblank's pad sample (0x326B88 ring, 0x326B48). The page read the gamepad once a
-frame, so at 40 fps about a third of the ticks repeated the tick before's pad (the keyboard already had per-tick keys,
-stallKeyInput).
-
-- With the switch, a poller (every 4 ms during a visible ride) keeps each changed pad sample with its time in a 64-slot ring.
-- stallKeyInput gives each earlier tick of a multi-tick frame the newest sample at or before its tick time, and the frame's
-  last tick the live pad, so no latency is added (test-pad-ring.mjs).
-- Both browsers refresh pads every 4 ms off the main thread: Chromium gamepad_provider.cc kPollingIntervalMilliseconds, Firefox
-  WindowsGamepad.cpp kWindowsGamepadPollInterval (no deadzone; triggers /255).
-- Firefox updates content Gamepad objects through main-thread IPC events, so the poller only helps when the main thread is
-  free between frames.
-- To decide: the pad-rate probe (rAF against a poller, with an optional per-frame busy load) with a real pad in Firefox and
-  Chrome.
+The PS2's catch-up updates each take their own vblank's pad sample (0x326B88 ring, 0x326B48); the page reads the gamepad once a drawn
+frame, so a catch-up tick repeats the tick before's pad. A between-frame poller (pv padRing, 4 ms, a ring consumed per tick) was tried
+and removed. The pad-rate probe (local/physics-jank/pad-rate-probe.html: rAF against the poller, distinct timestamps and stick states)
+on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
+- Chrome 149: mapping standard, ~50 Hz from the pad; the poller saw ~8% more samples at load 0 and fewer under a 20 ms frame
+  load (it starves when the main thread is busy). Not worth its code.
+- Firefox 157: mapping '' with 7 axes, and only ~9.4 Hz reaches the page (16% of off-centre frames change, runs of 9 frames)
+  from the same pad, poller or not. Gecko's macOS backend (dom/gamepad/cocoa/CocoaGamepad.cpp) is event-driven
+  (IOHIDManagerRegisterInputValueCallback, no throttle), and Gamepad::SetAxis bumps the timestamp on every value, so the rate
+  is what Firefox's IOHID path receives; no page-side workaround found.
+- The mapping: Firefox has no remap for 0b20 / 0b21 / 0b22 (GamepadRemapping.cpp lists 0b13 and 02e0 / 02fd), and its default
+  remapper numbers axes in descriptor order (X Y Z Rz Brake Accelerator hat), not by usage. The port applied Chromium's
+  usage-indexed RawInput table (the right stick's Y from the right trigger, the D-pad from a missing axis 9). web/gamepad-map.js
+  FIREFOX_LAYOUTS / firefoxGenericLayout now map Firefox's descriptor order (test-gamepad.mjs).

@@ -19,7 +19,7 @@ const flexDir = process.env.BOARD_FLEX_DIR || pub + '/assets';
 const flexJson = (name, stem = 'board-flex') => JSON.parse(fs.readFileSync(`${flexDir}/${name}/${stem}.json`));
 const flexBin = (name, stem = 'board-flex') => fs.readFileSync(`${flexDir}/${name}/${stem}.bin`);
 // the morph parts: the board (file 2) and the race hands (file 7)
-const STEMS = [['board-flex', 2, /BoardFlex/i], ['hand-morphs', 7, /^([a-z]+_)?Hands[A-Z]?(\.mnf)?$/i]];
+const STEMS = [['board-flex', 2, /BoardFlex/i], ['hand-morphs', 7, /^([a-z]+_)?Hands[A-Z]?(\.mnf)?$/i], ['special-morphs', 46, /^([a-z]+_)?SpecialA(\.mnf)?$/i]];
 
 // ---- 1. packages ----------------------------------------------------------------------------------------------
 const packages = fs.existsSync(pub + '/assets') ? fs.readdirSync(pub + '/assets').filter((d) => d.startsWith('RIDER_')) : [];
@@ -54,7 +54,8 @@ const fetcher = async (path) => {
 };
 let wardrobeChecked = 0;
 if (fs.existsSync(pub + '/assets/WARDROBE/ZOE/wardrobe.json')) {
-  for (const id of ['zoe', 'mac', 'kaori', 'psymon']) {
+  // the outfit riders (cheat skins such as Stretch keep their RIDER_<X> package: wardrobe.js outfitState)
+  for (const id of ['zoe', 'mac', 'kaori', 'psymon', 'allegra']) {
     const name = `RIDER_${id.toUpperCase()}`;
     if (!withFlex.some((x) => x.startsWith(name + '/'))) continue;
     const w = await loadWardrobe(id, fetcher);
@@ -68,6 +69,8 @@ if (fs.existsSync(pub + '/assets/WARDROBE/ZOE/wardrobe.json')) {
       assert.equal(got.first_vertex, meta.first_vertex, `${id} ${stem}: first vertex`);
       assert.equal(got.vertex_count, meta.vertex_count, `${id} ${stem}: vertex count`);
       assert.deepEqual(got.mirror, meta.mirror, `${id} ${stem}: mirror`);
+      // the wardrobe's slot bit (geometryMasks) is the live geometry's (the export reads it from the rider's savestate)
+      if (Number.isInteger(meta.slot_bit)) assert.equal(got.slot_bit, meta.slot_bit, `${id} ${stem}: slot bit`);
       const bin = flexBin(name, stem);
       const ps2 = new Float32Array(bin.buffer, bin.byteOffset, bin.length / 4);
       let worst = 0;

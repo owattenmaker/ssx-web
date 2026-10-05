@@ -115,6 +115,29 @@ const channel = (pad, name) => buildPad(() => false, pad)[PAD_BUTTONS.indexOf(na
   std = map({ ...raw('054c-09cc-Wireless Controller', b(17, [0]), [0, 0, 0, 0]), mapping: 'standard' });
   assert.equal(std.layout, 'standard', 'a pad the browser maps itself is left alone'); assert.ok(std.buttons[0].pressed);
 }
+{ // Firefox (macOS 157) Xbox Wireless over Bluetooth LE, 045e-0b22, mapping '': 7 axes in descriptor order (X Y Z Rz Brake Accelerator hat),
+  // 15 buttons; Gecko's CocoaGamepad default remapper (playtest 2026-10-05)
+  const raw = (buttons, axes) => ({ id: '045e-0b22-Xbox Wireless Controller', index: 0, mapping: '', connected: true, timestamp: 1,
+    buttons: Array.from({ length: 15 }, (_, i) => ({ pressed: buttons.includes(i), value: buttons.includes(i) ? 1 : 0 })), axes });
+  const rest = [0, 0, 0, 0, -1, -1, -9 / 7];
+  const map = (r) => { const cal = M.newCalibration(); M.calibrate(cal, { axes: rest }); M.calibrate(cal, r); return M.mapPad(r, M.compileLayout(M.layoutFor(r)), cal); };
+  let std = map(raw([], rest));
+  assert.equal(std.layout, 'xbox-bt-firefox');
+  assert.deepEqual(std.axes, [0, 0, 0, 0], 'at rest: no stick deflection (the RawInput table read the right trigger as right stick Y)');
+  assert.ok(std.buttons.every((b) => !b.pressed), 'at rest nothing is pressed');
+  std = map(raw([0, 3, 6, 11], [0.5, -0.25, 0.75, -1, 1, 0, -1 + 4 * 2 / 7]));
+  assert.ok(std.buttons[0].pressed && std.buttons[2].pressed && std.buttons[4].pressed && std.buttons[9].pressed, 'A = Cross, X = Square, LB = L1, Menu = Start');
+  assert.deepEqual(std.axes, [0.5, -0.25, 0.75, -1], 'sticks on axes 0..3');
+  assert.ok(std.buttons[6].value > 0.99 && Math.abs(std.buttons[7].value - 0.5) < 1e-6, 'L2 = Brake (axis 4), R2 = Accelerator (axis 5)');
+  assert.ok(std.buttons[13].pressed && !std.buttons[12].pressed, 'the hat on axis 6: down');
+  std = map(raw([], [0, 0, 0, 0, -1, -1, -1 + 2 * 2 / 7]));
+  assert.ok(std.buttons[15].pressed && !std.buttons[14].pressed, 'hat right');
+  // Chromium's usage-indexed RawInput layout still applies to the Chromium id of the same pad
+  assert.equal(M.layoutFor({ id: 'Xbox Wireless Controller (Vendor: 045e Product: 0b22)', mapping: '', axes: new Array(10).fill(0), buttons: [] }).name, 'xbox-bt-rawinput');
+  // another Firefox pad without a remap and fewer than 10 axes: the hat is the axis at its null state
+  const g = M.layoutFor({ id: '1234-5678-Some Pad', mapping: '', axes: [0, 0, 0, 0, -9 / 7], buttons: new Array(12).fill({ pressed: false, value: 0 }) });
+  assert.equal(g.name, 'generic-firefox'); assert.deepEqual(g.buttons.slice(12, 16), ['h4:up', 'h4:down', 'h4:left', 'h4:right']);
+}
 { // Firefox-style pad with the hat on axis 9 and a live (mutated in place) Gamepad object
   const live = { id: '79-6-Generic   USB  Joystick  ', index: 0, mapping: '', connected: true, timestamp: 0,
     buttons: Array.from({ length: 12 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0, 0, 0, 0, 0, 0, HAT_NEUTRAL] };

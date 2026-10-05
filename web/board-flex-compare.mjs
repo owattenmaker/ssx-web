@@ -5,8 +5,17 @@
 // holds the state tick i left, as for every other field.
 // Summary: boardFlex {ticks, exact, nonzero, first: {tick, web, ps2}} for the board; handMorphs the same for the hands; or {skipped}.
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
-const WEIGHTS = 0x5dc000;
+// Snow Jam glide's human: geometry 0x5DC600, weights 0x5DC000. Another baseline's human (The Junction's rider 0x14542A0): the
+// weights pointer of its own savestate, *(*(rider+0x780)+0x3C) (local/board-flex/recapture.py watches the same address).
+const SNOW_JAM_WEIGHTS = 0x5dc000;
+function weightsOf(manifest) {
+  if (!manifest.baseline || !manifest.rider || !fs.existsSync(manifest.baseline)) return SNOW_JAM_WEIGHTS;
+  const script = 'import sys,zipfile,struct\nee=zipfile.ZipFile(sys.argv[1]).read("eeMemory.bin")\n' +
+    'w=lambda a: struct.unpack_from("<I",ee,a&0x1ffffff)[0]\nprint(w(w(int(sys.argv[2],16)+0x780)+0x3C))';
+  return Number(execFileSync('python3', ['-c', script, manifest.baseline, manifest.rider], { encoding: 'utf8' }).trim());
+}
 // Snow Jam Zoe's geometry: slot count 29; part 2 (board): morph index 0, weights +0, part+0x40 = [4, 5, 6, 7, 0, 1, 2, 3];
 // part 7 (HandsB): morph index 2, weights +44, part+0x40 = [9..17, 0..8]
 const SLOT_COUNT = 29;
@@ -17,6 +26,7 @@ const PARTS = [
 
 export function create({ core, dv, RECORD, captureManifest }) {
   const watches = captureManifest.layout?.watches || [];
+  const WEIGHTS = weightsOf(captureManifest);
   let watchAt = -1;
   let offset = 0;
   for (const w of watches) {
@@ -24,7 +34,7 @@ export function create({ core, dv, RECORD, captureManifest }) {
     offset += w.length;
   }
   if (watchAt < 0 || !core._board_morph_configure) {
-    const why = watchAt < 0 ? 'the capture does not watch 0x5dc000' : 'the core has no board_morph_configure';
+    const why = watchAt < 0 ? `the capture does not watch 0x${WEIGHTS.toString(16)}` : 'the core has no board_morph_configure';
     return { tick() {}, summary: () => ({ boardFlex: { skipped: why }, handMorphs: { skipped: why } }) };
   }
   const parts = core._morph_part_add ? PARTS : PARTS.slice(0, 1);

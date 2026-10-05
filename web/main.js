@@ -85,7 +85,6 @@ import {
 } from './game-tick.js';
 import { buildPad, createKeyboardContext, loadKeyboardMode, saveKeyboardMode } from './pad-input.js';
 import { pollPads, setPadsFocused } from './gamepad.js';
-import { createPadRing, padForTick, startPadPoller } from './pad-ring.js';
 import { installPadMenus } from './gamepad-menus.js';
 import { createTouchControls } from './touch-controls.js';
 // phones: touch deck + presentation quality (docs/mobile.md)
@@ -1484,11 +1483,8 @@ function animateRider(name, dt) {
 // the keyboard per tick of a multi-tick frame. The log holds this frame's key events (event timestamps); keyBase the keys
 // held at the previous frame's end. A frame that runs several ticks (a hitch) gives its k-th tick the keys as of the previous frame +
 // (k+1)/60 s, the PS2 pad ring's sample of that vblank (0x326B88), so a release during the stall lands on its tick; ticks at or past the
-// frame time read the current keys. Simple-mode roles are rebuilt in time order from the frame's start. Touch keeps the frame's one
-// sample; the gamepad too, unless pv padRing (web/pad-ring.js) kept its samples between frames: then each earlier tick reads the pad as
-// of its tick time and the last tick the live pad.
-const padRing = createPadRing({ read: () => pollPads(), now: () => performance.now() });
-startPadPoller(padRing, () => running && !document.hidden && pv('padRing'));
+// frame time read the current keys. Simple-mode roles are rebuilt in time order from the frame's start. Gamepad and touch keep the frame's
+// one sample (a between-frame pad poller bought nothing: docs/crash-motion.md "pv padRing (removed)").
 function clearInput() {
   keys.clear();
   touchControls.clear();
@@ -1519,8 +1515,7 @@ function stallKeyInput(input, ms, dt, snap, skip) {
           if (down) state.add(code);
           else state.delete(code);
         }
-    const pad = padForTick(pv('padRing') ? padRing : null, t, ms, pollPads());
-    return buildPad((c) => state.has(c) || touchControls.held(c), touchControls.pad(pad), keyboardPad);
+    return buildPad((c) => state.has(c) || touchControls.held(c), touchControls.pad(pollPads()), keyboardPad);
   };
 }
 

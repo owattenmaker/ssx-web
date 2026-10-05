@@ -174,9 +174,35 @@ def package_vertex(model_vertex):
     return [v[0], v[2], -v[1]]
 
 
-# The morph parts the race packages draw: the board (file 2, morph index 0 -> slot bit = the slot count) and the race hands (file 7,
-# their slot bit in the upper-body masks: web/board-flex.js). Output file stem per part.
-MORPH_PARTS = (('board', BOARD_FILE, 'board-flex'), ('upper', 7, 'hand-morphs'))
+# The morph parts the race packages draw: the board (file 2, morph index 0 -> slot bit = the slot count), the race hands (file 7,
+# their slot bit in the upper-body masks: web/board-flex.js) and Stretch's SpecialA (file 46, 1 morph, UBER_NOSE_STRETCH). Output
+# file stem per part.
+MORPH_PARTS = (('board', BOARD_FILE, 'board-flex'), ('upper', 7, 'hand-morphs'), ('special', 46, 'special-morphs'))
+
+
+def live_slot_bits(rig):
+    """{file: slot bit} of the morph parts of the package's live human geometry (its glide / countdown savestate,
+    rig.assembly_evidence.states): geometry+0x10 (slot count) + part+0xC (morph index), every part of the assembly counted, the
+    inactive NIS head / hands / PDA too (Stretch: board 27, hands 28, SpecialA 32)."""
+    import zipfile
+    evidence = rig.get('assembly_evidence') or {}
+    states = [ROOT / s for s in evidence.get('states', [])] or [ROOT / 'local/reference/pcsx2/snow-jam-glide.p2s']
+    actor = int(str(evidence.get('actor', '0x14701a0')), 16)
+    for state in states:
+        if not state.exists():
+            continue
+        ee = zipfile.ZipFile(state).read('eeMemory.bin')
+        word = lambda a: struct.unpack_from('<I', ee, a & 0x1ffffff)[0]
+        geometry = word(actor + 0x780)
+        slots = word(geometry + 0x10)
+        out = {}
+        for i in range(word(geometry + 8)):
+            part = word(geometry + 0xC) + i * 0x58
+            index = word(part + 0xC)
+            if index < 0x80000000 and word(part + 0x4C):
+                out[word(part)] = slots + index
+        return out, state.name
+    return {}, None
 
 
 def export(package, members, ps2_members, out):
@@ -203,17 +229,24 @@ def export(package, members, ps2_members, out):
     if base != count:
         return f'{package}: vertices.bin is not the parts in order ({base} vs {count})'
     lines = []
+    # Zoe's package (rider_assets.py) has no assembly evidence: its parts are the snow-jam-glide human's
+    bits, state = live_slot_bits(rig) if rig.get('assembly_evidence') or prefix == 'zoe' else ({}, None)
     for slot, file, stem in MORPH_PARTS:
         found = [i for i, m in enumerate(models) if m['file'] == file and m['morph_count']]
         if len(found) != 1:
             lines.append(f'{package}: no morphing file-{file} part')
             continue
         i = found[0]
-        lines.append(export_part(package, parts[i], models[i], vertices, bases[i], ps2_members, out, slot, stem))
+        bit = bits.get(file)
+        # SpecialA's bit depends on the whole assembly: only from a live geometry
+        if file == 46 and bit is None:
+            lines.append(f'{package}: SpecialA without a live geometry (no slot bit)')
+            continue
+        lines.append(export_part(package, parts[i], models[i], vertices, bases[i], ps2_members, out, slot, stem, bit, state))
     return '\n'.join(lines)
 
 
-def export_part(package, part, model, vertices, base, ps2_members, out, slot, stem):
+def export_part(package, part, model, vertices, base, ps2_members, out, slot, stem, bit=None, state=None):
     n = len(model['vertices'])
     # vertex check: the package's slice is the decoded part, converted as build_package converts it
     for k, v in enumerate(model['vertices']):
@@ -247,6 +280,9 @@ def export_part(package, part, model, vertices, base, ps2_members, out, slot, st
     meta = dict(version=1, resource=resource, file=model['file'], first_vertex=base, vertex_count=n,
                 morph_count=morph_count, mirror=[m['channel'] for m in model['morphs']], offsets=offsets,
                 source_sha256=part.get('source_sha256'), frame='vertices.bin (Y-up metres)', deltas=source)
+    if bit is not None:
+        # the live geometry's slot bit (geometry+0x10 + part+0xC) and its savestate
+        meta.update(slot_bit=bit, slot_bit_source=state)
     dest = out / package
     dest.mkdir(parents=True, exist_ok=True)
     (dest / f'{stem}.json').write_text(json.dumps(meta) + '\n')
