@@ -212,3 +212,30 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
   remapper numbers axes in descriptor order (X Y Z Rz Brake Accelerator hat), not by usage. The port applied Chromium's
   usage-indexed RawInput table (the right stick's Y from the right trigger, the D-pad from a missing axis 9). web/gamepad-map.js
   FIREFOX_LAYOUTS / firefoxGenericLayout now map Firefox's descriptor order (test-gamepad.mjs).
+
+## Move-family coverage (2026-10-05, physics-jank agent)
+
+- **Captures branch off gated runs at a feature** (local/ps2-capture/hl2.py; runs/hl2). Each one replays its source's pad to a
+  rail entry, a plant, a press, a long air or a surface run, then plays one move family with skilled-player timing.
+  - The families: air, uber, press, rail, carve, crash, attack, plant.
+  - Timing mixes frame-perfect taps and holds with sloppy chords: onsets and releases 1..4 frames apart.
+  - The PS2 is deterministic for the same savestate and pad, so a branch reaches the feature as its source did.
+  - Ubers use the full meter poked (rider+0x2F8 / 0x2F0 / 0x2F4) and Zoe's lodge rows set to entry K for every slot
+    (0x530EC0 + 4 x 0x1FE + slot x 6, both bands). compare-ps2-capture.mjs applies the same rows.
+- **Rules found and ported** (each with its first divergent capture; ps2-captures `hl2/*` gates them):
+  - 12E9B8's jump release on a rail returns before 114130: +0x2FC keeps its value for the release tick (rail-slide 737).
+  - 12E9B8 in the air with Cross held and +0x328 still set steers +0x22C with RailBalance (113F38), not the turn (113E80)
+    (rail-fence 707).
+  - 10EB30's 11FEC8(13) runs the old controller's exit first; for control 1 that is 12FE98 (crash-eba3 1409, rail-era5 2932).
+    10EB30 also clears +0x330 (rail-fence-b 811).
+  - 1057B8's surface landing passes 119E38 the stance argument +0x320 != +0x324 (crash-eba3 1664, press-bra2 1221).
+  - 12EE30 plays the air release clip with 3128E8 a2 = 0 (inheriting a fading copy) and not at all when channel 2 requests it
+    already (rail-bra2-a 1305).
+  - A control-1 departure tick does not approach the turn triplets a second time in the air pass (press-rail 1016).
+  - 334680 searches the rider's scope list (rider+0x860). Its splines are the segments whose loose octree cell (328F28, padded
+    0.2 cells) overlaps the scope box at the 3-tick refresh. The scope box is not the segment's own bounds: that test drops
+    rails the PS2 grinds. Measured from three PS2 savestates of plant-pipe-a: 4 then 8 segments, 0 missing, 0 extra
+    (plant-pipe-a 900).
+  - Motion 1's landing 13A7B0 also runs in control 7 after the rail motion lost the rail; the landing's control request runs
+    132048 first (uber-rail-10 2339).
+- **Open:** air-eba3 823, rail-bra2-a 1760, attack-bra2 756, plant-pipe-a eye bones 901 (see docs/HANDOFF.md).

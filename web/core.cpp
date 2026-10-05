@@ -188,6 +188,8 @@ RIDER_LOCAL bool browserStarting=false,browserStartFrame=false,browserStartFroze
 RIDER_LOCAL void (*browserRailTickBegin)()=nullptr; // clears the rail step's per-tick flags whether or not it runs (web/rail_gameplay.inc)
 // 12E9B8's jump release left a rail this tick: it returns before 114130, so the boost runs on into the first air tick (web/rail_gameplay.inc)
 RIDER_LOCAL bool browserRailJumpRelease=false;
+// the rail controller (control 7) ran this tick's 114130 and then handed the tick to the air (web/rail_gameplay.inc Stop::Airborne)
+RIDER_LOCAL bool browserRailControllerRan=false;
 RIDER_LOCAL bool browserRailActive=false;RIDER_LOCAL bool browserRailBoostTicked=false; // the rail step ran this tick's 114130 / 1200D0 and handed the tick back (web/rail_gameplay.inc)
 RIDER_LOCAL bool (*browserRailStep)(float,int,int,int)=nullptr;RIDER_LOCAL void (*browserRailReset)()=nullptr;
 // Handplant control11/motion5 (web/handplant_gameplay.inc): runs before rail attach; a failed cruise attempt edits the cruise inputs and skips 0x106848.
@@ -829,7 +831,9 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  // 12E9B8 (control 2) with JumpHeld (word0 0x2000) calls 114130(rider, BoostHeld, 0) at 0x12EB58 whatever the motion: Cross held
  // through a passive departure keeps the boost (and its drain) in the air (PS2 hl-glide-3 1430). Released, it never calls 114130.
  const bool airCrouch=!grounded&&physicsState.controlState==2&&held;
- if(browserRailBoostTicked){}
+ // a controller that already ran 114130 this tick or returned before it: control 7 leaving for the air (its Stop::Airborne), or 12F730
+ // returning at 12F7AC with an attack held (PS2 hl2/rail-rnb-s1b 3057, hl2/uber-row8 883: +0x2FC stays for that tick)
+ if(browserRailBoostTicked||browserRailControllerRan||attackHoldsAir){}
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&grounded&&bool(jump)==held&&!browserBoardPressFrame)
   originalBoostControl(boostState,boostProfile,boost,!held&&boost&&!boostHeld);
  else if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame&&airCrouch){if(jump)originalBoostControl(boostState,boostProfile,boost,false);}

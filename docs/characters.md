@@ -1491,6 +1491,40 @@ Playtester report: the board never bends (board presses, rail leans). It is a mo
   - Gates: the same 4 captures, hands bit-exact on every tick (195 / 305 / 461 / 197 non-zero ticks), in ps2-captures
     boardflex/* (summary `handMorphs`).
 
+### Animation channel audit (2026-10-05)
+
+30F2B0 maps each clip packet part (file id) to a geometry part (geometry+0x1C). Bone channels go to the local pose (+0x24 / +0x28)
+and morph channels to the weights (+0x3C + part+0x8). Slots outside +0x150 (active) are skipped, and so are slots outside +0x158
+when rider+0xB1C is set (hidden / LOD 2). Sources: Snow Jam Zoe's geometry, Stretch's glide.p2s, the WARDROBE part slots and the
+497 gameplay clips (animation-packets.json).
+
+| file / part | gameplay clips | PS2 | port |
+|---|---|---|---|
+| 0 body, 22 bones | 476 | bones | driven; world bones gated in every capture (BONE_SCAN) |
+| 1 bindings, board_rootg / childg | 441 | bones (board-off / board-grab Ubers too) | driven, gated |
+| 2 BoardFlex, 8 morphs | 157 | morphs | boardFlex |
+| 7 race hands, 18 morphs | 247 | morphs | boardFlex |
+| 15..42 hair, hats, hood, wings, backpack, tail, ... | 7 each (SH_ / SL_ / ST_) + UBER_NOSE_BEAVER (39) | bones, secondary channels 3..5 | driven (in the rig), gated for Zoe's mop |
+| 45 Stretch SpecialAB, 1 bone | UBER_NOSE_STRETCH (+ _CYC) | bone | driven |
+| 46 Stretch SpecialA, 1 morph (index 5, bit 32, +81) | the same 2 | morph | boardFlex (special-morphs.json), gated |
+| 5 / 6 / 8 / 9 / 11 NIS head, eyes, NIS hands, PDA | FE / NIS clips | inactive in the race geometry | FE preview, cutscenes.js |
+
+- **Tricks** (gates `ps2-captures boardflex/bf-*`, 22 captures: `local/board-flex/recapture.py` re-ran the trick runs' scripts and
+  pokes with the weights watched): board and hand weights bit-exact on every tick.
+  - Ubers bend the board: L1+R1 (semantic 95) a sum of 2.0, rail Uber (216) 1.18, R1 (131) 1.06, L2 (128) 0.86, L1 (122)
+    0.46, R2+Square (116) 0.33. Tweaks (TW_*) bend it too.
+  - Plain grabs (G_*) carry no file-2 stream: the board stays straight in the air (score-grabs, pipe-air-grabs: 0 on every
+    air tick).
+  - Landings (L_*, 62 / 63) and crash clips (WH_*) bend it most.
+- **Stretch's SpecialA:**
+  - Exported with the live geometry's slot bit (`tools/export_board_flex.py live_slot_bits`; wardrobe `geometryMasks().morph_bits`).
+  - Gate `boardflex/bf-stretch-nose-uber` (`--event --human RIDER_STRETCH`): his nose Uber, from his countdown.
+    - The Uber is L1+L2 + Square (grab slot 4, mask 3), semantic 160, UBER_NOSE_STRETCH, on the long air 1299..1411.
+    - A Super Uber is poked (tier 10) to keep the meter full; the weights are watched at 0x200 bytes.
+    - SpecialA is at +81, past a 0x100 watch: the hook refuses a part outside its window.
+    - Board, hands and SpecialA weights are bit-exact for 1599 ticks; SpecialA's peak is 1.063.
+  - SpecialA is a 6 cm part on bone 26 (speciala) that moves up to 7.6 cm, only during that Uber.
+
 ## Race rider texels (PS2 domain)
 
 (Restored: this section was lost when the file was overwritten concurrently.)

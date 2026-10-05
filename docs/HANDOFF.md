@@ -1,3 +1,47 @@
+> **Deployed 2026-10-05 (coordinator): core12 (move-family physics fixes) and Stretch's SpecialA morph.** web/runtime core.wasm `f37f278f…` (core.js `920f941b…`) copied from local/physics-jank/core12 (309 clean + 47 new hl2/* gates on this build): rail jump release keeps the boost a tick, held Cross after a rail steers the rail triplet, a collision crash in a press runs 12FE98 first, surface landings get the right stance, 12EE30 plays the release clip unforced, a press leaving the ground approaches the turn once, rail / handplant queries see only the scope list (loose octree cells). Assets: local/board-flex/export3 copied (RIDER_STRETCH/special-morphs.{json,bin} new; the board / hand jsons gain slot_bit fields). The tree's C++ already holds core13 candidates, so core12 was installed by copying, not rebuilt.
+
+> **Animation channel audit; the board bends in Ubers and tweaks; Stretch's SpecialA (2026-10-05, playtester-bugs agent; pv `boardFlex`):** see [characters.md](characters.md) "Animation channel audit".
+> - **Audit:** every clip stream and geometry part 30F2B0 drives.
+>   - Bones (files 0, 1, the secondary parts 15..42, Stretch's 45) were already driven and gated (BONE_SCAN).
+>   - Morphs: the board (2) and race hands (7) are done (boardFlex). Stretch's SpecialA (46) is now done.
+>   - The NIS head / eyes / hands / PDA (5, 6, 8, 9, 11) are inactive in the race geometry.
+>   - Nothing else the PS2 animates is drawn at rest.
+> - **Tricks:** `local/board-flex/recapture.py` re-ran 18 trick runs (same baselines, scripts, pokes) with *(*(rider+0x780)+0x3C) watched.
+>   - New gates `ps2-captures boardflex/bf-*` (23 in all): board and hand weights bit-exact on every tick, physics and bones exact.
+>   - Ubers bend the board: L1+R1 (95) a summed weight of 2.0, rail Uber 1.18, R1 1.06, L2 0.86, L1 0.46, R2 0.33. Tweaks (TW_*) bend it too.
+>   - Plain grabs (G_*) carry no board stream, so the board stays straight. Landings and crash clips bend it most.
+>   - Board-off / board-grab Ubers move the board with the file-1 bones (gated).
+> - **Page:** Chrome and WebKit draw the Uber bend as the PS2 does: local/board-flex/tricks/uber-l1r1-chase.png (PS2 | off | on), uber-l1r1-side-wk.png, uber-chrome.png.
+>   - vpshot (local/board-flex/qa) seeds a poked capture's boost words from record 0.
+> - **Stretch's SpecialA:**
+>   - New gate boardflex/bf-stretch-nose-uber (`--event --human RIDER_STRETCH`): his nose Uber 160 (L1+L2 + Square), weights exact for 1599 ticks, peak 1.063.
+>   - Slot bits come from each rider's live geometry: `slot_bit` in the json, and wardrobe `geometryMasks().morph_bits`.
+>   - Assets: local/board-flex/export3, to copy (special-morphs for Stretch; the json files gain slot_bit).
+> - **Comparer:** `compare-ps2-capture.mjs --human RIDER_X` (character settings via character-roster.js humanSettings / composeCheat), made exact for Stretch by the rider-parity agent.
+>   - web/board-flex-compare.mjs reads the morph parts from the capture's live geometry, and throws if a part lies past its watch window.
+
+> **Move-family coverage, batch 1: 47 branch captures, 9 more core divergences fixed (2026-10-05, physics-jank agent; core local/physics-jank/core12, to install):** see [crash-motion.md](crash-motion.md) "Move-family coverage". User request: rider feel and physics exact for every move family.
+> - **Harness:** local/ps2-capture/hl2.py.
+>   - `find SRC` lists a gated capture's features (rail entries, plants, presses, long airs, surface runs).
+>   - `make` writes a branch: the source's pad up to the feature, then one move family (air, uber, press, rail, carve, crash, attack, plant) with skilled timing, frame-perfect taps and sloppy staggered chords.
+>   - `build` captures it on ARMSX2 with the source's baseline, isolation, --ai-state, watches and pokes, plus the full meter (--meter) and Zoe's lodge Uber rows (--uber-row K). An --ai-state branch also writes its rng-order sidecar.
+>   - hl2-run.sh, hl2-compare.sh (judges as the gate does), hl2-why.sh and hl2-cases.py (prints the gate lines).
+> - **Fixes:**
+>   - rail jump release keeps the boost a tick (12E9B8 returns before 114130);
+>   - held Cross after a rail ends steers +0x22C via 113F38 while +0x328 is set;
+>   - a collision crash during a press runs 12FE98 first (11FEC8(13));
+>   - surface landings pass 119E38 the stance (+0x320 != +0x324);
+>   - 12EE30 plays the release clip unforced and skips it when already requested;
+>   - a press leaving the ground does not approach 1211F8's turn twice;
+>   - rail / handplant spline queries (334680(rider+0x860)) see only the scope list: a segment is listed when its loose octree cell (328F28, padded 0.2) overlaps the scope box. Measured from three PS2 savestates of hl2/plant-pipe-a, 898 / 899 / 901.
+> - **Gates:** 47 `ps2-captures hl2/*` (44 human branches, 3 among the computer riders), exact to the end except the open items.
+> - **Open, gated short:**
+>   - air-eba3 823: the get-up from a long airborne crash 350 with the D-pad held;
+>   - rail-bra2-a 1760: after a soft collision on a rail, the port bounces off instance 886544 when the rail is lost;
+>   - attack-bra2 756: Griff's NPC words gain 0x30000 (human 1380, RNG 1577, records 761);
+>   - plant-pipe-a: eye bones 24/25 on the plant tick 901.
+> - **Core** local/physics-jank/core12: wasm `f37f278f…`, js `920f941b…`. Full ps2-captures on it: 309 clean, plus the 47 hl2 gates. The tree already carries the next fixes (core13: +0x330 cleared at crash entry, a landing in control 7 after a rail loss), so install core12 by copying its files.
+
 > **Deployed 2026-10-05 (coordinator): Firefox-on-Mac Xbox Wireless pad mapping fixed; padRing removed.** Gecko has no remap for 045e:0b20 / 0b21 / 0b22, so Firefox on macOS gives this pad its raw 7-axis descriptor order (X, Y, Z, Rz, LT, RT, hat), while the port applied Chromium's table: right-stick Y read the resting right trigger (a permanent board press), triggers read the wrong axes, the d-pad read nothing. web/gamepad-map.js FIREFOX_LAYOUTS + firefoxGenericLayout, test-gamepad case. Measured: the same BLE pad reaches Firefox-Mac at ~9.4 Hz and Chrome-Mac at ~50 Hz; Gecko's macOS backend is event-driven with no throttle, no Bugzilla entry found. padRing gained ~8% samples in Chrome at load 0 and lost under load, so it is removed (crash-motion.md).
 
 > **Deployed 2026-10-05 (coordinator): pv loadMeter ON.** The load screen's number is the load itself: bytes against web/load-files.json's expected total at the measured bandwidth, plus measured prep stages, 100% only when done (a creep of at most 2% ahead when stalled); no 7 s minimum (a port choice from 09-22; the PS2's 0x2454F8 prints the loader's progress and counts no frames); a stage line under the % in the screen's font; 'load-stage' diag events over 5 s. Snow Jam load 7.6 -> 4.5 s (Chrome) / 5.8 s (WebKit); a full first race after the screen has no shader builds. test-load-files guards the manifest; refresh with `node load-files.mjs build`.

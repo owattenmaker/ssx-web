@@ -193,11 +193,17 @@ inline OriginalRailQueryResult originalRailWorldQuery(std::span<const OriginalRa
 // pure, so testing the copied box first visits exactly the same segments, in the same order, with the same arguments.
 struct OriginalRailWalkBox {RailVector boundsMin{},boundsMax{};};
 inline OriginalRailQueryResult originalRailWorldQuery(std::span<const OriginalRailRecord> records,std::span<const OriginalRailWalkEntry> order,
-        std::span<const OriginalRailWalkBox> boxes,RailVector point,float radius=300.f,uint32_t mask=1) {
+        std::span<const OriginalRailWalkBox> boxes,RailVector point,float radius=300.f,uint32_t mask=1,
+        const terrain_original::RiderScope* scope=nullptr,std::span<const OriginalRailWalkBox> cells={}) {
     using namespace rail_original;Rounding rounding;
     RailVector extent{radius,radius,radius};RailVector boxMin=vsub(point,extent),boxMax=vadd(point,extent);
     OriginalRailQueryResult best;
     for(size_t i=0;i<order.size();++i){const auto& s=boxes[i];
+        // 334680 visits only the rider's scope list (rider+0x860), which 332DB8 fills with the segments of the octree cells it
+        // reaches: a segment is in it when its loose cell (originalSpatialCell, padded 0.2 cells) overlaps the scope box, not its own
+        // bounds (PS2 hl2/plant-pipe-a savestates 898..901: 4 then 8 segments, exactly the cell rule at the 3-tick refresh; the
+        // 300 cm handplant probe found a coping the PS2 did not list yet)
+        if(scope&&!cells.empty()&&!scope->admits(cells[i].boundsMin,cells[i].boundsMax))continue;
         if(boxMax[0]<s.boundsMin[0]||s.boundsMax[0]<boxMin[0])continue; // 0x335128's box rejection, on the copy
         if(boxMax[1]<s.boundsMin[1]||s.boundsMax[1]<boxMin[1])continue;
         if(boxMax[2]<s.boundsMin[2]||s.boundsMax[2]<boxMin[2])continue;

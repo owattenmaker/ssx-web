@@ -7,6 +7,7 @@
 #include <emscripten/emscripten.h>
 #include <unordered_set>
 #include <unordered_map>
+namespace ssx {const terrain_original::RiderScope* browser_rider_scope();} // web/world_bridge.cpp: rider+0x860, null before its first refresh
 using nlohmann::json;
 namespace {
 RIDER_LOCAL std::vector<ssx::OriginalRailRecord> records;RIDER_LOCAL unsigned segmentCount=0;RIDER_LOCAL bool ready=false;
@@ -66,7 +67,7 @@ namespace {
 // the query scans that compact copy (32 B per segment, in order) instead of the 112 B segments in octree order. Segment bounds
 // are never edited in place (a change replaces the record set: new segment buffers, whose addresses are in the key); eight
 // sampled boxes are compared with their segments on every query as well.
-struct RailWalkCache {std::vector<ssx::OriginalRailWalkEntry> order;std::vector<ssx::OriginalRailWalkBox> boxes;uint64_t key=0;};
+struct RailWalkCache {std::vector<ssx::OriginalRailWalkEntry> order;std::vector<ssx::OriginalRailWalkBox> boxes,cells;uint64_t key=0;};
 RIDER_LOCAL RailWalkCache walkAll,walkStatic;
 const RailWalkCache& walk_order(std::span<const ssx::OriginalRailRecord> set,RailWalkCache& cache){
  uint64_t k=1469598103934665603ull^uint64_t(set.size());
@@ -77,6 +78,11 @@ const RailWalkCache& walk_order(std::span<const ssx::OriginalRailRecord> set,Rai
  if(!fresh){
   cache.order=ssx::originalRailWalkOrder(set);cache.key=k;cache.boxes.clear();cache.boxes.reserve(cache.order.size());
   for(const auto& e:cache.order){const auto& g=set[e.record].segments[e.segment];cache.boxes.push_back({g.boundsMin,g.boundsMax});}
+  // each segment's loose octree cell (328F28): the scope list 332DB8 admits a segment by its cell
+  cache.cells.clear();cache.cells.reserve(cache.order.size());
+  for(const auto& b:cache.boxes){const auto c=ssx::originalSpatialCell(b.boundsMin,b.boundsMax);const float size=std::bit_cast<float>(uint32_t(c.level+127)<<23);ssx::OriginalRailWalkBox box;ssx::terrain_original::Rounding rounding;
+   for(unsigned k=0;k<3;k++){box.boundsMin[k]=ssx::terrain_original::mul(ssx::originalScalarSubtract(float(c.coordinate[k]),.20000000298023224f),size);box.boundsMax[k]=ssx::terrain_original::mul(ssx::originalScalarAdd(float(c.coordinate[k]+1),.20000000298023224f),size);}
+   cache.cells.push_back(box);}
  }
  return cache;
 }
@@ -85,7 +91,7 @@ ssx::OriginalRailQueryResult teeterQuery(ssx::RailVector point,uint32_t mask){
  const bool all=teeters.empty()&&!(staticActive&&!staticRecords.empty());
  const std::span<const ssx::OriginalRailRecord> set=all?std::span<const ssx::OriginalRailRecord>(records):std::span<const ssx::OriginalRailRecord>(staticRecords);
  const auto& walk=walk_order(set,all?walkAll:walkStatic);
- auto result=ssx::originalRailWorldQuery(set,walk.order,walk.boxes,point,300,mask);
+ auto result=ssx::originalRailWorldQuery(set,walk.order,walk.boxes,point,300,mask,ssx::browser_rider_scope(),walk.cells) /*0x334680(rider+0x860, ...)*/; // 0x334680(rider+0x860, ...)
  bool found=result.found;float best=result.distance;ssx::OriginalRailModifierHit hit;bool modifierHit=false;
  const ssx::RailVector extent{300,300,300};
  for(auto& t:teeters)for(auto& [m,record]:t.rails){

@@ -180,7 +180,11 @@ static void release_air_control(){
  if(gs.prewindStyle==3||gs.prewindStyle==4){terrain_original::Rounding rounding;auto sc=originalSinCos(-0.f);graph.defaultRoot={{0,0,0},{sc[0]*0.f,sc[0]*0.f,sc[0]*1.f,sc[1]}};} //12EA4C..12EAC0: a sideways (rail) style resets the default root (anim+0x30/+0x40) before 12EE30 plays the release clip (metro-air-tricks 981)
  originalAirReleaseGroundTargets(gp,gs,gs.velocity);
  float rate=(prewind.spin.current!=0||prewind.flip.current!=0)?originalAirReleaseAnimationRate(airProfile.trickStat,air.spinRate,air.flipRate):-1.f; //12EE30 plays with the pending animator +0x1C and sets the head rate (311B20) only for a spin/flip release (tech-oob-dance 2897)
- if(!graph.enter(originalAirReleaseAnimation(prewind.spin.current,prewind.flip.current,gs.reverseStance,gs.prewindStyle),rate,~uint64_t(0),true))throw std::runtime_error("Missing original air release animation");
+ // 12EE30 (0x12F0D8..0x12F0EC): no play when the clip is channel 2's requested semantic already (312AA0), else an ordinary play
+ // (3128E8 a2 = 0), which inherits a fading-out copy of the same clip instead of restarting it (PS2 hl2/rail-bra2-a 1305: a re-jump
+ // while the last jump's 268 still fades continues it at t 0.4167; the forced play restarted it and posed the root 13 cm off)
+ {const int release=originalAirReleaseAnimation(prewind.spin.current,prewind.flip.current,gs.reverseStance,gs.prewindStyle);
+  if(release!=graph.requestedSemantics[2]&&!graph.enter(release,rate,~uint64_t(0),false))throw std::runtime_error("Missing original air release animation");}
  gs.prewindStyle=physicsState.prewindStyle=0; //12EAD8: the release clears rider+0x328 after 12EE30 (a held jump that left a rail released in the air kept style 4 until the crash entry: metro-air-tricks 1011)
 }
 RIDER_LOCAL static bool landingAirExitBaked=false;
@@ -284,6 +288,7 @@ static void detach_rail_for_crash();
 // 10EB30(rider, a1 semantic, a2 attacked, a3 impact type, t0 event). a2 only reaches 119B08 (0x10EB94): attacked counts the
 // victim's score +0x12C and posts popup 0x2D, else +0x124. Only 107E70 (0x1082F4) passes a nonzero a2, its own a3, which is 1
 // from 107888's attack branch (0x107E0C) alone; 105D98 (0x1064E4), 1311B8 / 1311D0, 13A530 and 13F22C (surface 18) pass 0.
+static void board_press_crash_exit();static void board_press_clear_style(); // web/boardpress_gameplay.inc
 static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool attacked=false){
  if(crash.active)return;clear_start();
  const bool crashFromAirControl=gs.controlState==5&&!heldAirMode&&!passiveMode&&!::grounded;
@@ -304,7 +309,9 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool at
  cb.previewCrashRoot=[](int clip){auto root=graph.previewRoot(clip);if(!root)throw std::runtime_error("Missing crash preview root");return *root;};
  cb.currentScaledLocalRoot=[](){auto root=graph.scaledLocalRoot();if(!root)throw std::runtime_error("Missing sampled crash root");return *root;};
  cb.offsetAnimationRoots=[](const AnimationTransform& root){graph.offsetSequenceRoots(root);};cb.playAnimation=crash.host.play;
- cb.enterControl=[&](int control,OriginalHardCrashEntryState& value){physicsState.controlState=gs.controlState=control;if(control==13)return;
+ // 11FEC8(13) first runs the old controller's exit: control 1's 12FE98 (+0x330 = 0, +0x274 -> 0 at 1/60, +0x268 -> 0 at 1/30) when a
+ // collision crashes a board press (PS2 hl2/crash-eba3 1409, hl2/rail-era5 2932: the press depth then posed the crash 0.5-1.7 cm off)
+ cb.enterControl=[&](int control,OriginalHardCrashEntryState& value){if(control==13)board_press_crash_exit();physicsState.controlState=gs.controlState=control;if(control==13)return;
   OriginalCrashActorState actor;actor.position=value.physical.position;actor.quaternion=value.physical.rotation;actor.velocity=physicsState.velocity;actor.groundNormal=physicsState.normal; //rider+370: landing contact normal, air +180 copy, or ground normal
   actor.surfaceVelocity=physicsState.surfaceVelocity;actor.surface=physicsProfile.surface.id;actor.timeScale=physicsState.timeScale;actor.contactDistance=physicsState.distance;
   crash.beginControl(actor,pending_pose_translation()); /*12CA30: the control-8 entry adds rider+0x9D0 (the tick's 106538 translations: landing, body and pair pushes; score-uber 480, c0a-ws13 Allegra 5940) to the cached primary/secondary before 136D40 detaches the board*/tmpBegin[0]=float(animationTick);for(unsigned k=0;k<3;k++){tmpBegin[1+k]=crash.actor.detachedPosition[k];tmpBegin[4+k]=browserLandingTranslation[k];} /*TMPDEBUG*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
@@ -314,6 +321,7 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool at
   // ground re-arms the 208/2BC/2C8 decays (targets 0) and stamps the leave tick. Brake, crouch, +1FC, lift and board
   // alignment keep their values and keep decaying through the crash ticks' 1211F8 pass.
   physicsState.turn={};physicsState.extraLean={};physicsState.presentationRoll={};
+  board_press_clear_style(); // +0x330 (an air BoardPress step's pending press: PS2 hl2/rail-fence-b 811 -> 0; the port kept it and re-entered a press on the next rail landing, 1045)
   if(previousMotion==0&&!groundDeparturePending)originalLandingGroundLeave(physicsState,motionTick,lastGroundLeave); /*a departure tick already left the ground (core.cpp begin_airborne)*/
   physicsState.prewindStyle=0;physicsState.manualSpin=0;publish_crash_actor(crash.actor,crash.motion.submode);
  };
@@ -1056,7 +1064,8 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  // still in control 7 (0x132770 waits for the rotation clip) turns toward its trajectory too (PS2 The Throne Psymon 2925).
  if(physicsAttached&&(!railFrame||(physicsState.controlState==12&&!browserRailActive)||(physicsState.controlState==7&&!browserRailActive&&!railStepConsumed))&&!resetFrame&&!crashFrame&&!grounded){align_air_orientation(startFrame?physicsState.controlState:physicsState.controlState==12?12:physicsState.controlState==7&&railFrame?7:softFrame?3:board_press_air_frame()?1:heldAirMode?2:passiveMode?4:5,air.adjustSpin);gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.boardUp=physicsState.boardUp;}
  // Active air control owns the single1211F8 filter tick, including charged release.
- if(physicsAttached&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&!softFrame&&!grounded&&!heldAirMode&&!passiveMode&&!passiveEntryApproached){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);} /*a 12F730 -> control 5 request already had its 1211F8 pass above (pipe-uber 601)*/
+ // (a board press leaving the ground: control 1's ground pass already ran this tick's 1211F8: PS2 hl2/press-rail 1016, +0x1F0 lags a tick)
+ if(physicsAttached&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&!softFrame&&!grounded&&!heldAirMode&&!passiveMode&&!passiveEntryApproached&&!(board_press_air_frame()&&groundMotionDeparture)){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);} /*a 12F730 -> control 5 request already had its 1211F8 pass above (pipe-uber 601)*/
  if(physicsAttached&&!(startFrame&&browserStartFrozen)&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&(!passiveMode||passiveDeparture==1)&&!softFrame)groundControlApproach(gs.animationTurn); /*passive departure tick: control0 already ran, 1211F8 advances +1FC*/if(physicsAttached)step_secondary_motion();
  if(!railFrame)originalAirPrewindApproach(prewind); //1211F8 approaches the prewind pair every tick, after controller selection.
  attack_control_changes(browser_control_state()); //0x131C30/0x12FB68 upper-attack exit
@@ -1143,7 +1152,13 @@ static float* animation_post_phase(){
  if(physicsAttached){
   // 139D78 touchdown resolves before the second-phase body query 13AA48; after a touchdown the
   // query filters against the new ground normal and uses the ground response.
-  if((!railFrame||(physicsState.controlState==12&&!browserRailActive)||handplant_air_frame())&&!grounded&&resolve_posed_landing(*browserBodyVolume)){
+  // motion 1's landing 13A7B0 runs whatever the controller: also in control 7 after the rail motion lost the rail (0x132770 still waits
+  // for the rotation clip; PS2 hl2/uber-rail-10 2339 lands there, the port flew on through the ground)
+  // (not in the tick the rail motion ran: it lost the rail, motion 1's post runs from the next tick; PS2 hl2/carve-powder-cba2 2371: a
+  // soft control 3 leaving the rail stays airborne, the port landed in the same tick)
+  if(!railStepConsumed&&(!railFrame||(physicsState.controlState==12&&!browserRailActive)||(physicsState.controlState==7&&!browserRailActive)||handplant_air_frame())&&!grounded&&resolve_posed_landing(*browserBodyVolume)){
+   // a control-7 landing: the landing's control request runs control 7's exit 132048 first
+   if(physicsState.controlState==7&&railOwned&&!browserRailActive){auto view=rail_view();originalRailControlLeave(view);railOwned=railHeldJump=railPreviousJump=false;rail_apply(view);}
    if(physicsState.controlState==12){auto award=rail_score_entry(!physicsState.state320Equals324,0,0);award_rail_meter(award.meterDelta);}else finish_landing(jumpHeld,output[15]);previousGround=true;poseLanded=true;
    physicsState.animationIndex=graph.requestedSemantics[2];physicsState.animationClass=graph.currentClass(2);
    info[0]=graph.requestedSemantics[2];info[1]=graph.currentClass(2);info[2]=grab.state;info[5]=graph.flags(2)&0xffffff;
@@ -1159,7 +1174,9 @@ static float* animation_post_phase(){
    browserSoftActive=false;enter_crash(360,event);}
   if(browserGroundResetPending&&grounded&&!crash.active){browserGroundResetPending=false;if(browserResetBegin)browserResetBegin(1);} //13F260 116120(rider,0,1) (core.cpp)
   // 13F4CC skips only a computer rider's 13F488 query near its route; 105398 (and 107888) still run.
-  const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||crashFrame||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
+  // (no air post in the tick the rail motion lost the rail, whatever the controller: a soft control 3 leaving a rail too; PS2 hl2/rail-bra2-a
+  // 1760: the port bounced off an instance there)
+  const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||crashFrame||railStepConsumed||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
   // 139C88 runs 13AA48 after its touchdown too (13A718 -> 11E150 -> 13AA48 at 13A744, also after a landing crash): the query
   // keeps the air filter (query+0x10 = rider+0x180, not the new ground normal +0x370) and 13AA48's own response (no ground
   // projection or steering); only 105398 after it sees the ground motion 11FE78(0) set (PS2 allpeak/apr-start 3581: a landing

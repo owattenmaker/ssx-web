@@ -154,6 +154,10 @@ static void board_press_rail_update(){
  const auto result=originalBoardPressUpdate(bpControl,r,w0,w1,a);bpLastStop=int(result.stop);bp_apply(r);bp_publish_graph();
  bpRailTick=!railOwned; //the R3 ollie released the rail: step_rider continues this tick without another controller
 }
+// 10EB30's 11FEC8(13) from control 1 (a collision crash during a press): the 12FE98 exit before the crash control enters.
+static void board_press_crash_exit(){if(!bpActive)return;auto r=bp_view();originalBoardPressExit(r);bp_apply(r);bpActive=false;bpLastExitControl=13;++bpExits;bp_publish_graph();}
+// 10EB30 clears +0x330 with the 1F0/208/250 triplets.
+static void board_press_clear_style(){bp330=0;graph.boardPress330=0;}
 // ---- A soft collision during a board press (108388 from control 1) ----
 // 108388 (0x1083D8..0x1083EC): in control 1 it first calls 131348 on the control-1 object (owner+0x1D0): the pivot spring
 // 1313A8, the pivot finalise 131428 (which can flip the stance back, 12FEC8) and, for a nose / tail press, the end score

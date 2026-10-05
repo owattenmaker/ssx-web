@@ -35,7 +35,21 @@ const str = (path) => put(Buffer.concat([read(path), Buffer.from([0])]));
 const courseManifest = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8'));
 const course = args.includes('--course') ? args[args.indexOf('--course') + 1] : (courseManifest.location || 'ARA1');
 const initialPath = course === 'ARA1' ? 'ANIMATIONS/initial.json' : course + '/initial.json';
-const rider = args.includes('--zoe') ? 'RIDER_ZOE' : 'RIDER_SAM';
+// --human RIDER_X: another selectable rider as the human, with its package's settings.json over the course initial.json as the page
+// applies them (web/character-roster.js humanSettings; a cheat skin rides on Zoe: composeCheat). Use it with --event on a capture from
+// the character's own countdown (local/reference/pcsx2/characters/<id>/countdown.p2s; local/ps2-capture/riders-capture.sh): a glide
+// capture has no seed of its own here (the glide seed is Zoe's ANIMATIONS/initial.json, ~39 cm from Stretch's glide.p2s).
+// --base RIDER_Y: the cheat skin's base rider (a skin on a goofy rider: characters/brodi-on-psymon).
+const humanPackage = args.includes('--human') ? args[args.indexOf('--human') + 1] : null;
+const basePackage = args.includes('--base') ? args[args.indexOf('--base') + 1] : null;
+const rider = humanPackage || (args.includes('--zoe') ? 'RIDER_ZOE' : 'RIDER_SAM');
+// BONE_SCAN: the PS2 geometry slot of compiled bone b. A --human package maps its rig with rider.json source_bone_slots (the live
+// actor's slots: Zoe skips her inactive eye bones 24 / 25, Stretch has none, Moby's tshirt sits at 29 / 30); otherwise Zoe's rule.
+const humanBoneSlots = humanPackage ? json(humanPackage + '/rider.json').source_bone_slots || null : null;
+const boneSlot = (b, n) => {
+  if (humanBoneSlots && b < humanBoneSlots.length) return humanBoneSlots[b];
+  return b >= 24 && n <= 27 ? b + 2 : b;
+};
 // Poked Uber rows (0x530EC0 + char*0x1FE + slot*6 + (tier >= 5), the byte 0x14FEA8 reads for grab slot `slot`; Zoe = char 4):
 // the grab profile gets the table 0x45AEB8 row as the lodge Ubertrick Setup would (web/fe-screens.js uberRow).
 const uberRowPokes = (courseManifest.pokes || []).flatMap((p) => [0, 1, 2, 3].map((k) => ({ a: Number(p.address) + k - 0x530EC0 - 4 * 0x1FE, v: (Number(p.value) >>> (8 * k)) & 0xff }))).filter((p) => p.a >= 0 && p.a < 0x1FE && p.a % 6 < 2);
@@ -44,8 +58,16 @@ const initialBytes = (() => { if (!uberRowPokes.length) return read(initialPath)
   for (const { a, v } of uberRowPokes) { const slot = Math.floor(a / 6), tier = a % 6; const e = shop.categories.find((c) => c.category === slot)?.entries[v]; if (!e) continue;
     const [begin, hold] = points[e.name_index]; init.original_grab_control.profile.uber[tier][slot] = { semantic: e.trick_ids[0], upper_semantic: e.trick_ids[1], score_id: e.name_index, begin_points: begin, hold_points: hold }; }
   return Buffer.from(JSON.stringify(init)); })();
-core._init_animation(str('ANIMATIONS/animation-packets.json'), str(rider + '/rider.json'), put(Buffer.concat([initialBytes, Buffer.from([0])])), put(read('ANIMATIONS/animation-packets.bin')), read('ANIMATIONS/animation-packets.bin').length);
-core._init_race(str(initialPath));
+const humanBytes = await (async () => {
+  if (!humanPackage) return initialBytes;
+  const { humanSettings, composeCheat } = await import('./character-roster.js');
+  const doc = json(humanPackage + '/settings.json');
+  const base = basePackage ? json(basePackage + '/settings.json') : null;
+  const character = doc.kind === 'cheat' ? composeCheat(base, doc) : doc;
+  return Buffer.from(JSON.stringify(humanSettings(JSON.parse(initialBytes), character)));
+})();
+core._init_animation(str('ANIMATIONS/animation-packets.json'), str(rider + '/rider.json'), put(Buffer.concat([humanBytes, Buffer.from([0])])), put(read('ANIMATIONS/animation-packets.bin')), read('ANIMATIONS/animation-packets.bin').length);
+core._init_race(humanPackage ? put(Buffer.concat([humanBytes, Buffer.from([0])])) : str(initialPath));
 core._animation_use_physics(1);
 // --course PEAK1 (a free-ride / peak-run capture on the streamed Peak 1 world, web/peak-capture.mjs): every Peak 1
 // location is loaded after the records are read (below) and the capture's streaming rows drive the residency.
@@ -603,7 +625,7 @@ for (let i = 0; i + 1 < records.length; i++) {
   // word ([0] is m/s, which rounds when scaled back); an older core has something else there.
   const pinfo = f32(core._physics_info(), 7), webLimit = Math.abs(pinfo[6] - pinfo[0] * 100) < 1 ? pinfo[6] : pinfo[0] * 100, ps2Limit = records[i].speedLimit;
   if (process.env.BONE_SCAN && (!globalThis.__boneDone || process.env.BONE_SCAN === 'all')) { const wb = f32(core._world_pose_bones(), 1 + 32 * 7); const n = wb[0]; const base = (i + 1) * RECORD + 3264; const bad = [];
-    for (let b = 0; b < Math.min(n, +(process.env.BONE_SCAN_MAX || 29)); b++) for (let k = 0; k < 7; k++) { const pb = b >= 24 && n <= 27 ? b + 2 : b; /* compiled 24/25 are Zoe's inactive eye bones */ const pv = dv.getFloat32(base + 32 * pb + (k < 3 ? k * 4 : 16 + (k - 3) * 4), true), wv = wb[1 + b * 7 + k]; if (Math.fround(wv) !== pv) bad.push([b, k, wv, pv]); }
+    for (let b = 0; b < Math.min(n, +(process.env.BONE_SCAN_MAX || 29)); b++) for (let k = 0; k < 7; k++) { const pb = boneSlot(b, n); const pv = dv.getFloat32(base + 32 * pb + (k < 3 ? k * 4 : 16 + (k - 3) * 4), true), wv = wb[1 + b * 7 + k]; if (Math.fround(wv) !== pv) bad.push([b, k, wv, pv]); }
     if (bad.length) { console.error('bones', ps2.tick, JSON.stringify(bad.slice(0, 8))); globalThis.__boneDone = true; } }
   if (process.env.PROBE_TRACE && process.env.PROBE_TRACE.split(',').map(Number).includes(ps2.tick)) { const wb = f32(core._world_pose_bones(), 1 + 32 * 7); console.error('probe', ps2.tick, JSON.stringify(Array.from(f32(core._landing_probe_info(), 17))), 'webBone22', JSON.stringify(Array.from(wb.slice(1 + 22 * 7, 1 + 22 * 7 + 3)))); }
   // BONE_DUMP=ticks BONE_DUMP_BONES=22,23: full web vs PS2 world bone transforms (position, quaternion).

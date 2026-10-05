@@ -1,59 +1,73 @@
 // TICK_HOOK observer (compare-ps2-capture.mjs) for the rider morph parts (docs/characters.md "Board flex"): the core's morph weights
 // (board_morph_weights, web/animation_bridge.cpp) against the PS2's *(geometry+0x3C), which 30F2B0 blended in the same tick: the
-// board (part file 2, weights 0..7) and, with a core that has morph_part_add, the race hands (file 7, weights 44..61). The capture
-// watches the Snow Jam human's weight array (tools/ps2_capture.py build --watch 0x5dc000:256; geometry 0x5DC600). Record i+1
+// board (file 2), the race hands (file 7) and Stretch's SpecialA (file 46), each the parts the capture's live geometry has. The
+// capture watches the human's weight array (local/board-flex/recapture.py, tools/ps2_capture.py --watch WEIGHTS:256). Record i+1
 // holds the state tick i left, as for every other field.
-// Summary: boardFlex {ticks, exact, nonzero, first: {tick, web, ps2}} for the board; handMorphs the same for the hands; or {skipped}.
+// Summary: boardFlex / handMorphs / specialMorphs {ticks, exact, nonzero, first: {tick, web, ps2}} or {skipped}.
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
-// Snow Jam glide's human: geometry 0x5DC600, weights 0x5DC000. Another baseline's human (The Junction's rider 0x14542A0): the
-// weights pointer of its own savestate, *(*(rider+0x780)+0x3C) (local/board-flex/recapture.py watches the same address).
-const SNOW_JAM_WEIGHTS = 0x5dc000;
-function weightsOf(manifest) {
-  if (!manifest.baseline || !manifest.rider || !fs.existsSync(manifest.baseline)) return SNOW_JAM_WEIGHTS;
-  const script = 'import sys,zipfile,struct\nee=zipfile.ZipFile(sys.argv[1]).read("eeMemory.bin")\n' +
-    'w=lambda a: struct.unpack_from("<I",ee,a&0x1ffffff)[0]\nprint(w(w(int(sys.argv[2],16)+0x780)+0x3C))';
-  return Number(execFileSync('python3', ['-c', script, manifest.baseline, manifest.rider], { encoding: 'utf8' }).trim());
+// The capture's human geometry, read from its baseline savestate (*(rider+0x780)): the weights pointer +0x3C and every active morph
+// part (part+0x18 active, +0x4C count): its file, slot bit (+0x10 slot count + part+0xC morph index), weight offset part+0x8 and
+// mirror table part+0x40. Snow Jam Zoe: weights 0x5DC000; board (file 2) bit 29 +0, hands (file 7) bit 31 +44.
+const GEOMETRY_SCRIPT = [
+  'import sys,zipfile,struct,json',
+  'ee=zipfile.ZipFile(sys.argv[1]).read("eeMemory.bin")',
+  'w=lambda a: struct.unpack_from("<I",ee,a&0x1ffffff)[0]',
+  'g=w(int(sys.argv[2],16)+0x780)',
+  'parts=[]',
+  'for i in range(w(g+8)):',
+  ' p=w(g+0xC)+i*0x58',
+  ' n=w(p+0x4C)',
+  ' if n and w(p+0x18) and w(p+0xC)<0x80000000:',
+  '  parts.append(dict(file=w(p),bit=w(g+0x10)+w(p+0xC),offset=w(p+8),mirror=[w(w(p+0x40)+4*k) for k in range(n)]))',
+  'print(json.dumps(dict(weights=w(g+0x3C),parts=parts)))'
+].join('\n');
+function geometryOf(manifest) {
+  return JSON.parse(execFileSync('python3', ['-c', GEOMETRY_SCRIPT, manifest.baseline, manifest.rider], { encoding: 'utf8' }));
 }
-// Snow Jam Zoe's geometry: slot count 29; part 2 (board): morph index 0, weights +0, part+0x40 = [4, 5, 6, 7, 0, 1, 2, 3];
-// part 7 (HandsB): morph index 2, weights +44, part+0x40 = [9..17, 0..8]
-const SLOT_COUNT = 29;
-const PARTS = [
-  { key: 'boardFlex', file: 2, offset: 0, mirror: [4, 5, 6, 7, 0, 1, 2, 3] },
-  { key: 'handMorphs', file: 7, offset: 44, mirror: [9, 10, 11, 12, 13, 14, 15, 16, 17, 0, 1, 2, 3, 4, 5, 6, 7, 8] }
-];
+const KEYS = { 2: 'boardFlex', 7: 'handMorphs', 46: 'specialMorphs' };
 
 export function create({ core, dv, RECORD, captureManifest }) {
   const watches = captureManifest.layout?.watches || [];
-  const WEIGHTS = weightsOf(captureManifest);
+  const geometry = geometryOf(captureManifest);
+  const WEIGHTS = geometry.weights;
   let watchAt = -1;
+  let watchLength = 0;
   let offset = 0;
   for (const w of watches) {
-    if (Number(w.address) === WEIGHTS) watchAt = offset;
+    if (Number(w.address) === WEIGHTS) {
+      watchAt = offset;
+      watchLength = w.length;
+    }
     offset += w.length;
   }
+  const allKeys = Object.values(KEYS);
   if (watchAt < 0 || !core._board_morph_configure) {
     const why = watchAt < 0 ? `the capture does not watch 0x${WEIGHTS.toString(16)}` : 'the core has no board_morph_configure';
-    return { tick() {}, summary: () => ({ boardFlex: { skipped: why }, handMorphs: { skipped: why } }) };
+    return { tick() {}, summary: () => Object.fromEntries(allKeys.map((k) => [k, { skipped: why }])) };
   }
-  const parts = core._morph_part_add ? PARTS : PARTS.slice(0, 1);
+  // the board first (board_morph_configure clears the parts), then the others in file order, as web/board-flex.js configures them
+  const ordered = [...geometry.parts].sort((x, y) => (x.file === 2 ? -1 : y.file === 2 ? 1 : x.file - y.file));
+  const parts = ordered.filter((p) => KEYS[p.file] && (p.file === 2 || core._morph_part_add));
+  // a part past the watched window cannot be compared (Stretch's SpecialA is at +81: a 0x100-byte watch ends at +64)
+  for (const p of parts) if ((p.offset + p.mirror.length) * 4 > watchLength) throw new Error(`file-${p.file} weights +${p.offset} lie past the ${watchLength}-byte watch`);
   const put = (mirror) => {
     const pointer = core._malloc(mirror.length);
     core.HEAPU8.set(mirror, pointer);
     return pointer;
   };
-  {
-    const pointer = put(parts[0].mirror);
-    core._board_morph_configure(SLOT_COUNT, parts[0].mirror.length, pointer);
-    core._free(pointer);
-  }
-  for (const part of parts.slice(1)) {
-    // the hands' bit from the upper-body mask (rider+0x8C0), as the page takes it (web/board-flex.js)
-    const bit = core._morph_upper_bit(SLOT_COUNT);
-    if (bit !== 31) throw new Error(`hands morph bit ${bit}, the PS2's is 31`);
+  for (const part of parts) {
     const pointer = put(part.mirror);
-    core._morph_part_add(part.file, bit, part.mirror.length, pointer);
+    if (part.file === 2) core._board_morph_configure(part.bit, part.mirror.length, pointer);
+    else {
+      // the page takes the hands' bit from the upper-body mask: it must be the live geometry's
+      if (part.file === 7 && core._morph_upper_bit) {
+        const slots = geometry.parts.find((p) => p.file === 2)?.bit;
+        if (slots !== undefined && core._morph_upper_bit(slots) !== part.bit) throw new Error(`hands morph bit ${core._morph_upper_bit(slots)}, the PS2's is ${part.bit}`);
+      }
+      core._morph_part_add(part.file, part.bit, part.mirror.length, pointer);
+    }
     core._free(pointer);
   }
   const base = captureManifest.layout.watch_offset + watchAt;
@@ -79,7 +93,7 @@ export function create({ core, dv, RECORD, captureManifest }) {
         // bit-equal (a +0 / -0 difference counts as a mismatch)
         if (web.every((v, k) => Object.is(Math.fround(v), ps2[k]))) s.exact++;
         else if (!s.first) s.first = { tick, web, ps2 };
-        row[part.key] = { web, ps2 };
+        row[KEYS[part.file]] = { web, ps2 };
       });
       if (log) log.push(row);
     },
@@ -87,9 +101,9 @@ export function create({ core, dv, RECORD, captureManifest }) {
       if (log) fs.writeFileSync(process.env.BOARD_FLEX_LOG, JSON.stringify(log));
       const out = {};
       parts.forEach((part, p) => {
-        out[part.key] = stats[p];
+        out[KEYS[part.file]] = stats[p];
       });
-      if (!out.handMorphs) out.handMorphs = { skipped: 'the core has no morph_part_add' };
+      for (const k of allKeys) if (!out[k]) out[k] = { skipped: 'no such morph part in this geometry (or the core cannot add it)' };
       return out;
     }
   };

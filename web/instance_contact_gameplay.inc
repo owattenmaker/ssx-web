@@ -89,6 +89,9 @@ static std::array<float,3> run_instance_contacts(BodyCollisionVolume& volume,std
   ++instanceContactResponses;
   OriginalInstanceResponseRider r;r.controlState=actor.controlState;r.motionMode=actor.motion;r.ownerWord30=actor.ownerWord30;
   r.velocity=contact_quad(*actor.velocity);r.presentationUp=contact_quad(actor.presentationUp);r.secondaryCounter=collisionHistory.secondaryCounter;
+  // 119E38's stance argument of a surface landing (+0x320 != +0x324): it was never set, so a switch-stance rider landing on a bouncy
+  // instance cleared score +0x00 (PS2 hl2/crash-eba3 1664, hl2/press-bra2 1221: +0x00 stays 1)
+  r.stanceDiffers=!physicsState.state320Equals324;
   OriginalInstanceResponseHost h;
   h.entityRigid=[&]{return browser_entity_rigid(hit.instance);};
   h.softCollision=[&](const OriginalInstanceContactRecord& rec){++instanceContactSoft;if(actor.soft)actor.soft(instance_contact_event(rec,hit.surface));};

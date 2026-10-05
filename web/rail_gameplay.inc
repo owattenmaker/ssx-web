@@ -6,7 +6,7 @@ RIDER_LOCAL extern uint16_t browserPatchFlags; // rider+0x2D4 (web/core.cpp)
 #include "../engine/soft_collision_control.hpp"
 extern void retain_jump_camera(const OriginalJumpState&);
 // Ordinary authored-rail controller/motion adapter. Included after graph/crash/reset setup.
-RIDER_LOCAL extern void (*browserRailTickBegin)();RIDER_LOCAL extern bool browserRailJumpRelease;RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool browserRailBoostTicked;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
+RIDER_LOCAL extern void (*browserRailTickBegin)();RIDER_LOCAL extern bool browserRailJumpRelease;RIDER_LOCAL extern bool browserRailControllerRan;RIDER_LOCAL extern bool browserRailActive;RIDER_LOCAL extern bool browserRailBoostTicked;RIDER_LOCAL extern bool (*browserRailStep)(float,int,int,int);RIDER_LOCAL extern void (*browserRailReset)();
 RIDER_LOCAL extern OriginalBoostProfile boostProfile;RIDER_LOCAL extern bool boostHeld;bool soft_animation_finished();
 void publish_rail_rider(const OriginalRailRider&,bool);void leave_rail_motion();void publish_rail_charge(float);void retain_rail_crouch(float);RIDER_LOCAL extern uint32_t groundFocusTick;
 void advance_pickup_timers(uint32_t);void dispatch_pickup_contacts(const BodyCollisionVolume&);
@@ -249,7 +249,7 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
   access.boardPressEntry=[&view](float press){board_press_rail_begin(press);view.controlState=physicsState.controlState;originalRailControlLeave(view);}; //0x1161D0 -> 0x11FEC8(1): 0x132048 then 0x12FC60
   auto result=originalRailControlStep(railControl,view,railMotion,command,access);if(result.stop==OriginalRailControlResult::Stop::Rotated)++railRotations;
   if(result.stop==OriginalRailControlResult::Stop::Upper){originalRailControlLeave(view); /*1162C8 requestControl(2) runs control 7 exit 0x132048: +0x238 target 0, rate 1/15 (metro-air-tricks 936)*/view.animationTurn=physicsState.animationTurn;const int semantic=originalPrewindAnimation(prewind.spin.current,prewind.flip.current,view.reverseStance,view.style);if(semantic<0||!graph.enter(semantic))throw std::runtime_error("Missing rail crouch entry");}
-  if(result.stop==OriginalRailControlResult::Stop::Airborne){railControlAirborne=true;originalRailControlLeave(view);railBalance=view.balance;railOwned=false;view.style=physicsState.prewindStyle;view.quaternion=physicsState.quaternion;view.reverseStance=physicsState.reverseStance;view.state324=physicsState.state320Equals324?view.reverseStance:!view.reverseStance;rail_apply(view);railReleaseFrame=true;heldAirMode=false;gs=physicsState;gp=physicsProfile;passiveMode=physicsState.controlState==4;if(passiveMode)originalPassiveAirBegin(passive,physicsState,prewind);else if(physicsState.controlState==5)air=originalAirControlBegin(0,0);else throw std::runtime_error("Unexpected rail airborne control");
+  if(result.stop==OriginalRailControlResult::Stop::Airborne){railControlAirborne=true;browserRailControllerRan=true;originalRailControlLeave(view);railBalance=view.balance;railOwned=false;view.style=physicsState.prewindStyle;view.quaternion=physicsState.quaternion;view.reverseStance=physicsState.reverseStance;view.state324=physicsState.state320Equals324?view.reverseStance:!view.reverseStance;rail_apply(view);railReleaseFrame=true;heldAirMode=false;gs=physicsState;gp=physicsProfile;passiveMode=physicsState.controlState==4;if(passiveMode)originalPassiveAirBegin(passive,physicsState,prewind);else if(physicsState.controlState==5)air=originalAirControlBegin(0,0);else throw std::runtime_error("Unexpected rail airborne control");
    // 1211F8 still approaches every triplet after 0x132770's exit in this tick (PS2 Gravitude Allegra 3749: +0x220 0.4833 -> 0.4296).
    for(auto* control:{&physicsState.turn,&physicsState.brake,&physicsState.crouch})groundControlApproach(*control);
    return false;}
@@ -284,7 +284,7 @@ static std::array<float,3> rail_motion_post(){
  originalRailMotionLeave(railMotion,view,access);if(!crash.active&&!browserResetActive){rail_apply(view);publish_rail_charge(railHeldJump?view.crouch.current:0);} //rail_apply republishes the rider; keep the step's crouch charge
  std::array<float,3> moved;for(unsigned k=0;k<3;k++)moved[k]=railQueryOffset[k]-before[k];return moved;
 }
-static void rail_tick_begin(){railReleaseFrame=false;browserRailJumpRelease=false;}
+static void rail_tick_begin(){railReleaseFrame=false;browserRailJumpRelease=false;browserRailControllerRan=false;}
 static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;browserRailTickBegin=rail_tick_begin;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_debug(){return railExitDebug.data();}
