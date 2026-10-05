@@ -245,6 +245,15 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
   - After a landing crash in 139C88, its 105398 (106F78 first) runs with the rider as the ragdoll: 10EB30 switched the motion
     to 2, so the push and impulse land on the crash actor and 105D98 dispatches a ragdoll impact that restarts the crash
     predictor from the pushed state (uber-rail-6 1027; the 13AA48 body response already did this, docs/ai-racers.md).
+  - 1211F8 approaches the rail triplets +0x22C/+0x238/+0x25C every tick, also when 12F730 returns early for an attack hold; a
+    fading rail cycle 18..20 reads +0x238 (rail-rnb-s1 739).
+  - A board press requesting control 2 (Cross held) runs control 2's entry 12E980: +0x200 = 1/30, +0x204 = 0 (rail-dss2-s1 1422).
+  - 1211F8 approaches +0x28C/+0x298 once per tick: on the first 133308 tick the selector's approach after its targets is that one
+    (uber-row6 854).
+  - 120378 reads the post-controller +0x320 and owner+0xDE4: a pivot's 12FEC8 stance flip (rail-cra3-s2b 1320) and the handplant
+    entry's control 11 (plant-pipe-a 900) count.
+  - 12E9B8 returns after its 106848 attaches: a Cross released on the attach tick is released on the rail the next tick
+    (riders/griff-uber-c 1730).
 - **Batch 2** (46 captures, runs/hl2/batch2.log): the 11 lodge Uber rows with the full meter, Ubers off rails, more rails
   (fences, slides, the ice and event peaks, hard balance and side switches), presses and carves on ice and powder, crashes and
   resets, plants on the pipe and Snow Jam, attacks among the computer riders.

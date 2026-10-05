@@ -1,3 +1,21 @@
+> **Deployed 2026-10-05 (coordinator): core19.** web/runtime core.wasm `6bc25c7e…` (core.js `920f941b…`) copied from local/physics-jank/core19-snapshot (465 clean): 12E9B8 returns after its 106848 rail attach (riders/griff-uber-c), 120378 sees control 11 on the plant tick (hl2/plant-pipe-a), the rider-parity agent's Viggo crash fixes (score_crash_air_exit, the crash submode kept across beginControl).
+
+> **Move-family fixes, cores 16–19 (2026-10-05, physics-jank agent; core16–18 live, core19 to install):** see [crash-motion.md](crash-motion.md) "Move-family coverage".
+> - **core16:** after a landing crash in 139C88, its 105398 (106F78 first) runs with the rider as the ragdoll (web/instance_contact_gameplay.inc crash_post_instance_contacts): uber-rail-6.
+> - **core17:**
+>   - 1211F8 approaches the rail triplets also in an attack-hold tick (core.cpp): rail-rnb-s1.
+>   - A press requesting control 2 runs 12E980 (+0x200 1/30, +0x204 0; boardpress_gameplay.inc): rail-dss2-s1.
+>   - The first 133308 air-animation tick approaches +0x28C/+0x298 once (browserAdjustBefore28C): uber-row6.
+> - **core18:** 12FEC8's stance flip in the controller reaches 120378 (a.stanceRoot -> browser_controller_stance): rail-cra3-s2b, press-ice-cra3.
+> - **core19:**
+>   - No release on the 106848 attach tick (rail_gameplay.inc, `!attached`): riders/griff-uber-c.
+>   - 120378 sees control 11 on the plant tick (handplant_gameplay.inc): plant-pipe-a.
+>   - It also carries the rider-parity agent's crash, score and stance edits.
+>   - local/physics-jank/core19-snapshot: wasm `6bc25c7e…`, 465 scenarios clean.
+> - **Gates raised to END:** uber-rail-6, rail-rnb-s1, rail-dss2-s1, uber-row6, uber-rail-3, rail-cra3-s2b, press-ice-cra3. plant-pipe-a waits for core19 to go live.
+> - **ARMSX2 budget:** at most 4 instances on the machine. local/ps2-capture/hl2-run.sh now runs 2 at a time, niced, and waits while `pgrep -f ARMSX2` shows 4.
+> - **Open:** air-eba3 823 (the get-up tick's ground step; a no-D-pad capture is running to test the D-pad), attack-bra2 / -b (the computer riders), riders/fareastmyth-uber-b 2479 and -uber-c bones 2149 (taken from the rider-parity agent).
+
 > **Deployed 2026-10-05 (coordinator): core18.** web/runtime core.wasm `ef2e199e…` (core.js `920f941b…`) copied from local/physics-jank/core18-snapshot (465 clean): a pivot's 12FEC8 stance flip reaches 120378's hair channels (rail-cra3-s2b, press-ice-cra3), plus the rider-parity agent's step_reset stance line.
 
 > **Deployed 2026-10-05 (coordinator): core17.** web/runtime core.wasm `822b4ee5…` (core.js `920f941b…`) copied from local/physics-jank/core17-snapshot (465 clean): 1211F8 approaches the rail triplets every tick incl. 12F730's attack-hold early return (rail-rnb-s1); a press requesting control 2 runs 12E980 (rail-dss2-s1); the first 133308 tick approaches +0x28C/+0x298 once (uber-row6). Gates rail-rnb-s1 / rail-dss2-s1 / uber-row6 / uber-rail-3 can go to END.

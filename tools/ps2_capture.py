@@ -687,6 +687,7 @@ def build(baseline, script_path, output, isolate=False, camera_variant=None, wat
                         others_owners=[hex(u(o + 0x77C)) for o in others], ai_path_bank=hex(u(0x4D33AC)))
     if pokes: manifest['pokes'] = [dict(address=hex(a), value=hex(v)) for a, v in pokes]
     if audio_log: manifest['audio_log'] = True
+    manifest['fpu_mode'] = fpu_mode()
     output.with_suffix('.capture.json').write_text(json.dumps(manifest, indent=2) + '\n')
     return manifest
 
@@ -726,7 +727,44 @@ class Pine:
         return bytes(out)
 
 
-def prepare_datapath(DATAPATH=DATAPATH, PINE_SLOT=PINE_SLOT):
+# EE FPU / VU0 arithmetic profile (docs/ps2-float.md). 'mode1' is the template ini (fpuOverflow, vu0Overflow: ARMSX2's
+# clamp mode 1, whose MUL has no one-ULP deficit and whose DIV / SQRT round to nearest). 'exact' is ARMSX2's console model
+# (eeClampMode 4 / vu0ClampMode 4: the measured guard mask, multiplier array and SRT divide unit). VU1 keeps the template.
+# Chosen by PS2_CAPTURE_FPU at build (recorded as the manifest's fpu_mode) and followed by run unless PS2_CAPTURE_FPU overrides it.
+FPU_MODES = {
+    'mode1': {},
+    'exact': {'fpuOverflow': 'true', 'fpuExtraOverflow': 'true', 'fpuFullMode': 'true', 'fpuExactMode': 'true',
+              'vu0Overflow': 'true', 'vu0ExtraOverflow': 'true', 'vu0SignOverflow': 'true', 'vu0ExactMode': 'true'},
+}
+DEFAULT_FPU_MODE = 'mode1'
+
+
+def fpu_mode(manifest=None):
+    mode = os.environ.get('PS2_CAPTURE_FPU') or (manifest or {}).get('fpu_mode', DEFAULT_FPU_MODE)
+    if mode not in FPU_MODES: raise ValueError(f'PS2_CAPTURE_FPU: unknown mode {mode!r} (one of {sorted(FPU_MODES)})')
+    return mode
+
+
+def apply_recompiler_keys(lines, keys):
+    """Set keys in [EmuCore/CPU/Recompiler], replacing existing lines and appending the missing ones to the section."""
+    out = []
+    section = None
+    seen = set()
+    for line in lines + ['[end]']:
+        stripped = line.strip()
+        key = line.split('=')[0].strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            if section == '[EmuCore/CPU/Recompiler]':
+                out += [f'{k} = {v}' for k, v in keys.items() if k not in seen]
+            section = stripped
+        elif section == '[EmuCore/CPU/Recompiler]' and '=' in line and key in keys:
+            seen.add(key)
+            line = f'{key} = {keys[key]}'
+        out.append(line)
+    return out[:-1]
+
+
+def prepare_datapath(DATAPATH=DATAPATH, PINE_SLOT=PINE_SLOT, mode=DEFAULT_FPU_MODE):
     ini_source = DATAPATH_TEMPLATE / 'inis/PCSX2.ini'
     (DATAPATH / 'inis').mkdir(parents=True, exist_ok=True)
     for sub in ('snapshots', 'savestates', 'memorycards', 'logs', 'cheats', 'patches', 'cache', 'textures', 'userresources'):
@@ -748,6 +786,7 @@ def prepare_datapath(DATAPATH=DATAPATH, PINE_SLOT=PINE_SLOT):
         key = line.split('=')[0].strip()
         if key in replacements and '=' in line: line = f'{key} = {replacements[key]}'
         lines.append(line)
+    lines = apply_recompiler_keys(lines, FPU_MODES[mode])
     # PCSX2 reads <datapath>/inis; ARMSX2 reads <datapath>/ARMSX2/inis.
     for inis in (DATAPATH / 'inis', DATAPATH / 'ARMSX2/inis'):
         inis.mkdir(parents=True, exist_ok=True)
@@ -761,7 +800,8 @@ def run(state, output, frames, speed='normal', timeout=600, snaps=(), keep_state
     import random
     slot = random.randint(28100, 28999)
     datapath = DATAPATH.parent / f'pcsx2-{slot}'
-    prepare_datapath(datapath, slot)
+    mode = fpu_mode(manifest)
+    prepare_datapath(datapath, slot, mode)
     args = [str(PCSX2), '-datapath', str(datapath), '-batch', '-nogui', '-statefile', str(Path(state).resolve())]
     if speed == 'unlimited': args.append('-unlimited')
     elif speed == 'turbo': args.append('-turbo')
@@ -823,7 +863,7 @@ def run(state, output, frames, speed='normal', timeout=600, snaps=(), keep_state
     summary = dict(state=str(state), manifest=manifest, records=len(ordered), bytes_per_record=record,
                    first_tick=struct.unpack_from('<I', ordered[0], 4)[0] if ordered else None,
                    last_tick=struct.unpack_from('<I', ordered[-1], 4)[0] if ordered else None,
-                   sha256=hashlib.sha256(b''.join(ordered)).hexdigest(), snapshots=snapshots)
+                   sha256=hashlib.sha256(b''.join(ordered)).hexdigest(), snapshots=snapshots, fpu_mode=mode)
     if audio is not None:
         Path(output).with_suffix('.audio.json').write_text(json.dumps(dict(hooks='tools/ps2_audio_log.py', entries=audio)) + '\n'); summary['audio_entries'] = len(audio)
     Path(output).with_suffix('.json').write_text(json.dumps(summary, indent=2) + '\n')

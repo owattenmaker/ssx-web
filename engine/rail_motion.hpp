@@ -272,6 +272,9 @@ struct OriginalRailAccess {
     std::function<void(int style,int flag330,float speed,const OriginalRailQueryResult&)> airborneRailEvent; // 0x10E910
     std::function<void(int surface)> recordRailSurface;                  // global(gp+0x410)+0x598C
     std::function<void(const OriginalRailQueryResult&,const RailVector& before,const RailVector& after)> attachForce; // optional: 0x106848 -> hit entity vtable+0x15C (AnimTeeter 0x342538) with v_before - v_after
+    // optional: 0x13B07C..0x13B098, an entity-owned rail (out+0x50 instance, its entity +0xC): vtable+0x154 writes the contact
+    // velocity at the rail point to out+0x20, which 0x13B0C8 stores as +0x3D0 (a log teeter swinging under the rider)
+    std::function<bool(const OriginalRailQueryResult&,RailVector&)> entityVelocity;
     std::function<float()> balanceStat;                                  // 0x149208 via 0x14DC80/0x14DD58(.,3)
     std::function<float(int style,float spin)> railSpinScore;            // 0x119918(rider+0x790,style,spin)
     std::function<bool(bool requested)> recovery;                        // 0x116120
@@ -436,6 +439,10 @@ inline OriginalRailMotionStepResult originalRailMotionStep(OriginalRailMotionSta
     if(!hit.found){rebuild(r.quaternion,r.right,r.forward,r.up);result.outcome=OriginalRailMotionStepResult::Outcome::RailLost;return result;}
     m.railId=hit.record?int32_t(hit.record->packedId):-1;
     r.surfaceId=hit.surface;r.contactPoint=hit.point;r.surfaceVelocity={};
+    if(access.entityVelocity){
+        RailVector moving{};
+        if(access.entityVelocity(hit,moving))r.surfaceVelocity=moving;
+    }
     // 0x13B0A4..0x13B10C: f20 starts at 0.5 and becomes |v|*0.0009 only from 555.5555 cm/s up.
     float f20=.5f;{float speed=length(r.velocity);if(!(speed<bits(0x440ae38eu)))f20=mul(speed,bits(0x3a6bedfbu));}
     float f24=mul(f20,f20);

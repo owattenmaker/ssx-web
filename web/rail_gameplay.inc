@@ -90,8 +90,18 @@ static void rail_exit_contacts(OriginalRailRider& r){
  // Reactions may replace motion/control and physically rebake the crash root.
  r=rail_view();r.motionMode=browserResetActive?3:crash.active?2:r.motionMode;
 }
+// 0x13B07C..0x13B098: an entity-owned rail answers vtable+0x154, the contact velocity at the rail point (out+0x20), which the rail
+// motion stores as +0x3D0 (PS2 riders/fareastmyth-uber-b 2478: a Snow Jam log teeter tips under the rider; the port kept 0).
+static bool rail_entity_velocity(const OriginalRailQueryResult& hit,RailVector& velocity){
+ const auto hooks=browser_rail_snap_hooks();
+ if(!hooks.hasEntity(hit))return false;
+ ssx::RollerQuad linear{},angular{};
+ hooks.contactVelocity(hit,linear,angular);
+ velocity={linear[0],linear[1],linear[2]};
+ return true;
+}
 static OriginalRailAccess rail_access(){
- OriginalRailAccess a;a.exitContacts=rail_exit_contacts;a.query=browserRailQuery;a.attachForce=browser_teeter_attach_force; /*log teeters (rail_bridge.cpp)*/a.channel2Class=[](){return graph.currentClass(2);};a.channel2SequenceFlag=[](unsigned bit){return bool(graph.flags(2)&(uint64_t(1)<<bit));};a.currentSemantic=[](){return graph.requestedSemantics[2];};
+ OriginalRailAccess a;a.exitContacts=rail_exit_contacts;a.query=browserRailQuery;a.attachForce=browser_teeter_attach_force; /*log teeters (rail_bridge.cpp)*/a.entityVelocity=rail_entity_velocity; /*13B094: a moving entity rail's +0x3D0*/a.channel2Class=[](){return graph.currentClass(2);};a.channel2SequenceFlag=[](unsigned bit){return bool(graph.flags(2)&(uint64_t(1)<<bit));};a.currentSemantic=[](){return graph.requestedSemantics[2];};
  a.playAnimation=[](int semantic,float,int){if(!graph.enter(semantic))throw std::runtime_error("Missing authored rail animation");};
  // 0x311B48 rotates the sequence roots by -angle: sincos(-angle*0.5) scaling 0x4FF160 = (0,0,1,0), then 0x311BF0.
  a.rotateAnimation=[](float angle){terrain_original::Rounding rounding;auto sc=originalSinCos(terrain_original::mul(-angle,.5f));graph.offsetSequenceRoots({{}, {terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],0.f),sc[0],sc[1]}});};
