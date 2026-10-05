@@ -21,20 +21,9 @@ import { wardrobeFile } from './wardrobe.js';   // Equip Gear outfits: generated
 import { packageTextureBlob, texelTexture, bcTexture, textureDecodeConfig } from './texture-archive.js';   // rider texture archives (docs/asset-formats.md)
 import { createGuardedWorker, workerUrl } from './worker-guard.js';   // build handshake + main-thread fallback (docs/workers.md)
 import { prepareFrontEndPreview, decodeTextureBlob } from './fe-preview-prepare.js';
-import { pv } from './pv-flags.js';
 import { quality, onQualityChange } from './quality.js';   // rider texture set (retexture)
 // the next animation frame (a timer when frames stop: a hidden tab)
 const nextFrame = () => new Promise((r) => { let done = false; const go = () => { if (!done) { done = true; r(); } }; globalThis.requestAnimationFrame?.(go); setTimeout(go, 50); });
-// pv loadSmooth: the builds and compiles of every preview (the cutscene cast is one preview each) take turns, so a frame runs one
-// model's ~16 ms of builds, not one per model at once
-let buildTurn = Promise.resolve();
-function takeTurn() {
-  let release;
-  const mine = new Promise((r) => (release = r));
-  const ready = buildTurn;
-  buildTurn = buildTurn.then(() => mine);
-  return ready.then(() => release);
-}
 const FE_PREVIEW_WORKER = workerUrl((Worker) => new Worker(new URL('./fe-preview-worker.js', import.meta.url), { type: 'module' }));
 
 const DEG = Math.PI / 180;
@@ -244,19 +233,12 @@ export class FrontEndPreview {
       };
       mark('fetch');
       const prepared = await (prepareInWorker(root) || prepareHere(root));
-      const release = pv('loadSmooth') ? await takeTurn() : null;
-      let model;
+      mark('build');
+      const model = this.build(T, root, prepared);
+      mark('compile');
       const pending = [];
-      try {
-        mark('build');
-        model = this.build(T, root, prepared);
-        mark('compile');
-        if (release) await nextFrame();
-        if (this.compile) await this.compileParts(model, pending);
-      } finally {
-        release?.();
-      }
       if (this.compile) {
+        await this.compileParts(model, pending);
         try {
           await Promise.all(pending);
         } catch (error) {

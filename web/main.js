@@ -27,8 +27,7 @@ import {
   feedContextWorld,
   feedEventRails,
   initWorldStepped,
-  framePause,
-  nextFrame as loadFrame
+  framePause
 } from './load-slices.js';
 import { createCutscenes, playCutscene, COURSE_CODES, heatSteps } from './cutscenes.js';
 import { heatResetWorld, heatRows, requireHeatCore } from './event-heat.js';
@@ -3658,26 +3657,60 @@ const cullQa = new URL(location.href).searchParams.has('qa');
 const cullFrustum = new T.Frustum(),
   cullMatrix = new T.Matrix4(),
   cullSphere = new T.Sphere();
-function cullOffscreenRiders() {
-  const entries = aiRace?.renderer?.entries,
-    opponents = aiRace?.opponents;
-  if (!pv('riderCull') || !entries?.length || !opponents) return null;
+// The camera's frustum for this frame's cull tests
+function cullView() {
   camera.updateMatrixWorld();
   cullFrustum.setFromProjectionMatrix(cullMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-  let hidden = null;
-  for (let i = 0; i < entries.length; i++) {
-    const g = entries[i].group,
-      c = opponents[i]?.core;
-    if (!g.visible || !c?._rider_world_state) continue;
-    // the core's centimetres, Z up -> the scene's metres, Y up (as web/rival-beam.js places the icons); read in place (no view per call)
-    const H = c.HEAPF32,
-      k = c._rider_world_state() >> 2;
-    cullSphere.center.set(H[k] * 0.01 - origin.x, H[k + 2] * 0.01 - origin.y, -H[k + 1] * 0.01 - origin.z);
-    cullSphere.radius = RIDER_CULL_RADIUS;
-    if (cullFrustum.intersectsSphere(cullSphere)) continue;
-    g.visible = false;
-    (hidden ??= []).push(g);
-  }
+}
+// Whether a rider's sphere of `radius` metres around its world position lies wholly outside the frustum (cullView first)
+function riderOutside(c, radius) {
+  if (!c?._rider_world_state) return false;
+  // the core's centimetres, Z up -> the scene's metres, Y up (as web/rival-beam.js places the icons); read in place (no view per call)
+  const H = c.HEAPF32,
+    k = c._rider_world_state() >> 2;
+  cullSphere.center.set(H[k] * 0.01 - origin.x, H[k + 2] * 0.01 - origin.y, -H[k + 1] * 0.01 - origin.z);
+  cullSphere.radius = radius;
+  return !cullFrustum.intersectsSphere(cullSphere);
+}
+// pv fxCull: a computer rider's trail, wake, snow spray and streamers are neither read nor drawn while its sphere of FX_CULL_RADIUS is
+// wholly out of view. The longest of them is the trail: at most 48 slices, one a tick (engine/board_trail.hpp drawWindow, 54-slice
+// ring), so it reaches 48 ticks behind the rider: 100 m holds it up to 125 m/s. The spray's and the wake's reach is not derived from the
+// code (shorter-lived than the trail in every capture seen); the pixel A/B (docs/web-render-performance.md) checks the frames.
+const FX_CULL_RADIUS = 100;
+const fxAwayTest = (c) => riderOutside(c, FX_CULL_RADIUS);
+function fxAway() {
+  if (!pv('fxCull') || warming) return null;
+  // QA (?qa, the cull's history A/B): every rider's effects away, as if out of view
+  if (cullQa && window.__fxForceAway) return () => true;
+  cullView();
+  return fxAwayTest;
+}
+// a remote multiplayer rider (net/mp-game.js drawnRiders: its drawn palette's translation, source cm) outside the view
+const cullRemote = (g, x, y, z) => {
+  if (!g.visible) return;
+  cullSphere.center.set(x * 0.01 - origin.x, z * 0.01 - origin.y, -y * 0.01 - origin.z);
+  cullSphere.radius = RIDER_CULL_RADIUS;
+  if (cullFrustum.intersectsSphere(cullSphere)) return;
+  g.visible = false;
+  cullHidden.push(g);
+};
+const cullHidden = [];
+function cullOffscreenRiders() {
+  if (!pv('riderCull')) return null;
+  const entries = aiRace?.renderer?.entries,
+    opponents = aiRace?.opponents;
+  cullView();
+  cullHidden.length = 0;
+  if (entries?.length && opponents)
+    for (let i = 0; i < entries.length; i++) {
+      const g = entries[i].group,
+        c = opponents[i]?.core;
+      if (!g.visible || !riderOutside(c, RIDER_CULL_RADIUS)) continue;
+      g.visible = false;
+      cullHidden.push(g);
+    }
+  mpGame?.drawnRiders?.(cullRemote);
+  const hidden = cullHidden.length ? cullHidden : null;
   // QA: how many were left out of the last draw
   if (cullQa) window.__riderCulled = hidden ? hidden.length : 0;
   return hidden;
@@ -4028,7 +4061,7 @@ function frame(ms) {
     // the computer / online riders under a menu (pause, options, popups): hidden like the player's (aiRace.update shows them again) after
     // the gameplay visibility pass: computer riders' trails/wake/spray only while they race
     if (!playing) for (const o of scene.children) if (o.userData.opponentRider) o.visible = false;
-    opponentFx?.update(aiRace ? aiRace.racers.npcs.map((n) => n.core) : [], camera, playing && aiActive);
+    opponentFx?.update(aiRace ? aiRace.racers.npcs.map((n) => n.core) : [], camera, playing && aiActive, fxAway());
     if (riderIcons) {
       const bones = (aiRace?.racers?.npcs || []).map((n) => {
         const p = n.core._world_pose_bones(),
@@ -4304,22 +4337,14 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
     pipeline (WebGL links programs synchronously; Safari/Metal compiles are slow), at most 30 more frames. */
   // textures swapped in at run time (snow flipbook frames) upload now; post passes that only draw with something in view (sun Z query,
   // light glows) draw once
-  // (pv loadSmooth: WARM_TEXTURES a frame, after the post passes)
-  const warmTextures = [];
   scene.traverse((o) => {
-    for (const t of o.userData.warmTextures ?? []) warmTextures.push(t);
+    for (const t of o.userData.warmTextures ?? []) renderer.initTexture(t);
   });
-  if (!pv('loadSmooth')) for (const t of warmTextures) renderer.initTexture(t);
-  // the glare pass and the glow query (web/glare-pass.js, light-glow.js); pv loadSmooth: one of them a frame (below), not all in the
-  // first warm frame with the fog composite
-  const postWarms = [
-    sunFlare && (() => (sunFlare.warm = true)),
-    lightGlow && (() => (lightGlow.warm = true)),
-    glarePass && (() => (glarePass.warm = true)),
-    lightGlow && (() => (lightGlow.warmQuery = true))
-  ].filter(Boolean);
-  const smooth = pv('loadSmooth');
-  if (!smooth) for (const on of postWarms) on();
+  if (sunFlare) sunFlare.warm = true;
+  if (lightGlow) lightGlow.warm = true;
+  // the glare pass and the glow query (web/glare-pass.js, light-glow.js)
+  if (glarePass) glarePass.warm = true;
+  if (lightGlow) lightGlow.warmQuery = true;
   warming = true;
   const pipelineCount = () => renderer._pipelines?.caches?.size ?? 0;
   try {
@@ -4353,18 +4378,6 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       warmShadowLimit = 0;
       await nextFrame();
       alive();
-      if (smooth) {
-        for (const on of postWarms) {
-          on();
-          await nextFrame();
-          alive();
-        }
-        for (let k = 0; k < warmTextures.length; k += WARM_TEXTURES) {
-          for (const t of warmTextures.slice(k, k + WARM_TEXTURES)) renderer.initTexture(t);
-          await nextFrame();
-          alive();
-        }
-      }
       /* then, a step a frame: three sky meshes, a rider's shadow silhouettes (web/rider-shadow.js) and one shared vertex buffer */
       for (
         let step = 1, steps = Math.max(riderShadows?.entryCount ?? 0, Math.ceil(skyMeshes.length / 3), big.length);
@@ -4397,10 +4410,6 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
     // desktop)
     // the first slice builds one, then its measured cost sets the rate
     let newLimit = 1;
-    // pv loadSmooth: the drawables a slice reveals shrink when a frame's work ran over SLICE_BUDGET_MS (a new variant can mean several
-    // node builds: one per pass and geometry layout) and grow back once frames are light
-    let sliceSize = warmSlice;
-    const budget = smooth ? SLICE_BUDGET_MS : 40;
 
     // on a gated tier (30 fps: a drawn frame every 2nd animation frame) a drawn frame takes that many animation frames'
     // slices, and the new-material rate follows the drawn frame's own work (frame(), not the wait for it)
@@ -4409,7 +4418,7 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       const per = perNow(),
         slice = [];
       let fresh = 0;
-      for (const end = i + (smooth ? sliceSize : warmSlice) * per; i < drawables.length && i < end && fresh < newLimit; i++) {
+      for (const end = i + warmSlice * per; i < drawables.length && i < end && fresh < newLimit; i++) {
         const k = variant(drawables[i]);
         if (!built.has(k)) {
           built.add(k);
@@ -4422,20 +4431,15 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
       const f0 = performance.now();
       const work = await nextFrame();
       alive();
-      const spent = work > 0 ? work : performance.now() - f0;
       if (fresh)
         newLimit = Math.max(
           1,
           Math.min(
             cap * per,
             // cap: pv worldWarm passes more (their pipelines were compiled first: a new variant costs its render object)
-            Math.floor((budget * per) / (spent / fresh))
+            Math.floor((40 * per) / ((work > 0 ? work : performance.now() - f0) / fresh))
           )
         );
-      if (smooth && spent > budget * per) {
-        sliceSize = Math.max(1, Math.floor(sliceSize / 2));
-        newLimit = 1;
-      } else if (smooth && spent < (budget * per) / 2) sliceSize = Math.min(warmSlice, Math.ceil(sliceSize * 1.5));
       for (const o of slice) o.visible = false;
       progress?.(WARM_SHARE.pre + ((WARM_SHARE.slices - WARM_SHARE.pre) * i) / drawables.length);
     }
@@ -4503,9 +4507,6 @@ const gpuIdle = () => {
 // the post passes / sky / shadow / vertex-buffer steps, the slices, the whole-scene frames; the GPU wait is the rest
 const WARM_SHARE = { pre: 0.06, slices: 0.95, frames: 0.99 };
 // per warm-up frame: drawables revealed, new material variants built
-// pv loadSmooth: a warm slice frame's work (frame(), ms) before its slices shrink; run-time textures uploaded a warm frame
-const SLICE_BUDGET_MS = 24,
-  WARM_TEXTURES = 16;
 const warmSlice = 60,
   warmNewMaterials = 3;
 // ---- Course lifecycle and in-app navigation (docs/course-switch.md) ----------------------------------------------------- A course /
@@ -5542,8 +5543,6 @@ async function loadCourse(next) {
   } else {
     if (baseWorld) core._init_world_collision(worldRaw ? worldRaw.ptr : allocString(worldPackage), hashPtr);
     if (courseLoadGuard) await courseLoadYield();
-    // pv loadSmooth: under the load screen as well (a frame in between: it draws)
-    else if (pv('loadSmooth')) await loadFrame();
     // behind the menus: two tasks, not one
     if (baseWorld) core._init_body_terrain(terrainRaw ? terrainRaw.ptr : allocString(terrainPackage));
   }
@@ -6335,6 +6334,9 @@ async function init() {
           qaStepping = false;
         }
         acc = 0;
+        // QA: the fixed clock's leftover goes too, so the frames after a step draw the same render alpha on every page (it came from
+        // real time before the step: a frozen frame clock kept it, and pages drew a sub-tick apart; docs/web-render-performance.md)
+        simulation.reset();
         return Array.from(state);
       },
       hud(show) {

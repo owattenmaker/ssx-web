@@ -139,3 +139,71 @@ arguments, so `getDynamicCacheKey` makes an array per draw.
   screen unlocked before turning sceneLightingOff on. A new origin loads slowly the first time in WebKit (its HTTP cache is
   per origin). Then repeat `wkrace.mjs` (WebKit footprint, frames over 34 ms, p95 / p99 over a race; the baseline is in
   `runs/wkbase-BRA2-phone.log`).
+
+## Computer riders outside the view (pv riderCull, pv fxCull; 2026-10-04, lag agent)
+
+A playtester on Windows Firefox (diag 71f4ne0n) ran free ride at 60 fps and every race with five computer riders at ~40 fps (frames
+alternating 17 / 33 ms).
+
+**Costs** (Chrome 1x on this Mac, cold profile, in-world Snow Jam race vs free ride on the same stretch, main thread per frame):
+- 6.6 vs 3.5 ms.
+- The five rider contexts' simulation: +1.07 ms (bit-exact core work).
+- The riders' presentation: +2.0 ms. Measured by hiding them in alternating windows:
+  - the five models: 0.9 ms (render 0.8);
+  - their trails, wake, spray and streamers: 1.35 ms (the core's spray build 0.37, the trail ribbons 0.18, draws 0.5).
+- At 4x CPU: 33 vs 14 ms.
+- Firefox (headless here, which falls back to three's WebGL backend): 10.2 vs 5 ms of main thread. Its parent-process CanvasRenderer
+  thread adds about 0.2 s of CPU a second.
+- The event-load path costs the same per game tick: in-world adds nothing of its own.
+
+**The waste:**
+- opponent-riders.js builds every part with frustumCulled = false (the bounds are the bind pose, not the drawn pose). So all five
+  models draw every frame wherever the riders are: about 106 draw calls, skinned, many in two passes.
+- opponent-fx.js reads and draws every rider's effects every frame.
+- The shadows already cull: rider-shadow.js uses a 3 m frustum sphere, its stand-in for the PS2's rider visibility flag.
+
+**The switches:**
+- **riderCull** (main.js cullOffscreenRiders): a model whose 5 m sphere around the rider's world position (core rider_world_state)
+  is wholly outside the frustum is hidden for the frame's draw. This runs after the shadows took their silhouettes. Every capture
+  (palettes, lighting) is unchanged.
+- **fxCull** (main.js fxAway, web/opponent-fx.js update's `away`): a rider whose 100 m sphere is out of view has its effects
+  neither read nor drawn. They are built when read (web/animation_bridge.cpp), so the next frame that shows them reads the core's
+  current state.
+  - The trail is the longest effect: at most 48 slices, one per tick (engine/board_trail.hpp drawWindow, the 54-slice ring). 100 m
+    holds it up to 125 m/s.
+  - The spray's and the wake's reach is not derived from the code.
+
+**Checks:**
+- Chrome, Snow Jam with 5 riders and the frame clock frozen, 9 checkpoints from tick 200 to 4800, with 0-5 models and 0-5 riders'
+  effects culled. Both switches on vs off: identical pixels at every checkpoint. Scratch: local/lag-latency/qa/cullab.mjs.
+- When all five riders are out of view the saving is the hidden cost above (2.2 ms at 1x). Measured in an in-world race where
+  the scripted rider rides behind the pack, so most riders stay in view: at 4x, render 14.9 -> 13.4 ms and busy 34 -> 31.7 ms per
+  frame; at 1x lost in noise.
+
+- Re-entry with history (local/lag-latency/qa/cullhist.mjs): three separate pages step a tick and a drawn frame at a time to tick
+  4800: culls ON, with every rider's effects forced away for ticks 1800-2400 and 3400-4000 (?qa `window.__fxForceAway`); culls OFF;
+  OFF again. Identical pixels at all 11 checkpoints, including the frames 2401 / 2420 / 2440 / 2500 / 4020 / 4040 after 600
+  unread ticks, and OFF == OFF.
+
+**Multiplayer remote riders (riderCull):**
+- net/mp-game.js drawnRiders hands main.js each drawn remote model with the translation of its drawn skin palette's first matrix
+  (source cm, the eased offset included). The same 5 m test applies.
+- Check (local/lag-latency/qa/mpab.mjs): two headless Chrome clients race Snow Jam through a private mp-server. Both pages' clocks
+  are frozen at each of 8 checks (the second client held on every other check, so it falls behind the first's camera). Riders culled
+  at 4 checks, identical pixels at all 8.
+- fxCull does not cover remote riders: net/remote-fx.js updates their effects inside mpGame.render, before the frame's camera is
+  set, so a skip decided there cannot be made exact against the drawn view.
+
+**WebKit (2026-10-05):**
+- cullab, one page with a frozen clock: identical pixels at all 9 checkpoints. Ticks 3000 and 3600 need 20 settle frames
+  (SETTLE_FRAMES=20); otherwise the first OFF shot differs from the second OFF shot as well.
+- cullhist cannot be judged in WebKit: separate pages draw a sub-tick apart (OFF vs OFF2 differ over ~1.9 M pixels). The history
+  check rests on Chrome's exact cross-page run.
+  - Not a simulation difference: two WebKit pages give identical ?simtrace hashes on all 1500 ticks (local/lag-latency/qa/wkdiverge.mjs).
+  - The cause is the harness: the fixed clock's leftover when the frame clock is frozen (0 vs 16.3 ms) depends on real time. Every frozen
+    frame draws at that page's own render alpha: ssxQA.advance sets acc 0, then frame() sets it from simulation.pending again.
+  - Fixed (QA only): ssxQA.advance now also resets the fixed clock's leftover (simulation.reset()), so frames after a step draw the same
+    render alpha on every page. Two WebKit pages at tick 1500 now give 0 differing pixels (wkdiverge.mjs). test-world-warm, test-replay
+    and test-frame-clock pass. Cross-page WebKit pixel A/Bs work after an ssxQA.advance.
+
+**Not covered:** set-piece flags (about 15 meshes / 30 draws, static, often off-screen; not worth it).

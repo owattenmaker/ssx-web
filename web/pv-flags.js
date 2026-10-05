@@ -170,6 +170,8 @@
 // riderCull (lag agent, docs/web-render-performance.md "Computer riders outside the view"): a computer rider whose 5 m sphere is outside the
 // camera's frustum is not drawn that frame (main.js cullOffscreenRiders; shadows, trails and every capture unchanged). Off: all five are
 // drawn every frame wherever they are.
+// fxCull (lag agent, same doc section): a computer rider's trail, wake, snow spray and streamers are neither read from its core nor drawn
+// while its 100 m sphere is out of view (main.js fxAway, web/opponent-fx.js). Off: all five riders' effects every frame.
 // setBlendClass (playtester report "the gondola is transparent from the outside", docs/visual-parity.md section 46): a cutscene set's
 // blended batch (web/cutscenes.js ensureSet: TRANSP's gondola cabin, the heli sets' windows) draws its static-model class as
 // 37F2A4..37F7E0 sets it (material word +0x0C & 0x660000: ATST GREATER 92 / 20, AFAIL FB_ONLY, Z written), in the two passes of
@@ -182,11 +184,6 @@
 // load's own work (the course, the rider, the lineup, the warm-up's slices and frames, the intro's preparation; a world load's unload,
 // course build, ride rider and world warm), each weighted by its measured time, and the PS2 curve paces it over the 7 s minimum up to
 // 98%. 100% only when everything is done. Off: the PS2 curve over the minimum, then 98% until the work promises settle.
-// loadSmooth (load-screen agent, docs/loading-screen.md "Smooth under the load"): the load screen keeps animating under the heavy
-// first-use work: the warm-up's post passes join one a frame and its slices shrink when a frame's builds ran long, the cutscene
-// cast's FE compiles share one per-frame budget (web/fe-preview.js), and the course's collision and body-terrain inits run as two
-// tasks under the load screen too. Same work, same order; nothing ticks. Off: the post passes all in the warm-up's first frame,
-// 60-drawable slices, a per-model budget, the two inits in one task.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -233,11 +230,11 @@ export const PV_DEFAULTS = Object.freeze({
   boardFlex: true,
   eventRiderWarm: true,
   tickLock: true,
-  riderCull: false,
+  riderCull: true,
+  fxCull: true,
   setBlendClass: true,
   padRing: false,
-  loadMeter: false,
-  loadSmooth: false
+  loadMeter: false
 });
 const overrides = new Map();
 function fromQuery() {

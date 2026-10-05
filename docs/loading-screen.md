@@ -189,6 +189,9 @@ At 1x these are 50-110 ms. Left: splitting a variant's passes over frames, which
     number already shown, so a course switch that turns into an event load does not hold.
   - A world load that may close into a cutscene shows only its work.
   - 100% only when every promise has settled; then the 12 frames at 100% and the fade, as before.
+  - A world load (CTM, a lodge return, a peak world) ends the same way: main.js afterSwitch hands its continuation (the career's
+    resume: the arrival cut or the ride) to `LoadingScreen.finish()`, which ends the session as soon as its work has settled (no
+    minimum), on 100% and the fade, about 0.5 s. A world-mode session (the Transport's held loop) is left as it was.
 - Off: unchanged (the curve, 90% caps for downloads and the lazy course, 98% until done).
 
 **Measured with the switch** (same set-up):
@@ -200,7 +203,7 @@ At 1x these are 50-110 ms. Left: splitting a variant's passes over frames, which
 | Single Event at 20 Mbit/s | 86 -> 98, held 3.8 s | climbs to 95, then 100 |
 | BRA2 switch + event, WebKit | | 0 -> 97 over 7 s, 100 at the end |
 | `?autostart=1`, Chrome | | 0 -> 97 -> 100 |
-| CTM world load, WebKit / Chrome 4x | 92-98%, held up to 10.7 s, cut | climbs steadily to 96-97%, cut at the end of the work |
+| CTM world load, WebKit / Chrome 4x | 92-98%, held up to 10.7 s, cut | climbs steadily, 100% and the fade, then the arrival cut (+0.5 s) |
 
 Frames on and off are the same: the switch adds no work, only the reports.
 
@@ -215,6 +218,49 @@ test-ctm-event-world, test-career-rider.
   PROFILE;
 - `an.mjs` for frame stats, the percentage, stages and the worst frames, with CPU-profile attribution;
 - `recorder.js` and `server.mjs` (start a new server after edits: it does not watch).
+
+## Smooth under the load (pv loadSmooth, 2026-10-04)
+
+The load screen draws on the page's frames, so a long frame of first-use work under it makes its snow and trees hitch. With
+`loadSmooth` on (default off), the same work runs in the same order, spread over more frames, and nothing ticks:
+- **The post passes** (main.js `warmupRender`): the sun flare, light glow, glare and glow query join one a frame after the fog
+  composite's frame, instead of all in the warm-up's first frame. Before, that frame held 11 pipelines and 11 node builds:
+  FogComposite 42 ms, GlareFinal 10 ms and the effect quads 4-9 ms each, at 4x.
+- **The run-time textures** (the snow flipbook's `warmTextures`, 108 of them): 16 a frame (`WARM_TEXTURES`), not all in one.
+- **The slices:** a slice shrinks by half when a frame's work ran over `SLICE_BUDGET_MS` (24 ms; 40 before) and grows back by
+  1.5x once frames are light. The new-variant rate uses the same budget.
+- **The cutscene cast's FE compiles** (web/fe-preview.js `takeTurn`): each actor is its own FrontEndPreview, and each kept its own
+  16 ms budget, so several riders built in one frame (GRIFF + LUTHER: 117-133 ms at 1x). They now take turns, with a frame
+  between a model's build and its compile.
+- **A course's `_init_world_collision` and `_init_body_terrain`:** a frame between them under the load screen too (two tasks
+  behind the menus already).
+
+Not split, because each is one atom:
+- **One drawable's node builds:** a computer rider's mesh is 4 builds (its passes), about 25 ms each at 4x and 6-9 ms at 1x, so
+  about 100 ms at 4x even when the slice is down to one drawable.
+- **The course's C++ parses:** `_init_terrain`, `_init_world_collision` and `_init_body_terrain` are one core call each, 180-325 ms
+  at 4x. Splitting them needs a core change.
+- **The streamed world's start-row rewarm items** (free-ride.js): 108-125 ms frames at 4x.
+- **Firefox's GPU-process pipeline waits:** up to 267 ms with 73 ms of builds.
+
+**Measured** (same set-up as above, 2 runs each in Chrome, 1 in Firefox; load = load screen open -> next screen; frames under the
+load screen; "after" = the 5 s after it):
+
+| browser | load | off | loadMeter | loadMeter + loadSmooth |
+| --- | --- | --- | --- | --- |
+| Chrome 1x | Single Event | 7.6 s, max 108-117 ms, 1 > 100 | 7.6 s, max 108-117 ms, 1 > 100 | 7.6 s, **max 58 ms, 0 > 100**, 2-4 > 50 |
+| | CTM world | 3.7 s, max 50-67 ms | 4.1-4.3 s (the 100% beat), max 50-58 ms | 4.2 s, max 58 ms |
+| Chrome 4x | Single Event | 13.8 s, max 217 ms, 21 > 100 | 13.3-13.7 s, max 200-258 ms, 15-20 > 100 | 14.3-14.5 s, **max 175 ms, 15 > 100** |
+| | CTM world | 12.6-13.5 s, max 183 ms, 6 > 100 | 13.5-13.6 s, max 167-183 ms, 5-7 > 100 | 13.4-14.4 s, max 167-183 ms, 3-6 > 100 |
+| Firefox 1x (headless, `open -a Firefox`) | Single Event | 7.6 s, max 268 ms, 4 > 100 | 7.6 s, max 283 ms, 5 > 100 | 7.6 s, max 268 ms, 3 > 100 |
+| | CTM world | 5.1 s, max 117 ms, 2 > 100 | 5.6 s, max 117 ms, 3 > 100 | 5.9 s, max 118 ms, 2 > 100 |
+
+Results:
+- After the load screen, every run is smooth (max 17-58 ms in the 5 s after).
+- The meter's longest still stretch is 0.3 s on Single Event (2.3-7.5 s off) and 0.6-3.3 s on a world load (its start-row stream).
+- loadSmooth costs 0.6-0.9 s at Chrome 4x on Single Event (about 5%) and nothing at 1x.
+- WebKit for loadSmooth is owed: the screen locked at 22:00, and with it locked WebKit's frames stop. The loadMeter runs above were
+  made in WebKit before that.
 
 **Not confirmed from the code:** the PS2's own meter weighting (which loader steps move it); the port's weights are measured
 times, not the PS2's. Whether the PS2's CTM load shows 100% before its black: the 25-sample captures go from 85% to black.

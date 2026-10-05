@@ -44,11 +44,14 @@ export async function createOpponentFx({ scene, origin, count, sampleCore }) {
   return {
     entries,
     // cores[i]: the computer rider in slot i+1 (null hides it); active: computer riders race this run.
-    update(cores, camera, active) {
+    // away(core) (pv fxCull, main.js): true for a rider whose effects are all out of view this frame; they are hidden and not read, and
+    // the next frame that shows them reads the core's current trail / wake / spray (built when read, web/animation_bridge.cpp).
+    update(cores, camera, active, away = null) {
       const debugCore = globalThis.ssxEffects?.core; // board-trail.js records the last core for QA; keep the human's
       entries.forEach((e, i) => {
         const core = active ? cores[i] : null;
         setVisible(e, !!core); if (!core) { e.fx?.clear(); return; }
+        if (away?.(core)) { setVisible(e, false); return; }
         e.trail.update(core); e.wake.update(core); e.snow.update(core, camera); e.fx?.update(core);
       });
       if (globalThis.ssxEffects) globalThis.ssxEffects.core = debugCore;

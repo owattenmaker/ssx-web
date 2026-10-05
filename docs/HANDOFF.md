@@ -1,3 +1,48 @@
+> **Deployed 2026-10-05 (coordinator): pv riderCull and fxCull ON.** A computer rider's (and a remote MP rider's) model skips its draw while a 5 m sphere around it is out of view; a computer rider's trail / wake / spray / streamers are neither read nor drawn while a 100 m sphere is out of view (rebuilt from core state when read again). Pixel A/B identical in Chrome (9 checkpoints; with history 11 checkpoints including re-entry; 2-client MP 8 checks) and WebKit (9 checkpoints). Up to 2.2 ms of a 6.6 ms race frame at 1x when the field is behind. loadSmooth removed; loadMeter (off) is being reworked into real streaming progress plus a stage caption.
+
+> **Races at 40 fps: the computer riders' presentation; pv riderCull + fxCull (new, off, approved pending WebKit) (2026-10-04, lag agent):** see [web-render-performance.md](web-render-performance.md) "Computer riders outside the view".
+> - **Report:** Julia (diag 71f4ne0n, Windows Firefox, real NVIDIA GPU): free ride at 60 fps, every race with five computer riders at ~40 fps.
+> - **Costs (Chrome 1x, race vs free ride, the same stretch):**
+>   - 6.6 vs 3.5 ms per frame.
+>   - The five rider contexts' simulation: +1.07 ms (exact core work).
+>   - Their presentation: +2.0 ms. The models are 0.9 ms (106 draws). Trails, wake, spray and streamers are 1.35 ms.
+>   - In-world adds nothing over the event-load path per tick.
+> - **Waste:** the models are frustumCulled = false and draw wherever the riders are, and every rider's effects are read and drawn every frame.
+> - **riderCull** (main.js cullOffscreenRiders, after the shadows' silhouettes): a model whose 5 m sphere is out of view is not drawn. It also covers remote MP riders, through net/mp-game.js drawnRiders.
+> - **fxCull** (main.js fxAway, web/opponent-fx.js `away`): a computer rider's effects are neither read nor drawn while its 100 m sphere is out of view. The trail reaches at most 48 ticks behind (board_trail.hpp). The spray's and wake's reach is not derived from the code.
+> - **Checks, all identical pixels:**
+>   - Chrome frozen-clock A/B (9 checkpoints, 0-5 culled);
+>   - Chrome history A/B with forced re-entry after 600 unread ticks (11 checkpoints, OFF == OFF too);
+>   - 2-client MP A/B (8 checks, riders culled at 4).
+> - **Saving:** up to 2.2 ms of 6.6 when all five are out of view, which is a leading player's race. My scripted rider rides behind the pack, so most riders stay in view: there, 4x render 14.9 -> 13.4 ms.
+> - **Tests:** remote-riders, mp-fx, opponent-riders, line-length.
+> - **WebKit (2026-10-05):** cullab identical at 9 of 9 (with 20 settle frames). cullhist can't be judged in WebKit: separate pages drew a sub-tick apart. The simulation was identical (?simtrace, 1500 ticks); the cause was the clock leftover kept across the QA freeze. Now ssxQA.advance resets it (QA only), and two WebKit pages draw 0 differing pixels. Flipped by the coordinator.
+
+> **The load screen's "stuck at 98%": pv loadMeter and pv loadSmooth (new, both off) (2026-10-04, load-screen agent):** see [loading-screen.md](loading-screen.md) "The honest meter" and "Smooth under the load".
+> - **Cause:** the meter was a clock. The PS2 Snow Jam curve was stretched over the 7 s minimum, so it reached 98% at 4.6 s. It then held 98% for the rest of the minimum and all of the real work.
+>   - Single Event, cold profile: 98% held 2.4 s (Chrome 1x, WebKit, Firefox), 7.3-11.5 s (Chrome 4x) and 3.8 s at 20 Mbit/s.
+>   - CTM world load: 98% for 10.7 s at Chrome 4x, then cut to the arrival without 100%.
+>   - The PS2's CTM load climbs unevenly by work (0..85% in ctm-parity/runs/new-career) with no hold.
+> - **After 100%** nothing stalls in Chrome 1x/4x, WebKit or Firefox (max 17-58 ms in the 5 s after): Single Event intro / card / race, the CTM arrival and ride, an in-world Transport. Restarts and the in-world gate have no load screen.
+> - **loadMeter:** web/load-meter.js (new). The load is a plan of stages weighted by measured time:
+>   - an event load: course left, rider, lineup, warm, intro (ui.js loadEvent, main.js cb.warmup / cb.loadStages);
+>   - a course or world switch: unload, course, ride, world, gc, and `pending` for the event that follows (main.js switchCourse).
+>   - Reports: warmupRender's parts, warmWorld's compiles, loadCourse milestones, free-ride.js start's locations.
+>   - Shown: min(PS2 curve to 98% over the minimum, 99 x work). The pace applies only once the session waits for its minimum, and it continues from the number shown. 100% only when done.
+>   - A world load ends on 100% and the fade before its arrival cut or ride (LoadingScreen.finish, about +0.5 s).
+>   - Chrome 4x Single Event: the 98% hold went from 7.3 s to 0.3-0.6 s; the number is still for at most 1.4-1.6 s; same load time.
+> - **loadSmooth:** the same work spread over frames, nothing ticks:
+>   - the warm-up's post passes one a frame;
+>   - the 108 run-time textures 16 a frame;
+>   - adaptive slices (24 ms budget);
+>   - the cutscene cast's FE compiles take turns (fe-preview.js takeTurn);
+>   - a frame between `_init_world_collision` and `_init_body_terrain`.
+>   - Chrome 1x Single Event max frame 108-117 -> 58 ms; Chrome 4x frames > 100 ms 21 -> 15, max 217 -> 175 ms, +0.6-0.9 s load (about 5%); Firefox 4-5 -> 3 frames > 100.
+>   - Left (one atom each): a rider mesh's 4 node builds (about 100 ms at 4x), the C++ course parses, the start-row rewarm items, Firefox's GPU-process waits.
+> - **Checked:** web/test-load-meter.mjs (new, in test:all); test-loading-screen, test-lazy-course, test-world-warm, test-ctm-stream, test-stage-world, test-peak-release, test-rider-prefetch, test-ctm-event-world, test-career-rider, test-fe-preview(s), test-cutscenes, line length and comment code pass.
+> - **Proposal:** turn both on after one WebKit batch (`local/load-meter/qa/batch.sh webkit 1 2`, about 15 min). It is owed because the screen locked at 22:00. WebKit has traced loadMeter's Single Event, BRA2 switch and CTM climb, but not the CTM 100% finish or loadSmooth. Chrome 1x/4x and Firefox are traced for both.
+> - **QA:** local/load-meter/qa: loadprobe.mjs (FLOW single|late|ctm|transport|auto, BROWSER chrome|webkit|firefox, THROTTLE, NET, PV, COURSE, SHORT), an.mjs, sumload.mjs, big.mjs, batch.sh, the runs' JSON.
+
 > **Deployed 2026-10-04 (coordinator): core6, the high-level-play physics fixes.** web/runtime core.wasm `5bd03604…`, core.js `920f941b…` from local/physics-jank/core6 (291 clean, 15 new hl/* gates exact to the end): the soft collision in a board press (108388 -> 131348 -> 12FE98; the 'flung' report), boost through a crouched departure (12E9B8 0x12EB58), the double meter decay after a rail loss, passive air stuck after a rail release with an attack held (12F730), 115B58 in control 1. padRing stays off pending the user's pad-rate probe.
 
 > **High-level play: five core divergences fixed, 15 aggressive-pad gates, bail diagnostics, pv padRing (2026-10-04, physics-jank agent; core local/physics-jank/core6, to install):** see [crash-motion.md](crash-motion.md) "High-level play". Playtest report (an SSX speedrunner, Windows Firefox 157, xinput pad): "bailing and getting flung in weird directions whenever I attempt high-level play".

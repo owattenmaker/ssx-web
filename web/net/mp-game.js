@@ -87,6 +87,8 @@ export function createMpGame({
     finalResults = null,
     lastFrameMs = 0,
     lightPtr = 0;
+  // the opponents array of the last render (pv riderCull)
+  let drawnOpponents = null;
   let remoteFx = null,
     worldQueue = [],
     sentTriggers = new Set(),
@@ -681,11 +683,23 @@ export function createMpGame({
         client.finish(dnf ? 0 : resultTicks(), dnf, dnf ? 'gave up' : '');
       }
     },
+    // pv riderCull (main.js cullOffscreenRiders): f(group, x, y, z) for each remote rider drawn this frame, with the translation of its
+    // drawn skin palette's first matrix (source cm, Z up; the rider's model lies within a few metres of it)
+    drawnRiders(f) {
+      if (!renderer || !drawnOpponents) return;
+      const entries = renderer.entries;
+      for (let i = 0; i < entries.length; i++) {
+        const p = drawnOpponents[i]?.core?.palette;
+        if (p) f(entries[i].group, p[12], p[13], p[14]);
+      }
+    },
     render(alpha = 1) {
+      drawnOpponents = null;
       if (!renderer || !pairNet) return;
       // The local rider is drawn between the states after ticks n-2 and n-1 (pairNet.tick = n); remote packets are
       // stamped with the tick whose end state they carry.
       const opponents = remote.frame(order, pairNet.tick - 2 + alpha);
+      drawnOpponents = opponents;
       renderer.capture(opponents);
       renderer.update(opponents, 1);
       const cam = camera();
