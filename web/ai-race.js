@@ -166,7 +166,8 @@ export async function createAiRace({
     contextSetup,
     prepareWorld,
     hostAtStart,
-    anchorTick
+    anchorTick,
+    stageTriggers: pv('npcStageTriggers')
   });
   // The course-world inputs only set up the rider contexts' worlds: drop them (~20 MB of text otherwise kept for the whole
   // session). A lineup change (setDocument) needs only the animation packets, initial settings and rider packages.

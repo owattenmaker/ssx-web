@@ -203,9 +203,61 @@ python3 tools/ps2-float/ee_oracle/vudis.py DIR/vu0MicroMem.bin 0x6E0  # read a m
 
 - A named build of core.wasm (`local/ps2-float/build-core-names.sh`) shows native f32 add / sub / mul / div / sqrt in 279 functions. These are mostly the helpers' nearest-mode branches and the port-side presentation code (camera replay, snow, skin palette); the sim functions call the helpers.
 
-`tools/ps2-float/make_swap_tree.py OUT` builds a scratch tree that routes the helpers onto `ps2_fpu`. A scratch core has been built from it (`local/ps2-float/core-ps2fpu`, wasm 6.27 MB vs 6.81 MB). Changing the helpers is not enough. The port has expressions that equal the PS2's under mode-1 arithmetic but not on the console:
+### The switch core
 
-- **Example 1:** 13D8F0 computes dt = mul.s rider+0x300 (fs) × gp-0x7064 1/60 (ft). With +0x300 = 1.0 as fs the multiplier is one ULP low (0x3C888888). `web/core.cpp` passed `timeScale/60.f` (0x3C888889), so the extra-lean / board-alignment rates (+0x20C / +0x2C0) were off. The scratch tree carries the fix; it is the physics agent's file.
-- **Example 2:** every `mul(a, b)` in the port has an operand order that mode 1 never checked. Where the PS2's fs is a short constant (1.0, 0.5, 2, 3, ...) the deficit fires on most operands.
-- **Next: the matcher.** A logging build records every helper call with its source location. For each tick, port results whose bits are missing from the oracle's trace for that tick (or present only with the operands swapped) name the site and what to change.
-- Site fixes land in the live tree behind one compile-time switch (`SSX_PS2_EXACT_FPU`, default off), so today's build stays bit-exact to the mode-1 gates until the coordinator switches.
+- `tools/ps2-float/make_swap_tree.py OUT` builds a scratch tree of symlinks with the helper headers patched.
+- Every helper gets an early return on a runtime switch, `software_float::exactArithmetic`. It defaults off (mode-1 results, bit for bit), so one core runs both profiles.
+  - Covered: software_float add / mul / div / sqrt, the EE add / sub / DIV.S / SQRT.S, terrain_original in both rounding policies, collision_scalar, the LUN VM.
+- Exported as `ps2_arith_exact(on)`.
+- Build it with `CORE_OUT=… sh OUT/web/build-core.sh`. The scratch build skips the rider-global check, since the switch is a plain global.
+- With the switch off, the core passes the mode-1 gates (zoe-race, zoe-hl, hl-sj-1, neutral-3000).
+- `PS2_ARITH=exact` (default off) in `web/compare-ps2-capture.mjs` / `web/compare-ai-capture.mjs` turns the switch on at the capture's first tick.
+
+**Mode-1 history.** Every baseline savestate was made in mode 1, so an exact capture carries mode-1 history up to its first tick. With `--event` the comparer simulates the grid start and countdown up to that tick itself, so those ticks must stay in mode 1 too. Only an exact-mode baseline made from a state with no float history (the title or a menu) would remove this.
+
+### The matcher
+
+Per tick:
+
+1. A frozen snapshot: `snap_at.py CAP.p2s TICK OUT.p2s`.
+2. The PS2 trace: `oracle --trace-fpu`, which also logs a MAC's product and RSQRT's inner SQRT.
+3. The port trace: a trace core (`make_swap_tree.py OUT --trace`; every helper records its call site through `std::source_location`, see `tools/ps2-float/ps2_trace.hpp`), run with `PS2_ARITH=exact PS2_MATCH_TICK=T+1 PS2_MATCH_OUT=port.json TICK_HOOK=../tools/ps2-float/trace_hook.mjs`. The comparer's row T+1 is the PS2's pass T.
+4. `tools/ps2-float/match.py port.json oracle.fpu`.
+
+What match.py does:
+
+- It classes every port call against the PS2's: match, operand **swap**, **form** (same operands, another result), **drift** (an operand a few ULPs off a PS2 operand), value, or unmatched.
+- It skips world objects and presentation code by default, since they run outside 0x128AF0.
+- It votes per multiply site on operand order (`--swaps OUT.json`).
+- It follows the first drift's provenance back through the port calls that produced its operands (negations included) to the first call that left the PS2.
+
+### First findings (riders/zoe-race, exact)
+
+- **13D8F0 dt** = mul.s rider+0x300 (fs) × gp-0x7064 1/60 (ft). With fs = 1.0 the multiplier is one ULP low (0x3C888888). `web/core.cpp` computes `timeScale/60.f` (0x3C888889), so the +0x20C / +0x2C0 rates are off. This is not mode-1-neutral for timeScale ≠ 1, so it goes behind the switch.
+- **Motion 3 (136958) calls 11E098 every tick**, including the countdown hold, where the port skips it. 11E098's sum is ACC + 1.0·z² + 1.0·w² (VMADDA / VMADD with 1.0 as fs), so on the console the rebuild is not an identity: Q = 3F800001 moves q by one ULP from the first exact tick. Port form: `add(add(add(sq0,sq1), mul(1.f,sq2)), mul(1.f,sq3))`. Both changes are mode-1-neutral.
+- **The general rule:** wherever the port dropped a ×1.0, a 1.0×, or a normalisation because it was the identity in mode 1, the console disagrees when 1.0 is the fs operand.
+- Operand-order fixes (`mul(a,b)` → `mul(b,a)`) are mode-1-neutral (the mode-1 product is commutative), so they can land without the switch.
+
+### Performance
+
+Measured on a loaded machine.
+
+Native ns per op:
+
+| Op | software_float (mode 1) | ps2_fpu |
+|---|---|---|
+| add | 4.0 | 2.8 (exact double fast path) |
+| mul | 1.2 | 2.3 (fast path, array only on short tails) |
+| div | 3.1 | 110 (SRT recurrence on 56% of operands) |
+| sqrt | 1.4 | 79 |
+
+`web/bench-sim.mjs`, six riders, node: live 1.59 ms/tick, switch core in mode 1 1.53 (0.998x), switch core exact 2.16 (1.43x). One rider-tick makes ~120 divides and ~200 square roots, which dominate. Making the divide unit faster is open.
+
+### Status
+
+No-go for the swap. Remaining work:
+
+- the per-site form / order fixes (matcher batches to the physics agent);
+- the remaining bulk captures;
+- divide / square-root speed;
+- landing the helper switch in the live tree behind `SSX_PS2_EXACT_FPU` (core-file owner: the physics agent).

@@ -1,3 +1,30 @@
+> **PS2 arithmetic: the hardware is the target; console-model library, exact-mode captures, EE oracle, matcher (2026-10-05, PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md).
+> - **Finding:** every gate was captured in ARMSX2 clamp mode 1.
+>   - Its MUL has no Booth one-ULP deficit.
+>   - Its EE DIV / SQRT round to nearest, where the console runs an SRT recurrence.
+>   - Its VU0 adds have no guard mask, and VDIV / VSQRT chop.
+>   - The port reproduces exactly that, not the PS2.
+>   - ARMSX2's clamp mode 4 (its console model, measured on an SCPH-90000) departs from the gated rings on the first simulated tick of every scenario tried, and is metres away within 1000-2000 ticks.
+>   - Mode 4 equals ARMSX2's own interpreters byte for byte (neutral-3000, hl-sj-1, score-uber; event-race-ai up to a sound-voice handle).
+> - **engine/ps2_fpu.hpp (new, unused by the live core):** the console's EE FPU / VU FMAC / FDIV in integers plus exact-double fast paths.
+>   - 0 mismatches on 3785 hardware rows (ARMSX2 console tables + ps2autotests): tests/ps2_fpu_console.cpp.
+>   - 0 mismatches on 165M rows against ARMSX2's model, exhaustive MUL / DIV / SQRT sweeps included: tests/ps2_fpu_fuzz.cpp.
+> - **Captures:**
+>   - `PS2_CAPTURE_FPU=mode1|exact` in tools/ps2_capture.py (default mode1, recorded as the manifest's fpu_mode).
+>   - tools/ps2-float/recapture_exact.py re-runs every gate in exact mode into local/ps2-capture/runs-exact (turbo, which gives the same bytes; resumable). Running.
+>   - `PS2_RUNS=dir` points test-ps2-captures.mjs at another tree.
+>   - tools/ps2-float/score_gates.mjs scores gate by gate.
+> - **EE oracle (tools/ps2-float/ee_oracle):** an R5900 + VU0 macro / micro interpreter on ps2_fpu (`--arith mode1` for today's gates).
+>   - From a `snap_at.py` freeze at the start of any tick's rider pass, `0x128AF0(rider manager)` reproduces ARMSX2's ring record bit for bit (exact and mode 1; --ai-state too). Only the camera, rider +0x7C0.. and the pad counters, which run outside the pass, differ.
+>   - Already used by the physics agent for hl2/air-eba3 823 (138960) and fareastmyth-uber-b 2569.
+> - **Matcher:** a trace core (make_swap_tree.py --trace) + trace_hook.mjs + match.py name the port call sites that compute a tick differently from the PS2 (operand swaps, forms, drift with provenance).
+>   - First findings: core.cpp's dt (timeScale/60 vs 13D8F0's mul.s); motion 3's 11E098 rebuild every tick with ×1.0 as fs in its sum.
+> - **Comparers:** `PS2_ARITH=exact` (default off) turns a switch core's console model on at the capture's first tick, since the baselines carry mode-1 history.
+> - **Cost:** the switch core in mode 1 is 1.0x; exact is 1.43x in bench-sim (divide / square-root recurrences).
+> - **Status:** no-go for the core swap until the matcher's site fixes land (physics agent's files) and divide / sqrt are faster. Mode-1 gates stay the deploy gate.
+
+> **Deployed 2026-10-05 (coordinator): core24** (supersedes core23). web/runtime core.wasm `4baf4f2a…` (core.js `920f941b…`, unchanged) copied from local/physics-jank/core24-snapshot (531 clean). On top of core22: 13F410's ground-leave stamp uses the step's logic tick for a 121818 Wrong Way reset (hl2/attack-bra2 exact to the end); 138960 writes the patch words so 13C948 drives on the get-up tick (hl2/air-eba3 exact to the end; found with the EE oracle).
+
 > **Move-family fixes, cores 20–24, and the EE oracle on open cases (2026-10-05, physics-jank agent; core21 live, core22 installed, core24 in test):** see [crash-motion.md](crash-motion.md) "Move-family coverage".
 > - **core20:**
 >   - Crash plays are unforced (3128E8 a2 = 0 at every crash play site): riders/fareastmyth-uber-c.

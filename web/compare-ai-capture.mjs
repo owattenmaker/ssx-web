@@ -13,6 +13,7 @@ import * as eventSnapshot from './event-snapshot.js';
 import * as eventReturn from './event-return.js';
 import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
+import { pv } from './pv-flags.js'; // SSX_PV=npcStageTriggers (node): the page's ?pv= switches
 
 const args = process.argv.slice(2);
 if (args.includes('--coast-device')) process.env.COAST_DEVICE = '1'; // the Give Up's coast from the device pad (menu_pad.py's samples), as the PS2 read it
@@ -118,7 +119,7 @@ const inWorldAi = args.includes('--in-world-ai') ? await (async () => {
   return { cut, prepareWorld: async (c) => { const h = str(c, cut.hash); try { await feedContextWorld(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); await feedEventRails(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); } finally { c._free(h); } } };
 })() : null;
 if (inWorldAi) resources.worldKeys = { ...inWorldAi.cut.keys, hash: inWorldAi.cut.hash };
-const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual, ...(inWorldAi ? { prepareWorld: inWorldAi.prepareWorld, hostAtStart: !!ctmFull, ...(ctmFull ? { anchorTick: 0 } : {}) } : {}),
+const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual, stageTriggers: pv('npcStageTriggers'), ...(inWorldAi ? { prepareWorld: inWorldAi.prepareWorld, hostAtStart: !!ctmFull, ...(ctmFull ? { anchorTick: 0 } : {}) } : {}),
   onDraws: (slot, before, controller, motion) => { if (controller || motion) tickDraws.push(`${slot}:c${controller}m${motion}`); },
   afterRider: (slot) => injectWorldDraws(slot) });
 if (doc.game_mode) for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._event_kind?.(doc.game_mode.kind);

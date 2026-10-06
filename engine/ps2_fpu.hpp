@@ -20,8 +20,9 @@
 //   - multiply-accumulate rounds twice (product, then the accumulate).
 // The EE FPU and the VU FMAC are the same unit: VU0 macro and micro arithmetic use these too.
 //
-// Everything here is integer arithmetic on the raw words, so no host rounding mode, FTZ / DAZ
-// or FMA contraction can change a result (native and WebAssembly give the same bits).
+// Everything here works on the raw words in integers, or in double arithmetic whose results are exact (the fast
+// paths, a square-root seed), so no host rounding mode, FTZ / DAZ or FMA contraction can change a result: native and
+// WebAssembly give the same bits.
 #include <bit>
 #include <cstdint>
 
@@ -395,21 +396,15 @@ inline constexpr uint32_t divideNonzero(uint32_t a, uint32_t b) {
     return sign | (uint32_t(exponent) << 23) | (quotient & mantissaMask);
 }
 
-// floor(sqrt(x)) for x below 2^48, in integers.
-inline constexpr uint32_t integerSqrt48(uint64_t x) {
-    uint64_t root = 0;
-    uint64_t bit = uint64_t(1) << 46;
-    while (bit > x) {
-        bit >>= 2;
+// floor(sqrt(x)) for x below 2^48. x converts to a double exactly and its square root is correctly rounded, so the
+// truncated seed is within one of the answer under any rounding mode; the two corrections settle it.
+inline uint32_t integerSqrt48(uint64_t x) {
+    uint64_t root = uint64_t(__builtin_sqrt(double(x)));
+    while (root > 0 && root * root > x) {
+        --root;
     }
-    while (bit != 0) {
-        if (x >= root + bit) {
-            x -= root + bit;
-            root = (root >> 1) + bit;
-        } else {
-            root >>= 1;
-        }
-        bit >>= 2;
+    while ((root + 1) * (root + 1) <= x) {
+        ++root;
     }
     return uint32_t(root);
 }
@@ -555,19 +550,67 @@ inline constexpr int32_t floatToIntBits(uint32_t word) {
     return (word & signBit) ? -int32_t(integer) : int32_t(integer);
 }
 
+// ---- Fast paths ------------------------------------------------------------------------------
+// The same words as addBits / mulBits on ordinary operands, through exact double arithmetic: a guard-masked sum of two
+// singles within 24 exponents, and any product of two singles, is exact in a double (49 and 48 significant bits), so no
+// rounding mode or FMA contraction can touch it, and chopping it is clearing the double's low 29 fraction bits.
+// Anything else (zeros, the top binade, results outside the normal range, a product whose tail can meet the multiplier
+// deficit) takes the integer path. tests/ps2_fpu_fuzz.cpp holds the two to each other.
+
+inline constexpr uint64_t chopTo24Mask = ~uint64_t(0x1FFFFFFFu);
+
+// Whether a double's biased exponent is a normal single's below the top binade: [2^-126, 2^127 * 2).
+inline bool normalSingleRange(uint64_t bits) {
+    return uint32_t((bits >> 52) & 0x7FFu) - 897u <= 253u;
+}
+
+inline uint32_t addSubFast(uint32_t a, uint32_t b, bool subtract) {
+    guardMask(a, b);
+    if (subtract) {
+        b ^= signBit;
+    }
+    const uint32_t ea = exponentOf(a);
+    const uint32_t eb = exponentOf(b);
+    if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
+        return addSubResult(a, b, false).bits;
+    }
+    const double sum = double(std::bit_cast<float>(a)) + double(std::bit_cast<float>(b));
+    const uint64_t bits = std::bit_cast<uint64_t>(sum);
+    if (!normalSingleRange(bits)) {
+        return addSubResult(a, b, false).bits;
+    }
+    return std::bit_cast<uint32_t>(float(std::bit_cast<double>(bits & chopTo24Mask)));
+}
+
+inline uint32_t mulFast(uint32_t fs, uint32_t ft) {
+    const uint32_t ea = exponentOf(fs);
+    const uint32_t eb = exponentOf(ft);
+    if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
+        return mulResult(fs, ft).bits;
+    }
+    const double product = double(std::bit_cast<float>(fs)) * double(std::bit_cast<float>(ft));
+    const uint64_t bits = std::bit_cast<uint64_t>(product);
+    // The product's bits below the single's last bit sit in the top of the double's low 29 fraction bits. When any of
+    // fraction bits 21..28 is set the tail is at least 2^15 product units, so the multiplier's deficit cannot reach it.
+    if (!normalSingleRange(bits) || ((bits >> 21) & 0xFFu) == 0) {
+        return mulResult(fs, ft).bits;
+    }
+    return std::bit_cast<uint32_t>(float(std::bit_cast<double>(bits & chopTo24Mask)));
+}
+
 // ---- Float conveniences --------------------------------------------------------------------
 
 inline float add(float a, float b) {
-    return std::bit_cast<float>(addBits(std::bit_cast<uint32_t>(a), std::bit_cast<uint32_t>(b)));
+    return std::bit_cast<float>(addSubFast(std::bit_cast<uint32_t>(a), std::bit_cast<uint32_t>(b), false));
 }
 
 inline float sub(float a, float b) {
-    return std::bit_cast<float>(subBits(std::bit_cast<uint32_t>(a), std::bit_cast<uint32_t>(b)));
+    return std::bit_cast<float>(addSubFast(std::bit_cast<uint32_t>(a), std::bit_cast<uint32_t>(b), true));
 }
 
 // fs * ft in the PS2 instruction's operand order.
 inline float mul(float fs, float ft) {
-    return std::bit_cast<float>(mulBits(std::bit_cast<uint32_t>(fs), std::bit_cast<uint32_t>(ft)));
+    return std::bit_cast<float>(mulFast(std::bit_cast<uint32_t>(fs), std::bit_cast<uint32_t>(ft)));
 }
 
 inline float div(float a, float b) {

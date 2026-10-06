@@ -143,6 +143,9 @@ uint32_t nearOperand(uint32_t first) {
 
 void compareAll(uint32_t a, uint32_t b, uint32_t acc) {
     expect("add", a, b, 0, reference(cop1::ADD_S, a, b), addBits(a, b));
+    expect("add fast path", a, b, 0, addBits(a, b), addSubFast(a, b, false));
+    expect("sub fast path", a, b, 0, subBits(a, b), addSubFast(a, b, true));
+    expect("mul fast path", a, b, 0, mulBits(a, b), mulFast(a, b));
     expect("sub", a, b, 0, reference(cop1::SUB_S, a, b), subBits(a, b));
     expect("mul", a, b, 0, reference(cop1::MUL_S, a, b), mulBits(a, b));
     expect("div", a, b, 0, reference(cop1::DIV_S, a, b), divBits(a, b));
@@ -193,6 +196,7 @@ void multiplySweep(uint32_t fixedCount) {
             const uint32_t variable = 0x3F800000u | m;
             expect("mul sweep (fixed fs)", fixed, variable, 0, reference(cop1::MUL_S, fixed, variable), mulBits(fixed, variable));
             expect("mul sweep (fixed ft)", variable, fixed, 0, reference(cop1::MUL_S, variable, fixed), mulBits(variable, fixed));
+            expect("mul fast sweep", fixed, variable, 0, mulBits(fixed, variable), mulFast(fixed, variable));
         }
     }
 }

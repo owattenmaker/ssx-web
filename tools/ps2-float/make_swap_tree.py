@@ -163,16 +163,17 @@ def apply_trace(engine, web):
         ('inline float originalScalarSubtract(float a,float b){return originalScalarAddSub(a,b,true);}',
          'inline float originalScalarSubtractUntraced(float a,float b){return originalScalarAddSub(a,b,true);}\n'
          'inline constexpr ps2trace::TracedBinary originalScalarSubtract{originalScalarSubtractUntraced,ps2trace::EeSub};'),
-        ('inline float originalScalarDivide(float a,float b){return ps2fpu::div(a,b);}',
-         'inline float originalScalarDivideUntraced(float a,float b){return ps2fpu::div(a,b);}\n'
-         'inline constexpr ps2trace::TracedBinary originalScalarDivide{originalScalarDivideUntraced,ps2trace::EeDiv};'),
-        ('inline float originalScalarSqrt(float value){return ps2fpu::sqrt(value);}',
-         'inline float originalScalarSqrtUntraced(float value){return ps2fpu::sqrt(value);}\n'
-         'inline constexpr ps2trace::TracedUnary originalScalarSqrt{originalScalarSqrtUntraced,ps2trace::EeSqrt};'),
     ]
     for old, new in replacements:
         assert original.count(old) == 1, old[:50]
         original = original.replace(old, new)
+    # DIV.S / SQRT.S have one definition per platform branch: rename them all, and add the function objects at the end.
+    for name, parameters in (('originalScalarDivide', '(float a,float b){'), ('originalScalarSqrt', '(float value){')):
+        assert original.count(f'inline float {name}{parameters}') >= 1, name
+        original = original.replace(f'inline float {name}{parameters}', f'inline float {name}Untraced{parameters}')
+    closing = original.rindex('}')
+    original = (original[:closing] + 'inline constexpr ps2trace::TracedBinary originalScalarDivide{originalScalarDivideUntraced,ps2trace::EeDiv};\n'
+                'inline constexpr ps2trace::TracedUnary originalScalarSqrt{originalScalarSqrtUntraced,ps2trace::EeSqrt};\n' + original[closing:])
     (engine / 'original_float.hpp').write_text(original)
     collision = (engine / 'collision_scalar.hpp').read_text()
     for old, new in [

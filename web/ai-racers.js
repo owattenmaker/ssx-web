@@ -88,7 +88,9 @@ export async function createAiRacers({
   contextSetup = null,
   prepareWorld = null,
   hostAtStart = false,
-  anchorTick = null
+  anchorTick = null,
+  // pv npcStageTriggers: computer riders' stage-trigger contacts run the human context's stage programs (riderHost.stageContact)
+  stageTriggers = false
 }) {
   if (!singleCoreSupported(humanModule)) throw new Error('This core has no rider contexts (web/rider_context.cpp)');
   // The human's own context seen through a view, so its exports run in it even while a computer rider's context is
@@ -716,7 +718,37 @@ export async function createAiRacers({
     beforeProgress: () => {
       if (riderTlsCurrent(humanModule) === humanBlock) stage2();
     },
-    pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule)))
+    pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule))),
+    // A computer rider's 121818 (its race_end, stage 3) with a stage-trigger contact: the PS2 runs the slot-2 program right there with
+    // that rider as the player object (0x121854 -> 30A060), before its 125AD0 / route. The human's context holds the one stage world: run
+    // the program there on the rider's shared and visual RNG cursors, replay the world changes, then land the builtin-27 effects
+    // (10F1C0) in the rider's context. Returns 1 when handled (docs/crash-motion.md "Computer riders' stage triggers").
+    stageContact: (resource, record) => {
+      if (!stageTriggers || !human._stage_foreign_contact) return 0;
+      const slot = slotOf.get(riderTlsCurrent(humanModule));
+      const rider = slot ? npcs.find((n) => n.slot === slot) : null;
+      if (!rider) return 0;
+      const own = rngView(rider.core), shared = rngView(human), kept = shared.slice();
+      shared.set(own);
+      const v = sharedVisual ? visualOf(rider.core) : null, h = sharedVisual ? visualOf(human) : null;
+      const lend = v && v.words && v.lcg && h.words && h.lcg;
+      if (lend) {
+        h.words.set(v.words);
+        h.lcg[0] = v.lcg[0];
+      }
+      const p = human._stage_foreign_contact(resource, record);
+      const n = new Float32Array(human.HEAPU8.buffer, p, 1)[0];
+      const effects = new Float32Array(human.HEAPU8.buffer, p + 4, 2 * n).slice();
+      own.set(shared);
+      shared.set(kept);
+      if (lend) {
+        v.words.set(h.words);
+        v.lcg[0] = h.lcg[0];
+      }
+      syncWorld(human);
+      for (let k = 0; k < n; k++) rider.core._stage_apply_effect(effects[2 * k], effects[2 * k + 1]);
+      return 1;
+    }
   });
   // | 4: no renderer poses (a computer rider is drawn from its skin palette, not animation_post's bone poses; web/animation_bridge.cpp)
   for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4);

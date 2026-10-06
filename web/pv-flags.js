@@ -181,6 +181,10 @@
 // bandwidth, and its work stages (course build, rider, lineup, warm-up, intro, world warm) by their measured time. No minimum (the
 // PS2's screens last as long as the load: 0x2454F8), 100% only when everything is done, and a line under the % saying what is
 // loading ('load-stage' diag events past 5 s). Off: the PS2 curve over the 7 s minimum, then 98% until the work promises settle.
+// npcStageTriggers (gameplay, docs/crash-motion.md "Computer riders' stage triggers"): a computer rider's stage-trigger contact runs the
+// human context's stage programs with that rider as the current player (121818 -> 30A060 slot 2), and builtin-27 effects (boost window,
+// boost, Wrong Way!) land in that rider's context inside its 121818 (web/ai-racers.js riderHost.stageContact). Off: computer riders never
+// fire stage triggers (PS2 hl2/attack-bra2-b 1161: Griff's +0x2E8 boost window).
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -230,7 +234,8 @@ export const PV_DEFAULTS = Object.freeze({
   riderCull: true,
   fxCull: true,
   setBlendClass: true,
-  loadMeter: true
+  loadMeter: true,
+  npcStageTriggers: false
 });
 const overrides = new Map();
 function fromQuery() {
