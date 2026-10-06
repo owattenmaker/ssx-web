@@ -15,6 +15,9 @@ namespace ssx {
     return software_float::eeFlush(subtract?left-right:left+right);
 }
 inline float originalScalarAddSub(float a,float b,bool subtract){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return subtract?ps2fpu::sub(a,b):ps2fpu::add(a,b);
+#endif
     uint32_t x=std::bit_cast<uint32_t>(a),y=std::bit_cast<uint32_t>(b);
     int difference=int((x>>23)&255)-int((y>>23)&255);
     if(difference>=25)y&=0x80000000u;
@@ -37,14 +40,30 @@ inline float originalScalarSubtract(float a,float b){return originalScalarAddSub
 #if defined(__EMSCRIPTEN__)
 // WebAssembly only has nearest rounding (the rider-context rounding policy is the software originalRoundingMode), so
 // the native fesetround round trip is a no-op there.
-inline float originalScalarDivide(float a,float b){return software_float::eeFlush(software_float::eeFlush(a)/software_float::eeFlush(b));}
-inline float originalScalarSqrt(float value){return software_float::eeFlush(std::sqrt(software_float::eeFlush(value)));}
+inline float originalScalarDivide(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::div(a,b);
+#endif
+   return software_float::eeFlush(software_float::eeFlush(a)/software_float::eeFlush(b));}
+inline float originalScalarSqrt(float value){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::sqrt(value);
+#endif
+   return software_float::eeFlush(std::sqrt(software_float::eeFlush(value)));}
 #else
 inline float originalScalarDivide(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::div(a,b);
+#endif
+   
     int old=std::fegetround();if(std::fesetround(FE_TONEAREST))throw std::runtime_error("Scalar DIV rounding");
     volatile float left=software_float::eeFlush(a),right=software_float::eeFlush(b);float result=left/right;std::fesetround(old);return software_float::eeFlush(result);
 }
 inline float originalScalarSqrt(float value){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::sqrt(value);
+#endif
+   
     int old=std::fegetround();if(std::fesetround(FE_TONEAREST))throw std::runtime_error("Scalar SQRT rounding");
     volatile float input=software_float::eeFlush(value);float result=std::sqrt(input);std::fesetround(old);return software_float::eeFlush(result);
 }

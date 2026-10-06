@@ -1,3 +1,35 @@
+> **Deployed 2026-10-05 (coordinator): core26.** web/runtime core.wasm `a8894cb8…`, core.js `2fd64a91…` (new exports _stage_foreign_contact / _stage_apply_effect) copied from local/physics-jank/core26-snapshot (531 clean). On top of core24: the computer riders' stage-trigger routing (inert; pv npcStageTriggers off, waiting on the per-context trigger loader) and the two mode-1-neutral 11E098 fixes (rebuild sums with the x1.0 products; the countdown hold renormalises every held tick).
+
+> **Coverage-guided pad fuzzing: coverage map, port-only fuzzer, exact-mode queue (2026-10-05, fuzzing agent):** see [fuzzing.md](fuzzing.md).
+> - **Coverage core:** local/fuzz/build-cov-core.sh.
+>   - It is web/build-core.sh's em++ line with clang source-based coverage, compiled from a source snapshot (cov-core/src).
+>   - Its arithmetic is unchanged: 465 ps2-captures scenarios clean on it.
+>   - local/fuzz/profraw2text.py converts emscripten's wasm32 raw profile v10, which emsdk's llvm-profdata can't read.
+> - **Baseline:** gameplay coverage of all 465 scenarios is functions 84.7%, regions 83.9%, branches 76.3% (per area in fuzzing.md).
+>   - Reachable but never run:
+>     - originalRailUberBalanceStep;
+>     - originalNpcDesignatedBehavior (100B90);
+>     - collision reactions in control 9 / 11 and the surface reset;
+>     - a kind-2 pair crash and a pair contact in a press.
+>   - Offline-unreachable: respondToAttack (online only) and refreshProximity (native only).
+> - **Fuzzer:** local/fuzz/fuzz.py.
+>   - Seeds: 349 gated captures; each variant is a seed's whole pad from its own baseline.
+>   - Replay: --sync-rng with the seed's cached draw counts, or compare-ai-capture.mjs for six riders; 2-4 s a variant.
+>   - Mutations: timing shifts, chords, mashes, reversed sticks, resets, attacks, presses, splices.
+>   - Closed-loop guides (local/fuzz/guide.mjs): steering onto rails, brakes on rails, held grabs and presses, Uber chords on rails.
+>   - Invariants (local/fuzz/fuzz-hook.mjs, calibrated on the exact seeds): NaN, caps, ground sinks, unverified control transitions.
+> - **Results:** five rounds, 1280 variants.
+>   - 0 core exceptions, 0 NaN, 0 cap violations; the ground-sink hits were all false alarms.
+>   - Coverage levelled off at regions 84.4%, branches 77.0%.
+>   - New branch sides reached: collisions picking 342 / 332, 351, 328 / 329; rail attach in reverse-stance press, upside down,
+>     and 106D9C's press onto a rail.
+>   - 14 port control transitions no PS2-exact replay shows.
+>   - All of these are queued in local/fuzz/exact-queue.json (22 entries).
+> - **Paused:** the ARMSX2 differential step (local/fuzz/diff.py build / compare / chunks / revert) waits for the exact-mode core
+>   swap. No PS2 divergence handed over yet.
+> - **Machine rules:** fuzz rounds run at most 2 comparers wide while the exact-mode bulk capture runs. Never kill by pattern: an
+>   earlier `pkill -f test-ps2-captures.mjs` of mine hit the coordinator's deploy run.
+
 > **PS2 arithmetic: the hardware is the target; console-model library, exact-mode captures, EE oracle, matcher (2026-10-05, PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md).
 > - **Finding:** every gate was captured in ARMSX2 clamp mode 1.
 >   - Its MUL has no Booth one-ULP deficit.

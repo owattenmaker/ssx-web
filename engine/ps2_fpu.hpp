@@ -217,6 +217,11 @@ inline constexpr bool multiplyOneUlpLow(uint32_t fs, uint32_t ft) {
     if (exponentOf(fs) == 0 || exponentOf(ft) == 0) {
         return false;
     }
+    // With ft's low 16 bits clear every Booth window of digits 0..7 is zero: no partial product and no correction
+    // reaches the low columns, and the exact product's bit 15 is clear, so the array equals the exact product.
+    if ((ft & 0xFFFFu) == 0) {
+        return false;
+    }
     const uint32_t a = significandOf(fs);
     const uint32_t b = significandOf(ft);
     const uint64_t exact = uint64_t(a) * uint64_t(b);
@@ -564,7 +569,16 @@ inline bool normalSingleRange(uint64_t bits) {
     return uint32_t((bits >> 52) & 0x7FFu) - 897u <= 253u;
 }
 
-inline uint32_t addSubFast(uint32_t a, uint32_t b, bool subtract) {
+// The integer paths behind the fast paths, kept out of line so the fast paths inline into their callers.
+[[gnu::noinline]] inline uint32_t addSubSlow(uint32_t a, uint32_t b) {
+    return addSubResult(a, b, false).bits;
+}
+
+[[gnu::noinline]] inline uint32_t mulSlow(uint32_t fs, uint32_t ft) {
+    return mulResult(fs, ft).bits;
+}
+
+[[gnu::always_inline]] inline uint32_t addSubFast(uint32_t a, uint32_t b, bool subtract) {
     guardMask(a, b);
     if (subtract) {
         b ^= signBit;
@@ -572,28 +586,28 @@ inline uint32_t addSubFast(uint32_t a, uint32_t b, bool subtract) {
     const uint32_t ea = exponentOf(a);
     const uint32_t eb = exponentOf(b);
     if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
-        return addSubResult(a, b, false).bits;
+        return addSubSlow(a, b);
     }
     const double sum = double(std::bit_cast<float>(a)) + double(std::bit_cast<float>(b));
     const uint64_t bits = std::bit_cast<uint64_t>(sum);
     if (!normalSingleRange(bits)) {
-        return addSubResult(a, b, false).bits;
+        return addSubSlow(a, b);
     }
     return std::bit_cast<uint32_t>(float(std::bit_cast<double>(bits & chopTo24Mask)));
 }
 
-inline uint32_t mulFast(uint32_t fs, uint32_t ft) {
+[[gnu::always_inline]] inline uint32_t mulFast(uint32_t fs, uint32_t ft) {
     const uint32_t ea = exponentOf(fs);
     const uint32_t eb = exponentOf(ft);
     if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
-        return mulResult(fs, ft).bits;
+        return mulSlow(fs, ft);
     }
     const double product = double(std::bit_cast<float>(fs)) * double(std::bit_cast<float>(ft));
     const uint64_t bits = std::bit_cast<uint64_t>(product);
     // The product's bits below the single's last bit sit in the top of the double's low 29 fraction bits. When any of
     // fraction bits 21..28 is set the tail is at least 2^15 product units, so the multiplier's deficit cannot reach it.
     if (!normalSingleRange(bits) || ((bits >> 21) & 0xFFu) == 0) {
-        return mulResult(fs, ft).bits;
+        return mulSlow(fs, ft);
     }
     return std::bit_cast<uint32_t>(float(std::bit_cast<double>(bits & chopTo24Mask)));
 }

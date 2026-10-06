@@ -7,11 +7,17 @@ namespace ssx::collision_scalar {
 // the game's FPUFPCR chop mode. VU arithmetic must not use these helpers.
 struct Nearest {int prior=std::fegetround();Nearest(){std::fesetround(FE_TONEAREST);}~Nearest(){std::fesetround(prior);}};
 inline float divide(float a,float b) {
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::div(a,b);
+#endif
     Nearest rounding;volatile float x=a,y=b;
     if(y==0)return std::copysign(std::numeric_limits<float>::max(),std::signbit(x)!=std::signbit(y)?-1.f:1.f);
     volatile float result=x/y;return result;
 }
 inline float squareRoot(float x) {
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::sqrt(x);
+#endif
     if(x==0)return x;Nearest rounding;volatile float argument=std::abs(x);volatile float result=std::sqrt(argument);return result;
 }
 inline float constant(uint32_t bits){return std::bit_cast<float>(bits);}

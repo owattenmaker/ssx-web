@@ -810,7 +810,11 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
  const bool uberFrame=browser_rail_uber_control();
  browserStartFrame=browserStarting;
  if(browserStarting){if(!browserStartControl)throw std::runtime_error("Start controller unavailable");browserStartControl();
-  if(browserStartFrozen){browser_boost_tick(boostState,boostProfile,physicsState.timeScale,3,6);for(auto* v:{&physicsState.turn,&physicsState.brake,&physicsState.crouch,&physicsState.presentationLift,&physicsState.animationTurn,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll})groundControlApproach(*v);charge=physicsState.crouch.current;airMotionThisTick=false;++motionTick;publish_motion();return output;}
+  if(browserStartFrozen){browser_boost_tick(boostState,boostProfile,physicsState.timeScale,3,6);for(auto* v:{&physicsState.turn,&physicsState.brake,&physicsState.crouch,&physicsState.presentationLift,&physicsState.animationTurn,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll})groundControlApproach(*v);charge=physicsState.crouch.current;
+   // motion 3's tick 136958 is 11E098: the quaternion is renormalised every held tick (an identity in mode-1 arithmetic, not on the
+   // console's: docs/ps2-float.md)
+   physicsState.quaternion=originalRebuildOrientation(physicsState.quaternion).quaternion;
+  airMotionThisTick=false;++motionTick;publish_motion();return output;}
  }
  browserSoftFrame=browserSoftActive;
  if(browserSoftFrame){
@@ -934,7 +938,12 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   auto basis=originalRebuildOrientation(q);physicsState.quaternion=basis.quaternion;physicsState.physicalForward=basis.forward;physicsState.boardUp=basis.up;
   if(selected!=physicsProfile.surface.id){const float limit=physicsProfile.speedLimit;physicsProfile=physicsMaterials.at(selected);physicsProfile.speedLimit=limit;}
   auto relative=terrain_original::difference(physicsState.velocity,physicsState.surfaceVelocity);
+#if SSX_PS2_EXACT_FPU
+  // 13D8F0: dt = mul.s rider+0x300 (fs) x gp-0x7064 1/60 (ft); on the console 1.0 as fs comes back one ULP low (docs/ps2-float.md).
+  originalGroundVisualTargets(physicsProfile,physicsState,software_float::exactArithmetic?ps2fpu::mul(physicsState.timeScale,std::bit_cast<float>(0x3c888889u)):physicsState.timeScale/60.f,relative);
+#else
   originalGroundVisualTargets(physicsProfile,physicsState,physicsState.timeScale/60.f,relative);
+#endif
   if(!leave)originalGroundBoardLift(physicsState,relative);
   groundBoardNormalBefore=physicsState.boardNormal;originalGroundBoardNormal(physicsState);
   // 13F358 is after the contact velocity correction. Clamping first changes
@@ -1000,4 +1009,9 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
 #include "replay_camera.inc" // the replay view (web/replay.js, docs/replay.md)
 #ifdef SSX_SNAPSHOT_REGISTRY // the rider-context snapshot's registry (web/generate-snapshot-registry.mjs, docs/replay.md §2a)
 #include "generated/snapshot/core.inc"
+#endif
+
+#if SSX_PS2_EXACT_FPU
+// The arithmetic profile (docs/ps2-float.md): the capture comparers run their setup in mode 1 and the capture on the console model.
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2_arith_exact(int on){ssx::software_float::exactArithmetic=on!=0;}
 #endif

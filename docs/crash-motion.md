@@ -278,3 +278,19 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
     velocity, with depth1/3, distance and position equal.
   - attack-bra2-b 1232: Griff's first ground tick after a landing has 34 cm/s more forward speed on the PS2 (along +0x1B0),
     with the command words and every compared field equal. attack-bra2 is exact to the end since core23.
+
+## Computer riders' stage triggers (pv npcStageTriggers, off; 2026-10-05, physics-jank agent)
+
+- **PS2 order (decomp + EE oracle, hl2/attack-bra2-b tick 1161):**
+  - 128AF0 runs each rider's 121818 in slot order. Its first step (0x121854) calls the entity of the contact that 105398's 104E70 stored at rider+0xA30.
+  - For a stage-script trigger that's 355770 → 34FE00 → 2D19B8 → 30A060, which runs the slot-2 program with that rider as the player object. Builtin 27 (0x2FF850) → 10F1C0(rider, type, amount) acts on that rider at once (type 1: 10E770, +0x2E8 = 5).
+  - Only then do 125AD0 (progress) and 112338 / 1125C0 (the route) run, then 125228, 117C28, and 120E30, which clears +0xA30.
+- **Port:** only the human's context holds the stage world. A computer rider's browser_stage_triggers (first in its race_end) hands the contact to riderHost.stageContact (web/ai-racers.js, createAiRacers `stageTriggers`, pv npcStageTriggers). That hook:
+  - runs core stage_foreign_contact in the human's context, on the rider's shared and visual RNG cursors;
+  - replays the human's world events (syncWorld);
+  - applies the collected builtin-27 effects in the rider's context (core stage_apply_effect), all before the rest of that rider's race_end.
+  - Exports are additive. The JS checks for _stage_foreign_contact, so an older core keeps today's behaviour.
+- **Still blocked:** a computer rider's instance query never contacts the stage trigger.
+  - The trigger in this case is BRA2's mdl_BRA2_speedboost_1000, resource 758544. tools/export_browser_pickups.py lists it under unsupported_entity_pickups.
+  - Griff passes through its box at 1162 with complete queries and no contact. The entity instances need the stage world's bindings in each rider context, or a shared lookup, before the routing has anything to route.
+  - The rider-parity agent is on the human-side loading (riders/fareastmyth-uber-b 2567).

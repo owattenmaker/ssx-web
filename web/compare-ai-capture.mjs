@@ -27,6 +27,11 @@ const root = new URL('public/assets/', import.meta.url);
 const read = (p) => fs.readFileSync(new URL(p, root));
 const text = (p) => read(p).toString('utf8');
 const human = await createCore();
+// PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
+// console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
+if (process.env.PS2_ARITH === 'exact' && human._ps2_arith_exact) {
+  human._ps2_arith_exact(0);
+}
 process.on('uncaughtException', (e) => { console.error(e instanceof Error ? e.stack : (human.getExceptionMessage ? human.getExceptionMessage(e) : e)); if (!(e instanceof Error) && e?.stack) console.error(e.stack); console.error('at record', globalThis.__compareTick, 'stage', globalThis.__compareStage); process.exit(1); });
 const put = (core, bytes) => { const p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); return p; };
 const str = (core, s) => put(core, Buffer.from(s + '\0'));

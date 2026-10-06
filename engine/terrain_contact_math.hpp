@@ -14,42 +14,72 @@ using Coefficients=std::array<Vector,16>;
 // multiply/add instructions in PS2 0x32E9A0 instead of contracting them to FMA.
 inline float add(float a,float b){
 #if defined(__EMSCRIPTEN__)
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::add(a,b);
+#endif
  if(originalRoundingMode==FE_TOWARDZERO)return software_float::add(a,b);
  return software_float::eeFlush(software_float::eeFlush(a)+software_float::eeFlush(b)); // no excess precision in wasm
 #else
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::add(a,b);
+#endif
  volatile float r=software_float::eeFlush(software_float::eeFlush(a)+software_float::eeFlush(b));return software_float::eeFlush(r);
 #endif
 }
 inline float sub(float a,float b){
 #if defined(__EMSCRIPTEN__)
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::sub(a,b);
+#endif
  if(originalRoundingMode==FE_TOWARDZERO)return software_float::sub(a,b);
  return software_float::eeFlush(software_float::eeFlush(a)-software_float::eeFlush(b)); // no excess precision in wasm
 #else
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::sub(a,b);
+#endif
  volatile float r=software_float::eeFlush(software_float::eeFlush(a)-software_float::eeFlush(b));return software_float::eeFlush(r);
 #endif
 }
 inline float mul(float a,float b){
 #if defined(__EMSCRIPTEN__)
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::mul(a,b);
+#endif
  if(originalRoundingMode==FE_TOWARDZERO)return software_float::mul(a,b);
  return software_float::eeFlush(software_float::eeFlush(a)*software_float::eeFlush(b)); // no excess precision in wasm
 #else
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::mul(a,b);
+#endif
  volatile float r=software_float::eeFlush(software_float::eeFlush(a)*software_float::eeFlush(b));return software_float::eeFlush(r);
 #endif
 }
 inline float div(float a,float b){
 #if defined(__EMSCRIPTEN__)
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::div(a,b);
+#endif
  if(originalRoundingMode==FE_TOWARDZERO)return software_float::div(a,b);
  return software_float::eeFlush(software_float::eeFlush(a)/software_float::eeFlush(b)); // no excess precision in wasm
 #else
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::div(a,b);
+#endif
  volatile float r=software_float::eeFlush(software_float::eeFlush(a)/software_float::eeFlush(b));return software_float::eeFlush(r);
 #endif
 }
 inline float sum3(float a,float b,float c){return add(add(a,b),c);}
 inline float sqrt(float a){
 #if defined(__EMSCRIPTEN__)
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::sqrt(a);
+#endif
  if(originalRoundingMode==FE_TOWARDZERO)return software_float::sqrt(a);
  return std::sqrt(a);
 #else
+#if SSX_PS2_EXACT_FPU
+ if(software_float::exactArithmetic)return software_float::sqrt(a);
+#endif
  volatile float r=std::sqrt(a);return r;
 #endif
 }

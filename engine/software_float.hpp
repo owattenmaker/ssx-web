@@ -2,8 +2,17 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#if SSX_PS2_EXACT_FPU
+#include "ps2_fpu.hpp"
+#endif
 
 namespace ssx::software_float {
+#if SSX_PS2_EXACT_FPU
+// The console's arithmetic (engine/ps2_fpu.hpp, docs/ps2-float.md) in a core built with SSX_PS2_EXACT_FPU. On by default;
+// the capture comparers turn it off for their setup before a capture's first tick (PS2_ARITH=exact): the baseline savestates
+// carry mode-1 history.
+inline bool exactArithmetic = true;
+#endif
 // The EE FPU (and PCSX2/ARMSX2's EE emulation: DAZ + FTZ) has no denormals: a denormal operand reads as
 // zero and an underflowing result is flushed to a signed zero (tech-trip-stop: the decaying +0x2C8 lift).
 inline float eeFlush(float value){uint32_t bits=std::bit_cast<uint32_t>(value);return (bits&0x7f800000u)==0&&(bits&0x007fffffu)!=0?std::bit_cast<float>(bits&0x80000000u):value;}
@@ -76,6 +85,9 @@ inline float addFlushed(double x,double y,float a,float b){
 // used as they are and the two eeFlush tests are skipped (docs/sim-performance.md "Operand flush test").
 inline bool exponentsNonzero(float a,float b){return ((std::bit_cast<uint32_t>(a)&0x7f800000u)!=0)&((std::bit_cast<uint32_t>(b)&0x7f800000u)!=0);}
 inline float add(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(exactArithmetic)return ssx::ps2fpu::add(a,b);
+#endif
     if(exponentsNonzero(a,b))return addFlushed(a,b,a,b);
     return addFlushed(eeFlush(a),eeFlush(b),a,b);
 }
@@ -89,6 +101,9 @@ inline float mulFlushed(double x,double y,float a,float b){
     return mulReference(a,b);
 }
 inline float mul(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(exactArithmetic)return ssx::ps2fpu::mul(a,b);
+#endif
     if(exponentsNonzero(a,b))return mulFlushed(a,b,a,b);
     return mulFlushed(eeFlush(a),eeFlush(b),a,b);
 }
@@ -99,11 +114,21 @@ inline float divExact(float a,float b) {
     const double remainder=double(a)-double(rounded)*double(b);
     return correct(rounded,std::signbit(b)?-remainder:remainder);
 }
-inline float div(float a,float b){return eeFlush(divExact(eeFlush(a),eeFlush(b)));}
+inline float div(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(exactArithmetic)return ssx::ps2fpu::div(a,b);
+#endif
+    return eeFlush(divExact(eeFlush(a),eeFlush(b)));
+}
 inline float sqrtExact(float a) {
     const float rounded=float(std::sqrt(double(a)));
     if(std::isfinite(a)&&a>0&&double(rounded)*double(rounded)>double(a))return reduceMagnitude(rounded);
     return rounded;
 }
-inline float sqrt(float a){return eeFlush(sqrtExact(eeFlush(a)));}
+inline float sqrt(float a){
+#if SSX_PS2_EXACT_FPU
+    if(exactArithmetic)return ssx::ps2fpu::sqrt(a);
+#endif
+    return eeFlush(sqrtExact(eeFlush(a)));
+}
 }

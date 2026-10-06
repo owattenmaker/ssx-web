@@ -22,6 +22,11 @@ const root = new URL('public/assets/', import.meta.url);
 const read = (p) => fs.readFileSync(new URL(p, root));
 const json = (p) => JSON.parse(read(p));
 const core = await createCore();
+// PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
+// console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
+if (process.env.PS2_ARITH === 'exact' && core._ps2_arith_exact) {
+  core._ps2_arith_exact(0);
+}
 if (finishPlace != null) core.finishHost = { place: () => finishPlace };
 // Stage builtin 34, the Metro-City phone booths / water towers (web/stage_teleport.inc): on;
 // STAGE_TELEPORT=0 turns it off. A capture with booth_injections (the PS2 hook at 0x121818 wrote rider+0xA30 = a booth instance on

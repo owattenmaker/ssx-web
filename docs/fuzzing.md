@@ -28,7 +28,7 @@ Tools are in local/fuzz (scratch, not shipped). Nothing here touches web/runtime
 - `covmap.py report DIR` gives coverage per gameplay area. `covmap.py gaps DIR` lists uncovered functions, blocks and one-sided
   branches, with the PS2 addresses their comments carry. Render, camera, fx, stage, mission and seed-data code is excluded.
 
-### Baseline (all 465 ps2-captures scenarios, coverage core v1)
+### Baseline (all 465 ps2-captures scenarios, coverage core v2: the snapshot build)
 
 | area | functions | regions | branches |
 |---|---|---|---|
@@ -38,33 +38,31 @@ Tools are in local/fuzz (scratch, not shipped). Nothing here touches web/runtime
 | crash/reset | 96.5% | 89.8% | 81.1% |
 | plant | 96.2% | 89.4% | 74.6% |
 | scoring | 94.3% | 89.7% | 82.7% |
-| npc/race | 93.3% | 88.2% | 80.0% |
+| npc/race | 93.3% | 88.3% | 80.0% |
 | uber/tricks | 85.2% | 86.5% | 80.9% |
 | pair/attack/collision | 86.0% | 81.7% | 73.1% |
-| animation | 75.8% | 81.0% | 74.7% |
-| rail | 81.4% | 80.2% | 71.6% |
+| rail | 83.5% | 82.2% | 73.2% |
+| animation | 75.8% | 81.0% | 74.8% |
 | ground/core | 77.3% | 79.8% | 72.2% |
-| **gameplay** | **84.4%** (1787/2117) | **83.7%** (16955/20254) | **76.1%** (11684/15352) |
+| **gameplay** | **84.7%** (1793/2118) | **83.9%** (17008/20268) | **76.3%** (11720/15362) |
 
 Many one-sided branches are compound conditions on callbacks that are always set, which no pad can flip.
 
+**The v1 build's gap labels were wrong:** it compiled the live tree, which other agents had edited before the gaps were listed, so
+its labels were 2-5 lines off. Every label here comes from the v2 snapshot (cov-core/src). Rails below 555 cm/s (13B0A4), the
+13BB14 push-away and the teeter force (342538, riders/fareastmyth-uber-b) are all covered.
+
 **Reachable code never run:**
-- originalAnimTeeterApplyForce (342538, through 106848's attach force on the ARA1 log teeters);
 - originalRailUberBalanceStep (the kind-10 rail Uber balance state);
 - originalNpcDesignatedBehavior (100B90).
 
-**Branches never taken:**
-- originalCollisionReaction:
-  - the surface reset;
-  - the control 9 / 11 returns;
-  - classes 18..21 picking 351 / 361;
-  - the fast low contact 342 / 332.
-- originalRailMotionStep:
-  - 13B0A4: below 555 cm/s;
-  - 13BB14: the push-away;
-  - the up.z < 0 steer;
-  - 13B6EC: the unclamped pull.
-- pair_react: a kind-2 pair crash, and a pair contact during a press.
+**Branches never taken** (`targets.py list`):
+- originalCollisionReaction: the control 9 / 11 returns, the surface reset (surfaceProperty44), classes 20 / 21 picking 361.
+- originalRailAttach:
+  - style picks: flag330 off a press, control 12;
+  - previous style 3 / 4.
+- pair_react: a kind-2 pair crash, and a pair contact in control 1.
+- surface_landing_control: a control other than 5 / 13.
 
 **Not reachable offline:**
 - OriginalRiderPairSystem::respondToAttack: online races only (race_world_pair_respond);
@@ -134,11 +132,31 @@ Many one-sided branches are compound conditions on callbacks that are always set
 
 ## Rounds
 
-| round | variants | kept | keys | violations | targets reached | unverified states |
-|---|---|---|---|---|---|---|
-| r1 (core v1) | 300 | 137 | 23134 -> 24232 | 0 real (CRA3 powder sinks, whitelisted) | 2 rail-attach branch sides | 7>0 7>3 4>3 10>0 2>10 8>3 1>9 5>11 |
+Keys are (function, counter, bucket) for gameplay functions. Regions and branches are the merged gameplay coverage of the baseline
+plus every kept variant so far.
+
+| round | variants | kept | keys | regions | branches | violations | new targets | new unverified states |
+|---|---|---|---|---|---|---|---|---|
+| r1 (core v1, 5 wide) | 300 | 137 | 23134 -> 24232 | - | - | 0 | 2 rail-attach sides | 7>0 7>3 4>3 10>0 2>10 8>3 1>9 5>11 |
+| baseline v2 | - | - | 22974 | 83.9% | 76.3% | - | - | - |
+| r2 (2 wide) | 300 | 140 | 24402 | 84.2% | 76.6% | 0 | rail-attach 566 (press in reverse stance), 569 (board upside down) | 2>9 4>11 7>8 5>9 8>5 |
+| r3teeter (guide only) | 80 | 28 | 24507 | - | - | 0 | - (grinds the 0x1d08 teeter rail) | - |
+| r4 | 300 | 105 | 25338 | 84.4% | 76.9% | 0 | collision 129 (fast low 342 / 332), 135, 142 (classes 18 / 19 -> 351), 155 (328 / 329); rail-attach 583 (106D9C press onto a rail, 26); rail-motion 507 | - |
+| r5 | 300 | 91 | 25841 | 84.4% | 77.0% | 0 | - | 11>9 |
+
+Coverage has levelled off: r5 added 8 regions and 17 branches. Most of what is left is unreachable from a pad (always-set
+callback checks, online and native paths) or needs situations the seeds never reach (a pair crash, control 11 / 9 collisions).
 
 ## Findings
 
-- No port invariant violation so far: 0 core exceptions, 0 NaN, 0 cap violations.
-- No PS2 divergence handed over yet: the differential step waits for exact mode.
+- **Port invariants:**
+  - 1280 variants in five rounds: 0 core exceptions, 0 NaN / inf, 0 speed or dv cap violations.
+  - The ground-sink hits were all false alarms: the CRA3 deep-powder spot that the exact replays show too (whitelisted), one
+    single-tick 0.76 m landing dip, and one reading of a computer rider's context. fuzz-hook.mjs now reads the human through its
+    own context view in six-rider runs.
+- **Unverified port states:** control transitions no PS2-exact replay shows: 7>0 7>3 4>3 10>0 2>10 8>3 1>9 5>11 2>9 4>11 7>8 5>9
+  8>5 11>9. They are queued for exact-mode capture.
+- **Exact-mode queue** (local/fuzz/exact-queue.json, 22 entries):
+  - every target reach and unverified state, each with its seed and variant directory;
+  - the r1 entries were re-checked on core v2 (`rechecked`).
+- **PS2 divergences handed over:** none yet. The differential step is paused until the exact-mode core swap.

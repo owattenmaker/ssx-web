@@ -116,12 +116,18 @@ inline float cvtSW(int32_t value){
 }
 // CVT.W.S: truncate, saturate (NaN -> 0 as the recompiled cast).
 inline int32_t cvtWS(float x){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::floatToIntBits(std::bit_cast<uint32_t>(x));
+#endif
     if(!(x==x))return 0;
     if(x>=2147483648.f)return INT32_MAX;
     if(x<=-2147483648.f)return INT32_MIN;
     return int32_t(x);
 }
 inline float mulS(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::mul(a,b);
+#endif
 #if defined(__EMSCRIPTEN__)
     if(originalRoundingMode==FE_TOWARDZERO)return software_float::mul(a,b);
 #endif
@@ -129,6 +135,9 @@ inline float mulS(float a,float b){
 }
 // DIV.S: nearest; a zero-exponent divisor yields sign(a^b)|0x7F7FFFFF like the EE.
 inline float divS(float a,float b){
+#if SSX_PS2_EXACT_FPU
+    if(software_float::exactArithmetic)return ps2fpu::div(a,b);
+#endif
     const uint32_t x=floatBits(a),y=floatBits(b);
     if((y&0x7F800000u)==0)return bitsFloat(((x^y)&0x80000000u)|0x7F7FFFFFu);
     return originalScalarDivide(a,b);

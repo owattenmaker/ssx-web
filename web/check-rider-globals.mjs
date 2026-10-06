@@ -4,6 +4,7 @@
 // or engine/ object) would be shared by all six riders: the build fails and names it. Usage: check-rider-globals.mjs core.map
 import fs from 'node:fs';
 const SHARED = [
+  /exactArithmetic/,                                            // the arithmetic profile of an SSX_PS2_EXACT_FPU core (docs/ps2-float.md)
   /^(world|cameraTerrain)$/,                                   // web/core.cpp: course geometry, immutable after the load
   /pendingWorld/,                                               // web/core.cpp: that geometry while it builds (init_world_step, the load)
   /^_ZZN3ssx15original_camera/, /^_ZGVZN3ssx15original_camera/, // camera constant tables (jump knots, swing spline, shake, chase variants)

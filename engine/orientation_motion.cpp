@@ -164,7 +164,9 @@ OriginalPhysicalOrientation originalOrientationBasis(std::array<float,4> q){
 OriginalPhysicalOrientation originalRebuildOrientation(std::array<float,4> q){
     Round round;
     std::array<float,4> squared;for(int i=0;i<4;i++)squared[i]=terrain_original::mul(q[i],q[i]);
-    float sum=terrain_original::add(squared[0],squared[1]);sum=terrain_original::add(sum,squared[2]);sum=terrain_original::add(sum,squared[3]);
+    // 11E098: ACC.x = S.x + S.y, then ACC += one.x * S.z, R = ACC + one.x * S.w (one.x = vf0.x + vf0.w as the fs operand of the
+    // products: identity in mode-1 arithmetic, one ULP low on the console for some S; docs/ps2-float.md)
+    float sum=terrain_original::add(squared[0],squared[1]);sum=terrain_original::add(sum,terrain_original::mul(1.f,squared[2]));sum=terrain_original::add(sum,terrain_original::mul(1.f,squared[3]));
     float inverse=terrain_original::div(1.f,terrain_original::sqrt(sum));for(float& x:q)x=terrain_original::mul(x,inverse);
     return originalOrientationBasis(q);
 }
