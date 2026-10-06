@@ -15,6 +15,7 @@
 // nothing is patched, so default play stays bit-identical to the captures.
 #include "../engine/original_float.hpp"
 #include <array>
+#include <cmath>
 #include <cstdint>
 RIDER_LOCAL inline std::array<int32_t,7> browserAttributeRaw{5,5,5,5,5,5,5};
 RIDER_LOCAL inline int32_t browserAttributeMaximum=11,browserAttributeOverride=0;
@@ -23,5 +24,18 @@ inline float browserAttributeStat(int k){
     const int32_t numerator=browserAttributeOverride>0?browserAttributeOverride:browserAttributeRaw[k]/5;
     return ssx::originalScalarDivide(float(numerator),float(browserAttributeMaximum));
 }
+// A seeded stat (a getter's result in a capture or a lineup) is numerator / maximum by div.s, or 0.5 for a flagged rider
+// (1477E8). The PS2 recomputes it with div.s at every use, so it is recomputed here in the current arithmetic: mode 1's
+// quotient is the seed itself (nearest), the console's can be one ULP lower (1/11: 0x3DBA2E8B, not 0x3DBA2E8C).
+// A value that is no such quotient is kept as it is.
+inline float browserStatFromSeed(float seed){
+    const double maximum=double(browserAttributeMaximum);
+    const double scaled=double(seed)*maximum;
+    const double numerator=std::nearbyint(scaled);
+    if(seed==0.5f||numerator<0||numerator>maximum||std::abs(scaled-numerator)>1e-5)return seed;
+    return ssx::originalScalarDivide(float(numerator),float(maximum));
+}
 void browser_apply_ground_attributes();     // web/attribute_bridge.cpp (core profiles)
+void browser_reseed_ground_stats();        // web/attribute_bridge.cpp (seeded stats in the current arithmetic)
 void browser_apply_animation_attributes();  // web/animation_bridge.cpp (air control / grab statics)
+void browser_reseed_stats();                // web/animation_bridge.cpp (every stat in the current arithmetic)

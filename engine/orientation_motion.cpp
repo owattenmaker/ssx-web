@@ -156,10 +156,15 @@ OriginalPhysicalOrientation originalOrientationBasis(std::array<float,4> q){
     V diagonal={terrain_original::mul(doubled[0],q[0]),terrain_original::mul(doubled[1],q[1]),terrain_original::mul(doubled[2],q[2])};
     V weighted={terrain_original::mul(doubled[0],q[3]),terrain_original::mul(doubled[1],q[3]),terrain_original::mul(doubled[2],q[3])};
     V mixed={terrain_original::mul(doubled[1],q[2]),terrain_original::mul(doubled[2],q[0]),terrain_original::mul(doubled[0],q[1])};
+    // 0x11E0CC..0x11E134: every row element is an ACC stage then an FMAC whose fs is one = vf0 + vf0.w (1.0), so the second term goes
+    // through mul(1, x); the cross terms start from 0 + M (vadda with vf0 = +0, turning -0 into +0). Identical in mode-1 arithmetic
+    // except for that -0, which the PS2 also makes +0 (docs/ps2-float.md).
+    auto one=[](float x){return terrain_original::mul(1.f,x);};
+    auto zero=[](float x){return terrain_original::add(0.f,x);};
     return {q,
-        {terrain_original::sub((terrain_original::sub(1.f,diagonal[1])),diagonal[2]),terrain_original::add(mixed[2],weighted[2]),terrain_original::sub(mixed[1],weighted[1])},
-        {terrain_original::sub(mixed[2],weighted[2]),terrain_original::sub((terrain_original::sub(1.f,diagonal[2])),diagonal[0]),terrain_original::add(mixed[0],weighted[0])},
-        {terrain_original::add(mixed[1],weighted[1]),terrain_original::sub(mixed[0],weighted[0]),terrain_original::sub((terrain_original::sub(1.f,diagonal[0])),diagonal[1])}};
+        {terrain_original::sub(terrain_original::sub(1.f,diagonal[1]),one(diagonal[2])),terrain_original::add(zero(mixed[2]),one(weighted[2])),terrain_original::sub(zero(mixed[1]),one(weighted[1]))},
+        {terrain_original::sub(zero(mixed[2]),one(weighted[2])),terrain_original::sub(terrain_original::sub(1.f,diagonal[2]),one(diagonal[0])),terrain_original::add(zero(mixed[0]),one(weighted[0]))},
+        {terrain_original::add(zero(mixed[1]),one(weighted[1])),terrain_original::sub(zero(mixed[0]),one(weighted[0])),terrain_original::sub(terrain_original::sub(1.f,diagonal[0]),one(diagonal[1]))}};
 }
 OriginalPhysicalOrientation originalRebuildOrientation(std::array<float,4> q){
     Round round;

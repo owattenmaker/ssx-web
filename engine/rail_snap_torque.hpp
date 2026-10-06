@@ -109,6 +109,14 @@ inline void originalAnimNodeVelocities(OriginalAnimTeeter& e,float rate,Original
     e.evaluated=0;
 }
 
+// 0x34E698's sum for one node: its velocity row (entity+0x4C) and its matrix origin.
+inline void originalAnimContactVelocityAt(const RollerQuad& origin,const OriginalAnimNodeVelocity& v,const RollerQuad& point,RollerQuad& packet20,RollerQuad& packet30){
+    using namespace roller_math;
+    OriginalRounding rounding;
+    const RollerQuad lever=vsub(point,origin);
+    const RollerQuad linear=vadd(v.linear,cross(lever,v.angular));
+    packet20=vadd(packet20,linear);packet30=vadd(packet30,v.angular);
+}
 // 0x34E698 for an entity without a primary modifier (AnimTeeter; LiveComps without a
 // Spline/MultiSpline): packet +0x20 += node linear + (point - node origin) x node angular,
 // +0x30 += node angular. The table is recomputed only when e.evaluated is set (0x34E348
@@ -119,11 +127,7 @@ inline bool originalAnimContactVelocity(OriginalAnimTeeter& e,float rate,Origina
     if(node<0)return false;
     if(e.evaluated||table.nodes.size()!=e.model->nodes.size())originalAnimNodeVelocities(e,rate,table,fps);
     const RollerQuad origin=originalAnimNodeMatrix(e,node)[3]; // 0x34E600 -> vt+0xE8 0x3610E0
-    OriginalRounding rounding;
-    const auto& v=table.nodes.at(size_t(node));
-    const RollerQuad lever=vsub(point,origin);
-    const RollerQuad linear=vadd(v.linear,cross(lever,v.angular));
-    packet20=vadd(packet20,linear);packet30=vadd(packet30,v.angular);
+    originalAnimContactVelocityAt(origin,table.nodes.at(size_t(node)),point,packet20,packet30);
     return true;
 }
 inline bool originalAnimTeeterContactVelocity(OriginalAnimTeeter& e,OriginalAnimNodeVelocityTable& table,int32_t node,

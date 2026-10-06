@@ -23,6 +23,7 @@ const SHARED = [
   /chairEntityShared|multiSplineShared/,                         // web/set_piece_gameplay.inc: chair entities / lift evaluations reused only on bit-identical inputs
   /ssx_snapshot|snapshotRegistry_/,                            // web/world_snapshot.hpp: the snapshot's registry (the TLS layout, one for every context)
   /avalancheShared/,                                           // web/avalanche_gameplay.inc: the loaded avalanche definitions, taken by the other contexts of that location
+  /stageWorldSharedPosed/,                                     // web/stage_world.inc: the human's LiveComp-posed collision nodes, put on every other context's instances
 ];
 const map = fs.readFileSync(process.argv[2], 'utf8');
 const bad = new Set();

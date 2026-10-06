@@ -76,6 +76,9 @@ struct ControllerDraws{ControllerDraws(){++rng.controllerDepth;}~ControllerDraws
 uint32_t browser_shared_random_next(){return rng.next();} /* stage-program draws of the shared RNG 0x4FF030 (web/set_piece_gameplay.inc) */
 RIDER_LOCAL static OriginalGroundState gs;RIDER_LOCAL static OriginalGroundProfile gp;
 RIDER_LOCAL static OriginalGrabState grab;RIDER_LOCAL static OriginalGrabProfile grabProfile;
+// The 149690 grab stat behind grabProfile.playbackRate (browser_reseed_stats recomputes the rate from it).
+RIDER_LOCAL static float grabStatSeed=0;
+RIDER_LOCAL static bool grabStatSeeded=false;
 RIDER_LOCAL static bool passiveMode=false,heldAirMode=false;RIDER_LOCAL static OriginalPassiveAirState passive;RIDER_LOCAL static OriginalAirPrewindState prewind;RIDER_LOCAL static OriginalAirControlState air;RIDER_LOCAL static bool airAdjustLive=false; //air control owned rider+0x28C/+0x298 last tick
 RIDER_LOCAL static OriginalAirAnimationState airAnimation;RIDER_LOCAL_LAZY static OriginalAirControlProfile airProfile;
 RIDER_LOCAL static bool previousGround=true,previousHeld=false;
@@ -949,7 +952,7 @@ EMSCRIPTEN_KEEPALIVE void init_animation(const char* metadata,const char* skelet
  for(auto&[key,records]:m["animation_variants"].items())for(auto&d:records){OriginalAnimationVariant v{d["leaf"],d["weight"],d["allowed_flags"]};graph.rig->animationVariants[std::stoi(key)].push_back(v);if(v.leaf!=519)graph.rig->variantClips[v.leaf]=d["clip"];}
  rng.words=config["original_animation"]["random_state"].get<std::array<uint32_t,6>>();graph.variantRandom=[](){return rng.next();};
  pivotBone=config["original_animation"]["pivot_bone"];if(pivotBone>=graph.rig->bones.size())throw std::runtime_error("Air pivot outside skeleton");
- auto p=config["original_grab_control"]["profile"];grabProfile.playbackRate=originalGrabPlaybackRate(p["grab_stat"]);grabProfile.extendedDefinitions=p["extended_definitions"];
+ auto p=config["original_grab_control"]["profile"];grabStatSeed=browserStatFromSeed(p["grab_stat"].get<float>());grabStatSeeded=true;grabProfile.playbackRate=originalGrabPlaybackRate(grabStatSeed); /*149690 div.s at use*/grabProfile.extendedDefinitions=p["extended_definitions"];
  auto def=[](json d){return OriginalGrabDefinition{d["semantic"],d["upper_semantic"],d["score_id"],d["begin_points"],d["hold_points"]};};
  for(int i=0;i<15;i++){grabProfile.grabs[i]=def(p["grabs"][i]);grabProfile.tweak[i]=def(p["tweak"][i]);for(int t=0;t<2;t++)grabProfile.uber[t][i]=def(p["uber"][t][i]);}
  auto tc=config["original_trick_identity"];auto tp=tc["profile"];auto cp=tc["commit_profile"];
@@ -958,7 +961,7 @@ EMSCRIPTEN_KEEPALIVE void init_animation(const char* metadata,const char* skelet
  for(unsigned i=0;i<24;i++){auto row=tc["named_tricks"][i];commitProfile.named[i]={row["id"],row["points"],row["identity_fields"].get<std::array<uint8_t,7>>()};}
  commitProfile.namedPointScale=cp["named_point_scale"];commitProfile.scoreScale=cp["score_scale"];commitProfile.spinScale=cp["spin_scale"];commitProfile.flipScale=cp["flip_scale"];
  auto ac=config["original_boost"]["award_context"];awardContext={ac["reward_mask"],ac["enable_tricky"]};trickHistory={};trickIdentity={};
- scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):0.0909090936f;
+ scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(0.0909090936f);
  for(auto&d:grabProfile.grabs)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};for(auto&d:grabProfile.tweak)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};for(auto&t:grabProfile.uber)for(auto&d:t)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};
  for(int i=0;i<15;i++)scoringProfile.normal[i]=scoreRules.at(grabProfile.grabs[i].scoreId);
  for(int i=0;i<4;i++){auto t=config["original_grab_score"]["profile"]["hold_thresholds"][i];scoringProfile.holdThresholds[i]={t["seconds"],t["points"]};}
@@ -981,7 +984,7 @@ EMSCRIPTEN_KEEPALIVE void soft_collision_begin(int semantic,float spin){
  if(browserRailActive){auto view=rail_view();originalRailControlLeave(view);railBalance=view.balance;railHeldJump=railPreviousJump=false;}
  if(!graph.enter(semantic))throw std::runtime_error("Missing soft collision animation"); /*108388 plays through 3128E8(anim,semantic,0,-1): an ordinary play, so a fading-out copy of the same clip is inherited (311F00), not restarted (metro-glide-carve 1208)*/grab={};heldAirMode=passiveMode=false;
 }
-EMSCRIPTEN_KEEPALIVE void reset_animation(){finish_reset();retainedGroundLateral.reset();clear_skin_matrices();committedPoseTranslation={};clear_start();lastVisualTick=0xffffffffu;reset_boost_fx();committedTrickName.clear();clear_rails();reset_snow(true);reset_impact_fx(true);reset_trail();clear_reset();reset_crash();cachedCrashWorld.clear();completedMain=false;completedMainSemantic=-1;landingAirExitBaked=false;airExitInfo={};poseContact=initialPoseContact;poseControls={};legWeight=initialPoseContact.legWeight;graph.sequences.clear();graph.sampledLocal.reset();graph.nextRate=1;graph.defaultRoot=initialDefaultRoot;graph.defaultMirror=initialDefaultMirror;graph.requestedSemantics.fill(438);posedPhysical[7]=0;browserBodyVolume.reset();browserBodyQuery.reset();browserBodyResponse.reset();reset_body_queries();lastLandingSpin=0;trickHistory={};trickIdentity={};scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):0.0909090936f;gs={};gs.timeScale=1;gs.animationIndex=5;gs.animationClass=7;grab={};previousGround=true;previousHeld=false;seed_initial_sequences();}
+EMSCRIPTEN_KEEPALIVE void reset_animation(){finish_reset();retainedGroundLateral.reset();clear_skin_matrices();committedPoseTranslation={};clear_start();lastVisualTick=0xffffffffu;reset_boost_fx();committedTrickName.clear();clear_rails();reset_snow(true);reset_impact_fx(true);reset_trail();clear_reset();reset_crash();cachedCrashWorld.clear();completedMain=false;completedMainSemantic=-1;landingAirExitBaked=false;airExitInfo={};poseContact=initialPoseContact;poseControls={};legWeight=initialPoseContact.legWeight;graph.sequences.clear();graph.sampledLocal.reset();graph.nextRate=1;graph.defaultRoot=initialDefaultRoot;graph.defaultMirror=initialDefaultMirror;graph.requestedSemantics.fill(438);posedPhysical[7]=0;browserBodyVolume.reset();browserBodyQuery.reset();browserBodyResponse.reset();reset_body_queries();lastLandingSpin=0;trickHistory={};trickIdentity={};scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(0.0909090936f);gs={};gs.timeScale=1;gs.animationIndex=5;gs.animationClass=7;grab={};previousGround=true;previousHeld=false;seed_initial_sequences();}
 // QA (compare-ps2-capture.mjs): a mid-run baseline seeds the 115D48 idle clock rider+0x35C from its first record.
 EMSCRIPTEN_KEEPALIVE void idle_clock_seed(float seconds){idleSeconds=seconds;}
 // 0x135BE0 in-flight stance switch (engine/air_switch.hpp), called from inside the control-5 update.
@@ -1679,7 +1682,24 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* start_animation_probe(float pose){
  copy.advance(state,0,0);auto first=selected().slots.front();RIDER_LOCAL static float out[4];out[0]=first.clip;out[1]=first.time;out[2]=first.duration;copy.advance(state,0,0);out[3]=selected().slots.front().time;return out;
 }
 // Career attributes (web/rider_attributes.hpp): 0x1495A8 spin -> air control, 0x149690 tricks -> 0x120038 grab rate.
-void browser_apply_animation_attributes(){if(!browserAttributesSet)return;airProfile.trickStat=browserAttributeStat(4);grabProfile.playbackRate=originalGrabPlaybackRate(browserAttributeStat(2));}
+void browser_apply_animation_attributes(){
+ if(!browserAttributesSet)return;
+ airProfile.trickStat=browserAttributeStat(4);
+ grabStatSeed=browserAttributeStat(2);
+ grabStatSeeded=true;
+ grabProfile.playbackRate=originalGrabPlaybackRate(grabStatSeed);
+}
+// Every seeded or set stat recomputed in the current arithmetic: ps2_arith_exact (web/core.cpp) turns the console model on after
+// the capture comparers' mode-1 setup, and the PS2's getters divide (div.s) at every use. A no-op in mode 1.
+void browser_reseed_stats(){
+ browser_reseed_ground_stats();
+ airProfile.trickStat=browserStatFromSeed(airProfile.trickStat);
+ if(grabStatSeeded){
+  grabStatSeed=browserStatFromSeed(grabStatSeed);
+  grabProfile.playbackRate=originalGrabPlaybackRate(grabStatSeed);
+ }
+ npc.grabs.grabStat=browserStatFromSeed(npc.grabs.grabStat);
+}
 
 // QA (ground_state_dump): controller triplets owned by the animation side, as (rider offset, value) pairs.
 static void animation_state_dump(std::vector<float>& out){

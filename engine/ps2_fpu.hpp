@@ -386,6 +386,17 @@ inline constexpr uint32_t divideNonzero(uint32_t a, uint32_t b) {
     if (exponentOf(a) == 0) {
         return sign;
     }
+    // A power-of-two divisor: the unit's quotient is exact (checked for every significand), so only the exponent moves.
+    if ((b & mantissaMask) == 0) {
+        const int exponent = int(exponentOf(a)) - int(exponentOf(b)) + 127;
+        if (exponent > 255) {
+            return sign | maxMagnitude;
+        }
+        if (exponent < 1) {
+            return sign;
+        }
+        return sign | (uint32_t(exponent) << 23) | (a & mantissaMask);
+    }
     uint32_t quotient = divideSignificand(significandOf(a), significandOf(b));
     int exponent = int(exponentOf(a)) - int(exponentOf(b)) + 126;
     if (quotient >= (1u << 24)) {
@@ -585,7 +596,15 @@ inline bool normalSingleRange(uint64_t bits) {
     }
     const uint32_t ea = exponentOf(a);
     const uint32_t eb = exponentOf(b);
-    if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
+    // Zero (or denormal) operands, the common case in vector code: the other operand, or a zero whose sign is negative
+    // only when both are (addSubResult's rule).
+    if (eb == 0) {
+        return ea == 0 ? (a & b & signBit) : a;
+    }
+    if (ea == 0) {
+        return b;
+    }
+    if (ea == 255 || eb == 255) {
         return addSubSlow(a, b);
     }
     const double sum = double(std::bit_cast<float>(a)) + double(std::bit_cast<float>(b));
@@ -599,7 +618,11 @@ inline bool normalSingleRange(uint64_t bits) {
 [[gnu::always_inline]] inline uint32_t mulFast(uint32_t fs, uint32_t ft) {
     const uint32_t ea = exponentOf(fs);
     const uint32_t eb = exponentOf(ft);
-    if (ea == 0 || eb == 0 || ea == 255 || eb == 255) {
+    // A zero (or denormal) operand: a zero with the sign of the product.
+    if (ea == 0 || eb == 0) {
+        return (fs ^ ft) & signBit;
+    }
+    if (ea == 255 || eb == 255) {
         return mulSlow(fs, ft);
     }
     const double product = double(std::bit_cast<float>(fs)) * double(std::bit_cast<float>(ft));

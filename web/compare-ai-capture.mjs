@@ -13,7 +13,6 @@ import * as eventSnapshot from './event-snapshot.js';
 import * as eventReturn from './event-return.js';
 import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
-import { pv } from './pv-flags.js'; // SSX_PV=npcStageTriggers (node): the page's ?pv= switches
 
 const args = process.argv.slice(2);
 if (args.includes('--coast-device')) process.env.COAST_DEVICE = '1'; // the Give Up's coast from the device pad (menu_pad.py's samples), as the PS2 read it
@@ -124,7 +123,7 @@ const inWorldAi = args.includes('--in-world-ai') ? await (async () => {
   return { cut, prepareWorld: async (c) => { const h = str(c, cut.hash); try { await feedContextWorld(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); await feedEventRails(c, cut, h, { yieldFn: now, budgetMs: 1e9 }); } finally { c._free(h); } } };
 })() : null;
 if (inWorldAi) resources.worldKeys = { ...inWorldAi.cut.keys, hash: inWorldAi.cut.hash };
-const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual, stageTriggers: pv('npcStageTriggers'), ...(inWorldAi ? { prepareWorld: inWorldAi.prepareWorld, hostAtStart: !!ctmFull, ...(ctmFull ? { anchorTick: 0 } : {}) } : {}),
+const racers = await createAiRacers({ human, resources, document: doc, isolate: args.includes('--isolate'), sharedVisual, ...(inWorldAi ? { prepareWorld: inWorldAi.prepareWorld, hostAtStart: !!ctmFull, ...(ctmFull ? { anchorTick: 0 } : {}) } : {}),
   onDraws: (slot, before, controller, motion) => { if (controller || motion) tickDraws.push(`${slot}:c${controller}m${motion}`); },
   afterRider: (slot) => injectWorldDraws(slot) });
 if (doc.game_mode) for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._event_kind?.(doc.game_mode.kind);
@@ -332,7 +331,7 @@ const stageSnaps = process.env.STAGE_WORLD_PS2 ? loadSnapshots(process.env.STAGE
 const stageCompare = [];
 const stageDump = process.env.STAGE_WORLD_DUMP ? new Set(process.env.STAGE_WORLD_DUMP.split(',').map(Number)) : null;
 const particleEval = stageDump ? await import('./set-piece-particle-eval.js') : null;
-// PS2_ARITH=exact: a core with the arithmetic switch (tools/ps2-float/make_swap_tree.py) computes on the console model
+// PS2_ARITH=exact: a core built with SSX_PS2_EXACT_FPU=1 (web/build-core.sh SSX_CORE_CFLAGS) computes on the console model
 // (engine/ps2_fpu.hpp) from here, the capture's first tick. The setup above ran in mode 1, as the baseline's own history did
 // (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact') {
@@ -340,6 +339,8 @@ if (process.env.PS2_ARITH === 'exact') {
     throw new Error('PS2_ARITH=exact needs a core with ps2_arith_exact');
   }
   human._ps2_arith_exact(1);
+  // the switch is global, the stats it recomputes are each context's own (web/core.cpp ps2_arith_exact)
+  for (const n of racers.npcs) n.core._ps2_arith_exact(1);
 }
 // TICK_HOOK=module.mjs: an observer (create({core, racers, dv, RECORD, captureManifest}) -> {tick({i, tick, core, racers}), summary()}),
 // run after every compared tick (the human core has run record i's command; record i + 1 holds the PS2 state after it), as in

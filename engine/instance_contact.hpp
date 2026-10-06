@@ -52,6 +52,10 @@ struct OriginalInstanceContactPacket {
 };
 // sp+0x80 record passed to 0x1057B8/0x105D98 and copied to rider+0xA60.
 // Lanes y/z/w of +0x30 are stale stack words in the original and not modeled.
+// 0x105398 never writes sp+0xB4..0xBF, and 0x105718 copies them to rider+0xA94..0xA9F as they were. The EE oracle at
+// event-race-ai tick 1599 (docs/ps2-float.md) shows sp+0xBC, rider+0xA9C, as the last overlap flag of the 0x33B748
+// spatial-tree cell test of the same pass (its sp+0x1C, 0x33BAD8 / 0x33BB0C). That flag is float-dependent: keep these
+// words out of comparisons.
 struct OriginalInstanceContactRecord {
     ContactQuad point{},direction{},normal{};
     float closingSpeed=0;

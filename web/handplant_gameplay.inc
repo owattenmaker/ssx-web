@@ -15,14 +15,16 @@ void begin_prediction(OriginalAirState);bool advance_prediction(OriginalAirState
 void browser_wind_push(bool air); // web/core.cpp 0x125970
 
 RIDER_LOCAL static OriginalHandplantMotionState hpMotion;RIDER_LOCAL static OriginalHandplantControlState hpControl;
-RIDER_LOCAL static GroundControlValue hpLean244{0,std::bit_cast<float>(0x3d4cccceu),0}; //rider+0x244 (0x132F98 rate)
+// rider+0x244 triplet. A new rider has all three words 0 (PS2 zoe-race pass 186: +0x248 is 0 in every slot); 132F98 (handplant
+// exit, rate 0x3D4CCCCE from gp-0x754C, a .sdata constant) and the phase-2 seek (rate dt x 5) write the rate together with the target.
+RIDER_LOCAL static GroundControlValue hpLean244{};
 RIDER_LOCAL static bool hpActive=false,hpTick=false,hpAirTick=false;RIDER_LOCAL static int hpPhase=0,hpMotionMode=0,hpClip=438,hpEntryControl=-1;
 RIDER_LOCAL static unsigned hpAttempts=0,hpEntries=0,hpLaunches=0,hpAttaches=0,hpStats=0,hpFailedCruise=0,hpLastExitPhase=0;RIDER_LOCAL static int hpLastScoreKind=0,hpLastReject=0;
 RIDER_LOCAL static float hpLastAward=0;
 
 static bool handplant_owned(){return hpTick;}
 static bool handplant_air_frame(){return hpTick&&hpAirTick;}
-static void clear_handplant(){hpMotion={};hpControl={};hpLean244={0,std::bit_cast<float>(0x3d4cccceu),0};hpActive=hpTick=hpAirTick=false;hpPhase=0;hpMotionMode=0;hpClip=438;hpEntryControl=-1;
+static void clear_handplant(){hpMotion={};hpControl={};hpLean244={};hpActive=hpTick=hpAirTick=false;hpPhase=0;hpMotionMode=0;hpClip=438;hpEntryControl=-1;
  hpAttempts=hpEntries=hpLaunches=hpAttaches=hpStats=hpFailedCruise=hpLastExitPhase=0;hpLastScoreKind=hpLastReject=0;hpLastAward=0;browserAirModeFlag=0;browserHandplantMotion5=false;graph.handplantBalance=0;}
 
 static OriginalHandplantRider hp_view(){

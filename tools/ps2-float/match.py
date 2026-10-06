@@ -1,6 +1,6 @@
 """The matcher (docs/ps2-float.md "Matcher"): which port arithmetic sites compute a tick differently from the PS2.
 
-usage: match.py PORT.json ORACLE.fpu [--limit N] [--swaps OUT.json] [--exclude REGEX]
+usage: match.py PORT.json ORACLE.fpu [--limit N] [--swaps OUT.json] [--exclude REGEX] [--from INDEX]
 
 PORT.json is one tick of the port's helper calls (tools/ps2-float/trace_hook.mjs with a trace core); ORACLE.fpu is the
 same tick of the PS2's own code (tools/ps2-float/ee_oracle --trace-fpu, from a snap_at.py state of that tick). Both
@@ -17,6 +17,7 @@ Port calls at sites matching --exclude are skipped: by default the world objects
 PS2 runs outside the rider pass (0x128AF0) the oracle calls. The report lists swap / form / drift sites in port order (the first one is where the tick starts to differ), with the PS2
 pcs they correspond to.
 """
+import bisect
 import json
 import re
 import sys
@@ -166,12 +167,24 @@ def main():
     for index, kind, *_ in findings:
         kinds[index] = kind
     first_drift = next((f for f in findings if f[1] == 'drift'), None)
+    if '--from' in sys.argv:
+        start = int(sys.argv[sys.argv.index('--from') + 1])
+        first_drift = next((f for f in findings if f[0] == start), (start,))
     if first_drift:
-        produced = {}
-        producers = []
+        by_value = defaultdict(list)
         for index, (site, code, a, b, r) in enumerate(port['entries']):
-            producers.append(dict(produced))
-            produced[r] = index
+            by_value[r].append(index)
+
+        def producer(value, before):
+            """The nearest earlier port call whose result is value (or its negation)."""
+            best = None
+            for candidate in (value, value ^ 0x80000000):
+                indices = by_value.get(candidate, [])
+                position = bisect.bisect_left(indices, before) - 1
+                if position >= 0 and (best is None or indices[position] > best):
+                    best = indices[position]
+            return best
+
         print('provenance of the first drift:')
         frontier = [(first_drift[0], 0)]
         visited = set()
@@ -185,8 +198,8 @@ def main():
             print(f'  {"  " * depth}#{index} {port["sites"][site]} {PORT_NAMES[code]}({a:08X}, {b:08X}) = {r:08X}'
                   f'{" [order-sensitive]" if sensitive else ""} {kinds.get(index, "")}')
             for operand in (a, b):
-                # A negation or abs between two calls is not a helper call: follow the magnitude too.
-                source = producers[index].get(operand, producers[index].get(operand ^ 0x80000000))
+                # A negation or abs between two calls is not a helper call: producer() follows the magnitude too.
+                source = producer(operand, index)
                 if source is not None and (operand & 0x7FFFFFFF) not in (0, 0x3F800000):
                     frontier.append((source, depth + 1))
     # A site is swapped only when every order-sensitive call there wanted the other order (a shared helper serving

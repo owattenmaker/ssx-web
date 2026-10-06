@@ -167,15 +167,9 @@ RIDER_LOCAL static std::vector<StageInstance> stageInstances; // sorted by resou
 struct StagePendingContact {uint32_t resource=0;OriginalInstanceContactPacket packet;OriginalInstanceContactRecord record;};
 RIDER_LOCAL static std::optional<StagePendingContact> stagePending; // rider+A30/9E0/A60
 RIDER_LOCAL static std::optional<OriginalInstanceContactRecord> stagePendingRecord; // the record of the contact being dispatched (context +0x294)
-// pv npcStageTriggers (docs/crash-motion.md "Computer riders' stage triggers"): the PS2 has one stage world and runs each rider's 121818
-// in slot order; a computer rider's contact runs the slot-2 program with that rider as the player object (10F1C0 on it). Here only the
-// human's context holds the stage world: a computer rider's 121818 hands its contact to the human context (stage_foreign_contact, web/ai-
-// racers.js riderHost.stageContact), whose builtin-27 effects are collected and applied back in the rider's context (stage_apply_effect)
-// before the rest of its 121818 (125AD0, the route).
-RIDER_LOCAL static bool stageForeignRider=false;
-RIDER_LOCAL static std::vector<float> stageForeignEffects; // [count, then (type, amount)]
-RIDER_LOCAL static OriginalInstanceContactRecord stageForeignRecord;
-EM_JS(int,js_rider_stage_contact,(uint32_t resource,const void* record),{return Module.riderHost&&Module.riderHost.stageContact?Module.riderHost.stageContact(resource,record):0;});
+// A computer rider's 121818 runs here in its own context: every context holds the stage world, the contact runs the slot-2 program with
+// that rider as the player object (10F1C0 on it), and the shared-world log (event 6) replays the instance changes into the other
+// contexts (docs/crash-motion.md "Computer riders' stage triggers").
 RIDER_LOCAL static uint32_t stageDispatches=0,stagePrograms=0,stageUnsupported=0,stageLastResource=0,stageLastProgram=0;
 RIDER_LOCAL static std::array<uint32_t,128> stageBuiltinCalls{};
 RIDER_LOCAL static std::vector<uint32_t> stageFiredLog; // (tick, resource, program) triples: diagnostics / computer-rider sharing
@@ -542,7 +536,7 @@ static void stage_contact(uint32_t resource,bool rider,bool human){
   if(s->guard>0)return;
   s->guard=30; // clockRate (60) / 2
  }
- if(rider&&!stageForeignRider&&!stage_rider_may_fire())return; // 121818's +0x480 test is the human's own (a computer rider never times out)
+ if(rider&&!stage_rider_may_fire())return; // 121818's +0x480 test is the human's own (a computer rider never times out)
  if(rider&&human)browser_mission_contact(resource); // 30A060 -> 3097E0: WScript event kind 0 (web/mission_gameplay.inc)
  if(rider&&s->handler&&s->handler->slots[2]>=0)shared_world_log({6u,resource,human?1u:0u});
  stage_current_human=human;stage_current_human_rider=rider;stage_current_slot=2;if(rider&&stagePendingRecord)stage_contact_record=*stagePendingRecord;
@@ -551,7 +545,6 @@ static void stage_contact(uint32_t resource,bool rider,bool human){
 }
 // 121818 (from race_end), then 120E30 clears rider+A30.
 void browser_stage_triggers(){if(!stagePending)return;const auto pending=*stagePending;stagePending.reset();
- if(!browserHumanRider&&stageInstances.empty()){stageForeignRecord=pending.record;js_rider_stage_contact(pending.resource,&stageForeignRecord);return;} // a computer rider's context has no stage world
 stagePendingRecord=pending.record;stage_contact(pending.resource,true,browserHumanRider);stagePendingRecord.reset();}
 void browser_stage_replay(uint32_t resource,bool human){stage_contact(resource,false,human);}
 // Entity pass (race_begin): 356198 guards and the Debounce countdown 342D88 / completion 342E98.
@@ -633,7 +626,6 @@ extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_collect_events(){RIDER_LOCAL sta
 // 10F1C0 effect table 0x456AF0 for the current player (the human rider in this core).
 static void score_stage_points(int32_t points){push_score();originalScorePickup(scoreObject,points,score_environment(),audioScoreHooks);pull_score();}
 static void stage_effect(int type,float amount){
- if(stageForeignRider){stageForeignEffects.push_back(float(type));stageForeignEffects.push_back(amount);return;} // 10F1C0 on the computer rider
  if(sharedWorldReplay)return; // another rider's pickup/reset: the effect belongs to that rider
  switch(type){
  case 1:case 2:award_boost_pickup(type,amount);break;       // rider vt+0x6C 10E770 (+0x2E8) / vt+0x74 10E7D0 (+0x2EC)
@@ -647,19 +639,6 @@ static void stage_effect(int type,float amount){
  }
 }
 extern "C" {
-// In the human's context: a computer rider's stage contact (its 104E70 record), run as that rider's 121818 dispatch. Returns its
-// builtin-27 effects [count, then (type, amount)] for stage_apply_effect in the rider's context.
-EMSCRIPTEN_KEEPALIVE float* stage_foreign_contact(uint32_t resource,const void* record){
- stageForeignEffects.assign(1,0.f);
- OriginalInstanceContactRecord copy;std::memcpy(&copy,record,sizeof copy);
- stageForeignRider=true;stagePendingRecord=copy;
- stage_contact(resource,true,false);
- stagePendingRecord.reset();stageForeignRider=false;
- stageForeignEffects[0]=float((stageForeignEffects.size()-1)/2);
- return stageForeignEffects.data();
-}
-// In a computer rider's context: 10F1C0(rider, type, amount) from another context's stage program.
-EMSCRIPTEN_KEEPALIVE void stage_apply_effect(int type,float amount){stage_effect(type,amount);}
 // Diagnostics: [dispatches, programs run, unsupported, last resource, last program, instances, fired count] then (tick, resource, program) triples.
 // QA: calls per builtin index (0..127) since the last stage reset (table 0x441F38 order).
 EMSCRIPTEN_KEEPALIVE uint32_t* stage_builtin_counts(){return stageBuiltinCalls.data();}

@@ -37,7 +37,7 @@ const riderGateArgs = (id) => {
 // RIDER_BONES_THROUGH: a rider gate's bones through an earlier tick (none open).
 const RIDER_BONES_THROUGH = {};
 const riderGates = RIDER_GATE_IDS.flatMap((id) => ['race', 'hl'].map((kind) => ({
-  name: `riders/${id}-${kind}`, args: riderGateArgs(id), exactThrough: END, scoreThrough: END, boostThrough: END,
+  name: `riders/${id}-${kind}`, args: riderGateArgs(id), stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END,
   bonesThrough: RIDER_BONES_THROUGH[`${id}-${kind}`] ?? END,
   why: `${id} as the human from its own countdown, ${kind === 'race' ? 'the event-race pad' : 'the hl-sj-1 high-level pad'}: physics, bones, score and boost`,
 })));
@@ -45,20 +45,24 @@ const riderGates = RIDER_GATE_IDS.flatMap((id) => ['race', 'hl'].map((kind) => (
 // countdown with the meter full and 120 s of Tricky (+0x2F8 1, +0x2F0 120, +0x2F4 tier 1 for a / b / e, 5 for c / d), every grab
 // slot's Uber (L1, L2, R1, R2, L1+L2, R1+R2) landed in both table bands (0x14FEA8: tier >= 5) and bailed (the Uber crash ends Tricky:
 // one bail per run, last). The ten base riders, the four Uber overrides (Stretch / Gutless / Canhuck Nose Grab, Snowballs Tail Grab),
-// Hiro (0.75) and Far East Myth (2.0). Open (the physics agent's): fareastmyth-uber-b 2479 (a rail, control 7), fareastmyth-uber-c 2149
+// Hiro (0.75) and Far East Myth (2.0). Open (the physics agent's): fareastmyth-uber-c 2149
 // (a sliding crash bounce re-requests 379 while it fades: the PS2 revives the old sequence). Waiting for a live core: nate-uber-b 1262
 // (the landing reaction's +0x354 tick, web/score_gameplay.inc). Fixed in core19: griff-uber-c 1731 (a jump release onto a rail),
 // viggo-uber-a 1892 / 2132 (the get-up air exit's 119E38; the retained crash submode owner+0x30 at the board detach).
 const RIDER_UBER_RUNS = ['zoe', 'moby', 'psymon', 'griff', 'viggo', 'elise', 'nate', 'mac', 'allegra', 'kaori', 'stretch', 'gutless', 'canhuck',
   'snowballs', 'hiro', 'fareastmyth'].flatMap((id) => ['a', 'b', 'c', 'd'].map((k) => `${id}-uber-${k}`)).concat(['viggo-uber-e', 'kaori-uber-e']);
+// The rider gates load the stage world, as the page does: fareastmyth-uber-b 2567 is mdl_ARA1_speedboost_1000's box turned by its
+// section-started LiveComp (334888 composes on the entity's nodes; web/stage_world.inc stage_section_collision_update). A core without
+// stage_shared_posed_info keeps the authored box and leaves at 2569 (the boost window 13C948 drives on).
+const coreHasPosedCollision = fs.readFileSync(process.env.CORE_JS || new URL('runtime/core.js', import.meta.url), 'utf8').includes('_stage_shared_posed_info');
 const RIDER_UBER_OPEN = {
-  'fareastmyth-uber-b': { exactThrough: 2478, bonesThrough: 2478, scoreThrough: 2478, boostThrough: 2486 },
+  ...(coreHasPosedCollision ? {} : { 'fareastmyth-uber-b': { exactThrough: 2568, bonesThrough: 2568, scoreThrough: 2568, boostThrough: 2568 } }),
   'fareastmyth-uber-c': { bonesThrough: 2148 },
   'nate-uber-b': { bonesThrough: 1261 },
 };
 const riderUberGates = RIDER_UBER_RUNS.map((run) => {
   const id = run.slice(0, run.indexOf('-uber-'));
-  return { name: `riders/${run}`, args: riderGateArgs(id), exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: END,
+  return { name: `riders/${run}`, args: riderGateArgs(id), stageWorld: true, exactThrough: END, scoreThrough: END, boostThrough: END, bonesThrough: END,
     ...RIDER_UBER_OPEN[run], why: `${id}'s own Ubers (${run.slice(-1)}): landed and bailed, physics, bones, score and boost` };
 });
 const cases = [

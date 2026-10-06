@@ -1,3 +1,46 @@
+> **Deployed 2026-10-05 (coordinator): core29.** web/runtime core.wasm `b3313f6c…`, core.js `f8ae9c9c…` copied from local/physics-jank/core29-snapshot (531 clean), shipped with the tree JS that no longer calls _stage_foreign_contact / _stage_apply_effect. On top of core26: rider-parity's posed pickups (spinning pickup collision follows its LiveComp; one shared posed table for every rider context), the octree's reflected Gray child order in 33B748 (originalSpatialBefore), arithmetic batches 2 and 3 (mode-1-neutral), and npcStageTriggers removed (computer riders run their triggers in their own context, as on the PS2). Memory: the per-context stage world already existed on core26; core29 adds about 5 MB RSS in a six-rider BRA2 race.
+
+> **core29: the scope lists' octree order, matcher batch 3, npcStageTriggers removed (2026-10-05, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Move-family coverage" and "Computer riders' stage triggers".
+> - **Scratch core:** local/physics-jank/core29-snapshot, core.wasm `b3313f6c…`, core.js `f8ae9c9c…`. It is the tree at about 15:45, with rider-parity's posed pickups. Full ps2-captures suite: 531 clean.
+> - **Octree child order** (EE oracle, hl/hl-aimetro-17 2493, scope list rider+0x860):
+>   - 33B748 visits an overlapped node's children 0 1 3 2 6 7 5 4, the reflected Gray order of its unrolled blocks (0x33BC10..0x33CAB0). Only a contained node's subtree (340DC0) goes 0..7.
+>   - The rider scope box never contains a cell with children. engine/original_spatial.hpp originalSpatialBefore now orders the terrain body query, the ground probe's patches, the collidable instances and the rail walk this way.
+>   - hl-aimetro-17 is exact to the end (was 2494). Raise its humanThrough when the core is live.
+> - **Matcher batch 3** (the arithmetic agent's exact-mode zoe-race 186):
+>   - The hard-coded 0x3D4CCCCE rate resets are all .sdata constants.
+>   - hpLean244 starts at 0, as the PS2 rider's +0x244..+0x24C do.
+>   - The seeded attribute stats are recomputed by div.s (web/rider_attributes.hpp browserStatFromSeed; ps2_arith_exact reseeds them in its context, and compare-ai-capture calls it in every racer context).
+>   - Mode-1-neutral, as is batch 2 (11E098's rows on the start hold, the basis one / zero forms).
+> - **npcStageTriggers removed:**
+>   - Every rider context already holds the stage world: 815 instances in each computer rider's context on core26 too. A computer rider's 121818 runs its trigger program in its own context with builtin 27 on itself; the shared-world log replays the instance changes.
+>   - The routing only fired for a context without stage instances: 0 hand-offs over all 48 six-rider scenarios with the switch on.
+>   - Removed the switch, riderHost.stageContact, createAiRacers' stageTriggers and the core exports _stage_foreign_contact / _stage_apply_effect.
+> - **Memory** (node, six-rider BRA2 attack-bra2-b, 1300 ticks, core26 then core29):
+>   - The wasm memory is 128 MiB on both, not grown.
+>   - RSS at the end: 593.2 MB, then 598.6 MB.
+>   - JS heap used: 57.9 MB, then 49.2 MB.
+> - **Captures:** local/ps2-capture/hl2-run.sh now uses 1 slot with PS2_CAPTURE_FPU=exact.
+
+> **Spinning pickups collide where they are drawn, in every rider's context (2026-10-05, rider-parity agent; in the tree, scratch core local/rider-parity/core6):** see [obstacle-collision.md](obstacle-collision.md) "Spinning pickups and one world for every rider".
+> - **Cause** (EE oracle on fem-b-2567 / ab2b-1161): ARA1's and BRA2's speedboost_1000 carry a type-1 LiveComp at instance+0xC (section-started, or built in the load).
+>   - 334888 composes their collision box on the LiveComp's turned and bobbing node matrix (0x3349B0 vt+0xE4 0x3560C0).
+>   - So 329590 hits where the authored box misses. 121818's builtin 27 then sets +0x2E8 = 5.
+>   - The port never posed section-started or pre-race LiveComps, and only the human's context had a stage world.
+> - **Port (web/stage_world.inc):**
+>   - collision players for section-started LiveComps (built as stage_section_livecomp_nodes builds them) and for the ready-state pieces (seeded as set-pieces-renderer.js seeds its players; ready-state.json via init_stage_flags);
+>   - posed nodes, velocity rows and origins published by the human's entity pass to one shared table, stageWorldSharedPosed, which every other context's entity pass applies, with 34E698 answered from it;
+>   - engine/rail_snap_torque.hpp originalAnimContactVelocityAt, web/check-rider-globals.mjs shared entry, export stage_shared_posed_info (additive). No JS change.
+> - **Gates:**
+>   - The rider gates now load the stage world (stageWorld: true), as the page does.
+>   - riders/fareastmyth-uber-b: exact to the end on a core with stage_shared_posed_info; through 2568 before.
+>   - hl2/attack-bra2-b: every rider and the RNG exact to the end on core6 (each computer rider runs the trigger program in its own context; the physics agent's npcStageTriggers routing never fired and was removed in core29, which carries these changes: 531 clean, core.wasm `b3313f6c…`).
+> - **Full suite:** test-ps2-captures on core6 (core.wasm `aa831c06…`, core.js `ba85473e…`, the tree at 15:10 plus these changes): 531 clean.
+>   - The tree's copy only re-wraps three long lines since; it rides the physics agent's next build.
+> - **Exact mode:**
+>   - The queue (local/rider-parity/exact-queue.jobs) runs into local/ps2-capture/runs/riders-exact.
+>   - local/rider-parity/sweep.sh (detached) then derives every peak's race and freestyle countdowns for Griff, Hiro, Allegra, Stretch, NW Legend and Far East Myth, and captures them (characters/scripts/make_course_states.py now knows 13 events).
+>   - These are the exact-mode reference; no gates yet.
+
 > **Deployed 2026-10-05 (coordinator): core26.** web/runtime core.wasm `a8894cb8…`, core.js `2fd64a91…` (new exports _stage_foreign_contact / _stage_apply_effect) copied from local/physics-jank/core26-snapshot (531 clean). On top of core24: the computer riders' stage-trigger routing (inert; pv npcStageTriggers off, waiting on the per-context trigger loader) and the two mode-1-neutral 11E098 fixes (rebuild sums with the x1.0 products; the countdown hold renormalises every held tick).
 
 > **Coverage-guided pad fuzzing: coverage map, port-only fuzzer, exact-mode queue (2026-10-05, fuzzing agent):** see [fuzzing.md](fuzzing.md).

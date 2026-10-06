@@ -8,7 +8,9 @@
 // read the hardware's pipeline would answer differently is reported as a hazard.
 //
 // usage: oracle --state DIR --call ADDR [--a0 X ...--a3 X] [--f12 X] [--f13 X] [--trace-calls] [--trace-fpu]
-//               [--watch ADDR:LEN ...] [--dump ADDR:LEN ...] [--max-steps N] [--save DIR] [--arith exact|mode1]
+//               [--watch ADDR:LEN ...] [--dump ADDR:LEN ...] [--max-steps N] [--save DIR] [--arith exact|mode1] [--sp ADDR]
+//   --sp runs on the game's own stack (state.py prints the frozen sp) instead of the private one: needed when the code
+//   reads a stack word it never wrote (stale locals left by earlier calls).
 //   numbers are hex with 0x or decimal; --f12 takes a float or 0x bits.
 #include "arith.hpp"
 #include "ps2_fpu.hpp"
@@ -2444,6 +2446,7 @@ int main(int argc, char** argv) {
     std::string save;
     uint32_t call = 0;
     uint64_t maxSteps = 50000000;
+    uint32_t stackPointer = kStackBase + kStackSize - 0x100;
     std::vector<std::pair<uint32_t, uint32_t>> dumps;
     for (int k = 1; k < argc; ++k) {
         const std::string option = argv[k];
@@ -2487,6 +2490,8 @@ int main(int argc, char** argv) {
             maxSteps = std::stoull(value());
         } else if (option == "--save") {
             save = value();
+        } else if (option == "--sp") {
+            stackPointer = parseNumber(value());
         } else {
             std::fprintf(stderr, "unknown option %s\n", option.c_str());
             return 2;
@@ -2505,7 +2510,7 @@ int main(int argc, char** argv) {
     readFile(state + "/vu0MicroMem.bin", machine.microMem, false);
     machine.vf[0][3] = 0x3F800000u;
     machine.set64(28, kGp);
-    machine.set64(29, kStackBase + kStackSize - 0x100);
+    machine.set64(29, stackPointer);
     machine.set64(31, kReturnSentinel);
     machine.pc = call;
     int code = 0;

@@ -28,9 +28,24 @@ void browser_apply_ground_attributes(){
         // not Zoe's 0.85 (held-out capture ass1-griff-87e9ff58, docs/slopestyle-bigair.md).
         landingProfile.bodyScale=browserHumanBodyScale;
     }else if(humanScaleApplied){humanScaleApplied=false;landingProfile.bodyScale=seedLandingScale;for(size_t k=0;k<physicsMaterials.size();++k)physicsMaterials[k].bodyScale=seedMaterialScale[k];}
-    if(!browserAttributesSet)return;
+    if(!browserAttributesSet){
+        // The seeds' stats are mode-1 quotients: recompute them (a no-op in mode 1; matcher batch 3, docs/ps2-float.md).
+        browser_reseed_ground_stats();
+        return;
+    }
     applyGround(physicsProfile);for(auto& m:physicsMaterials)applyGround(m);
     landingProfile.landingStat=browserAttributeStat(6); // 0x149120 landing; 0x149208 rail balance reads the same field
+}
+// The ground and landing stats of the current profiles, recomputed by div.s in the current arithmetic (browserStatFromSeed).
+void browser_reseed_ground_stats(){
+    auto reseed=[](OriginalGroundProfile& p){
+        p.topSpeedStat=browserStatFromSeed(p.topSpeedStat);
+        p.speedStat=browserStatFromSeed(p.speedStat);
+        p.edgeStat=browserStatFromSeed(p.edgeStat);
+    };
+    reseed(physicsProfile);
+    for(auto& m:physicsMaterials)reseed(m);
+    landingProfile.landingStat=browserStatFromSeed(landingProfile.landingStat);
 }
 extern "C" {
 // raw: the seven attribute progress bytes in original order (speed, accel, tricks, edging, spin, toughness,

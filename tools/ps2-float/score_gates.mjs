@@ -2,7 +2,8 @@
 // web/test-ps2-captures.mjs stops at the first failing gate; this runs it once per gate (ONLY=name) and keeps going,
 // so a whole tree gets a pass / fail / skip line per gate and a tally per area (the name's first path part).
 //
-// usage: node tools/ps2-float/score_gates.mjs --runs DIR --core CORE.js [--par N] [--only a,b] [--out FILE.json]
+// usage: node tools/ps2-float/score_gates.mjs --runs DIR --core CORE.js [--par N] [--only a,b] [--out FILE.json] [--arith exact]
+// --arith exact sets PS2_ARITH=exact for the comparers: an SSX_PS2_EXACT_FPU core then runs the captures on the console model.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -17,6 +18,7 @@ const core = argument('--core', '');
 const par = Number(argument('--par', '2'));
 const out = argument('--out', '');
 const onlyList = argument('--only', '');
+const arith = argument('--arith', '');
 
 const source = fs.readFileSync(path.join(root, 'web/test-ps2-captures.mjs'), 'utf8');
 const ids = [...source.match(/RIDER_GATE_IDS = \[([\s\S]*?)\];/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
@@ -28,7 +30,7 @@ if (onlyList) {
 names = names.filter((name) => fs.existsSync(path.join(runs, `${name}.bin`)));
 
 const score = (name) => new Promise((resolve) => {
-  const env = { ...process.env, ONLY: name, PS2_RUNS: runs, PAR: '1', ...(core ? { CORE_JS: path.resolve(core) } : {}) };
+  const env = { ...process.env, ONLY: name, PS2_RUNS: runs, PAR: '1', ...(core ? { CORE_JS: path.resolve(core) } : {}), ...(arith ? { PS2_ARITH: arith } : {}) };
   execFile(process.execPath, ['test-ps2-captures.mjs'], { cwd: path.join(root, 'web'), env, encoding: 'utf8', maxBuffer: 1 << 26 }, (error, stdout, stderr) => {
     const text = `${stdout}\n${stderr}`;
     const skipped = stdout.includes(`skip ${name}`) || stdout.includes(`pending ${name}`);
@@ -69,5 +71,5 @@ for (const result of results) {
 }
 const total = { pass: 0, fail: 0, skip: 0 };
 for (const counts of Object.values(areas)) for (const key of Object.keys(total)) total[key] += counts[key];
-console.log(JSON.stringify({ runs, core: core || 'web/runtime', total, areas }, null, 1));
-if (out) fs.writeFileSync(out, JSON.stringify({ runs, core, total, areas, results }, null, 1));
+console.log(JSON.stringify({ runs, core: core || 'web/runtime', arith: arith || 'mode1', total, areas }, null, 1));
+if (out) fs.writeFileSync(out, JSON.stringify({ runs, core, arith: arith || 'mode1', total, areas, results }, null, 1));

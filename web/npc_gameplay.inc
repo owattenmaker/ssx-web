@@ -95,10 +95,14 @@ void npc_player_setup_stats(){
 void npc_seed_rider(){
  // begin_event_rider has applied the human seed and the shared resets; replace the rider-specific parts.
  physicsState=npc.groundState;physicsProfile=npc.groundProfile;
+ // The lineup's stats are mode-1 quotients (n / 11): the getters' div.s in the current arithmetic (browserStatFromSeed).
+ physicsProfile.topSpeedStat=browserStatFromSeed(physicsProfile.topSpeedStat);
+ physicsProfile.speedStat=browserStatFromSeed(physicsProfile.speedStat);
+ physicsProfile.edgeStat=browserStatFromSeed(physicsProfile.edgeStat);
  // The stat getters 0x1494C0 / 0x1493D8 / 0x148D80 read the rider's own character stats on every surface: a surface change
  // (physicsProfile = physicsMaterials[surface]) keeps them. Peak 2 computer riders ride at stat 0.364 against the human's 0.091
  // (docs/peak2.md); on Peak 1 both are 0.091, so the human seed's materials hid this.
- for(auto& m:physicsMaterials){m.bodyScale=npc.groundProfile.bodyScale;m.topSpeedStat=npc.groundProfile.topSpeedStat;m.speedStat=npc.groundProfile.speedStat;m.edgeStat=npc.groundProfile.edgeStat;}
+ for(auto& m:physicsMaterials){m.bodyScale=npc.groundProfile.bodyScale;m.topSpeedStat=physicsProfile.topSpeedStat;m.speedStat=physicsProfile.speedStat;m.edgeStat=physicsProfile.edgeStat;}
  landingProfile.bodyScale=npc.groundProfile.bodyScale;
  boostState=npc.boost;const auto actor=OriginalAirState{physicsState.position,physicsState.velocity};position=actor.nativePosition();velocity={};
  normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};if(!browserEventRolling)physicsState.controlState=6;publish_motion();
@@ -143,7 +147,7 @@ npc.participant.finish={race.at("finish_elapsed"),race.at("penalty_ticks"),race.
  s.behavior=behavior=="0x00100680"?OriginalNpcBehavior::Cruise100680:behavior=="0x001009e0"?OriginalNpcBehavior::Jump1009E0:behavior=="0x00100b90"?OriginalNpcBehavior::Designated100B90:behavior=="0x00100f88"?OriginalNpcBehavior::Peer100F88:throw std::runtime_error("Unknown NPC behaviour delegate");
  const auto& g=n.at("grab_catalog");auto timing=[](const json& x){return OriginalNpcGrabTiming{x.at("semantic"),x.at("marker1"),x.at("marker2")};};
  for(unsigned i=0;i<15;++i){npc.grabs.normal[i]=timing(g.at("normal").at(i));npc.grabs.tweak[i]=timing(g.at("tweak").at(i));for(unsigned k=0;k<2;++k)npc.grabs.uber[k][i]=timing(g.at("uber").at(k).at(i));}
- npc.grabs.grabStat=g.at("grab_stat");npc.grabs.eventId=g.at("event_id");
+ npc.grabs.grabStat=browserStatFromSeed(g.at("grab_stat").get<float>());npc.grabs.eventId=g.at("event_id");
  const auto& score=n.at("score_state");npc.role=int16_t(score.at("role_e00").get<int>());npc.allowFlag=score.at("allow_flag0_e04");npc.randomize=score.at("randomize_e08");
  const auto& pacing=n.at("pacing_state");npc.pacingMode=pacing.at("mode_e4");npc.eventVariant=int8_t(doc.at("event_variant").get<int>());
  for(unsigned k=0;k<6;++k)npc.relationship[k]=doc.at("relationships").at("scores").at(npc.slot).at(k);

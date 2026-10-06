@@ -18,6 +18,7 @@ def main():
     with zipfile.ZipFile(sys.argv[1]) as archive:
         for name in ('eeMemory.bin', 'Scratchpad.bin', 'vu0Memory.bin', 'vu0MicroMem.bin'):
             (out / name).write_bytes(archive.read(name))
+        structures = archive.read('PCSX2 Internal Structures.dat')
     memory = bytearray((out / 'eeMemory.bin').read_bytes())
     # A snap_at.py state still carries its freeze hook: put the rider pass entry back and clear the stub arena.
     jump = struct.pack('<I', (2 << 26) | ((0xFF800 >> 2) & 0x3FFFFFF))
@@ -34,6 +35,13 @@ def main():
     manager = word(word(word(GP - 0x848) + 0x84) + 0x0C)
     # The rider manager (cAI): its +8 is the game tick, and 0x128AF0(manager) is one whole rider pass.
     print('tick', word(manager + 8), 'rider_manager', hex(manager))
+    # The EE registers follow the 32-byte "cpuRegs" freeze tag, 16 bytes per GPR. In a snap_at.py state the EE spins in
+    # the stub before the pass prologue, so sp is the game's stack at the pass entry (oracle --sp).
+    tag = structures.find(b'cpuRegs\0')
+    if tag >= 0:
+        registers = tag + 32
+        sp = struct.unpack_from('<I', structures, registers + 16 * 29)[0]
+        print('sp', hex(sp), 'ra', hex(struct.unpack_from('<I', structures, registers + 16 * 31)[0]))
 
 
 if __name__ == '__main__':

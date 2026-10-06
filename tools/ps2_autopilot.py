@@ -19,6 +19,10 @@ ring and watches, and only swaps its pad hook for a live one:
     python3 tools/ps2_autopilot.py build CARD.p2s OUT.p2s [--watch ADDR:LEN ...]
     python3 tools/ps2_autopilot.py run OUT.p2s OUT.bin --frames N [--jam] [--snap-events]
     python3 tools/ps2_autopilot.py pads OUT.bin
+    python3 tools/ps2_autopilot.py run OUT.p2s NEW.bin --frames N --replay RUN.script.json   (open loop: RUN's consumed pads)
+
+`--replay` writes the entry of every index from a finished run's consumed script (`pads`) instead of steering, so a run is
+captured again with the same inputs, e.g. under another arithmetic profile (PS2_CAPTURE_FPU=exact, docs/ps2-float.md).
 
 Development reference only: the ISO and the baseline savestates are never modified (derived states only).
 """
@@ -317,7 +321,8 @@ def watch_offsets(manifest):
     return out
 
 
-def run(state, output, frames, speed='normal', timeout=7200, jam=False, snap_every=0, snap_events=True, idle_end=240, route=None, mode=8, resume=None):
+def run(state, output, frames, speed='normal', timeout=7200, jam=False, snap_every=0, snap_events=True, idle_end=240, route=None, mode=8, resume=None,
+        replay=None):
     """Stream the records to OUTPUT (never held in memory), steer LEAD ticks ahead, save states (PS2 screenshots) at every
     course / split / world-state change. Ends at `frames` records or `idle_end` seconds without a record (the results)."""
     # resume=(OLD.bin, capture state): continue a run from one of its kept states (RUN.raw/*.p2s, the hooks and ring live in it):
@@ -330,7 +335,14 @@ def run(state, output, frames, speed='normal', timeout=7200, jam=False, snap_eve
     live_at, course_at, rows_at, handler_at, world_at = offsets[LIVE_STATE], at('course'), at('rows'), at('handler'), at('world')
     slot = random.randint(28100, 28999)
     datapath = cap.DATAPATH.parent / f'pcsx2-auto-{slot}'
-    cap.prepare_datapath(datapath, slot)
+    # The arithmetic profile (PS2_CAPTURE_FPU, else the manifest's, else mode 1) is recorded in the summary.
+    fpu = cap.fpu_mode(manifest)
+    cap.prepare_datapath(datapath, slot, fpu)
+    # replay: the consumed segment of every script index, expanded from a `pads` script (the last one repeats past its end).
+    replay_entries = []
+    if replay:
+        for segment in json.loads(Path(replay).read_text())['segments']:
+            replay_entries += [segment] * int(segment['frames'])
     args = [str(cap.PCSX2), '-datapath', str(datapath), '-batch', '-nogui', '-statefile', str(Path(state).resolve())]
     if speed == 'unlimited': args.append('-unlimited')
     elif speed == 'turbo': args.append('-turbo')
@@ -391,7 +403,10 @@ def run(state, output, frames, speed='normal', timeout=7200, jam=False, snap_eve
                     exit_ = CONNECTOR_OF.get(last_rec[course_at], ('',))[0] + (':Finish' if last_rec[course_at] == FINISH_COURSE else ':Unload')
                     pilot.next = next((k for k, w in enumerate(pilot.waypoints) if w['name'] == exit_), 0); pilot.log.append((index, f'resume at {exit_}'))
                 while next_write <= index + LEAD:
-                    seg = pilot.segment(last_rec, next_write, last_rec[course_at] if course_at is not None else None)
+                    if replay_entries:
+                        seg = replay_entries[min(next_write, len(replay_entries) - 1)]
+                    else:
+                        seg = pilot.segment(last_rec, next_write, last_rec[course_at] if course_at is not None else None)
                     base = LIVE_RING + (next_write % SLOTS) * ENTRY
                     pine.write(base + 16, entry_bytes(next_write, seg)[16:]); pine.write(base, struct.pack('<I', next_write))
                     padlog.write(json.dumps([next_write, seg]) + '\n'); next_write += 1
@@ -439,7 +454,7 @@ def run(state, output, frames, speed='normal', timeout=7200, jam=False, snap_eve
             snaps.append(dict(tick=tick, name=name, png=str(png), state=str(kept)))
         except (zipfile.BadZipFile, OSError, KeyError) as error: snaps.append(dict(error=str(error), file=f.name))
     shutil.rmtree(rawdir, ignore_errors=True)
-    summary = dict(state=str(state), records=have, bytes_per_record=record, events=len(events), snapshots=snaps)
+    summary = dict(state=str(state), records=have, bytes_per_record=record, events=len(events), snapshots=snaps, fpu_mode=fpu)
     output.with_suffix('.json').write_text(json.dumps(dict(summary, manifest=manifest), indent=2) + '\n')
     return summary
 
@@ -525,6 +540,7 @@ def main():
     b.add_argument('--role', action='append', default=[], help='ROLE=ADDR (rows, course, gmm, handler, world, streamer): a watched window the run reads')
     r = sub.add_parser('run'); r.add_argument('state'); r.add_argument('output'); r.add_argument('--frames', type=int, required=True)
     r.add_argument('--speed', default='normal', choices=['normal', 'turbo', 'unlimited']); r.add_argument('--timeout', type=int, default=7200)
+    r.add_argument('--replay', help="a finished run's consumed script (RUN.script.json from `pads`): open-loop pads instead of the pilot")
     r.add_argument('--resume', nargs=2, metavar=('OLD_BIN', 'CAPTURE_STATE'), help='continue OLD_BIN from STATE (a kept RUN.raw state; OLD_BIN "-": only the new records); STATE here is the kept state');
     r.add_argument('--route', choices=sorted(ROUTES)); r.add_argument('--mode', type=int, default=8, help='game mode (8 All Peak Race, 11 All Peak Jam, 7 Peak 2 Race): the stations\' bank variant'); r.add_argument('--jam', action='store_true'); r.add_argument('--snap-every', type=int, default=0); r.add_argument('--no-snap-events', action='store_true')
     q = sub.add_parser('pads'); q.add_argument('run')
@@ -534,7 +550,7 @@ def main():
         roles = {r.split('=')[0]: int(r.split('=')[1], 0) for r in a.role}
         print(json.dumps(build(a.baseline, a.output, json.loads(a.start), [tuple(int(v, 0) for v in w.split(':')) for w in a.watch], roles), indent=2)[:3000])
     elif a.cmd == 'run':
-        print(json.dumps(run(a.state, a.output, a.frames, a.speed, a.timeout, a.jam, a.snap_every, not a.no_snap_events, route=a.route, mode=a.mode, resume=a.resume), indent=2))
+        print(json.dumps(run(a.state, a.output, a.frames, a.speed, a.timeout, a.jam, a.snap_every, not a.no_snap_events, route=a.route, mode=a.mode, resume=a.resume, replay=a.replay), indent=2))
     elif a.cmd == 'analyze':
         print(json.dumps(analyze(a.run)))
     else:

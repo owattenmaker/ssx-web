@@ -813,7 +813,7 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   if(browserStartFrozen){browser_boost_tick(boostState,boostProfile,physicsState.timeScale,3,6);for(auto* v:{&physicsState.turn,&physicsState.brake,&physicsState.crouch,&physicsState.presentationLift,&physicsState.animationTurn,&physicsState.extraLean,&physicsState.boardAlignment,&physicsState.presentationRoll})groundControlApproach(*v);charge=physicsState.crouch.current;
    // motion 3's tick 136958 is 11E098: the quaternion is renormalised every held tick (an identity in mode-1 arithmetic, not on the
    // console's: docs/ps2-float.md)
-   physicsState.quaternion=originalRebuildOrientation(physicsState.quaternion).quaternion;
+   {const auto basis=originalRebuildOrientation(physicsState.quaternion);physicsState.quaternion=basis.quaternion;physicsState.physicalForward=basis.forward;physicsState.boardUp=basis.up;} // 11E098 also writes the rows +0x1A0..+0x1C0
   airMotionThisTick=false;++motionTick;publish_motion();return output;}
  }
  browserSoftFrame=browserSoftActive;
@@ -1013,5 +1013,9 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
 
 #if SSX_PS2_EXACT_FPU
 // The arithmetic profile (docs/ps2-float.md): the capture comparers run their setup in mode 1 and the capture on the console model.
-extern "C" EMSCRIPTEN_KEEPALIVE void ps2_arith_exact(int on){ssx::software_float::exactArithmetic=on!=0;}
+// The switch is global; the stats are this rider context's (call it in every context): the getters divide at every use.
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2_arith_exact(int on){
+ ssx::software_float::exactArithmetic=on!=0;
+ browser_reseed_stats();
+}
 #endif

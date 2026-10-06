@@ -30,7 +30,8 @@
 #include <memory>
 namespace stage_world {
 using PMat=ssx::set_piece_particles::Mat4;
-struct Model {uint32_t resource=0;std::string name;ssx::OriginalAnimModel model;ssx::RollerMatrix matrix{};float scale=1;uint32_t flags=0;};
+struct Model {uint32_t resource=0;std::string name;ssx::OriginalAnimModel model;ssx::RollerMatrix matrix{};float scale=1;uint32_t flags=0;
+ std::optional<std::array<uint32_t,11>> sectionWords;}; // sectionWords: its slot-1 builtin3 words (livecomp.json starts, trigger section)
 struct Effect {bool dynamic=false;ssx::OriginalParticleEffect burst;ssx::OriginalDynamicParticleEffect trail;uint32_t program=0;};
 enum Type:int {External=0,LiveComp=1,Boost=8,Emitter=13,Breaking=11};
 // MeshAnim (type 11, vtable 0x48F6D8): the break pieces of an instance fly apart (0x351B40 / 0x352230 / 0x352500).
@@ -142,9 +143,34 @@ static void stage_world_destroy(uint32_t resource){for(auto& e:stageEntities)if(
 // 2661, the rider slides under where the path stood; web/falling_billboard_collision.inc does the same for Snow Jam's
 // billboard). The authored nodes come back when the entity goes (a section leave, a location eviction, a new race).
 RIDER_LOCAL_LAZY static std::map<uint32_t,std::vector<std::pair<collision_transform::Matrix,collision_transform::Matrix>>> stageLiveCompRest;
+// A section-started LiveComp (a JS player: the pickups' spin and bob) has the same entity at instance+0xC on the PS2, so 334888
+// composes its collision on the LiveComp's nodes too (0x3348C8 entity, 0x334990 vt+0xD4 0x361090 = 1, 0x3349B0 vt+0xE4 0x3560C0;
+// riders/fareastmyth-uber-b 2567: mdl_ARA1_speedboost_1000's box turned about 44 degrees and 16 cm up, so the rider's broad centre
+// is inside it on two axes and 329590 hits, where the authored box is missed). Its player for the collision: built as
+// stage_section_livecomp_nodes builds it and advanced one tick per entity pass, with entity+0x4C's velocity table for 34E698.
+struct StageSectionCollision {ssx::OriginalLiveComp live;ssx::OriginalAnimNodeVelocityTable velocities;uint32_t start=0,at=0;bool ready=false;};
+// The pieces built before the race (SECTIONS/ready-state.json livecomp, the state at the start of race tick 0, before its entity pass;
+// init_stage_flags): e.g. BRA2's speedboost_1000, whose section started in the load (sections.json entity_at_start livecomp).
+struct StageReadyLiveComp {int16_t mode=1;int32_t enabled=1,done=0,delay=0;uint32_t rate=0,low=0,high=0,time=0,sampleTime=0,previous=0,unclamped=0;};
+RIDER_LOCAL_LAZY static std::map<uint32_t,StageReadyLiveComp> stageReadyLiveComps;
+RIDER_LOCAL_LAZY static std::map<uint32_t,StageSectionCollision> stageSectionCollision;
+static void stage_section_collision_update(); // (below stage_section_livecomp_start)
+// One world for every rider context. The PS2 has one instance table: every rider's 104E70 (334458 / 334888) queries the same
+// instances, posed by the entity pass 0x356198 before 0x128AF0's rider passes, and 34E698 answers each from the same entity.
+// Here each rider context holds its own instance list and only the human's context runs the stage world, so the human's entity
+// pass publishes its LiveComp-posed collision nodes (with each node's velocity row and origin for 34E698) into this table, shared by
+// the contexts (not RIDER_LOCAL); every other context's entity pass (race_begin, before its provider) puts them on its own
+// instances (riders/attack-bra2-b 1161: Griff through BRA2's speedboost_1000, which no computer rider's context had posed).
+struct StageSharedPosed {uint32_t resource=0;std::vector<std::pair<collision_transform::Matrix,collision_transform::Matrix>> nodes;
+ std::vector<ssx::OriginalAnimNodeVelocity> velocities;std::vector<ssx::RollerQuad> origins;};
+static std::vector<StageSharedPosed> stageWorldSharedPosed;
+RIDER_LOCAL_LAZY static std::map<uint32_t,std::vector<std::pair<collision_transform::Matrix,collision_transform::Matrix>>> stageSharedRest;
+static void stage_shared_posed_publish();
 static void stage_livecomp_collision(){
+ stage_section_collision_update();
  for(auto it=stageLiveCompRest.begin();it!=stageLiveCompRest.end();){
   if(const auto* e=stage_entity(it->first);e&&e->type==stage_world::LiveComp&&e->model){++it;continue;}
+  if(stageSectionCollision.count(it->first)){++it;continue;}
   if(auto* w=set_piece_instance_at(it->first)){for(size_t k=0;k<w->nodes.size()&&k<it->second.size();k++){w->nodes[k].world=it->second[k].first;w->nodes[k].inverse=it->second[k].second;}w->entityPointer=false;}
   it=stageLiveCompRest.erase(it);
  }
@@ -156,13 +182,78 @@ static void stage_livecomp_collision(){
   for(auto& n:w->nodes){if(n.index>=m.size())continue;collision_transform::Matrix x;for(unsigned i=0;i<16;i++)x[i]=m[n.index][i/4][i%4];n.world=x;n.inverse=collision_transform::inverseRigid(x);}
   w->entityPointer=true;
  }
+ for(auto& [resource,c]:stageSectionCollision){
+  auto* w=set_piece_instance_at(resource);if(!w)continue;
+  const auto& m=ssx::originalLiveCompMatrices(c.live);
+  if(!stageLiveCompRest.count(resource)){
+   std::vector<std::pair<collision_transform::Matrix,collision_transform::Matrix>> rest;
+   for(const auto& n:w->nodes)rest.push_back({n.world,n.inverse});
+   stageLiveCompRest.emplace(resource,std::move(rest));
+  }
+  for(auto& n:w->nodes){if(n.index>=m.size())continue;collision_transform::Matrix x;for(unsigned i=0;i<16;i++)x[i]=m[n.index][i/4][i%4];n.world=x;n.inverse=collision_transform::inverseRigid(x);}
+  w->entityPointer=true;
+ }
+ stage_shared_posed_publish();
+}
+// The human's context (the stage world's): every posed instance of this tick into the shared table.
+static void stage_shared_posed_publish(){
+ if(!stageWorldLoaded||!browserHumanRider)return;
+ stageWorldSharedPosed.clear();
+ for(const auto& [resource,rest]:stageLiveCompRest){
+  auto* w=set_piece_instance_at(resource);if(!w)continue;
+  ssx::OriginalLiveComp* live=nullptr;ssx::OriginalAnimNodeVelocityTable* table=nullptr;
+  if(auto it=stageSectionCollision.find(resource);it!=stageSectionCollision.end()&&!stage_entity(resource)){live=&it->second.live;table=&it->second.velocities;}
+  else if(auto* e=stage_entity(resource);e&&e->type==stage_world::LiveComp&&e->model){live=&e->live;table=&e->velocities;}
+  if(!live)continue;
+  StageSharedPosed p;p.resource=resource;
+  for(const auto& n:w->nodes)p.nodes.push_back({n.world,n.inverse});
+  // 34E798's table as 34E698 would fill it at the query (it reads only this tick's state)
+  auto& a=live->anim;if(a.evaluated||table->nodes.size()!=a.model->nodes.size())ssx::originalAnimNodeVelocities(a,ssx::originalLiveCompRate(*live),*table);
+  p.velocities=table->nodes;for(size_t k=0;k<a.model->nodes.size();k++)p.origins.push_back(ssx::originalAnimNodeMatrix(a,int32_t(k))[3]);
+  stageWorldSharedPosed.push_back(std::move(p));
+ }
+}
+// The shared table as this tick published it: [count, then per posed instance: resource, node count] (QA, test-ps2-captures).
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t* stage_shared_posed_info(){
+ RIDER_LOCAL static std::vector<uint32_t> out;out.assign(1,uint32_t(stageWorldSharedPosed.size()));
+ for(const auto& p:stageWorldSharedPosed){out.push_back(p.resource);out.push_back(uint32_t(p.nodes.size()));}
+ return out.data();
+}
+// Another rider context: the published nodes on its own instances, its authored nodes back for those no longer posed.
+static void stage_shared_posed_apply(){
+ for(auto it=stageSharedRest.begin();it!=stageSharedRest.end();){
+  bool posed=false;for(const auto& p:stageWorldSharedPosed)posed|=p.resource==it->first;
+  if(posed){++it;continue;}
+  if(auto* w=set_piece_instance_at(it->first)){
+   for(size_t k=0;k<w->nodes.size()&&k<it->second.size();k++){w->nodes[k].world=it->second[k].first;w->nodes[k].inverse=it->second[k].second;}w->entityPointer=false;
+  }
+  it=stageSharedRest.erase(it);
+ }
+ for(const auto& p:stageWorldSharedPosed){
+  auto* w=set_piece_instance_at(p.resource);if(!w||w->nodes.size()!=p.nodes.size())continue;
+  if(!stageSharedRest.count(p.resource)){
+   std::vector<std::pair<collision_transform::Matrix,collision_transform::Matrix>> rest;
+   for(const auto& n:w->nodes)rest.push_back({n.world,n.inverse});
+   stageSharedRest.emplace(p.resource,std::move(rest));
+  }
+  for(size_t k=0;k<w->nodes.size();k++){w->nodes[k].world=p.nodes[k].first;w->nodes[k].inverse=p.nodes[k].second;}
+  w->entityPointer=true;
+ }
 }
 // 1057B8 rigid predicate (entity+0x74 0x355420): 1 for a LiveComp without a primary modifier.
 bool browser_stage_livecomp_rigid(uint32_t resource){const auto* e=stage_entity(resource);return e&&e->type==stage_world::LiveComp&&e->model&&stageLiveCompRest.count(resource);}
 // 104E70 selected-entity callback (LiveComp vt+0x154 0x34E698): the node's velocity at the contact point into packet +0x20.
 bool browser_stage_livecomp_selected(OriginalInstanceContactPacket& packet){
- auto* e=stage_entity(packet.instance);if(!e||e->type!=stage_world::LiveComp||!e->model||!stageLiveCompRest.count(packet.instance))return false;
  ssx::RollerQuad angular{0,0,0,0}; // packet +0x30 is not carried by OriginalInstanceContactPacket
+ if(!stageWorldLoaded&&stageSharedRest.count(packet.instance)){
+  for(const auto& p:stageWorldSharedPosed)if(p.resource==packet.instance){
+   if(int32_t(packet.node)<0||size_t(packet.node)>=p.velocities.size())return true;
+   ssx::originalAnimContactVelocityAt(p.origins[packet.node],p.velocities[packet.node],packet.point,packet.surfaceVelocity,angular);return true;}
+  return false;}
+ if(auto it=stageSectionCollision.find(packet.instance);it!=stageSectionCollision.end()&&!stage_entity(packet.instance)&&stageLiveCompRest.count(packet.instance)){
+  auto& c=it->second;ssx::originalAnimContactVelocity(c.live.anim,ssx::originalLiveCompRate(c.live),c.velocities,int32_t(packet.node),packet.point,packet.surfaceVelocity,angular);
+  return true;}
+ auto* e=stage_entity(packet.instance);if(!e||e->type!=stage_world::LiveComp||!e->model||!stageLiveCompRest.count(packet.instance))return false;
  ssx::originalAnimContactVelocity(e->live.anim,ssx::originalLiveCompRate(e->live),e->velocities,int32_t(packet.node),packet.point,packet.surfaceVelocity,angular);
  return true;
 }
@@ -347,17 +438,66 @@ static void stage_hide_builtin(const StageArg* args,int count,bool hide){
 // original (0x341AA0 with the section's drawn word, on the entity matrix vt+0xC4: the magnet's) and every entity pass since
 // ticked it (0x341D48); the browser draws it with a JS player (web/livecomp-animation.js), so the same player is rebuilt
 // here from its start (builtin3 words, section log tick and word) and advanced to now. No draw, no shared state.
-static bool stage_section_livecomp_nodes(uint32_t resource,const stage_world::Model& model,const stage_world::PMat& root,std::vector<stage_world::PMat>& out){
+// The instance's latest section event must be the slot-1 start of its record (a leave ends the player): its start tick and the
+// drawn word (0 without a draw).
+static bool stage_section_livecomp_start(uint32_t resource,uint32_t& start,uint32_t& word){
  const auto rec=stageSectionLiveComps.find(resource);if(rec==stageSectionLiveComps.end())return false;
- const uint32_t start=rec->second.second,now=stage_world_tick();if(now<start||now-start>216000u)return false;
- uint32_t draws=0,word=0;bool started=false; // the instance's latest section event must be that slot-1 start (a leave ends the player)
+ start=rec->second.second;const uint32_t now=stage_world_tick();if(now<start||now-start>216000u)return false;
+ uint32_t draws=0;bool started=false;word=0;
  for(size_t i=sectionLog.size();i>=6;i-=6){const uint32_t* e=&sectionLog[i-6];if(e[1]!=resource)continue;
   started=e[2]==uint32_t(ssx::sections::Action::Slot1)&&e[0]==start;draws=e[4];word=e[5];break;}
- if(!started)return false;
- ssx::OriginalLiveCompArguments a;a.words=rec->second.first;ssx::RollerMatrix m;for(unsigned r=0;r<4;r++)for(unsigned c=0;c<4;c++)m[r][c]=root[r][c];
- auto live=ssx::originalLiveCompConstruct(model.model,m,model.scale,model.flags,a,[&]{return draws?word:0u;}); // as the JS player: the drawn word
+ if(!draws)word=0;
+ return started;
+}
+static ssx::OriginalLiveComp stage_section_livecomp_build(uint32_t resource,const stage_world::Model& model,const stage_world::PMat& root,uint32_t word){
+ ssx::OriginalLiveCompArguments a;a.words=stageSectionLiveComps.at(resource).first;ssx::RollerMatrix m;for(unsigned r=0;r<4;r++)for(unsigned c=0;c<4;c++)m[r][c]=root[r][c];
+ return ssx::originalLiveCompConstruct(model.model,m,model.scale,model.flags,a,[&]{return word;}); // as the JS player: the drawn word
+}
+static bool stage_section_livecomp_nodes(uint32_t resource,const stage_world::Model& model,const stage_world::PMat& root,std::vector<stage_world::PMat>& out){
+ uint32_t start=0,word=0;if(!stage_section_livecomp_start(resource,start,word))return false;
+ const uint32_t now=stage_world_tick();
+ auto live=stage_section_livecomp_build(resource,model,root,word);
  for(uint32_t t=start;t<now;t++)ssx::originalLiveCompTick(live,true);
  const auto& nodes=ssx::originalLiveCompMatrices(live);out.assign(nodes.begin(),nodes.end());return true;
+}
+// The section-started player for collision (stage_livecomp_collision): one per collidable instance whose slot-1 start still holds,
+// built once and ticked to the entity pass's tick; gone when the start does not hold (a section leave, a new race).
+// A ready piece's player holds while no section event touched the instance since the race start.
+static bool stage_ready_livecomp_holds(uint32_t resource){
+ if(!stageReadyLiveComps.count(resource))return false;
+ for(size_t i=sectionLog.size();i>=6;i-=6)if(sectionLog[i-5]==resource)return false;
+ return true;
+}
+static void stage_section_collision_update(){
+ const uint32_t now=stage_world_tick();
+ std::erase_if(stageSectionCollision,[](const auto& p){
+  if(stage_entity(p.first))return true;
+  if(p.second.ready)return !stage_ready_livecomp_holds(p.first);
+  uint32_t start=0,word=0;return !stage_section_livecomp_start(p.first,start,word)||start!=p.second.start;});
+ auto collidable=[](uint32_t resource){auto* w=set_piece_instance_at(resource);return w&&!w->nodes.empty()&&w->type!=0;};
+ for(const auto& [resource,rec]:stageSectionLiveComps){
+  if(stage_entity(resource)||stageSectionCollision.count(resource)||!collidable(resource))continue;
+  const auto model=stageWorldModels.find(resource);if(model==stageWorldModels.end())continue;
+  uint32_t start=0,word=0;if(!stage_section_livecomp_start(resource,start,word))continue;
+  auto& c=stageSectionCollision[resource];c.live=stage_section_livecomp_build(resource,*model->second,stage_entity_matrix(resource),word);c.start=c.at=start;
+ }
+ for(const auto& [resource,r]:stageReadyLiveComps){
+  if(stage_entity(resource)||stageSectionCollision.count(resource)||!collidable(resource)||!stage_ready_livecomp_holds(resource))continue;
+  const auto model=stageWorldModels.find(resource);if(model==stageWorldModels.end()||!model->second->sectionWords)continue;
+  // as set-pieces-renderer.js seeds its player: built with the section words (no draw), then the saved state
+  ssx::OriginalLiveCompArguments a;a.words=*model->second->sectionWords;ssx::RollerMatrix m;const auto root=stage_entity_matrix(resource);
+  for(unsigned row=0;row<4;row++)for(unsigned col=0;col<4;col++)m[row][col]=root[row][col];
+  auto& c=stageSectionCollision[resource];c.ready=true;
+  c.live=ssx::originalLiveCompConstruct(model->second->model,m,model->second->scale,model->second->flags,a,[]{return 0u;});
+  auto F=[](uint32_t b){return std::bit_cast<float>(b);};
+  c.live.mode=r.mode;c.live.enabled=r.enabled;c.live.done=r.done;c.live.delay=r.delay;c.live.rate=F(r.rate);c.live.low=F(r.low);c.live.high=F(r.high);
+  c.live.anim.time=F(r.time);c.live.anim.sampleTime=F(r.sampleTime);c.live.anim.previous=F(r.previous);c.live.anim.unclamped=F(r.unclamped);c.live.anim.dirty=true;
+  c.start=0;c.at=0; // ticked once per entity pass from race tick 0 (the ready state is before that pass)
+ }
+ for(auto& [resource,c]:stageSectionCollision){
+  const uint32_t target=c.ready?now+1:now-c.start; // ticks advanced by this entity pass
+  for(;c.at-c.start<target;c.at++)ssx::originalLiveCompTick(c.live,true);
+ }
 }
 // builtin13 0x2FCFF0 MeshAnim (defaults 0x4FB5E8, key types 0x446060): key0 instance, 1 end mode, 2 gravity scale,
 // 3 rider velocity share, 4 life s, 5..7 random speed ranges, 8..10 base velocity (cm/s), 11 max spin deg/s, 12 fade,
@@ -724,7 +864,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE int init_stage_flags(const char* flagsText,const
  for(const auto& j:flags.at("instances"))stageFlagCloth[j.at("resource").get<uint32_t>()]=j.at("cloth").get<int32_t>();
  stageFlagMode=flags.at("wind").value("mode",1);
  const auto& w=flags.at("wind").at("initial");stageFlagWindTick0={w.at("wind").get<float>(),w.at("base").get<float>(),w.at("delta").get<float>(),w.at("timer").get<float>()};
+ stageReadyLiveComps.clear();
  if(readyText&&*readyText){const auto ready=nlohmann::json::parse(readyText);
+  if(ready.contains("livecomp"))for(const auto& e:ready["livecomp"]){
+   if(!e.contains("bits")||!e.contains("state"))continue;StageReadyLiveComp r;const auto& st=e["state"];const auto& b=e["bits"];
+   r.mode=int16_t(st.value("mode",1));r.enabled=st.value("enabled",1);r.done=st.value("done",0);r.delay=st.value("delay",0);
+   r.rate=b.at("rate").get<uint32_t>();r.low=b.at("low").get<uint32_t>();r.high=b.at("high").get<uint32_t>();r.time=b.at("time").get<uint32_t>();
+   r.sampleTime=b.at("sampleTime").get<uint32_t>();r.previous=b.at("previous").get<uint32_t>();r.unclamped=b.at("unclamped").get<uint32_t>();
+   stageReadyLiveComps[e.at("resource").get<uint32_t>()]=r;}
   if(ready.contains("flags")){const auto& rf=ready["flags"];
    if(rf.contains("wind_bits")){const auto& b=rf["wind_bits"];auto F=[&](const char* k){return std::bit_cast<float>(b.at(k).get<uint32_t>());};stageFlagWindTick0={F("wind"),F("base"),F("delta"),F("timer")};}
    for(const auto& sl:rf.at("slots")){const int k=sl.at("slot").get<int>();if(k<0||k>=15)continue;stageFlagSlotsTick0[size_t(k)].cloth=sl.at("cloth").get<int32_t>();stageFlagSlotsTick0[size_t(k)].instances=sl.at("instances").get<std::vector<uint32_t>>();}}
@@ -930,7 +1077,7 @@ static void stage_sound_loop_builtin(const StageArg* args,int count,int kind){
 // Entity pass (race_begin, after the set-piece modifiers of this tick): newest entity first; per entity the
 // LiveComp tick with its slot-5 program, then the effect list; a finished once-mode player runs slot 4.
 static void stage_world_tick_entities(){
- if(!stageWorldLoaded)return;
+ if(!stageWorldLoaded){stage_shared_posed_apply();return;}
  std::vector<uint64_t> order;for(auto& e:stageEntities)if(e.alive)order.push_back(e.serial);
  auto& visual=stage_visual_random();
  for(auto it=order.rbegin();it!=order.rend();++it){
@@ -984,6 +1131,7 @@ static void stage_world_reset(){
  for(const auto& [r,f]:stageFlagsCountdown)if(auto* w=set_piece_instance_at(r))w->eventRuntimeFlags=f; // race restart: the countdown flags
  stageFlagsCountdown.clear();stageFlags.clear();stageNodeState.clear();stageSectionLiveComps.clear();stageEntityLog.clear();stage_contact_record.reset();
  stageEntities.clear();stageEntitySerial=0;stage_cutscene_restore(keptCutscene);stageLiveCompLog.clear();stageSoundLog.clear();stageWorldSlotLog.clear();stageSlot4Pending.clear();
+ stageSectionCollision.clear(); // a new race: the section and ready players start again
  stage_livecomp_collision(); // a new race: every LiveComp-animated instance back at its authored nodes
  stageParticleCreates=stageParticleRefused=stageLiveCompStarts=0;
  stageWorldVisualOwn=stageWorldVisualTick0;
@@ -1092,6 +1240,8 @@ static void stage_livecomp(const nlohmann::json& j){
    node.track=std::move(tr);}
   m->model.nodes.push_back(std::move(node));
  }
+ if(j.contains("starts"))for(const auto& st:j["starts"])if(st.value("trigger","")=="section"&&st.contains("words")&&st["words"].size()==11){
+  std::array<uint32_t,11> w{};for(unsigned k=0;k<11;k++)w[k]=st["words"][k].get<uint32_t>();m->sectionWords=w;break;}
  if(!stageWorldMatrices.count(m->resource))stageWorldMatrices[m->resource]=m->matrix; // after every particles instance (the documents' order)
  stageWorldModels[m->resource]=std::move(m);
 }

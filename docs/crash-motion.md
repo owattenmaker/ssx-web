@@ -271,26 +271,40 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
   resets, plants on the pipe and Snow Jam, attacks among the computer riders.
   - A branch that reaches a freestyle finish needs `--finish-place` in its job's extra_args (0x239230 sets the boost meter by
     place): carve-powder-cba2 finishes 5th.
-- **Open:**
-  - air-eba3 823: the crash get-up tick's ground step (7 cm/s; lateral 6.5, forward 4.3, normal -3.0), from the record-822
-    velocity. A no-D-pad branch capture timed out and waits for the exact-mode re-capture.
-  - riders/fareastmyth-uber-b 2569: ground at the 13F358 limit in the linear spring regime; the PS2 has 0.37 cm/s less normal
-    velocity, with depth1/3, distance and position equal.
-  - attack-bra2-b 1232: Griff's first ground tick after a landing has 34 cm/s more forward speed on the PS2 (along +0x1B0),
-    with the command words and every compared field equal. attack-bra2 is exact to the end since core23.
+- **Closed since:** air-eba3 (core24), fareastmyth-uber-b (rider-parity's posed pickup collision), attack-bra2-b (the same; core28 on),
+  hl/hl-aimetro-17 2495 (the scope-list order below, core28 on).
+- **The octree's child order** (332DB8 / 33B748, PS2 hl/hl-aimetro-17 2493 scope list rider+0x860 -> +0x10C / +0x110):
+  - 332DB8 visits roots 0..7. A root the query box contains goes to 340DC0, an overlapped one to 33B748.
+  - 33B748 collects a node's lists (3309D8 instances +0x20, terrain patches +0x24 with the box test, +0x28) before its children.
+  - Its eight unrolled child blocks load +0x0, +0x4, +0xC, +0x8, +0x18, +0x1C, +0x14, +0x10: children 0 1 3 2 6 7 5 4, the reflected Gray order
+    (child index x << 2 | y << 1 | z). A child the query box contains goes to 340DC0, which visits children 0..7.
+  - The rider's scope box (rider+0x400 / +0x410, about 3.6 m) never contains a loose cell with children (1.4 x 4096 cm on every axis), so the
+    rider's scope lists are in Gray order at every level: patches 171792, 245776, 64528, 293648 at 2493; the ascending order visited 64528 first.
+  - That changed which patch 333EF8 last hit, so the 3342D0 cache (the cell the next tick tries first) was wrong.
+  - engine/original_spatial.hpp originalSpatialBefore: used by the terrain body query, the ground probe's patch order, the collidable-instance
+    order and the rail walk.
+- **Matcher batch 3** (the arithmetic agent's exact-mode zoe-race 186):
+  - Every hard-coded 0x3D4CCCCE rate reset is a .sdata constant in the ELF, so the value is right:
+    13F410 gp-0x6FA8, 12F730 gp-0x76E4, 120D90 gp-0x7934 / -0x7928, 1328B0 gp-0x756C, 13AD20 gp-0x7184, 132F98 gp-0x754C.
+  - Only 13D818's 13EFF4..13F05C compute dt x 3 (+0x20C, +0x2C0): ground_pose_motion.cpp, on the exact dt.
+  - rider+0x244 .. +0x24C start at 0 (every slot at zoe-race 186): hpLean244 starts {}, not with the exit rate.
+  - The attribute getters divide (div.s) at every use: seeded stats (n / 11) are recomputed in the current arithmetic (browserStatFromSeed,
+    web/rider_attributes.hpp), and ps2_arith_exact recomputes them in its context. A no-op in mode 1.
+- **Open:** none from the mode-1 batches. New batches are exact-mode captures (PS2_CAPTURE_FPU=exact, one ARMSX2 slot).
 
-## Computer riders' stage triggers (pv npcStageTriggers, off; 2026-10-05, physics-jank agent)
+## Computer riders' stage triggers (2026-10-05, physics-jank agent)
 
 - **PS2 order (decomp + EE oracle, hl2/attack-bra2-b tick 1161):**
   - 128AF0 runs each rider's 121818 in slot order. Its first step (0x121854) calls the entity of the contact that 105398's 104E70 stored at rider+0xA30.
   - For a stage-script trigger that's 355770 → 34FE00 → 2D19B8 → 30A060, which runs the slot-2 program with that rider as the player object. Builtin 27 (0x2FF850) → 10F1C0(rider, type, amount) acts on that rider at once (type 1: 10E770, +0x2E8 = 5).
   - Only then do 125AD0 (progress) and 112338 / 1125C0 (the route) run, then 125228, 117C28, and 120E30, which clears +0xA30.
-- **Port:** only the human's context holds the stage world. A computer rider's browser_stage_triggers (first in its race_end) hands the contact to riderHost.stageContact (web/ai-racers.js, createAiRacers `stageTriggers`, pv npcStageTriggers). That hook:
-  - runs core stage_foreign_contact in the human's context, on the rider's shared and visual RNG cursors;
-  - replays the human's world events (syncWorld);
-  - applies the collected builtin-27 effects in the rider's context (core stage_apply_effect), all before the rest of that rider's race_end.
-  - Exports are additive. The JS checks for _stage_foreign_contact, so an older core keeps today's behaviour.
-- **Still blocked:** a computer rider's instance query never contacts the stage trigger.
-  - The trigger in this case is BRA2's mdl_BRA2_speedboost_1000, resource 758544. tools/export_browser_pickups.py lists it under unsupported_entity_pickups.
-  - Griff passes through its box at 1162 with complete queries and no contact. The entity instances need the stage world's bindings in each rider context, or a shared lookup, before the routing has anything to route.
-  - The rider-parity agent is on the human-side loading (riders/fareastmyth-uber-b 2567).
+- **Port:** every rider context holds the stage world (815 instances in each computer rider's context on BRA2), with the posed pickup collision
+  shared from the human's entity pass (stageWorldSharedPosed, docs/obstacle-collision.md).
+  - A computer rider's browser_stage_triggers runs the program in its own context, in slot order, with builtin 27 on that rider.
+  - The shared-world log (event 6) replays the instance changes into the other contexts, the human's included, without the effect.
+  - hl2/attack-bra2-b 1162: Griff's speedboost_1000 fires in his context (fired log 1162 / 758544 / program 14 in every context). Every rider
+    and the RNG are exact to the end.
+- **Removed:** pv npcStageTriggers, which routed a computer rider's contact to the human's context, with its exports _stage_foreign_contact /
+  _stage_apply_effect and riderHost.stageContact.
+  - It only fired for a context whose stageInstances was empty, and no computer rider's context is.
+  - With the shared world it never fired: 0 hand-offs over every six-rider gate (48 scenarios, all passing) with the switch on, core28.

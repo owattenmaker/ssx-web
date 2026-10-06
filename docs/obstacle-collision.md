@@ -411,7 +411,8 @@ Found at the whole-mountain crash contacts (docs/peak3.md section 6, "Past the c
   0x361090) from the entity's node matrices (vt+0xE4 -> 0x361098), on either broad-phase route.
   - `stage_livecomp_collision()` (web/stage_world.inc) applies this to every core LiveComp: those built by trigger, timer
     or contact programs, such as falling paths, tree bumps, falling rocks and breaking bridges.
-  - Section-started LiveComps (the collectibles' spin and bob) are drawn by the JS players and are not modelled here.
+  - Section-started LiveComps (the collectibles' spin and bob) are drawn by the JS players; since 2026-10-05 their collision
+    follows them too (below, "Spinning pickups and one world for every rider").
 - **13AA48 after a touchdown.** 139C88 runs 13AA48 after its own touchdown too. It filters with rider+0x180 and uses its
   own air response; only the following 105398 / 105D98 / 108388 see motion 0. The browser used the new ground normal and
   the ground response there, and dropped a steep wall the PS2 bounced off (allpeak/apr 3581, peak3/gravitude-race-ai 1505).
@@ -441,3 +442,42 @@ Found at the whole-mountain crash contacts (docs/peak3.md section 6, "Past the c
 - **Fix.** The first channel-2 sequence of that semantic decides, as the rail's `primaryCompleted` does.
 - **Checked.** p3b-right3000 exact on all 3000 ticks (was 474; now a gate), the full capture suite (253 scenarios) unchanged.
 
+## Spinning pickups and one world for every rider (2026-10-05, rider-parity agent)
+
+Found at riders/fareastmyth-uber-b 2569 (a boost window +0x2E8 = 5 the port never got) and hl2/attack-bra2-b 1161 (Griff, the same on
+Metro City). Traced with the EE oracle on the physics agent's snapshots local/physics-jank/oracle/fem-b-2567 and ab2b-1161.
+
+- **PS2:**
+  - mdl_ARA1_speedboost_1000 (0x10381E0, resource 480776, flags 0x210325: static route) has a type-1 LiveComp (vtable 0x490B10) at
+    instance+0xC, built by its section's slot-1 program (0x341AA0).
+  - 105398 -> 104E70 -> 334458 -> 334888:
+    - 0x3348C8 instance+0xC set: vt+0x134 0x356A28, no override;
+    - 0x334990 vt+0xD4 0x361090 returns 1;
+    - 0x3349B0 vt+0xE4 0x3560C0 returns the LiveComp's node matrix, turned about z (about 44 degrees at 2567) and bobbing (16 cm).
+  - The type-2 node's box is composed on that matrix, and 32FAC0 -> 32B2B8 -> 329590 tests the broad sphere against it. The broad
+    centre falls inside the turned box on two axes, so the box is hit. The authored box (y +-25.7 cm) is missed.
+  - 104E70 stores the instance at rider+0xA30. 121818 runs the vt+0x144 0x355770 chain to builtin 27 (0x2FF850) -> 10F1C0 -> 10E770,
+    which sets +0x2E8 = 5. 34E698 (vt+0x154) adds the node's velocity at the contact point to the packet's +0x20.
+  - BRA2's speedboost_1000 (0xFDD8B0, 758544) is the same, except its LiveComp was built in the load (sections.json
+    entity_at_start livecomp; its tick-0 state is in SECTIONS/ready-state.json).
+- **One world:** the PS2 has one instance table. Every rider's 104E70 queries the same instances, posed by the entity pass 0x356198
+  before 0x128AF0's rider passes, and 34E698 answers each rider from the same entity.
+- **Port (web/stage_world.inc):**
+  - `stage_section_collision_update`: a collision player per collidable instance with a section-started LiveComp, built as
+    `stage_section_livecomp_nodes` builds it (builtin3 words, the section's drawn word, vt+0xC4 matrix) and ticked once per entity
+    pass. A piece from ready-state.json is built with its livecomp.json section words, then given the saved state (as
+    set-pieces-renderer.js seeds its player), and ticked from race tick 0.
+  - `stage_livecomp_collision` puts their node matrices on the instance, as for core LiveComps. `browser_stage_livecomp_selected`
+    answers 34E698 from the player.
+  - Only the human's context runs the stage world. Its entity pass publishes every posed instance (nodes, each node's velocity row
+    and origin) to `stageWorldSharedPosed`, one table shared by the rider contexts (web/check-rider-globals.mjs).
+  - Every other context's entity pass (race_begin, before its provider) puts the published nodes on its own instances and gives its
+    authored nodes back to those no longer posed. Its 34E698 adds the published row (engine/rail_snap_torque.hpp
+    `originalAnimContactVelocityAt`).
+  - QA export `stage_shared_posed_info`.
+- **Gates:**
+  - The rider gates load the stage world (compare-ps2-capture STAGE_WORLD=1), as the page always does.
+  - riders/fareastmyth-uber-b: exact to the end.
+  - hl2/attack-bra2-b: every rider exact to the end (scratch core local/rider-parity/core6).
+- **Limit:** a piece built before the race needs the course's flags.json (init_stage_flags carries ready-state.json). Free-ride and
+  streamed worlds have no ready state, and their pickups start from their sections.

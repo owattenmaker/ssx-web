@@ -527,7 +527,7 @@ if (args.includes('--camera-seed') && core._camera_seed_words) {
   const wp = core._malloc(4 * CAMERA_WORDS), mp = core._malloc(CAMERA_WORDS); core.HEAPU8.set(new Uint8Array(words.buffer), wp); core.HEAPU8.set(mask, mp); core._camera_seed_words(wp, mp); core._free(wp); core._free(mp);
 }
 const webDrawsOut = []; let webSkip = 0;
-// PS2_ARITH=exact: a core with the arithmetic switch (tools/ps2-float/make_swap_tree.py) computes on the console model
+// PS2_ARITH=exact: a core built with SSX_PS2_EXACT_FPU=1 (web/build-core.sh SSX_CORE_CFLAGS) computes on the console model
 // (engine/ps2_fpu.hpp) from here, the capture's first tick. The setup above ran in mode 1, as the baseline's own history did
 // (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact') {

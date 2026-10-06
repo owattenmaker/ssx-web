@@ -121,10 +121,6 @@ public:
     // the copy is rebuilt whenever the list's buffer or size, or one of eight sampled entries, differs.
     struct TerrainScanEntry {terrain_original::Vector low{},high{};uint32_t resource=0;unsigned flags=0;};
     mutable std::vector<TerrainScanEntry> terrainScan;mutable const WorldCollisionTerrain* terrainScanData=nullptr;
-    // 3342D0 walks the rider's scope list (332DB8), an octree walk: patches in loose-cell order (0x328F28), node lists before the
-    // children, later insertions first in a list (as engine/collision.hpp orderPatches). The order matters: the +0x868 contact cache
-    // keeps the last patch that hit (PS2 hl/hl-aimetro-17 2494: Metro patch 171792 before 64528, so the cell cached was 64528 one).
-    mutable std::vector<uint32_t> terrainOrder;
     static bool terrainScanSame(const TerrainScanEntry& e,const WorldCollisionTerrain& p){return e.resource==p.resource&&e.flags==p.flags&&std::memcmp(e.low.data(),p.low.data(),sizeof e.low)==0&&std::memcmp(e.high.data(),p.high.data(),sizeof e.high)==0;}
     // Instances with collision (type != 0): the instance loops (query(), queryOriginalWorldSegment) skip a type-0 instance
     // (no collision, kept for drawing; about a third of the list) whatever its other fields, so they walk this index
@@ -155,16 +151,7 @@ public:
     const std::vector<TerrainScanEntry>& terrainScanList() const {
         bool fresh=terrainScanData==terrain.data()&&terrainScan.size()==terrain.size();
         for(size_t s=0;fresh&&s<8&&!terrain.empty();++s){const size_t i=s*(terrain.size()-1)/7;fresh=terrainScanSame(terrainScan[i],terrain[i]);}
-        if(!fresh){
-            terrainScan.resize(terrain.size());for(size_t i=0;i<terrain.size();++i){const auto& p=terrain[i];terrainScan[i]={p.low,p.high,p.resource,p.flags};}terrainScanData=terrain.data();
-            std::vector<OriginalSpatialCell> cells(terrain.size());for(size_t i=0;i<terrain.size();++i)cells[i]=originalSpatialCell(terrain[i].low,terrain[i].high);
-            terrainOrder.resize(terrain.size());for(size_t i=0;i<terrain.size();++i)terrainOrder[i]=uint32_t(i);
-            std::sort(terrainOrder.begin(),terrainOrder.end(),[&](uint32_t a,uint32_t b){
-                if(originalSpatialBefore(cells[a],cells[b]))return true;
-                if(originalSpatialBefore(cells[b],cells[a]))return false;
-                return a>b;
-            });
-        }
+        if(!fresh){terrainScan.resize(terrain.size());for(size_t i=0;i<terrain.size();++i){const auto& p=terrain[i];terrainScan[i]={p.low,p.high,p.resource,p.flags};}terrainScanData=terrain.data();}
         return terrainScan;
     }
     void prepareTerrainTraversal() {
@@ -239,8 +226,7 @@ public:
             if(wins){best=metric;result.best=hit;}
         };
         const auto& scan=surfaceFilter==1?terrainScan:terrainScanList(); //334458 (filter 1) scans instances, not terrain patches.
-        for(size_t at=0;surfaceFilter!=1&&at<scan.size();++at) {
-            const size_t index=terrainOrder[at];
+        for(size_t index=0;surfaceFilter!=1&&index<scan.size();++index) {
             const auto& entry=scan[index];
             if(!(entry.flags&1)||!worldResident(entry.resource))continue;
             bool overlaps=true;for(unsigned k=0;k<3;++k)overlaps&=entry.low[k]<high[k]&&low[k]<entry.high[k];
