@@ -276,6 +276,19 @@ rider-manager pass. `web/ps2-capture-ai.mjs` reads them. `web/compare-ai-capture
 countdown anchor. Nothing is copied from the capture after the anchor, except one unported
 world-pass draw (LiveComp 0x341AA0, `--world-draws`).
 
+**Computer-rider poses (`build --ai-bones`, 2026-10-05, fuzzing agent).** This needs --ai-state and can't be used with --watch:
+it takes the watch area.
+- **Recorded:** each record also gets every computer rider's posed world bones *(*(actor+0x780)+0x2C), sampled with the AI windows
+  (layout.ai_bones):
+  - bones 0..21 as positions: the body-volume centres that 13AA48 / 13F488 / 105398 read;
+  - bone 22, the board root, as the full row: 13A7B0's landing-probe origin and up.
+- **Compared:** compare-ai-capture.mjs checks the port's world_pose_bones for each rider bit for bit, and reports
+  summary.ai[k].boneTicks / firstBoneInexact.
+- **First results (mode 1, runs/fuzz-mode1):**
+  - The unmutated gravitude-race-ai pad has every rider's physics exact to the end, but Luther's whole-body pose is about 1 cm
+    off from 2403.
+  - Fuzz variant r2-0204 has Mac's pose about 2 cm off from 2163. His physics follows at the 2585 landing normal.
+
 | Capture | Human | Psymon | Allegra | Moby | Griff | Luther | Shared RNG | Ranks, pair records |
 |---|---|---|---|---|---|---|---|---|
 | event-race-ai (isolated, 2400 ticks) | all | all (was 1845) | all | all | all | all | all (was 2316) | all |

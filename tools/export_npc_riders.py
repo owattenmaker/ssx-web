@@ -36,17 +36,26 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--location', default='ARA1', help='course code with a six-rider event-start.json (ARA1 Snow Jam, BRA2 Metro-City)')
-    location = parser.parse_args().location
-    event = json.loads((ROOT / f'local/assets/native/{location}/event-start.json').read_text())
+    # --exact: the exact-derived anchor's export (tools/export_exact_event_starts.py, local/assets/native-exact/<code>/event-start.json),
+    # written only to local/assets/native-exact/<code>/npc-riders.json (compare-ai-capture.mjs --document); the human is not checked
+    # against initial.json there (its bits are the console arithmetic's).
+    parser.add_argument('--exact', action='store_true')
+    args = parser.parse_args()
+    location = args.location
+    native = ROOT / ('local/assets/native-exact' if args.exact else 'local/assets/native')
+    event = json.loads((native / location / 'event-start.json').read_text())
     snapshot = Path(event['provenance']['snapshot'])
     if not snapshot.is_absolute(): snapshot = ROOT / snapshot
     memory = zipfile.ZipFile(snapshot).read('eeMemory.bin')
     digest = hashlib.sha256(memory).hexdigest()
     if event['provenance']['ee_sha256'] != digest:
         raise ValueError('event-start.json was exported from another snapshot')
-    result = extract_document(memory, snapshot, event['participants'], location)
+    result = extract_document(memory, snapshot, event['participants'], location, check_human=not args.exact)
     text = json.dumps(result, indent=1, allow_nan=False) + '\n'
-    for out in (ROOT / f'local/assets/native/{location}/npc-riders.json', ROOT / f'web/public/assets/{location}/npc-riders.json'):
+    outputs = [native / location / 'npc-riders.json']
+    if not args.exact:
+        outputs.append(ROOT / f'web/public/assets/{location}/npc-riders.json')
+    for out in outputs:
         out.write_text(text)
     print(json.dumps(dict(riders=[(r['slot'], r['character'], r['identity']) for r in result['riders']], human=result['human_identity']), indent=1))
 

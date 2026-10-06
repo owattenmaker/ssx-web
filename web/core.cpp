@@ -5,6 +5,7 @@
 #include <memory>
 #include "generated/physics_seed.hpp"
 #include "generated/event_start_seed.hpp"
+#include "event_start_select.hpp" // the mode-1 or exact start seeds
 #include "rider_attributes.hpp" // career attributes -> stat fields (web/attribute_bridge.cpp)
 #include "../engine/jump_motion.hpp"
 #include "../engine/pickup_reward.hpp"
@@ -269,6 +270,9 @@ void leave_crash_motion(OriginalCrashActorState& actor,int mode){
 }
 // Contact acceptance and resolution are shared with the scalar diagnostic path.
 // The gameplay caller supplies the original posed-board query after world pose.
+// 139C88 0x139DA8..0x139DE0: a touchdown on a recovery material (or a patch with flag 2) runs 116120(rider, 0, 1) and branches to the
+// end of 139C88, past 13AA48 and 105398 (fuzz r10-0198 3087: the port's body query then hit a wall and bounced the reset rider).
+RIDER_LOCAL bool browserLandingRecoveryReset=false;
 bool resolve_touchdown(const OriginalWorldSegmentHit& contact,uint32_t tick,int queryKind){
  if(!contact.complete||contact.surface<0||contact.surface>=19)return false;
  OriginalLandingState touchdown;touchdown.rider=physicsState;
@@ -278,7 +282,7 @@ bool resolve_touchdown(const OriginalWorldSegmentHit& contact,uint32_t tick,int 
  {terrain_original::Rounding rounding;const auto& v=physicsState.velocity;float square=terrain_original::mul(v[0],v[0]);square=terrain_original::add(square,terrain_original::mul(v[1],v[1]));square=terrain_original::add(square,terrain_original::mul(v[2],v[2]));browserLandingSpeed=terrain_original::sqrt(terrain_original::add(square,0.f));}
  const auto& material=landingProfile.materials.at(contact.surface);
  for(unsigned i=0;i<3;i++){landingContactInfo[i]=physicsState.position[i];landingContactInfo[3+i]=contact.position[i];landingContactInfo[6+i]=contact.normal[i];}landingContactInfo[9]=material.depth3;
- if(!originalLandingResolveContact(touchdown,contact,material,impact.relativeNormalSpeed)){collisionRecoveryRequested=true;if(browserResetBegin)browserResetBegin(1);return false;}
+ if(!originalLandingResolveContact(touchdown,contact,material,impact.relativeNormalSpeed)){collisionRecoveryRequested=true;if(browserResetBegin)browserResetBegin(1);browserLandingRecoveryReset=true;return false;}
  browserLandingTranslation=touchdown.translationCm;
  browserTrajectory.predictedTime=touchdown.trajectoryPredictionTime; //139C88 clears predictor+98 at contact.
  if(contact.surface!=physicsProfile.surface.id){const float limit=physicsProfile.speedLimit;physicsProfile=physicsMaterials[contact.surface];physicsProfile.speedLimit=limit;}
@@ -493,7 +497,7 @@ void browser_upper_reaction_request(int kind); // web/animation_bridge.cpp: 10E0
 OriginalBoostEffects browser_boost_tick(OriginalBoostState& s,const OriginalBoostProfile& p,float timeScale,int motionMode,int controlState){
  const auto e=originalBoostTick(s,p,timeScale,motionMode,controlState);if(e.timerExpired)browser_upper_reaction_request(6);return e;}
 RIDER_LOCAL void (*browserEventRiderSeed)()=nullptr; // computer-rider core instances replace the human grid seed (web/npc_gameplay.inc)
-void begin_event_rider(){auto seed=browserEventGroundState();auto actor=OriginalAirState{seed.position,seed.velocity};auto p=actor.nativePosition();auto basis=originalOrientationBasis(seed.quaternion);reset_rider(p.x,p.y,p.z,std::atan2(basis.forward[0],-basis.forward[1]));physicsState=seed;physicsProfile=browserEventGroundProfile();browser_apply_ground_attributes();position=p;velocity={};normal={seed.normal[0],seed.normal[2],-seed.normal[1]};motionTick=0;lastGroundLeave=0;groundFocusTick=0;/*countdown anchor: motion owner+0x10/+0x14 are both 0*/if(!browserEventRolling){physicsState.controlState=6;browserStarting=browserStartFrozen=true;}/*backcountry rolling start (docs/backcountry.md): the ready state's control 0 / motion 0 with its start velocity*/chaseReady=false;arm_event_camera_seed();publish_motion();if(browserEventRiderSeed)browserEventRiderSeed();}
+void begin_event_rider(){auto seed=browser_event_ground_state();auto actor=OriginalAirState{seed.position,seed.velocity};auto p=actor.nativePosition();auto basis=originalOrientationBasis(seed.quaternion);reset_rider(p.x,p.y,p.z,std::atan2(basis.forward[0],-basis.forward[1]));physicsState=seed;physicsProfile=browser_event_ground_profile();browser_apply_ground_attributes();position=p;velocity={};normal={seed.normal[0],seed.normal[2],-seed.normal[1]};motionTick=0;lastGroundLeave=0;groundFocusTick=0;/*countdown anchor: motion owner+0x10/+0x14 are both 0*/if(!browserEventRolling){physicsState.controlState=6;browserStarting=browserStartFrozen=true;}/*backcountry rolling start (docs/backcountry.md): the ready state's control 0 / motion 0 with its start velocity*/chaseReady=false;arm_event_camera_seed();publish_motion();if(browserEventRiderSeed)browserEventRiderSeed();}
 void start_ground_motion(){browserStartFrozen=false;grounded=true;originalLandingGroundEnter(physicsState,landingProfile.materials.at(physicsProfile.surface.id),physicsProfile.bodyScale,motionTick,lastGroundLeave);groundFocusTick=motionTick;commit_rider_physics();}
 EMSCRIPTEN_KEEPALIVE void set_rider_velocity(float x,float y,float z){if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z))throw std::runtime_error("Nonfinite fixture velocity");physicsState.velocity={x,y,z};commit_rider_physics();if(!grounded)begin_prediction({physicsState.position,physicsState.velocity});}
 EMSCRIPTEN_KEEPALIVE float* rider_query_bounds(){

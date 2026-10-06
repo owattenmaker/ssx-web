@@ -309,6 +309,27 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
   +0x370 normal differs in the 5th digit; the probe origin (0x13A834) is 1 ULP off, which points at his posed root. Computer riders'
   bones are not recorded (--ai-state) and not gated.
 
+## Exact start seeds (2026-10-05, physics-jank agent)
+
+- **What a seed is:** the Single Event start (core begin_event_rider, race participant, per-character mapping) copies the PS2 countdown
+  anchor's rider block (generated/event_start_seed.hpp from tools/generate_event_seed.py). It is a recorded result: its bits come from
+  the arithmetic that ran the race load and the motion-3 hold up to the anchor, so mode-1 seeds are 1 ULP off on the console
+  (Snow Jam x / z: C800C64F / C85F68B4 against C800C650 / C85F68B3).
+- **Exact set:** tools/export_exact_event_starts.py (assembly audit + export_event_start on each local/reference-exact anchor ->
+  local/assets/native-exact/<code>/event-start.json), then tools/generate_event_seed.py --exact -> generated/event_start_seed_exact.hpp
+  (git-ignored). web/event_start_select.hpp takes it in SSX_PS2_EXACT_FPU builds while exactArithmetic is on; mode-1 builds are
+  byte-identical. Snow Jam's exact anchor is characters/zoe/countdown.p2s (the menu-path snow-jam-countdown-anchor.p2s carries Zoe's NIS
+  head and fails the audit). 12 courses so far; CHP2 / EBA3 wait for anchors, the backcountry ready states are not covered.
+  Exact-base riders/zoe-race on the exact core: seedErrorCm 0, exact through 490 (19 with the mode-1 seed).
+- **Computer riders:** tools/export_npc_riders.py --exact writes local/assets/native-exact/<code>/npc-riders.json (never
+  web/public/assets); compare-ai-capture.mjs --document takes it.
+- **Running the load instead:** the PS2 places the grid in 1297C8(C, 0 / 1) -> 11D390's event branch (0x11D564: 11FE78(3), 11FEC8(6), the
+  tail clears; no 11DE60 / 11DF18), then the start controller holds motion 3 (11E098 every tick) up to the anchor. The port has the
+  pieces for an in-world start (event_grid_start, place_rider_region for the rolling start's 11DE60), but the Single Event anchor also
+  carries words the load computes elsewhere (the speed limit's motion-3 fixed point, +0x380 / +0x390 contact normals, the route
+  words, the camera block). Running 11D390 + the hold would make the seed a computation, at the cost of porting the load's grid
+  placement (1297C8's grid rows) and replaying the hold ticks before tick 18. Not done; the exact seed set covers the swap.
+
 ## Computer riders' stage triggers (2026-10-05, physics-jank agent)
 
 - **PS2 order (decomp + EE oracle, hl2/attack-bra2-b tick 1161):**

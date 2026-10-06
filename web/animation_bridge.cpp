@@ -45,7 +45,7 @@
 using nlohmann::json;using namespace ssx;
 #include "audio_events.hpp" // audio observers (web/audio_events.inc, docs/audio-logic.md 5)
 RIDER_LOCAL extern bool (*browserLandingAirExit)();RIDER_LOCAL extern bool browserPosedLandingEnabled;
-bool resolve_posed_landing(const BodyCollisionVolume&);RIDER_LOCAL extern float output[16];
+bool resolve_posed_landing(const BodyCollisionVolume&);RIDER_LOCAL extern float output[16];RIDER_LOCAL extern bool browserLandingRecoveryReset; // web/core.cpp
 RIDER_LOCAL extern float rideBoard,rideSpin,rideFlip,rideAxes[12];
 RIDER_LOCAL extern bool rideLatched;
 RIDER_LOCAL extern void (*browserReverseAnimation)(std::array<float,4>);RIDER_LOCAL extern uint32_t reverseTurnSerial;
@@ -78,6 +78,11 @@ RIDER_LOCAL static OriginalGroundState gs;RIDER_LOCAL static OriginalGroundProfi
 RIDER_LOCAL static OriginalGrabState grab;RIDER_LOCAL static OriginalGrabProfile grabProfile;
 // The 149690 grab stat behind grabProfile.playbackRate (browser_reseed_stats recomputes the rate from it).
 RIDER_LOCAL static float grabStatSeed=0;
+// The rider's trick and landing stats from its settings (original_air_entry / original_landing profiles: the 1495A8 / 149120 getters at its
+// countdown). A computer rider above level 1 has its own (Gravitude's Mac: 7/11; fuzz r2-0204-bones: his clip 287 ran at 1.275x on the
+// PS2, 1x here); the human's are initial.json's 1/11. 0 = the settings carry none (the compiled 1/11).
+RIDER_LOCAL float browserSettingsTrickStat=0;
+RIDER_LOCAL float browserSettingsLandingStat=0;
 RIDER_LOCAL static bool grabStatSeeded=false;
 RIDER_LOCAL static bool passiveMode=false,heldAirMode=false;RIDER_LOCAL static OriginalPassiveAirState passive;RIDER_LOCAL static OriginalAirPrewindState prewind;RIDER_LOCAL static OriginalAirControlState air;RIDER_LOCAL static bool airAdjustLive=false; //air control owned rider+0x28C/+0x298 last tick
 RIDER_LOCAL static OriginalAirAnimationState airAnimation;RIDER_LOCAL_LAZY static OriginalAirControlProfile airProfile;
@@ -926,7 +931,7 @@ RIDER_LOCAL static std::optional<OriginalGroundState> humanEventSeed;
 // scalars where they differ from Zoe's; the surface vectors and orientation stay this course's. Snow Jam: unchanged.
 static OriginalGroundState human_event_seed_for_course(const OriginalGroundState& ch){
  if(std::string_view(browserEventLocation)=="ARA1")return ch;
- const auto zoe=browser_start_ARA1::browserEventGroundState();auto out=browserEventGroundState();
+ const auto zoe=browser_event_snow_jam_ground_state();auto out=browser_event_ground_state();
  terrain_original::Rounding rounding;using terrain_original::add;using terrain_original::sub;using terrain_original::mul;
  const auto dot3=[&](const auto& a,const auto& b){return add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(a[2],b[2]));};
  std::array<float,3> delta{};for(int k=0;k<3;k++)delta[k]=sub(ch.position[k],zoe.position[k]);
@@ -958,6 +963,8 @@ EMSCRIPTEN_KEEPALIVE void init_animation(const char* metadata,const char* skelet
  for(auto&[key,records]:m["animation_variants"].items())for(auto&d:records){OriginalAnimationVariant v{d["leaf"],d["weight"],d["allowed_flags"]};graph.rig->animationVariants[std::stoi(key)].push_back(v);if(v.leaf!=519)graph.rig->variantClips[v.leaf]=d["clip"];}
  rng.words=config["original_animation"]["random_state"].get<std::array<uint32_t,6>>();graph.variantRandom=[](){return rng.next();};
  pivotBone=config["original_animation"]["pivot_bone"];if(pivotBone>=graph.rig->bones.size())throw std::runtime_error("Air pivot outside skeleton");
+ browserSettingsTrickStat=config.contains("original_air_entry")?config["original_air_entry"]["profile"].value("trick_stat",0.f):0.f;
+ browserSettingsLandingStat=config.contains("original_landing")?config["original_landing"]["profile"].value("landing_stat",0.f):0.f;
  auto p=config["original_grab_control"]["profile"];grabStatSeed=browserStatFromSeed(p["grab_stat"].get<float>());grabStatSeeded=true;grabProfile.playbackRate=originalGrabPlaybackRate(grabStatSeed); /*149690 div.s at use*/grabProfile.extendedDefinitions=p["extended_definitions"];
  auto def=[](json d){return OriginalGrabDefinition{d["semantic"],d["upper_semantic"],d["score_id"],d["begin_points"],d["hold_points"]};};
  for(int i=0;i<15;i++){grabProfile.grabs[i]=def(p["grabs"][i]);grabProfile.tweak[i]=def(p["tweak"][i]);for(int t=0;t<2;t++)grabProfile.uber[t][i]=def(p["uber"][t][i]);}
@@ -967,7 +974,7 @@ EMSCRIPTEN_KEEPALIVE void init_animation(const char* metadata,const char* skelet
  for(unsigned i=0;i<24;i++){auto row=tc["named_tricks"][i];commitProfile.named[i]={row["id"],row["points"],row["identity_fields"].get<std::array<uint8_t,7>>()};}
  commitProfile.namedPointScale=cp["named_point_scale"];commitProfile.scoreScale=cp["score_scale"];commitProfile.spinScale=cp["spin_scale"];commitProfile.flipScale=cp["flip_scale"];
  auto ac=config["original_boost"]["award_context"];awardContext={ac["reward_mask"],ac["enable_tricky"]};trickHistory={};trickIdentity={};
- scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(0.0909090936f);
+ scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(browserSettingsTrickStat>0?browserSettingsTrickStat:0.0909090936f);
  for(auto&d:grabProfile.grabs)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};for(auto&d:grabProfile.tweak)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};for(auto&t:grabProfile.uber)for(auto&d:t)scoreRules[d.scoreId]={d.scoreId,d.beginPoints,d.holdPoints};
  for(int i=0;i<15;i++)scoringProfile.normal[i]=scoreRules.at(grabProfile.grabs[i].scoreId);
  for(int i=0;i<4;i++){auto t=config["original_grab_score"]["profile"]["hold_thresholds"][i];scoringProfile.holdThresholds[i]={t["seconds"],t["points"]};}
@@ -990,7 +997,7 @@ EMSCRIPTEN_KEEPALIVE void soft_collision_begin(int semantic,float spin){
  if(browserRailActive){auto view=rail_view();originalRailControlLeave(view);railBalance=view.balance;railHeldJump=railPreviousJump=false;}
  if(!graph.enter(semantic))throw std::runtime_error("Missing soft collision animation"); /*108388 plays through 3128E8(anim,semantic,0,-1): an ordinary play, so a fading-out copy of the same clip is inherited (311F00), not restarted (metro-glide-carve 1208)*/grab={};heldAirMode=passiveMode=false;
 }
-EMSCRIPTEN_KEEPALIVE void reset_animation(){finish_reset();retainedGroundLateral.reset();clear_skin_matrices();committedPoseTranslation={};clear_start();lastVisualTick=0xffffffffu;reset_boost_fx();committedTrickName.clear();clear_rails();reset_snow(true);reset_impact_fx(true);reset_trail();clear_reset();reset_crash();cachedCrashWorld.clear();completedMain=false;completedMainSemantic=-1;landingAirExitBaked=false;airExitInfo={};poseContact=initialPoseContact;poseControls={};legWeight=initialPoseContact.legWeight;graph.sequences.clear();graph.sampledLocal.reset();graph.nextRate=1;graph.defaultRoot=initialDefaultRoot;graph.defaultMirror=initialDefaultMirror;graph.requestedSemantics.fill(438);posedPhysical[7]=0;browserBodyVolume.reset();browserBodyQuery.reset();browserBodyResponse.reset();reset_body_queries();lastLandingSpin=0;trickHistory={};trickIdentity={};scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(0.0909090936f);gs={};gs.timeScale=1;gs.animationIndex=5;gs.animationClass=7;grab={};previousGround=true;previousHeld=false;seed_initial_sequences();}
+EMSCRIPTEN_KEEPALIVE void reset_animation(){finish_reset();retainedGroundLateral.reset();clear_skin_matrices();committedPoseTranslation={};clear_start();lastVisualTick=0xffffffffu;reset_boost_fx();committedTrickName.clear();clear_rails();reset_snow(true);reset_impact_fx(true);reset_trail();clear_reset();reset_crash();cachedCrashWorld.clear();completedMain=false;completedMainSemantic=-1;landingAirExitBaked=false;airExitInfo={};poseContact=initialPoseContact;poseControls={};legWeight=initialPoseContact.legWeight;graph.sequences.clear();graph.sampledLocal.reset();graph.nextRate=1;graph.defaultRoot=initialDefaultRoot;graph.defaultMirror=initialDefaultMirror;graph.requestedSemantics.fill(438);posedPhysical[7]=0;browserBodyVolume.reset();browserBodyQuery.reset();browserBodyResponse.reset();reset_body_queries();lastLandingSpin=0;trickHistory={};trickIdentity={};scoring={};reset_rail_score_tracking();clear_trick_scoring();score_init();lastScoreId=-1;banked=0;idleSeconds=0;idleControl=0;upperRequest358=0;upperRequestTick354=-1;animationTick=0;peers={};passiveMode=false;heldAirMode=false;passive={};prewind={};air={};airAnimation={};airProfile.trickStat=browserAttributesSet?browserAttributeStat(4):browserStatFromSeed(browserSettingsTrickStat>0?browserSettingsTrickStat:0.0909090936f);gs={};gs.timeScale=1;gs.animationIndex=5;gs.animationClass=7;grab={};previousGround=true;previousHeld=false;seed_initial_sequences();}
 // QA (compare-ps2-capture.mjs): a mid-run baseline seeds the 115D48 idle clock rider+0x35C from its first record.
 EMSCRIPTEN_KEEPALIVE void idle_clock_seed(float seconds){idleSeconds=seconds;}
 // 0x135BE0 in-flight stance switch (engine/air_switch.hpp), called from inside the control-5 update.
@@ -1040,6 +1047,10 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  scoreEvent=0;banked=deferredScore;deferredScore=0;++animationTick;board_press_filters();const bool airAdjustWasLive=airAdjustLive;airAdjustLive=false;gs.velocity={speed*100,0,0};if(!physicsAttached){gs.turn.current=turn;gs.animationTurn.current=turn;gs.brake.current=braking;}if(grounded)gs.crouch.current=charge;gs.boost=boost?1:0;if(physicsAttached){grabContext.superTime=boostState.superTime;grabContext.boostTier=boostState.tier;gs.reverseStance=physicsState.reverseStance;gs.state320Equals324=physicsState.state320Equals324;gs.prewindStyle=physicsState.prewindStyle;gs.boost=physicsState.boost;gs.manualSpin=physicsState.manualSpin;gs.velocity=physicsState.velocity;if(grounded||previousGround){gs.turn=physicsState.turn;gs.brake=physicsState.brake;gs.crouch=physicsState.crouch;}gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.normal=physicsState.normal;gp.surface=physicsProfile.surface;}
  const int softExit=physicsAttached?take_soft_transition():-1;
  if(softExit==0)prewind.jumpGate=0;
+ // 131620's 131CC0: control 0 with motion 1 requests control 4 at once. A soft collision (12E778) that hands back control 0 in the air
+ // is a passive departure: the next tick's control 0 requests control 4 (fuzz r7-0053 1684..1686: control 3, then 0 in the air, then 4;
+ // the port stayed in control 0 for the whole flight and encoded control 0's words)
+ if(softExit==0&&!grounded&&!crash.active)passiveMode=true,passiveDeparture=1;
  if(softExit==4){passiveMode=true;heldAirMode=false;gs.controlState=4;originalPassiveAirBegin(passive,gs,prewind);}
  bool passiveEntryApproached=false; //control 4 requested control 5 this tick and already approached the triplets
  const bool startFrame=browserStartFrame;const bool resetFrame=browserResetActive;const bool crashFrame=crash.active;const bool railFrame=railOwned||handplant_owned();
@@ -1108,7 +1119,9 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  // Active air control owns the single1211F8 filter tick, including charged release.
  // (a board press leaving the ground: control 1's ground pass already ran this tick's 1211F8: PS2 hl2/press-rail 1016, +0x1F0 lags a tick)
  if(physicsAttached&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&!softFrame&&!grounded&&!heldAirMode&&!passiveMode&&!passiveEntryApproached&&!(board_press_air_frame()&&groundMotionDeparture)){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);} /*a 12F730 -> control 5 request already had its 1211F8 pass above (pipe-uber 601)*/
- if(physicsAttached&&!(startFrame&&browserStartFrozen)&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&(!passiveMode||passiveDeparture==1)&&!softFrame)groundControlApproach(gs.animationTurn); /*passive departure tick: control0 already ran, 1211F8 advances +1FC*/if(physicsAttached)step_secondary_motion();
+ // 1211F8 approaches +0x1FC once a tick: a 12F730 -> control 5 request already approached it in the passive step above (fuzz
+ // r2-0204-bones 2162: Mac's +0x1FC 0.101 -> 0.051 on the PS2, 0.001 here; his posed lean and bones 2 cm off from there)
+ if(physicsAttached&&!(startFrame&&browserStartFrozen)&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&(!passiveMode||passiveDeparture==1)&&!softFrame&&!passiveEntryApproached)groundControlApproach(gs.animationTurn); /*passive departure tick: control0 already ran, 1211F8 advances +1FC*/if(physicsAttached)step_secondary_motion();
  if(!railFrame)originalAirPrewindApproach(prewind); //1211F8 approaches the prewind pair every tick, after controller selection.
  attack_control_changes(browser_control_state()); //0x131C30/0x12FB68 upper-attack exit
  if(physicsAttached){gs.adjustment28C=physicsState.adjustment28C;gs.adjustment298=physicsState.adjustment298;} //1043F8 (kind 11) reads rider+0x28C/+0x298, also while a landed air adjust fades out
@@ -1218,7 +1231,8 @@ static float* animation_post_phase(){
   // 13F4CC skips only a computer rider's 13F488 query near its route; 105398 (and 107888) still run.
   // (no air post in the tick the rail motion lost the rail, whatever the controller: a soft control 3 leaving a rail too; PS2 hl2/rail-bra2-a
   // 1760: the port bounced off an instance there)
-  const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||crashFrame||railStepConsumed||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
+  const bool landingRecovery=browserLandingRecoveryReset;browserLandingRecoveryReset=false; // 139C88's recovery branch skips its 13AA48 / 105398
+ const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||landingRecovery||crashFrame||railStepConsumed||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
   // 139C88 runs 13AA48 after its touchdown too (13A718 -> 11E150 -> 13AA48 at 13A744, also after a landing crash): the query
   // keeps the air filter (query+0x10 = rider+0x180, not the new ground normal +0x370) and 13AA48's own response (no ground
   // projection or steering); only 105398 after it sees the ground motion 11FE78(0) set (PS2 allpeak/apr-start 3581: a landing

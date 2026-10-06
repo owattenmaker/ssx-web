@@ -6,7 +6,7 @@
 // The lineup (web/lineup.js): prepare() runs the original roster build 0x23A4F0 for the selected human when an event
 // is loaded and sets the chosen riders up (assembled from /assets/<course>/lineups.json); without lineups.json, or until
 // prepare() runs, the course's anchor lineup (npc-riders.json) races.
-import { createAiRacers } from './ai-racers.js';
+import { createAiRacers, syncWorldNodes } from './ai-racers.js';
 import { eventAnchorWords } from './event-anchor-rng.js';
 import { pv } from './pv-flags.js';
 import { rivalCharacter, CHARACTER_ID as RIVAL_IDS } from './rival-mode.js';
@@ -295,6 +295,8 @@ export async function createAiRace({
       if (!replay) agedAtEnd = false;
       if (!replay && !preparedEvent?.career) ageAll();
       racers.start({ gridStart: !!opts.gridStart }); // (pv eventInWorldAi: the CTM riders' carried words, core npc_grid_start)
+      // pv npcWorldNodes: a Single Event's riders share the human's world node states (the in-world race syncs in main.js worldAiSync)
+      if (pv('npcWorldNodes') && !opts.gridStart) syncWorldNodes(human, racers.npcs.map((n) => n.core));
       if (tables) racers.setRelationships(api.doc.relationships.scores);
       // this race's presentation draws, noted at the next load; a replay's ticks draw the presentation stream too (the PS2 replay
       // does not restore 0x4FF018), so they count on

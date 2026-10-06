@@ -81,6 +81,18 @@ export function readAiCapture(binPath) {
       return Array.from({ length: 6 }, (_, j) => { const o = base + 36 * j;
         return { enabled: u(o), human: u(o + 4), distance: f(o + 8), bearing: f(o + 12), t10: u(o + 16), t14: u(o + 20), t18: u(o + 24), t1c: u(o + 28), t20: u(o + 32) }; });
     }
+    // build --ai-bones (layout.ai_bones): the computer rider's posed world bones 0..21 as positions, then bone 22 (the board root)
+    // as position and quaternion; null without it.
+    const B = L.ai_bones;
+    const bonesOf = (k) => {
+      if (!B) {
+        return null;
+      }
+      const o = B.offset + k * B.stride;
+      const positions = Array.from({ length: B.positions }, (_, b) => fv(o + B.position_bytes * b, 3));
+      const board = { position: fv(o + B.board_row_offset, 3), quaternion: fv(o + B.board_row_offset + 16, 4) };
+      return { positions, board };
+    };
     const ai = [], inHeat = heat && at / RECORD >= heatFrom, riderAt = inHeat ? heat.riderOf : riderOf, orderAt = inHeat ? heat.order : order, othersAt = inHeat ? heat.others : others;
     for (let k = 0; k < othersAt.length; k++) {
       const b = A.base + k * A.stride, s = A.slot_fields;
@@ -96,6 +108,7 @@ export function readAiCapture(binPath) {
         timeScale: f(act(0x300)), routePathAddress: ab8, routePath: ab8 >= pathBank0 ? (ab8 - (u(A.globals_pathbank_coursepaths_game_humanowner) || pathBank0)) / 64 : ab8,
         behaviour: { f44: u(oc(0xf44)), f48: u(oc(0xf48)) },
         raw: { actor_000_b40: view(act(0), 0xb40), owner_00_40: view(b + s.owner_00_40, 0x40), owner_1c0_300: view(b + s.owner_1c0_300, 0x140), owner_de0_f50: view(b + s.owner_de0_f50, 0x170) },
+        bones: bonesOf(k),
       });
     }
     const R = A.rng_draws_total_marka0_markra_npcunmatched, draws = u(R);

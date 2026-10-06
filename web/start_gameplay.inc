@@ -1,5 +1,6 @@
 #include "../engine/start_control.hpp"
 #include "generated/event_start_seed.hpp"
+#include "event_start_select.hpp" // the mode-1 or exact start seeds
 extern void apply_snow_jam_dead_nodes();
 RIDER_LOCAL extern bool browserStarting,browserStartFrame,browserStartFrozen;
 RIDER_LOCAL extern bool (*browserStartControl)();RIDER_LOCAL extern void (*browserStartClear)();

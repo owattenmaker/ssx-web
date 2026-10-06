@@ -190,6 +190,20 @@ callback checks, online and native paths) or needs situations the seeds never re
   | 6 | r8-0022-m5 (dra4, six riders) | Mac at 5921, then the RNG, the pairs and the human | sent |
   | 7 | r6-0273 (dra4, six riders) | Luther crashes at 3982; the human exact to the end | sent |
   | 8 | r7-0053 (press-ice-rnb) | the rail-release velocity 1-2 ULP at 836 | sent |
-- **Gap seen by the physics agent:** --ai-state records no computer-rider bones, so their pose parity is not gated.
+- **Computer-rider poses:**
+  - **The gap:** --ai-state recorded no computer-rider bones, which feed physics (13A7B0's probe, the body queries).
+  - **Now:** `build --ai-bones` and compare-ai-capture.mjs firstBoneInexact cover it (docs/ai-racers.md "Verification");
+    diff.py records them with FUZZ_AI_BONES=1.
+  - **First finding:** on the unmutated gravitude pad, Luther's pose is about 1 cm off from 2403 with physics exact. On r2-0204,
+    Mac's pose is about 2 cm off from 2163.
+- **Rechecks on newer cores:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against
+  each seed's own six-rider gate limit, diff.py six_limit).
+  - On core35: repros 2, 4, 8 and 9 exact.
+  - On core37: r10-0198 (an air-to-reset that ran that tick's post contacts) and r12-0064 exact.
+  - Still open on core37:
+    - r2-0249, r4-0048, r7-0028-m1 and r7-0082-m0: the shared RNG hundreds of ticks after a human pad change, with the riders
+      exact;
+    - r7-0038-m2: Allegra;
+    - r6-0103: Mac.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries
   are in mode 1 too.

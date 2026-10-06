@@ -1,3 +1,50 @@
+> **Switched on 2026-10-05 (coordinator): pv npcWorldNodes.** A Single Event's computer riders share the human's world node states (one world, as on the PS2; fuzz r7-0082 exact to its end). Verified: all 48 six-rider ps2-captures (physics agent) and test-rival-page.mjs through the real Single Event path in Chrome, 5 rival events exact as far as their gates. Core37 is live.
+
+> **Fuzzing, mode-1 differential: 15 repros, computer-rider pose capture (2026-10-05, fuzzing agent):** see [fuzzing.md](fuzzing.md)
+> and [ai-racers.md](ai-racers.md) "Verification".
+> - **Method:**
+>   - The fuzz variants are captured on ARMSX2 in mode 1 (runs/fuzz-mode1). The port is bit-exact there, so a first divergence
+>     is logic; this is the coordinator's one exception to exact-mode captures.
+>   - Event seeds are captured with --ai-state and compared six-rider: an isolated race still runs its computer riders on the
+>     PS2, and the rival fires stage triggers.
+>   - local/fuzz/diff.py: build / compare / batch / minimise (a greedy chunk revert). recheck.py re-runs every capture on a new
+>     core.
+> - **Fixed by the physics agent from these repros** (core32-core37):
+>   - a reset from a handplant;
+>   - landing with a board press pending;
+>   - the rail-release predictor seed;
+>   - a soft exit to control 0 in the air;
+>   - the control 3 -> 0 -> 4 command words;
+>   - an air-to-reset that ran that tick's post contacts.
+> - **Open on core37** (minimised, sent):
+>   - four cases where a human pad change makes the shared RNG differ hundreds of ticks later (r2-0249, r4-0048, r7-0028-m1,
+>     r7-0082-m0);
+>   - Allegra (r7-0038-m2) and Mac (r6-0103 / r2-0204) divergences.
+>   - r1-0066 was withdrawn: a harness gap (the rival fires the rock trigger).
+> - **Computer-rider poses:** new default-off `tools/ps2_capture.py build --ai-bones` (with --ai-state, not with --watch).
+>   - It records each computer rider's bones 0..21 and the board root 22.
+>   - compare-ai-capture.mjs reports summary.ai[k].firstBoneInexact.
+>   - The unmutated gravitude race has Luther's pose about 1 cm off from 2403 with physics exact; the r2-0204 variant has Mac
+>     about 2 cm off from 2163, which feeds his landing. Handed to the physics agent to gate.
+> - **Fuzz rounds:** 14 rounds, about 4300 variants. 0 exceptions, 0 NaN, no real cap or ground violation.
+>   - The PS2 itself takes Allegra to 3450 cm/s.
+>   - Every port control transition flagged so far also appears on the PS2.
+>   - Coverage keys have flattened (+120 in r14).
+> - **Hook fixes:**
+>   - the control word comes from rider_control_info (reference_motion [11] keeps 0 / 4 in the air);
+>   - the ground-sink check needs no floor at the rider's feet as well.
+
+> **Deployed 2026-10-05 (coordinator): core37.** web/runtime core.wasm `0e3d4527…` (core.js `f8ae9c9c…`, unchanged) copied from local/physics-jank/core37-snapshot (531 clean). On top of core34, from fuzz repros: a rail release seeds the predictor before the +0x2E4 clamp (13BFA8); a soft collision ending with control 0 in the air is a passive departure (131620 -> 131CC0); a recovery-material landing resets (116120 reason 1) and skips that tick's body / instance contacts (139C88). Exact start seeds (event_start_seed_exact.hpp) are selected only in exact builds; mode-1 builds are byte-identical.
+
+> **core37: four more fuzz logic fixes, the exact start seeds (2026-10-05, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures" and "Exact start seeds".
+> - **Scratch core:** local/physics-jank/core37-snapshot (no export or JS changes). Full ps2-captures: 531 clean.
+> - **Logic (oracle-traced fuzz repros, each exact past its old divergence):**
+>   - 13BFA8's 11FE78(1) seeds the predictor before the speed clamp (r7-0053 836: the rail release velocity 2 ULP);
+>   - 131620's 131CC0 requests control 4 for control 0 in the air: a soft exit to control 0 in the air is a passive departure (r7-0053 1686, r3teeter-0029 2911: control 0's words in the air);
+>   - 139C88's recovery-material landing (116120 reason 1) skips that tick's 13AA48 / 105398 (r10-0198 3088: a wall bounced the reset rider).
+> - **Exact start seeds** (exact builds only): tools/export_exact_event_starts.py + tools/generate_event_seed.py --exact -> generated/event_start_seed_exact.hpp, selected by web/event_start_select.hpp; 12 courses; computer riders: tools/export_npc_riders.py --exact -> local/assets/native-exact. Exact-base zoe-race: exact through 490 (was 19).
+> - **Open:** r2-0204-m0 / r6-0103 (computer riders' landing normal from their pose: the fuzzing agent adds compact pose records); r2-0249 (Gravitude billboard 332333's slot-5 program 85 draws builtin 77 one tick late); r7-0082 (Psymon's trigger 193069 program 122 runs on two ticks on the PS2, once here).
+
 > **Deployed 2026-10-05 (coordinator): core34.** web/runtime core.wasm `6e4ed21f…` (core.js `f8ae9c9c…`, unchanged) copied from local/physics-jank/core34-snapshot (531 clean). On top of core31, from the fuzzer's mode-1 repros: a Select reset during a handplant runs control 11's and motion 5's exits (116120 -> 11FEC8(9), 11FE78(3) -> 139178); the landing classification reads +0x330, so a pending air press lands into control 1 (139C88); animation_events.cpp uses the chopped mul.s. Plus matcher batch 5 (mode-1-neutral).
 
 > **core34: fuzz logic fixes, matcher batches 4-5, the start word (2026-10-05, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures".

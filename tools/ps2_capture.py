@@ -345,6 +345,10 @@ AI_GLOBALS = AI_GAME + 0xA0                     # 29408: *(0x4D33AC) AI path ban
 AI_RNG = AI_GLOBALS + 16                        # 29424: draws since previous record, total draws, marker a0, marker $ra, unmatched NPC returns, 3 x 0
 AI_RNG_LOG = AI_RNG + 32                        # 29456: AI_LOG_ENTRIES x 16 bytes
 AI_WATCH = 30720                                # --watch windows with --ai-state
+# --ai-bones (with --ai-state, instead of --watch): each computer rider's posed world bones *(*(actor+0x780)+0x2C) in the watch area,
+# the pose this pass's 13A7B0 landing probe and 13AA48 / 13F488 / 105398 body queries read: bones 0..21 as positions (3 words of the
+# 32-byte row), then bone 22 (the board root) as its full 32-byte row. AI_BONES_STRIDE bytes per computer-rider slot.
+AI_BONES, AI_BONES_COUNT, AI_BONES_STRIDE = AI_WATCH, 22, 22 * 12 + 32
 assert AI_RNG_LOG + 16 * AI_LOG_ENTRIES <= AI_WATCH
 NPC_EXIT = 0x10A87C         # common epilogue of NPC provider 0x10A768: s0 = 8-byte command (a1), s1 = owner (a0)
 NPC_EXIT_BYTES = struct.pack('<2I', 0x7BB00030, 0x7BB10020)       # lq s0,0x30(sp) / lq s1,0x20(sp)
@@ -370,8 +374,9 @@ def relocatable(word):
     return AT not in (rs, rt)
 
 
-def assemble_ai(back, marker_words):
-    """AI record block (entered from the provider-exit hook, returns to `back`), NPC exit hook, RNG hook, markers."""
+def assemble_ai(back, marker_words, bones=False):
+    """AI record block (entered from the provider-exit hook, returns to `back`), NPC exit hook, RNG hook, markers.
+    `bones` (--ai-bones): also each computer rider's posed world bones into AI_BONES (see there)."""
     a = Asm(AI_CODE)
     hi = (AI_DATA + 0x8000) >> 16; lo = AI_DATA - (hi << 16)
 
@@ -387,6 +392,18 @@ def assemble_ai(back, marker_words):
         base = AI_BASE + k * AI_STRIDE
         a.lw(T9, AI_F_OTHERS + 4 * k, V1); a.beq(T9, ZERO, f'ai_skip{k}'); a.nop()
         copy(T9, 0, base + AI_ACTOR, 0xB40 // 4, f'ai_actor{k}')
+        if bones:
+            # T1 = *(*(actor+0x780)+0x2C), the cached world bones (skipped while either pointer is 0)
+            a.lw(T1, 0x780, T9); a.beq(T1, ZERO, f'ai_bones_skip{k}'); a.nop()
+            a.lw(T1, 0x2C, T1); a.beq(T1, ZERO, f'ai_bones_skip{k}'); a.nop()
+            a.addiu(T7, T3, AI_BONES + k * AI_BONES_STRIDE); a.addiu(T8, ZERO, AI_BONES_COUNT)
+            a.label(f'ai_bones{k}')
+            for w in range(3):
+                a.lw(T5, 4 * w, T1); a.sw(T5, 4 * w, T7)
+            a.addiu(T1, T1, 32); a.addiu(T7, T7, 12); a.addiu(T8, T8, -1)
+            a.bne(T8, ZERO, f'ai_bones{k}'); a.nop()
+            copy(T1, 0, AI_BONES + k * AI_BONES_STRIDE + AI_BONES_COUNT * 12, 8, f'ai_board{k}')   # bone 22: the whole row
+            a.label(f'ai_bones_skip{k}')
         a.lw(T9, 0x77C, T9)                                       # motion owner
         copy(T9, 0, base + AI_OWNER_A, 0x40 // 4, f'ai_owner_a{k}')
         copy(T9, 0x1C0, base + AI_OWNER_B, 0x140 // 4, f'ai_owner_b{k}')
@@ -503,6 +520,7 @@ def script_bytes(segments):
 
 HUMAN_VTABLES, COMPUTER_VTABLES, DEFAULT3_VTABLE = (0x4583A8, 0x458360), (0x458660, 0x458618), 0x45CA38
 MAX_OTHERS = 5          # record layout: five computer-rider position/velocity slots (3008..3168)
+assert AI_BONES + MAX_OTHERS * AI_BONES_STRIDE <= AI_RECORD
 
 
 def _word_hits(memory, value, start=0x100000):
@@ -599,7 +617,7 @@ def verify_baseline(memory, found=None):
     return pad
 
 
-def ai_patches(memory, rider, others, back):
+def ai_patches(memory, rider, others, back, bones=False):
     """--ai-state hook patches (the AI arena 0xF8000..0x100000 is covered by verify_baseline's zero check)."""
     u = lambda at: struct.unpack_from('<I', memory, at)[0]
     for other in others:
@@ -608,7 +626,7 @@ def ai_patches(memory, rider, others, back):
     for address, expected in ((NPC_EXIT, NPC_EXIT_BYTES), (RNG_ENTRY, RNG_ENTRY_BYTES)):
         if memory[address:address + 8] != expected: raise ValueError(f'Hook bytes differ at {address:#x}')
     words = {fn: struct.unpack_from('<2I', memory, fn) for fn in MARKERS}
-    code, entries = assemble_ai(back, words)
+    code, entries = assemble_ai(back, words, bones)
     data = struct.pack('<16I', 0, 0, 0, 0, 0, 0, 0, rider, *others, *[0] * (MAX_OTHERS - len(others)), 0, 0, 0)
     j = lambda target: struct.pack('<2I', (2 << 26) | (target >> 2), 0)
     patches = [dict(address=hex(AI_CODE), expected='00' * len(code), replacement=code.hex()),
@@ -620,13 +638,16 @@ def ai_patches(memory, rider, others, back):
     return patches
 
 
-def build(baseline, script_path, output, isolate=False, camera_variant=None, watches=(), ai_state=False, pokes=(), audio_log=False):
+def build(baseline, script_path, output, isolate=False, camera_variant=None, watches=(), ai_state=False, pokes=(), audio_log=False,
+          ai_bones=False):
     spec = json.loads(Path(script_path).read_text())
     with zipfile.ZipFile(baseline) as archive: memory = archive.read('eeMemory.bin')
     found = discover(memory)
     pad = verify_baseline(memory, found)
     rider, camera, outer, others = found['rider'], found['camera'], found['outer'], found['others']
     record, capacity, watch_offset = (AI_RECORD, AI_CAPACITY, AI_WATCH) if ai_state else (RECORD, CAPACITY, WATCH)
+    if ai_bones and (not ai_state or watches):
+        raise ValueError('--ai-bones needs --ai-state and uses the watch area: no --watch with it')
     if any(length % 4 or length <= 0 for _, length in watches) or watch_offset + sum(l for _, l in watches) > record:
         raise ValueError('Watch windows must be word multiples that fit the record')
     ai = dict(entry=AI_CODE, watch_offset=AI_WATCH) if ai_state else None
@@ -660,7 +681,7 @@ def build(baseline, script_path, output, isolate=False, camera_variant=None, wat
         # Run the live chase object through another variant driver (0x45CAB0 Near / 0x45C9C0 Far) with its state intact.
         vt = {0x3C: 0x45CAB0, 0x3E: 0x45C9C0}[camera_variant]
         patches.append(dict(address=hex(camera + 0x10), expected=struct.pack('<I', 0x45CA38).hex(), replacement=struct.pack('<I', vt).hex()))
-    if ai_state: patches += ai_patches(memory, rider, others, ai['back'])
+    if ai_state: patches += ai_patches(memory, rider, others, ai['back'], ai_bones)
     if audio_log:   # sound/speech dispatch call log (tools/ps2_audio_log.py), streamed by run() into RUN.audio.json
         import ps2_audio_log; patches += ps2_audio_log.patches(memory)
     for address, value in pokes:
@@ -680,13 +701,18 @@ def build(baseline, script_path, output, isolate=False, camera_variant=None, wat
                             'local_positions_32x16': LOCAL_POSITIONS, 'local_rotations_32x16': LOCAL_ROTATIONS, 'animator_00_80': ANIMATOR,
                             'sequences_6x216_channel_address_d0': SEQUENCES, 'sequence_count': SEQUENCE_COUNT, 'owner_200_300': OWNER_CONTROL, 'shared_rng_6': RNG_STATE, 'obstacle_callback': HIT_RECORD, 'score_000_1d0': SCORE_RECORD, 'hud_slots_44x6': HUD_SLOTS_RECORD,
                             'watches': [dict(address=hex(w), length=l) for w, l in watches], 'watch_offset': watch_offset,
-                            **({'ai_state': ai_layout()} if ai_state else {})}, others=[hex(x) for x in others])
+                            **({'ai_state': ai_layout()} if ai_state else {}),
+                            **({'ai_bones': dict(offset=AI_BONES, stride=AI_BONES_STRIDE, positions=AI_BONES_COUNT, position_bytes=12,
+                                                 board_row_offset=AI_BONES_COUNT * 12, board_bone=AI_BONES_COUNT,
+                                                 source='*(*(actor+0x780)+0x2C) world bones, sampled with the AI windows')}
+                               if ai_bones else {})}, others=[hex(x) for x in others])
     if ai_state:
         u = lambda at: struct.unpack_from('<I', memory, at)[0]
         manifest.update(ai_state=True, ai_code=hex(AI_CODE), ai_data=hex(AI_DATA), human_owner=hex(u(rider + 0x77C)),
                         others_owners=[hex(u(o + 0x77C)) for o in others], ai_path_bank=hex(u(0x4D33AC)))
     if pokes: manifest['pokes'] = [dict(address=hex(a), value=hex(v)) for a, v in pokes]
     if audio_log: manifest['audio_log'] = True
+    if ai_bones: manifest['ai_bones'] = True
     manifest['fpu_mode'] = fpu_mode()
     output.with_suffix('.capture.json').write_text(json.dumps(manifest, indent=2) + '\n')
     return manifest
@@ -876,6 +902,9 @@ def main():
     b.add_argument('--watch', action='append', default=[], help='ADDR:LEN raw EE window copied into every record from layout.watch_offset')
     b.add_argument('--poke', action='append', default=[], help='ADDR:VALUE 32-bit word written into the derived savestate (a VALUE with a decimal point is a float, e.g. 0x1470498:0.97)')
     b.add_argument('--audio-log', action='store_true', help='log sound plays / speech requests / Uber and Tricky dispatchers (tools/ps2_audio_log.py) into RUN.audio.json')
+    b.add_argument('--ai-bones', action='store_true',
+                   help='with --ai-state: each computer rider\'s posed world bones 0..21 (positions) and the board root 22 (full row) '
+                        'in the watch area (manifest layout.ai_bones); no --watch')
     b.add_argument('--ai-state', action='store_true', help='32 KiB records: five computer riders (actor/owner windows, NPC provider commands), human +0..0x100, game info, per-draw RNG attribution (manifest layout.ai_state)')
     r = sub.add_parser('run'); r.add_argument('state'); r.add_argument('output'); r.add_argument('--frames', type=int, required=True)
     r.add_argument('--speed', default='normal', choices=['normal', 'turbo', 'unlimited']); r.add_argument('--timeout', type=int, default=600)
@@ -886,7 +915,7 @@ def main():
         address, value = text.split(':')
         word = struct.unpack('<I', struct.pack('<f', float(value)))[0] if '.' in value and not value.lower().startswith('0x') else int(value, 0) & 0xFFFFFFFF
         return int(address, 0), word
-    if args.cmd == 'build': print(json.dumps(build(args.baseline, args.script, args.output, args.isolate, args.camera_variant, [tuple(int(v, 0) for v in w.split(':')) for w in args.watch], args.ai_state, [poke(x) for x in args.poke], args.audio_log), indent=2))
+    if args.cmd == 'build': print(json.dumps(build(args.baseline, args.script, args.output, args.isolate, args.camera_variant, [tuple(int(v, 0) for v in w.split(':')) for w in args.watch], args.ai_state, [poke(x) for x in args.poke], args.audio_log, args.ai_bones), indent=2))
     else: print(json.dumps(run(args.state, args.output, args.frames, args.speed, args.timeout, [int(x) for x in args.snap.split(',') if x], args.keep_states), indent=2))
 
 

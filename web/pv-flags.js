@@ -181,6 +181,10 @@
 // bandwidth, and its work stages (course build, rider, lineup, warm-up, intro, world warm) by their measured time. No minimum (the
 // PS2's screens last as long as the load: 0x2454F8), 100% only when everything is done, and a line under the % saying what is
 // loading ('load-stage' diag events past 5 s). Off: the PS2 curve over the 7 s minimum, then 98% until the work promises settle.
+// npcWorldNodes (gameplay, docs/crash-motion.md "Fuzz repros on mode-1 captures"): a Single Event's computer riders take the human's
+// world node states (DeadNode / Hide / RestoreNode, instance flags) and its later changes as kind 9 events (web/ai-racers.js syncWorldNodes),
+// as the in-world event does. The PS2 has one world: a RestoreNode a computer rider's trigger program made is restored by the section scan
+// in that world (fuzz r7-0082 3001: Psymon's trigger 193069 fires again the next tick); the computer riders' contexts run no sections.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -230,7 +234,8 @@ export const PV_DEFAULTS = Object.freeze({
   riderCull: true,
   fxCull: true,
   setBlendClass: true,
-  loadMeter: true
+  loadMeter: true,
+  npcWorldNodes: true
 });
 const overrides = new Map();
 function fromQuery() {

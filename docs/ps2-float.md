@@ -356,6 +356,16 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
 
 The port's `--event` setup reproduces the mode-1 bits, so its grid placement is the next form to fix.
 
+### Mode-1-base gates
+
+These gates keep their mode-1 baseline, because the state they start from can't be re-derived. When the swap lands, each one either gets a new scenario captured from an exact root or is retired with a note.
+
+| Gate | Baseline | Why |
+|---|---|---|
+| peak1-lodge-attrs | `…/7fde9fd7…/scratchpad/ba/ps2/bought-t0.p2s` | the baseline lived in another session's scratchpad; file and recipe are gone |
+| peak1-green-start | `…/7fde9fd7…/scratchpad/lodgewall/ps2/navpre/s682.p2s` | the same |
+| weather/eba3-lightning | `…/7fde9fd7…/scratchpad/m2m-1620-clean.p2s` | the same |
+
 ### Status (2026-10-05)
 
 No-go for the swap. Per-gate scores against `local/ps2-capture/runs-exact`. The exact run also has the gates added later: allpeak/*-start, fr-throne-unload, c0a-ws13-splines.

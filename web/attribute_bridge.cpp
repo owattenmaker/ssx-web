@@ -37,6 +37,7 @@ void browser_apply_ground_attributes(){
     landingProfile.landingStat=browserAttributeStat(6); // 0x149120 landing; 0x149208 rail balance reads the same field
 }
 // The ground and landing stats of the current profiles, recomputed by div.s in the current arithmetic (browserStatFromSeed).
+RIDER_LOCAL extern float browserSettingsLandingStat; // web/animation_bridge.cpp (the rider's settings)
 void browser_reseed_ground_stats(){
     auto reseed=[](OriginalGroundProfile& p){
         p.topSpeedStat=browserStatFromSeed(p.topSpeedStat);
@@ -45,7 +46,8 @@ void browser_reseed_ground_stats(){
     };
     reseed(physicsProfile);
     for(auto& m:physicsMaterials)reseed(m);
-    landingProfile.landingStat=browserStatFromSeed(landingProfile.landingStat);
+    // 149120: the rider's own landing stat (its settings) over the compiled seed's 1/11
+    landingProfile.landingStat=browserStatFromSeed(browserSettingsLandingStat>0?browserSettingsLandingStat:landingProfile.landingStat);
 }
 extern "C" {
 // raw: the seven attribute progress bytes in original order (speed, accel, tricks, edging, spin, toughness,

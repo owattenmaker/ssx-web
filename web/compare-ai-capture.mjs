@@ -9,6 +9,7 @@ import fs from 'node:fs';
 // CORE_JS=path/core.js: a private core (CORE_OUT=dir sh web/build-core.sh) instead of web/runtime, as compare-ps2-capture.mjs.
 const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
 import { createAiRacers, rngNext, syncWorldNodes } from './ai-racers.js';
+import { pv } from './pv-flags.js'; // SSX_PV=npcWorldNodes (node): the page's ?pv= switches
 import * as eventSnapshot from './event-snapshot.js';
 import * as eventReturn from './event-return.js';
 import { readAiCapture, rosterOrder } from './ps2-capture-ai.mjs';
@@ -272,7 +273,7 @@ if (ctmFull) { for (const r of records) r.gameTick = r.tick; // (peak-capture.mj
   // the event location's start rows (its paths.json variant 0), for WS13's 1297C8(C, 1) (web/event-heat.js)
   var heatBank = () => { const loc = peakWorld.manifest.locations.find((l) => l.code === ctmFull); return JSON.parse(text(`${loc.root.replace(/^\/assets\//, '')}paths.json`)).variants['0']; };
   if (ws13) { heat = (await import('./ctm-heat-setup.mjs')).planHeat({ records, C: ctmPlan.C }); console.error('ws13: replay from record', heat.S, 'WS13', heat.W, 'grid', heat.G, 'semi countdown', heat.C2); }
-} else { human._reset_pad_history(); human._start_event(); racers.start(); }
+} else { human._reset_pad_history(); human._start_event(); racers.start(); if (pv('npcWorldNodes')) syncWorldNodes(human, racers.npcs.map((n) => n.core)); }
 if (inWorldAi && !ctmFull) { const seed = argValue('--node-seed'); if (seed) console.error('node seed', human._peak_world_seed(str(human, fs.readFileSync(seed, 'utf8'))), 'nodes');
   syncWorldNodes(human, racers.npcs.map((n) => n.core)); }
 // --ctm-countdown: a CTM countdown savestate's human keeps the words core event_grid_start keeps (compare-ps2-capture.mjs
@@ -325,7 +326,10 @@ function racersFieldsInit() { return [0, 1, 2, 3, 4].map(() => ({})); }
 const note = (k, key, tick, web, ps2) => { if (!(key in fieldFirst[k])) fieldFirst[k][key] = { tick, web, ps2 }; };
 const same = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-const first = { human: null, rng: null, ai: [null, null, null, null, null], ai1cm: [null, null, null, null, null], aiControl: [null, null, null, null, null] };
+const first = { human: null, rng: null, ai: [null, null, null, null, null], ai1cm: [null, null, null, null, null], aiControl: [null, null, null, null, null],
+  aiBones: [null, null, null, null, null] };
+// build --ai-bones captures: compared bone ticks per computer rider
+const aiBoneTicks = [];
 const worldDraws = args.includes('--world-draws');
 const rows = [];
 const resync = args.includes('--rng-resync'); const rngEvents = []; const rowsRank = [];
@@ -622,6 +626,31 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
     row.ai.push({ exact, errCm: +err.toFixed(3), control: m[11], ground: m[10] });
     if (!exact && !first.ai[k]) first.ai[k] = { tick: ps2.tick, errCm: err, velErr: dist(m.slice(3, 6), o.velocity), control: m[11], words: wordsHex(n), draws: n.info?.[5] };
     if (err > 1 && !first.ai1cm[k]) first.ai1cm[k] = { tick: ps2.tick, errCm: err, control: m[11] };
+    // build --ai-bones: the computer rider's posed world bones (world_pose_bones; bones 0..21 positions, 22 position + quaternion)
+    // against record i+1's (the AI windows: state after tick T-1). Opponent rigs keep slots 0..23 (test-opponent-riders).
+    const pb = aiCapture?.records[i + 1]?.ai[k]?.bones;
+    if (pb) {
+      const wb = f32(n.core, n.core._world_pose_bones(), 1 + 23 * 7);
+      const bad = [];
+      for (let b = 0; b < pb.positions.length && b < wb[0]; b++) {
+        for (let c = 0; c < 3; c++) {
+          if (Math.fround(wb[1 + 7 * b + c]) !== pb.positions[b][c]) {
+            bad.push([b, c, wb[1 + 7 * b + c], pb.positions[b][c]]);
+          }
+        }
+      }
+      const board = pb.positions.length;
+      const row = [...pb.board.position, ...pb.board.quaternion];
+      for (let c = 0; c < 7 && board < wb[0]; c++) {
+        if (Math.fround(wb[1 + 7 * board + c]) !== row[c]) {
+          bad.push([board, c, wb[1 + 7 * board + c], row[c]]);
+        }
+      }
+      aiBoneTicks[k] = (aiBoneTicks[k] || 0) + 1;
+      if (bad.length && !first.aiBones[k]) {
+        first.aiBones[k] = { tick: ps2.tick, diffs: bad.slice(0, 8) };
+      }
+    }
     if (aiCapture) { // record i+1 (tick T): provider words of tick T-1 = this browser tick; state after tick T-1.
       const rec = aiCapture.records[i + 1], a = rec.ai[k];
       const w0 = (n.info[0] + n.info[1] * 65536) >>> 0, w1 = (n.info[2] + n.info[3] * 65536) >>> 0;
@@ -685,7 +714,8 @@ function compareWeather(i, tick) {
 }
 const summary = { capture: capturePath, ticks: rows.length, ctmReturn: ctmReturn ? { row: ctmReturn.rowR ?? null, outRow: ctmReturn.rowOut ?? null } : null, humanScore: scoreState, firstHumanInexact: first.human, firstRngMismatch: first.rng, rngBlips: rngBlips.slice(0, 40), firstRankMismatch: first.rank || null, firstPairRecordMismatch: first.records || null, firstReturnPairRecordMismatch: first.returnRecords || null, // (from the in-world return's record on)
   finalRanks: rowsRank[rowsRank.length - 1],
-  ai: racers.npcs.map((n, k) => ({ slot: n.slot, character: n.character, firstInexact: first.ai[k], firstOver1cm: first.ai1cm[k], exactTicks: rows.filter((r) => r.ai[k].exact).length })),
+  ai: racers.npcs.map((n, k) => ({ slot: n.slot, character: n.character, firstInexact: first.ai[k], firstOver1cm: first.ai1cm[k], exactTicks: rows.filter((r) => r.ai[k].exact).length,
+    ...(aiBoneTicks[k] ? { boneTicks: aiBoneTicks[k], firstBoneInexact: first.aiBones[k] || null } : {}) })),
   standings: racers.standings(), rngEvents, injectedWorldDraws: injected,
   fields: fieldFirst.map((fields) => Object.fromEntries(Object.entries(fields).sort((a, b) => a[1].tick - b[1].tick).slice(0, +(process.env.FIELDS_MAX || 12)))) };
 if (stageWorld) { // stage world activity (web/stage_world.inc): LiveComp starts, slot 4/5 programs, particle effects
