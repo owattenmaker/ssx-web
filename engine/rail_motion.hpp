@@ -82,7 +82,8 @@ inline std::array<float,4> quaternionMultiply(const std::array<float,4>& a,const
     RailVector ax{a[0],a[1],a[2]},bx{b[0],b[1],b[2]};
     RailVector crossed{sub(mul(a[1],b[2]),mul(b[1],a[2])),sub(mul(a[2],b[0]),mul(b[2],a[0])),sub(mul(a[0],b[1]),mul(b[0],a[1]))};
     RailVector xyz=vadd(vadd(scale(ax,b[3]),scale(bx,a[3])),crossed);
-    float w=sub(sub(sub(mul(a[3],b[3]),mul(a[0],b[0])),mul(a[1],b[1])),mul(a[2],b[2]));
+    // msubay / msubz take vf0 (1.0) as fs: the y / z terms go through 1.0 x (docs/ps2-float.md "The VU0 forms").
+    float w=sub(sub(sub(mul(a[3],b[3]),mul(a[0],b[0])),mul(1.f,mul(a[1],b[1]))),mul(1.f,mul(a[2],b[2])));
     return {xyz[0],xyz[1],xyz[2],w};
 }
 template<class F> const F& need(const F& f,const char* what){if(!f)throw std::runtime_error(std::string("Rail callback missing: ")+what);return f;}

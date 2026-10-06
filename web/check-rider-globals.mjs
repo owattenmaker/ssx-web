@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 const SHARED = [
   /exactArithmetic/,                                            // the arithmetic profile of an SSX_PS2_EXACT_FPU core (docs/ps2-float.md)
+  /exactSeeds/,                                                 // the exact-baseline seeds switch of an SSX_PS2_EXACT_FPU core (docs/ps2-float.md)
   /^_Z(GV)?ZN3ssx6ps2fpu20powerOfTwoProductLow/,                // engine/ps2_fpu.hpp: the constant power-of-two multiply table, built once on first use
   /^(world|cameraTerrain)$/,                                   // web/core.cpp: course geometry, immutable after the load
   /pendingWorld/,                                               // web/core.cpp: that geometry while it builds (init_world_step, the load)

@@ -28,7 +28,7 @@ OriginalAirControlState originalAirControlRelease(OriginalAirPrewindState& state
 }
 namespace ssx {
 bool originalAirReverseTurnRequired(float brake,std::array<float,3> velocity,std::array<float,3> forward){
- Round round;if(brake!=0)return false;float a=terrain_original::mul(velocity[0],forward[0]),b=terrain_original::mul(velocity[1],forward[1]),c=terrain_original::mul(velocity[2],forward[2]);float speed=terrain_original::add(a,b);speed=terrain_original::add(speed,c);return speed<=-F(0x42de38e4);
+ Round round;if(brake!=0)return false;float a=terrain_original::mul(velocity[0],forward[0]),b=terrain_original::mul(velocity[1],forward[1]),c=terrain_original::mul(velocity[2],forward[2]);float speed=terrain_original::add(a,b);speed=terrain_original::add(speed,terrain_original::mul(1.f,c)); /*VU0 dot, 0x131688*/return speed<=-F(0x42de38e4);
 }
 void originalAirReleaseGroundTargets(const OriginalGroundProfile& profile,OriginalGroundState& state,std::array<float,3> velocity){
  Round round;groundTurnTarget(state.turn,0,velocity,profile.surface.id);float a=terrain_original::mul(velocity[0],state.forward[0]),b=terrain_original::mul(velocity[1],state.forward[1]),c=terrain_original::mul(velocity[2],state.forward[2]);float speed=terrain_original::add(a,b);speed=terrain_original::add(speed,c);
@@ -62,8 +62,9 @@ OriginalReverseTurnResult originalReverseTurn(OriginalGroundState& state,GroundC
  Round round;OriginalReverseTurnResult result;
  if(!originalAirReverseTurnRequired(state.brake.current,state.velocity,state.forward))return result;
  auto q=state.quaternion;auto axis=state.boardUp;std::array<float,4> rotated;
- for(unsigned i=0;i<3;++i){unsigned j=(i+1)%3,k=(i+2)%3;float cross=terrain_original::sub(terrain_original::mul(axis[j],q[k]),terrain_original::mul(axis[k],q[j]));float weighted=terrain_original::add(terrain_original::mul(axis[i],q[3]),terrain_original::mul(q[i],0.f));rotated[i]=terrain_original::add(weighted,cross);}
- float product=terrain_original::sub(terrain_original::mul(0.f,q[3]),terrain_original::mul(axis[0],q[0]));product=terrain_original::sub(product,terrain_original::mul(axis[1],q[1]));rotated[3]=terrain_original::sub(product,terrain_original::mul(axis[2],q[2]));
+ // VU0 product (0x114D60..0x114D80): vopmsub's fs is q, and the w lane's y / z terms go through vf0 (1.0) as fs (docs/ps2-float.md).
+ for(unsigned i=0;i<3;++i){unsigned j=(i+1)%3,k=(i+2)%3;float cross=terrain_original::sub(terrain_original::mul(axis[j],q[k]),terrain_original::mul(q[j],axis[k]));float weighted=terrain_original::add(terrain_original::mul(axis[i],q[3]),terrain_original::mul(q[i],0.f));rotated[i]=terrain_original::add(weighted,cross);}
+ float product=terrain_original::sub(terrain_original::mul(0.f,q[3]),terrain_original::mul(axis[0],q[0]));product=terrain_original::sub(product,terrain_original::mul(1.f,terrain_original::mul(axis[1],q[1])));rotated[3]=terrain_original::sub(product,terrain_original::mul(1.f,terrain_original::mul(axis[2],q[2])));
  auto rebuilt=originalRebuildOrientation(rotated);state.quaternion=rebuilt.quaternion;state.physicalForward=rebuilt.forward;state.boardUp=rebuilt.up;
  state.reverseStance=!state.reverseStance;state.state320Equals324=!state.state320Equals324;
  auto sc=originalSinCos(state.reverseStance?-F(0x3fc90fdb):-0.f);result.animationRootQuaternion={terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],1.f),sc[1]};

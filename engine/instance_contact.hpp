@@ -17,9 +17,11 @@
 namespace ssx {
 using ContactQuad=std::array<float,4>;
 namespace instance_contact_math {
+// The VU0 horizontal dot (vmul, vadday.x, then vmaddaz.x / vmaddw.x with the 1.0 vector as fs, e.g. 0x1055C8..0x1055D4): the z and w
+// products go through 1.0 x (docs/ps2-float.md "The VU0 forms").
 inline float dot4(const ContactQuad& a,const ContactQuad& b){
     using namespace terrain_original;
-    float v=add(mul(a[0],b[0]),mul(a[1],b[1]));v=add(v,mul(a[2],b[2]));return add(v,mul(a[3],b[3]));
+    float v=add(mul(a[0],b[0]),mul(a[1],b[1]));v=add(v,mul(1.f,mul(a[2],b[2])));return add(v,mul(1.f,mul(a[3],b[3])));
 }
 inline ContactQuad scale4(ContactQuad a,float s){for(auto& x:a)x=terrain_original::mul(x,s);return a;}
 inline ContactQuad add4(ContactQuad a,const ContactQuad& b){for(unsigned k=0;k<4;++k)a[k]=terrain_original::add(a[k],b[k]);return a;}

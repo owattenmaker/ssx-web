@@ -12,6 +12,9 @@ namespace ssx::software_float {
 // the capture comparers turn it off for their setup before a capture's first tick (PS2_ARITH=exact): the baseline savestates
 // carry mode-1 history.
 inline bool exactArithmetic = true;
+// The recorded seeds (glide ground states) of the exact-mode baselines instead of the mode-1 ones (web/generate-controllers.py
+// physics_seed_exact.hpp). Off by default; the comparers turn it on for a capture from an exact baseline (PS2_ARITH=exact-base).
+inline bool exactSeeds = false;
 #endif
 // The EE FPU (and PCSX2/ARMSX2's EE emulation: DAZ + FTZ) has no denormals: a denormal operand reads as
 // zero and an underflowing result is flushed to a signed zero (tech-trip-stop: the decaying +0x2C8 lift).

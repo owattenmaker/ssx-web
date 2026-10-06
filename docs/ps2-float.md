@@ -388,9 +388,10 @@ These gates keep their mode-1 baseline, because the state they start from can't 
 | peak1-fr-aara1 | `local/ps2-capture/peak1/fr-aara1-entry.p2s` | the same |
 | peak1-fr-aara1-glide, course-limits/p1-{neutral3000, right3000, left, right, left3000, zig3000} | `local/ps2-capture/peak1/fr-aara1-glide.p2s` | the same |
 | course-limits/gs-{zig3000, right3000, tuckleft3000, left3000, halfleft3000, halfright3000} | `local/ps2-capture/peak1/green-start-t0.p2s` | its patch source (`…/7fde9fd7…/lodgewall/ps2/navpre/.raw/00001.p2s`) is gone and matches no known root |
+| peak2/fr-c, vp-stations/c-tuck | `local/ps2-capture/peak2/fr-c-arrive.p2s` | its chain re-runs, but in exact mode the menu path stops at Transport > Select Peak (the pad script no longer lines up) |
 | ctm-events/c0a-race, c0a-race-riders | `local/ctm-events/caps/c0a-cd/countdown.p2s` | built from `ctm-parity/states/sj-card-q.p2s` ("from an earlier ride-in"); that state's only records loop back to itself (race-q / race-q-clean) |
 
-So far that is 22 gates on 10 baselines. The other 59 gates on the tail's 17 baselines resolve to the CTM session root through `tools/ps2-float/derive_exact_chain.py`.
+So far that is 24 gates on 11 baselines. The other 57 gates on the tail's 16 baselines resolve to the CTM session root through `tools/ps2-float/derive_exact_chain.py`.
 
 **At the swap** each of these needs a replacement scenario from an exact root (the exact CTM session replay `local/reference-exact/ctm/session-exact.fNNNNN.p2s`, or a derived exact state), covering the same behaviour. If no such scenario can be made, it is retired with a note:
 

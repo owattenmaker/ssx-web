@@ -32,7 +32,8 @@ bool OriginalAirState::step(float maximumSpeed,float* resultingSpeed) {
     float dz=velocity[2]>0?up:down;
     velocity[0]=terrain_original::add(velocity[0],dx);velocity[1]=terrain_original::add(velocity[1],dy);velocity[2]=terrain_original::add(velocity[2],dz);
     float x2=terrain_original::mul(velocity[0],velocity[0]),y2=terrain_original::mul(velocity[1],velocity[1]),z2=terrain_original::mul(velocity[2],velocity[2]);
-    float squared=terrain_original::add(x2,y2);squared=terrain_original::add(squared,z2);
+    // VU0 horizontal dot (0x113A44..0x113A54): z2 goes through vmaddaz.x with the 1.0 vector as fs (docs/ps2-float.md).
+    float squared=terrain_original::add(x2,y2);squared=terrain_original::add(squared,terrain_original::mul(1.f,z2));
     float speed=terrain_original::sqrt(squared);
     if (speed>maximumSpeed) {
         // Recovered source branch; one live capped trajectory is bit-identical in native tests.

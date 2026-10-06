@@ -17,7 +17,9 @@ using Round=OriginalRounding;
 V add(V a,V b){for(int i=0;i<3;i++)a[i]=terrain_original::add(a[i],b[i]);return a;}
 V sub(V a,V b){for(int i=0;i<3;i++)a[i]=terrain_original::sub(a[i],b[i]);return a;}
 V mul(V a,float b){for(float& x:a)x=terrain_original::mul(x,b);return a;}
-float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),z);}
+// VU0 forms (docs/ps2-float.md "The VU0 forms"): the horizontal dot's z product goes through 1.0 x (vmaddaz.x with the 1.0 vector,
+// 0x1142EC); the crosses' subtracted products have the second vector as vopmsub's fs (0x114C08).
+float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),terrain_original::mul(1.f,z));}
 float len(V a){return terrain_original::sqrt(dot(a,a));}
 V unit(V a){return mul(a,terrain_original::div(1.f,len(a)));}
 }
@@ -33,10 +35,11 @@ float originalJumpChargeStep(float current,bool held){
 float originalJumpCameraLaunch(V velocity,V normal){
     Round round;
     //114B78..114C6C: normalized (world up x velocity), then cross with contact normal.
-    V side={-velocity[1],velocity[0],0};const float magnitude=len(side);
+    // up x velocity on VU0 (0x114B8C / 0x114B90, up = (0,0,1)): the y lane is vopmula's 1.0 (fs) x velocity.x, one ULP low on the console.
+    V side={-velocity[1],terrain_original::mul(1.f,velocity[0]),0};const float magnitude=len(side);
     if(!(0.f<magnitude))return 0;
     side=mul(side,originalScalarDivide(1.f,magnitude));
-    V direction={terrain_original::sub(terrain_original::mul(side[1],normal[2]),terrain_original::mul(side[2],normal[1])),terrain_original::sub(terrain_original::mul(side[2],normal[0]),terrain_original::mul(side[0],normal[2])),terrain_original::sub(terrain_original::mul(side[0],normal[1]),terrain_original::mul(side[1],normal[0]))};
+    V direction={terrain_original::sub(terrain_original::mul(side[1],normal[2]),terrain_original::mul(normal[1],side[2])),terrain_original::sub(terrain_original::mul(side[2],normal[0]),terrain_original::mul(normal[2],side[0])),terrain_original::sub(terrain_original::mul(side[0],normal[1]),terrain_original::mul(normal[0],side[1]))};
     return terrain_original::mul(dot(velocity,normal),len(direction));
 }
 void originalJumpTakeoff(OriginalJumpState& s){
@@ -53,7 +56,14 @@ void originalJumpTakeoff(OriginalJumpState& s){
     }
     // Fixed original cosine values at 50/70 degrees. The source polynomial
     // results are supplied as constants to avoid a host libm dependency.
+#if SSX_PS2_EXACT_FPU
+    // The PS2 evaluates them each time (the cosine polynomial at 0x31C0A0..0x31C0CC); on the console model it gives
+    // 0x3F248DB9 / 0x3EAF1D3E (exact-base air-tricks, PS2 pass 383: 0x1143DC / 0x114404).
+    const bool exact=software_float::exactArithmetic;
+    const float c50=f(exact?0x3f248db9u:0x3f248dbau),c70=f(exact?0x3eaf1d3eu:0x3eaf1d41u);
+#else
     const float c50=f(0x3f248dbau),c70=f(0x3eaf1d41u);
+#endif
     if(s.motionMode==4)s.velocity=add(s.velocity,mul(s.boardUp,impulse));
     else {
         V direction=unit(add(s.normal,mul(s.forward,f(0x3e4ccccdu))));

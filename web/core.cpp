@@ -1022,4 +1022,10 @@ extern "C" EMSCRIPTEN_KEEPALIVE void ps2_arith_exact(int on){
  ssx::software_float::exactArithmetic=on!=0;
  browser_reseed_stats();
 }
+// The exact-baseline glide seeds (docs/ps2-float.md "Exact baselines"): the switch, then this context's seeded rider state again,
+// as a fresh core computes it. Call it right after the core is created, before any setup (it resets the rider statics).
+extern "C" EMSCRIPTEN_KEEPALIVE void ps2_exact_seeds(int on){
+ ssx::software_float::exactSeeds=on!=0;
+ rider_statics_core();
+}
 #endif

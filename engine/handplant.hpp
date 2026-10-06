@@ -33,8 +33,9 @@ inline float minS(float a,float b){return a<b?a:b;}
 inline float maxS(float a,float b){return a>b?a:b;}
 // vmul.xyzw; vadday.x; vmaddaz.x (1*z); vmaddw.x (1*w)
 inline float dot4(const HandplantQuad& a,const HandplantQuad& b){
+    // VU0 horizontal dot: z and w go through vmaddaz.x / vmaddw.x with the 1.0 vector as fs (docs/ps2-float.md "The VU0 forms").
     float x=mul(a[0],b[0]),y=mul(a[1],b[1]),z=mul(a[2],b[2]),w=mul(a[3],b[3]);
-    return add(add(add(x,y),z),w);
+    return add(add(add(x,y),mul(1.f,z)),mul(1.f,w));
 }
 inline HandplantQuad add4(HandplantQuad a,const HandplantQuad& b){for(unsigned k=0;k<4;++k)a[k]=add(a[k],b[k]);return a;}
 inline HandplantQuad sub4(HandplantQuad a,const HandplantQuad& b){for(unsigned k=0;k<4;++k)a[k]=sub(a[k],b[k]);return a;}

@@ -138,7 +138,8 @@ float groundForwardDrive(const GroundDriveState& r) {
         }
     }
     float x2=terrain_original::mul(r.velocity[0],r.velocity[0]),y2=terrain_original::mul(r.velocity[1],r.velocity[1]),z2=terrain_original::mul(r.velocity[2],r.velocity[2]);
-    float squared=terrain_original::add(x2,y2);squared=terrain_original::add(squared,z2);float speed=terrain_original::sqrt(squared);
+    // VU0 horizontal dot (0x113E8C..0x113E9C): z2 goes through vmaddaz.x with the 1.0 vector as fs.
+    float squared=terrain_original::add(x2,y2);squared=terrain_original::add(squared,terrain_original::mul(1.f,z2));float speed=terrain_original::sqrt(squared);
     float missing=terrain_original::mul(r.autoBoostSpeed,typeScale);missing=terrain_original::mul(missing,f(0x41de38e4u));missing=originalScalarSubtract(missing,speed);
     missing=std::min(missing,f(0x448ae38eu));
     if (missing>0) {

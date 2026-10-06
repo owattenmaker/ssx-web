@@ -1,3 +1,33 @@
+> **Deployed 2026-10-06 (coordinator): core-batch10.** web/runtime core.wasm `9172f338…` (core.js `2fe50ccb…`, unchanged) copied from local/ps2-float/core-batch10 (full mode-1 suite 534/534). On top of core41: the physics agent's core42 tree changes (r10-0153 reset fixes, batch 7) and the arithmetic agent's batches 8-10 plus the exact glide seeds. All mode-1-neutral; exact-only parts are under SSX_PS2_EXACT_FPU (not in this build).
+
+> **PS2 arithmetic, round 4 (2026-10-06): exact glide seeds, matcher batches 8-11, Snow Jam exact-base slice 6 -> 113 of 187 (PS2 arithmetic agent; the physics agent was paused, so these touch its files):** see [ps2-float.md](ps2-float.md) "Exact baselines" and "The VU0 forms".
+> - **Files changed (physics agent: please review on resume).** All forms are mode-1-neutral: a 1.0 x product (exact in mode 1) or an operand swap of a commutative chop multiply. The one exception is marked.
+>   - engine/air_alignment.cpp: the cross order, the dot, the Q mul w lane, delta = sin x axis.
+>   - engine/air_control.cpp (134DD0): cross, w lane, flip-axis length dot, sin x axis, flip axis built from (0,1,0)·blend and (1,0,0)·(1-blend).
+>   - engine/instance_contact.hpp: dot4.
+>   - engine/obstacle_collision.hpp: the 0x1067D8 product.
+>   - engine/jump_motion.cpp: dot, side cross, side y lane. **Under SSX_PS2_EXACT_FPU:** the exact c50 / c70 (3F248DB9 / 3EAF1D3E).
+>   - engine/air_trajectory.cpp: dot.
+>   - engine/air_motion.cpp: speed length.
+>   - engine/landing_motion.cpp: dot.
+>   - engine/air_entry.cpp: the reverse-turn product.
+>   - engine/animation_motion.cpp: channel evaluation, frame as mul.s fs (0x312F54).
+>   - engine/air_switch.hpp: dot4.
+>   - engine/handplant.hpp: dot4.
+>   - engine/rail_motion.hpp: the quaternionMultiply w lane.
+> - **Exact glide seeds:**
+>   - tools/ps2-float/export_exact_glide_seeds.py writes local/assets/native-exact/<CODE>/{riding-start,initial,start}.json from local/reference-exact glides. It covers 17 courses, plus secondary_motion and breath re-read from the exact state.
+>   - web/generate-controllers.py writes generated/physics_seed_exact.hpp, and its glide selectors take it under SSX_PS2_EXACT_FPU when `software_float::exactSeeds` is on (engine/software_float.hpp).
+>   - web/core.cpp: export `ps2_exact_seeds(on)`. web/check-rider-globals.mjs: exactSeeds shared.
+>   - web/compare-ps2-capture.mjs: PS2_ARITH=exact-base turns the seeds on and reads native-exact initial / start.
+>   - Default build byte-identical (checked: wasm 92a19fd8 before and after the seed change).
+> - **Mode-1 suites (full ps2-captures, CORE_OUT scratch cores):** batch 8, 9 and 10 each ran 534 of 534 scenarios with no failures. Snapshot for deploy: local/ps2-float/core-batch10 (wasm 9172f338…, js 2fe50ccb…). Batch 11 (handplant / rail) suite is running on local/ps2-float/core-batch11.
+> - **Exact-base Snow Jam slice** (batch-10 exact core, `score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base`): 113 pass of 187. Of the 74 fails, 37 have physics exact to the end and fail on bones or score; 37 leave physics early.
+>   - Known causes: the roller world-object matrix (carve, bag/carve-bag) and the rail / handplant / steer families.
+> - **Correction:** the identity-quaternion presentation in animation_bridge.cpp feeds only the renderer's presentedFrame. The sim's poseRoot already composes on the real orientation (0x134F3C).
+> - **Tail:** fr-c-arrive joins the mode-1-base list: in exact mode its menu path stops at Transport > Select Peak.
+> - **Tools:** tools/ps2-float/derive_exact_chain.py (17 tail states, 16 written), tools/ps2_menu_capture.py follows PS2_CAPTURE_FPU, tools/ps2-float/recapture_exact.py --exact-baselines, tools/ps2-float/link_riders_exact.py.
+
 > **PS2 arithmetic: PAUSED 2026-10-05 ~20:00. Resume point (PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md) "Exact baselines". Nothing of mine is running, and the machine has 0 ARMSX2.
 > - **Chain run** (`tools/ps2-float/derive_exact_chain.py --attempts 4 --width 2 <17 states>`; the list is in ps2-float.md "Mode-1-base gates", the resolvable side). It is resumable: done states are skipped and finished steps are reused from local/reference-exact/chains/steps.json.
 >   - **Written (11):** ara1-screen10, fr-ebc3-late, frd-1800, fr-ebc3-14302, bra2-screen10, out-p2r-card, out-apr-card, ass1-screen10, fr-ebc3-arrival, fr-e-glide, out-apj-card.

@@ -159,11 +159,14 @@ void originalAirControlStep(OriginalAirControlState& s,const RiderInput& in,cons
 namespace ssx {
 namespace {
 using V3=std::array<float,3>;using Q4=std::array<float,4>;
-V3 cross(V3 a,V3 b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(a[2],b[1])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(a[0],b[2])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(a[1],b[0]))};}
+// VU0 forms of 134DD0 (docs/ps2-float.md "The VU0 forms"): vopmsub's fs is b (0x134EB4, 0x134F44, 0x1350D0); the w lane's y / z
+// terms go through vmsubay.w / vmsubz.w with vf0 (1.0) as fs (0x134F54 / 0x134F58); the flip axis length is the horizontal dot
+// (vmaddaz.x with the 1.0 vector, 0x135054) and its scale by the half-angle sine has the sine as mul.s's fs (0x135088).
+V3 cross(V3 a,V3 b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(b[1],a[2])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(b[2],a[0])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(b[0],a[1]))};}
 Q4 multiply(Q4 a,Q4 b){
     V3 c=cross({a[0],a[1],a[2]},{b[0],b[1],b[2]});Q4 out;
     for(int i=0;i<3;i++){float x=terrain_original::add(terrain_original::mul(a[i],b[3]),terrain_original::mul(b[i],a[3]));out[i]=terrain_original::add(x,c[i]);}
-    float w=terrain_original::sub(terrain_original::mul(a[3],b[3]),terrain_original::mul(a[0],b[0]));w=terrain_original::sub(w,terrain_original::mul(a[1],b[1]));out[3]=terrain_original::sub(w,terrain_original::mul(a[2],b[2]));return out;
+    float w=terrain_original::sub(terrain_original::mul(a[3],b[3]),terrain_original::mul(a[0],b[0]));w=terrain_original::sub(w,terrain_original::mul(1.f,terrain_original::mul(a[1],b[1])));out[3]=terrain_original::sub(w,terrain_original::mul(1.f,terrain_original::mul(a[2],b[2])));return out;
 }
 V3 rotate(Q4 q,V3 v){
     V3 u={q[0],q[1],q[2]},a=cross(u,v),b=cross(u,a),out;
@@ -186,11 +189,13 @@ static OriginalAirPresentation presentationImpl(OriginalAirControlState& s,Origi
     p.quaternion=multiply(p.quaternion,{0,0,spinSC[0],spinSC[1]});
     float target=presentationBlend(s.spinRate,s.flipRate);
     float rate=terrain_original::mul(std::abs(S(s.axisBlend,target)),f(0x3d088889u));if(advanceBlend)s.axisBlend=approach(s.axisBlend,target,rate);
-    V3 axis={-S(1.f,s.axisBlend),s.axisBlend,0};
-    float length=terrain_original::sqrt(terrain_original::add((terrain_original::add(terrain_original::mul(axis[0],axis[0]),terrain_original::mul(axis[1],axis[1]))),terrain_original::mul(axis[2],axis[2])));
+    // 0x134FDC / 0x13501C: the axis is built from (0,1,0) x blend and (1,0,0) x (1 - blend) on VU0, 1.0 as fs (one ULP low on the
+    // console); the PS2's x lane is 0 - that (+0 for blend 1, where this negation gives -0: kept for mode-1 bits).
+    V3 axis={-terrain_original::mul(1.f,S(1.f,s.axisBlend)),terrain_original::mul(1.f,s.axisBlend),0};
+    float length=terrain_original::sqrt(terrain_original::add((terrain_original::add(terrain_original::mul(axis[0],axis[0]),terrain_original::mul(axis[1],axis[1]))),terrain_original::mul(1.f,terrain_original::mul(axis[2],axis[2]))));
     float inverse=terrain_original::div(1.f,length);for(float& v:axis)v=terrain_original::mul(v,inverse);
     auto flipSC=originalSinCos(terrain_original::mul(flip,.5f));
-    p.quaternion=multiply(p.quaternion,{terrain_original::mul(axis[0],flipSC[0]),terrain_original::mul(axis[1],flipSC[0]),terrain_original::mul(axis[2],flipSC[0]),flipSC[1]});
+    p.quaternion=multiply(p.quaternion,{terrain_original::mul(flipSC[0],axis[0]),terrain_original::mul(flipSC[0],axis[1]),terrain_original::mul(flipSC[0],axis[2]),flipSC[1]});
     for(float& v:pivot)v=terrain_original::mul(v,-1.f);
     offset=rotate(p.quaternion,pivot);for(int i=0;i<3;i++)p.position[i]=terrain_original::add(p.position[i],offset[i]);
     return p;

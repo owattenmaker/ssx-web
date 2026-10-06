@@ -80,8 +80,9 @@ inline std::array<float,4> originalObstacleOrientation(std::array<float,4> q,
     else change=std::clamp(originalScalarSubtract(-1.9198623895645142f,angle),-.349065899848938f,0.f);
     if(change==0)return q;
     auto sc=collision_scalar::sincos(mul(-change,.5f));std::array<float,4> delta{mul(sc[0],boardUp[0]),mul(sc[0],boardUp[1]),mul(sc[0],boardUp[2]),sc[1]},out;
-    for(unsigned i=0;i<3;++i){unsigned j=(i+1)%3,k=(i+2)%3;float crossed=sub(mul(q[j],delta[k]),mul(q[k],delta[j]));out[i]=add(add(mul(q[i],delta[3]),mul(delta[i],q[3])),crossed);}
-    out[3]=sub(sub(sub(mul(q[3],delta[3]),mul(q[0],delta[0])),mul(q[1],delta[1])),mul(q[2],delta[2]));
+    // VU0 product (0x1067D8..0x1067F4): vopmsub's fs is delta, and the w lane's y / z terms go through vf0 (1.0) as fs.
+    for(unsigned i=0;i<3;++i){unsigned j=(i+1)%3,k=(i+2)%3;float crossed=sub(mul(q[j],delta[k]),mul(delta[j],q[k]));out[i]=add(add(mul(q[i],delta[3]),mul(delta[i],q[3])),crossed);}
+    out[3]=sub(sub(sub(mul(q[3],delta[3]),mul(q[0],delta[0])),mul(1.f,mul(q[1],delta[1]))),mul(1.f,mul(q[2],delta[2])));
     if(rotated)*rotated=true;return out;
 }
 

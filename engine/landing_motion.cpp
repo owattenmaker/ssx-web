@@ -12,7 +12,8 @@ using V=std::array<float,3>;
 constexpr float F(uint32_t b){return std::bit_cast<float>(b);}
 float A(float a,float b){return originalScalarAdd(a,b);}float S(float a,float b){return originalScalarSubtract(a,b);}
 using Round=OriginalRounding;
-float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);float sum=terrain_original::add(x,y);sum=terrain_original::add(sum,z);return terrain_original::add(sum,0.f);}
+// VU0 horizontal dot (0x139CF8..0x139D04): z goes through vmaddaz.x with the 1.0 vector as fs (docs/ps2-float.md "The VU0 forms").
+float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);float sum=terrain_original::add(x,y);sum=terrain_original::add(sum,terrain_original::mul(1.f,z));return terrain_original::add(sum,0.f);}
 V difference(V a,V b){for(unsigned i=0;i<3;i++)a[i]=terrain_original::sub(a[i],b[i]);return a;}
 V cross(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(a[2],b[1])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(a[0],b[2])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(a[1],b[0]))};}
 }

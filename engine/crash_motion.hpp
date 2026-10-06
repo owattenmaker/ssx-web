@@ -59,7 +59,8 @@ inline void originalCrashDetachedStep(OriginalCrashMotionState& state,OriginalCr
     for(unsigned k=0;k<3;++k)derivative[k]=add(mul(mul(w[k],q[3]),.5f),mul(crossValue[k],.5f));
     derivative[3]=add(add(mul(-.5f,mul(q[0],w[0])),mul(-.5f,mul(q[1],w[1]))),mul(-.5f,mul(q[2],w[2])));
     for(unsigned k=0;k<4;++k)q[k]=originalScalarAdd(q[k],mul(derivative[k],dt));
-    float squared=add(add(add(mul(q[0],q[0]),mul(q[1],q[1])),mul(q[2],q[2])),mul(q[3],q[3]));
+    // VU0 horizontal dot (0x13710C..0x137118): z and w go through the 1.0 vector as fs (docs/ps2-float.md "The VU0 forms").
+    float squared=add(add(add(mul(q[0],q[0]),mul(q[1],q[1])),mul(1.f,mul(q[2],q[2]))),mul(1.f,mul(q[3],q[3])));
     float inverse=div(1,terrain_original::sqrt(squared));for(unsigned k=0;k<4;++k)actor.detachedQuaternion[k]=mul(q[k],inverse);
 }
 struct OriginalCrashAirAlignmentRequest {

@@ -53,7 +53,7 @@ std::vector<float> AnimationPacket::sample(float frame) const {
     // Source gp-3228 = tiny interpolation snap threshold.
     constexpr float snap=std::bit_cast<float>(0x3a83126fu);
     for(const auto&c:channels){const auto&p=c.parameters;float value=0;
-        if(c.type<=4){if(c.type){value=p[0];for(unsigned j=1;j<c.type;++j){value=terrain_original::mul(value,frame);value=originalScalarAdd(value,p[j]);}}}
+        if(c.type<=4){if(c.type){value=p[0];for(unsigned j=1;j<c.type;++j){value=terrain_original::mul(frame,value); /*0x312F54 mul.s fs = frame*/value=originalScalarAdd(value,p[j]);}}}
         else if(c.type==5){if(frame<=p[3]){value=terrain_original::mul(p[0],frame);value=originalScalarAdd(value,p[1]);}else{value=terrain_original::mul(p[0],p[3]);value=originalScalarAdd(value,p[1]);float delta=originalScalarSubtract(frame,p[3]),term=terrain_original::mul(p[2],delta);value=originalScalarAdd(value,term);}}
         else{float clock=c.type==7?terrain_original::mul(frame,.5f):frame;unsigned index=unsigned(clock);float fraction=originalScalarSubtract(clock,float(index));if(fraction<snap)fraction=0;float q=float(c.samples.at(index));if(fraction){float difference=originalScalarSubtract(float(c.samples.at(index+1)),q);float increment=terrain_original::mul(fraction,difference);q=originalScalarAdd(q,increment);}value=terrain_original::mul(q,p[1]);value=originalScalarAdd(value,p[0]);}
         result.push_back(value);

@@ -19,7 +19,21 @@ const finishPlace = args.includes('--finish-place') ? Number(args[args.indexOf('
 const traceRange = args.includes('--trace') ? args[args.indexOf('--trace') + 1].split(':').map(Number) : null;
 if (!capturePath) throw new Error('capture path required');
 const root = new URL('public/assets/', import.meta.url);
-const read = (p) => fs.readFileSync(new URL(p, root));
+// PS2_ARITH=exact-base: a course's initial.json and start.json come from its exact glide seed when one exists
+// (local/assets/native-exact/<CODE>/, tools/ps2-float/export_exact_glide_seeds.py).
+const exactAssets = new URL('../local/assets/native-exact/', import.meta.url);
+const exactAssetPath = (p) => {
+  if (process.env.PS2_ARITH !== 'exact-base') {
+    return null;
+  }
+  const match = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start)\.json$/.exec(p) || []).slice(1);
+  if (match.length !== 2) {
+    return null;
+  }
+  const file = new URL(`${match[0]}/${match[1]}.json`, exactAssets);
+  return fs.existsSync(file) ? file : null;
+};
+const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const json = (p) => JSON.parse(read(p));
 const core = await createCore();
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
@@ -31,6 +45,10 @@ if (process.env.PS2_ARITH === 'exact' && core._ps2_arith_exact) {
 // mode-1 history, so the setup runs on the console model too.
 if (process.env.PS2_ARITH === 'exact-base' && !core._ps2_arith_exact) {
   throw new Error('PS2_ARITH=exact-base needs a core with ps2_arith_exact');
+}
+// ... and the exact glide seeds compiled into the core (a core built before them has no ps2_exact_seeds: mode-1 seeds).
+if (process.env.PS2_ARITH === 'exact-base' && core._ps2_exact_seeds) {
+  core._ps2_exact_seeds(1);
 }
 if (finishPlace != null) core.finishHost = { place: () => finishPlace };
 // Stage builtin 34, the Metro-City phone booths / water towers (web/stage_teleport.inc): on;

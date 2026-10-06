@@ -58,8 +58,9 @@ using namespace terrain_original;
 inline float bits(uint32_t b){return std::bit_cast<float>(b);}
 // vmul.xyzw; vadday.x; vmaddaz.x (1*z); vmaddw.x (1*w)
 inline float dot4(const AirSwitchQuad& a,const AirSwitchQuad& b){
+    // VU0 horizontal dot (0x114E60..0x114E6C): z and w go through vmaddaz.x / vmaddw.x with the 1.0 vector as fs (docs/ps2-float.md).
     float x=mul(a[0],b[0]),y=mul(a[1],b[1]),z=mul(a[2],b[2]),w=mul(a[3],b[3]);
-    return add(add(add(x,y),z),w);
+    return add(add(add(x,y),mul(1.f,z)),mul(1.f,w));
 }
 // vmulx.xyzw by the dot, vsub.xyzw, then vrsqrt/vmulq normalisation of all four lanes.
 inline AirSwitchQuad projectNormalized(const AirSwitchQuad& v,const AirSwitchQuad& n,float d){

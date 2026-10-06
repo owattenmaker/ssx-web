@@ -12,7 +12,8 @@ using V=std::array<float,3>;
 constexpr float F(unsigned bits){return std::bit_cast<float>(bits);}
 float A(float a,float b){return originalScalarAdd(a,b);}
 float S(float a,float b){return originalScalarSubtract(a,b);}
-float dot(V a,V b){return terrain_original::sum3(terrain_original::mul(a[0],b[0]),terrain_original::mul(a[1],b[1]),terrain_original::mul(a[2],b[2]));}
+// VU0 horizontal dot (0x11332C..0x113338): the z product goes through vmaddaz.x with the 1.0 vector as fs (docs/ps2-float.md).
+float dot(V a,V b){return terrain_original::sum3(terrain_original::mul(a[0],b[0]),terrain_original::mul(a[1],b[1]),terrain_original::mul(1.f,terrain_original::mul(a[2],b[2])));}
 using Round=OriginalRounding;
 V blend(V a,V b,float x,float y){V out;for(int i=0;i<3;i++){float first=terrain_original::mul(a[i],x),second=terrain_original::mul(b[i],y);out[i]=terrain_original::add(first,second);}return out;}
 }

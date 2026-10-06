@@ -13,12 +13,14 @@ constexpr float F(unsigned bits){return std::bit_cast<float>(bits);}
 float A(float a,float b){return originalScalarAdd(a,b);}
 float S(float a,float b){return originalScalarSubtract(a,b);}
 using Round=OriginalRounding;
-V cross(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(a[2],b[1])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(a[0],b[2])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(a[1],b[0]))};}
-float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),z);}
+// VU0 forms (docs/ps2-float.md "The VU0 forms"): vopmsub's fs is b (0x31BB50, 0x121ED4), the dot's z and the w lane's y / z terms
+// go through an FMAC with vf0 (1.0) as fs (0x31BBE0, 0x121EE4 / 0x121EE8), and the half-angle sine is mul.s's fs (0x31BC40).
+V cross(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(b[1],a[2])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(b[2],a[0])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(b[0],a[1]))};}
+float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),terrain_original::mul(1.f,z));}
 Q mul(Q a,Q b){V c=cross({a[0],a[1],a[2]},{b[0],b[1],b[2]});Q out;
  for(int i=0;i<3;i++){float sum=terrain_original::add(terrain_original::mul(a[i],b[3]),terrain_original::mul(b[i],a[3]));out[i]=terrain_original::add(sum,c[i]);}
- float w=terrain_original::sub(terrain_original::mul(a[3],b[3]),terrain_original::mul(a[0],b[0]));w=terrain_original::sub(w,terrain_original::mul(a[1],b[1]));out[3]=terrain_original::sub(w,terrain_original::mul(a[2],b[2]));return out;}
-Q delta(V axis,float angle){auto sc=originalSinCos(terrain_original::mul(angle,.5f));return {terrain_original::mul(axis[0],sc[0]),terrain_original::mul(axis[1],sc[0]),terrain_original::mul(axis[2],sc[0]),sc[1]};}
+ float w=terrain_original::sub(terrain_original::mul(a[3],b[3]),terrain_original::mul(a[0],b[0]));w=terrain_original::sub(w,terrain_original::mul(1.f,terrain_original::mul(a[1],b[1])));out[3]=terrain_original::sub(w,terrain_original::mul(1.f,terrain_original::mul(a[2],b[2])));return out;}
+Q delta(V axis,float angle){auto sc=originalSinCos(terrain_original::mul(angle,.5f));return {terrain_original::mul(sc[0],axis[0]),terrain_original::mul(sc[0],axis[1]),terrain_original::mul(sc[0],axis[2]),sc[1]};}
 // Standalone 0x31BF60 sine has its own polynomial; it cannot be replaced by
 // the shared sin/cos pair, which uses a different reduction and cosine path.
 float sine(float x){float t=terrain_original::mul(x,F(0x3f22f983));t=x<0?S(t,.5f):A(t,.5f);int quadrant=int(t);
