@@ -162,48 +162,52 @@ plus every kept variant so far.
 | r3teeter (guide only) | 80 | 28 | 24507 | - | - | 0 | - (grinds the 0x1d08 teeter rail) | - |
 | r4 | 300 | 105 | 25338 | 84.4% | 76.9% | 0 | collision 129 (342 / 332), 135, 142 (351), 155 (328 / 329); rail-attach 583 (106D9C); rail-motion 507 | - |
 | r5 | 300 | 91 | 25841 | 84.4% | 77.0% | 0 | - | 11>9 |
-
 | r6-r8 (3 wide) | 900 | 189 | 26725 | - | - | 0 (sink false alarms fixed) | collision 150 (classes 20 / 21 -> 361), rail-attach 567 / 568 / 591 | 5>3 12>7 (PS2 has both) |
 | r9 | 300 | 62 | 26998 | - | - | 0 | pair-react 317 / 319 (a pair contact in a board press, hl/hl-ai-9) | 2>0 |
 | r10 | 300 | 54 | 27193 | - | - | 0 | - | 2>8 9>8 12>8 |
+| r11-r15 | 1500 | 193 | 27921 | - | - | 0 real (Allegra 3450 cm/s and a 3559 cm/s crash stop are the PS2's own, mode 1) | - | 10>5 5>10 10>4 4>10 (finishes) |
 
 Coverage has levelled off: r5 added 8 regions and 17 branches. Most of what is left is unreachable from a pad (always-set
 callback checks, online and native paths) or needs situations the seeds never reach (a pair crash, control 11 / 9 collisions).
 
 ## Findings
 
-- **Port invariants:** 3080 variants in ten rounds.
+- **Port invariants:** about 4600 variants in sixteen rounds.
   - 0 core exceptions, 0 NaN / inf, 0 speed or dv cap violations.
   - Every ground-sink hit was a false alarm. They led to the floor check above, and to reading the human through its own
     context view in six-rider runs.
-- **Unverified states:** the mode-1 captures show the PS2 making the same transition at the same tick for 7>3, 1>9, 2>9, 4>11,
-  7>8, 5>9, 8>5, 11>9, 5>3 and 12>7. 2>10 and 8>3 show in the exact captures. 2>0, 2>8, 9>8 and 12>8 are being captured.
-- **Mode-1 divergences handed to the physics agent** (minimised, live core):
+- **Unverified states:** every port transition flagged so far also appears on the PS2 in mode 1 at the same tick (7>3, 1>9,
+  2>9, 4>11, 7>8, 5>9, 8>5, 11>9, 5>3, 12>7, 2>0, 2>8, 12>8), or in the exact captures (2>10, 8>3). No control-state bug came from
+  this check; the divergences came from the mode-1 differential.
+- **Mode-1 divergences handed to the physics agent** (minimised; status on the latest scratch core rechecked):
 
-  | # | variant | what | status |
-  |---|---|---|---|
-  | 1 | r1-0066 (throne) | the human hits EBC3 fallingRocks_1003 at 3586 | harness gap: the rival fires the rock trigger on the PS2; withdrawn |
-  | 2 | r5-0165-min (Junction) | a Select reset from a handplant keeps +0x1E0 (PS2: 116120's 11FE78(3) runs 139178) | fixed (core32) |
-  | 3 | r2-0204-m0 (gravitude, six riders) | Mac's landing normal +0x370 at 2585 (1 ULP via his posed root), then pairs, human | open |
-  | 4 | r4-0005-m8 (Snow Jam) | landing with an air board press pending: the port crashes (348), the PS2 lands in control 1 | fixed (core34: manualState330 in landing_crash) |
-  | 5 | r7-0082-m0 (gravitude, six riders) | a Select tap at 1079: the shared RNG at 3003, the riders exact until 3894 | sent |
-  | 6 | r8-0022-m5 (dra4, six riders) | Mac at 5921, then the RNG, the pairs and the human | sent |
-  | 7 | r6-0273 (dra4, six riders) | Luther crashes at 3982; the human exact to the end | sent |
-  | 8 | r7-0053 (press-ice-rnb) | the rail-release velocity 1-2 ULP at 836 | sent |
+  | variant | what | status |
+  |---|---|---|
+  | r1-0066 (throne) | the human hits EBC3 fallingRocks_1003 at 3586 | harness gap (the rival fires the trigger); withdrawn |
+  | r5-0165-min (Junction) | a Select reset from a handplant keeps +0x1E0 | fixed (core32) |
+  | r4-0005-m8 (Snow Jam) | landing with an air board press pending: a crash instead of control 1 | fixed (core34) |
+  | r7-0053 (press-ice-rnb) | the rail-release velocity 1-2 ULP; a soft exit to control 0 in the air | fixed (core35); the RNG at 3690 remains |
+  | r3teeter-0029 (Snow Jam) | the control 3 -> 0 -> 4 command words | fixed (core35) |
+  | r10-0198 (dra4) | an air-to-reset ran that tick's post contacts | fixed (core37) |
+  | r2-0204 / r6-0103 (gravitude) | Mac's pose 2 cm off, then his 2585 landing normal | pose fixed (core38); the human's 2664 rail crash open |
+  | gravitude seed | Luther's pose 1 cm off from 2403, physics exact | fixed (core38) |
+  | r2-0249, r12-0064, r14-0154, r3teeter-0011 | RNG, human, crash stop, passive-to-air bones | exact on core40 |
+  | r4-0048, r7-0028, r7-0082, r10-0134 | the shared RNG differs hundreds of ticks after a human pad change, riders exact | open (core40) |
+  | r7-0038 (cra3) | Allegra 2096 fixed; Mac at 4998 | open (core40) |
+  | r10-0153 (Snow Jam) | a forced ground reset placed 15.5 cm off | open (core40) |
+  | r1-0203 (hl-glide-6) | bones after a Select reset from a board press | open (core40) |
+  | r13-0191 (hl-glide-5) | a handplant -> passive air -> landing, 0.016 cm | open (core40) |
+  | r7-0036 (bf-score-rail-uber) | bones 3 / 4 after a rail Uber (12) to rail (7) | open (core40) |
+  | r6-0273, r8-0022 (dra4) | Luther, Mac | past dra4's known limit (RNG 3772); deprioritised |
 - **Computer-rider poses:**
   - **The gap:** --ai-state recorded no computer-rider bones, which feed physics (13A7B0's probe, the body queries).
   - **Now:** `build --ai-bones` and compare-ai-capture.mjs firstBoneInexact cover it (docs/ai-racers.md "Verification");
     diff.py records them with FUZZ_AI_BONES=1.
-  - **First finding:** on the unmutated gravitude pad, Luther's pose is about 1 cm off from 2403 with physics exact. On r2-0204,
-    Mac's pose is about 2 cm off from 2163.
-- **Rechecks on newer cores:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against
-  each seed's own six-rider gate limit, diff.py six_limit).
-  - On core35: repros 2, 4, 8 and 9 exact.
-  - On core37: r10-0198 (an air-to-reset that ran that tick's post contacts) and r12-0064 exact.
-  - Still open on core37:
-    - r2-0249, r4-0048, r7-0028-m1 and r7-0082-m0: the shared RNG hundreds of ticks after a human pad change, with the riders
-      exact;
-    - r7-0038-m2: Allegra;
-    - r6-0103: Mac.
+  - **Gate captures:** gravitude, dra4 and cra3 are re-captured with --ai-bones (mode 1) in local/ps2-capture/runs/aibones
+    (aibones-capture.py).
+  - **On core40:** gravitude and cra3 are bone-exact for every rider to the end. In dra4, Psymon's bones split at 3772, one tick
+    before the gate's known RNG split.
+- **Rechecks:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against each seed's own
+  six-rider gate limit, diff.py six_limit). Results are in recheck-<core>.json.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries
   are in mode 1 too.

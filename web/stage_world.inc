@@ -1076,33 +1076,44 @@ static void stage_sound_loop_builtin(const StageArg* args,int count,int kind){
 // ---- world pass ---------------------------------------------------------------------------------------
 // Entity pass (race_begin, after the set-piece modifiers of this tick): newest entity first; per entity the
 // LiveComp tick with its slot-5 program, then the effect list; a finished once-mode player runs slot 4.
+// One entity of the entity pass (0x356198, by serial; it may be gone already).
+static void stage_world_tick_entity(uint64_t serial){
+ auto find=[&]{for(auto& e:stageEntities)if(e.serial==serial)return &e;return (stage_world::Entity*)nullptr;};
+ auto* e=find();if(!e||!e->alive)return;
+ const uint32_t resource=e->resource;
+ if(e->type==stage_world::LiveComp){
+  // 0x356198: vt+0x7C = 0x341D48 advances, runs slot 5 (0x34EBA0) and, on the tick the once-mode player finishes,
+  // slot 4 (vt+0x110 0x341FC8 -> 0x34FCC0) and returns 0: the entity's effect list (0x355748) is not updated in that
+  // tick (PS2 snapshots: every snow crumb trail skips exactly one birth when its player ends).
+  const auto r=ssx::originalLiveCompTick(e->live,true);
+  const bool done=r==ssx::OriginalLiveCompTick::Done;
+  if(r==ssx::OriginalLiveCompTick::Updated||done)stage_run_slot(resource,5);
+  if(done){stage_run_slot(resource,4);return;}
+  e=find();if(!e||!e->alive)return;
+ }
+ if(e->type==stage_world::Breaking){stage_meshanim_update(*e);e=find();if(!e||!e->alive)return;}
+ if(e->type==stage_world::Boost){stage_boost_update(*e);return;}
+ auto& visual=stage_visual_random();
+ for(size_t k=0;k<e->effects.size();k++){
+  auto& x=e->effects[k];
+  if(!x.dynamic){ssx::originalParticleEffectUpdate(x.burst);continue;}
+  if(x.trail.dead)continue;
+  stage_world::PMat node;if(!stage_node_matrix(resource,x.trail.node,node))node=stage_entity_matrix(resource);
+  ssx::originalDynamicParticleUpdate(x.trail,node,visual);
+ }
+}
+// The serial of the newest entity, and the entity-pass update of the entities built after it, newest first (web/section_gameplay.inc).
+static uint64_t stage_world_serial(){return stageEntitySerial;}
+static void stage_world_tick_newer(uint64_t serial){
+ if(!stageWorldLoaded)return;
+ std::vector<uint64_t> order;
+ for(auto& e:stageEntities)if(e.alive&&e.serial>serial)order.push_back(e.serial);
+ for(auto it=order.rbegin();it!=order.rend();++it)stage_world_tick_entity(*it);
+}
 static void stage_world_tick_entities(){
  if(!stageWorldLoaded){stage_shared_posed_apply();return;}
  std::vector<uint64_t> order;for(auto& e:stageEntities)if(e.alive)order.push_back(e.serial);
- auto& visual=stage_visual_random();
- for(auto it=order.rbegin();it!=order.rend();++it){
-  auto find=[&]{for(auto& e:stageEntities)if(e.serial==*it)return &e;return (stage_world::Entity*)nullptr;};
-  auto* e=find();if(!e||!e->alive)continue;
-  bool done=false;const uint32_t resource=e->resource;(void)done;
-  if(e->type==stage_world::LiveComp){
-   // 0x356198: vt+0x7C = 0x341D48 advances, runs slot 5 (0x34EBA0) and, on the tick the once-mode player finishes,
-   // slot 4 (vt+0x110 0x341FC8 -> 0x34FCC0) and returns 0: the entity's effect list (0x355748) is not updated in that
-   // tick (PS2 snapshots: every snow crumb trail skips exactly one birth when its player ends).
-   const auto r=ssx::originalLiveCompTick(e->live,true);done=r==ssx::OriginalLiveCompTick::Done;
-   if(r==ssx::OriginalLiveCompTick::Updated||done)stage_run_slot(resource,5);
-   if(done){stage_run_slot(resource,4);continue;}
-   e=find();if(!e||!e->alive)continue;
-  }
-  if(e->type==stage_world::Breaking){stage_meshanim_update(*e);e=find();if(!e||!e->alive)continue;}
-  if(e->type==stage_world::Boost){stage_boost_update(*e);continue;}
-  for(size_t k=0;k<e->effects.size();k++){
-   auto& x=e->effects[k];
-   if(!x.dynamic){ssx::originalParticleEffectUpdate(x.burst);continue;}
-   if(x.trail.dead)continue;
-   stage_world::PMat node;if(!stage_node_matrix(resource,x.trail.node,node))node=stage_entity_matrix(resource);
-   ssx::originalDynamicParticleUpdate(x.trail,node,visual);
-  }
- }
+ for(auto it=order.rbegin();it!=order.rend();++it)stage_world_tick_entity(*it);
  const auto pending=std::move(stageSlot4Pending);stageSlot4Pending.clear();
  for(uint32_t r:pending)stage_run_slot(r,4); // spline pieces finished this tick: 0x352ED0 -> vt+0x114 0x34FD00
  stage_livecomp_collision(); // the LiveComp-animated collision nodes of this tick (0x334888 reads them at query time)

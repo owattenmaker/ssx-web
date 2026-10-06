@@ -402,7 +402,9 @@ void originalScoreTick(OriginalScoreObject& o,const OriginalScoreTables& t,const
  const auto& v=env.velocity;
  // VU: vmul, vadday/vmaddaz/vmaddw (sum of the four squares), vsqrt.
  float sq=terrain_original::add(terrain_original::mul(v[0],v[0]),terrain_original::mul(v[1],v[1]));
- sq=terrain_original::add(sq,terrain_original::mul(v[2],v[2]));sq=terrain_original::add(sq,terrain_original::mul(v[3],v[3]));
+ // 0x117C64: vaddw.x vf6 = 1.0 is the fs of vmaddaz / vmaddw (1.0 x z^2, 1.0 x w^2)
+ sq=terrain_original::add(sq,terrain_original::mul(1.f,terrain_original::mul(v[2],v[2])));
+ sq=terrain_original::add(sq,terrain_original::mul(1.f,terrain_original::mul(v[3],v[3])));
  const float speed=terrain_original::sqrt(sq);
  const float dt=M(env.timeScale,F(0x3c888889));
  if(0<=o.f(0xA4)&&env.motionMode==0&&env.control!=1){

@@ -790,6 +790,27 @@ def apply_recompiler_keys(lines, keys):
     return out[:-1]
 
 
+def display_window_geometry(slot):
+    """Where the emulator's game window opens, from the git-ignored local/emulator-window.json (this machine's screens):
+    {"screen": 1, "screen_width": 1512, "tiles": [[x, y, width, height], ...]} in Qt's global coordinates (top-left origin,
+    the content rect below the title bar). The slot picks a tile, so concurrent emulators spread out. Returns the Qt
+    saveGeometry() blob (version 3) for [UI] DisplayWindowGeometry, or None (the emulator's default placement)."""
+    path = ROOT / 'local/emulator-window.json'
+    if not path.exists():
+        return None
+    import base64
+    config = json.loads(path.read_text())
+    x, y, w, h = config['tiles'][slot % len(config['tiles'])]
+    title = 32
+    frame = (x, y - title, x + w - 1, y + h - 1)
+    normal = (x, y, x + w - 1, y + h - 1)
+    blob = struct.pack('>IHH', 0x1D9D0CB, 3, 0)
+    blob += struct.pack('>4i', *frame) + struct.pack('>4i', *normal)
+    blob += struct.pack('>iBBi', config.get('screen', 0), 0, 0, config.get('screen_width', 0))
+    blob += struct.pack('>4i', *normal)
+    return base64.b64encode(blob).decode()
+
+
 def prepare_datapath(DATAPATH=DATAPATH, PINE_SLOT=PINE_SLOT, mode=DEFAULT_FPU_MODE):
     ini_source = DATAPATH_TEMPLATE / 'inis/PCSX2.ini'
     (DATAPATH / 'inis').mkdir(parents=True, exist_ok=True)
@@ -807,11 +828,27 @@ def prepare_datapath(DATAPATH=DATAPATH, PINE_SLOT=PINE_SLOT, mode=DEFAULT_FPU_MO
         replacements['NominalScalar'] = os.environ['PS2_CAPTURE_SCALAR']
     if os.environ.get('PS2_CAPTURE_EECYCLE'):  # opt-in EE clock (EECycleRate -3..3, -3 = 50 %): a game frame that overruns its vsync (frame-pacing studies)
         replacements['EECycleRate'] = os.environ['PS2_CAPTURE_EECYCLE']
+    # No host input reaches a run: every tool drives the pad through its in-game hook, and a new emulator window takes keyboard
+    # focus, so the user's typing (Space = TogglePause, Tab = turbo, F3 = load state) or game controller (SDL) used to stall or
+    # disturb captures. The [InputSources] switches go off and every [Hotkeys] binding is cleared below.
+    replacements.update({'Keyboard': 'false', 'Mouse': 'false', 'SDL': 'false'})
+    geometry = display_window_geometry(PINE_SLOT)
     lines = []
+    section = None
     for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section = stripped
         key = line.split('=')[0].strip()
-        if key in replacements and '=' in line: line = f'{key} = {replacements[key]}'
+        if section == '[Hotkeys]' and '=' in line:
+            line = f'{key} = '
+        elif key in replacements and '=' in line:
+            line = f'{key} = {replacements[key]}'
+        elif key == 'DisplayWindowGeometry':
+            continue
         lines.append(line)
+        if stripped == '[UI]' and geometry:
+            lines.append(f'DisplayWindowGeometry = {geometry}')
     lines = apply_recompiler_keys(lines, FPU_MODES[mode])
     # PCSX2 reads <datapath>/inis; ARMSX2 reads <datapath>/ARMSX2/inis.
     for inis in (DATAPATH / 'inis', DATAPATH / 'ARMSX2/inis'):

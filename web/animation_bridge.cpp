@@ -296,10 +296,12 @@ static OriginalCrashClipState crash_clip(){
 }
 static void reset_crash(){auto host=std::move(crash.host);crash={};crash.host=std::move(host);crashGroundGetUpTick=false;crash.riderCategory=1;browserCrashActive=false;browserCrashExitFrame=false;crashSerial=crashObservers=0;lastCrashObserver=lastCrashSemantic=-1;lastCrashImpact=crashPresentation=0;}
 static void detach_rail_for_crash();
+static void rail_control_exit(); // web/rail_gameplay.inc: control 7's exit 132048 (+0x238 target 0, rate 1/15)
 // 10EB30(rider, a1 semantic, a2 attacked, a3 impact type, t0 event). a2 only reaches 119B08 (0x10EB94): attacked counts the
 // victim's score +0x12C and posts popup 0x2D, else +0x124. Only 107E70 (0x1082F4) passes a nonzero a2, its own a3, which is 1
 // from 107888's attack branch (0x107E0C) alone; 105D98 (0x1064E4), 1311B8 / 1311D0, 13A530 and 13F22C (surface 18) pass 0.
 static void board_press_crash_exit();static void board_press_clear_style(); // web/boardpress_gameplay.inc
+static void board_press_placement_clear(); // web/boardpress_gameplay.inc
 static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool attacked=false){
  if(crash.active)return;clear_start();
  const bool crashFromAirControl=gs.controlState==5&&!heldAirMode&&!passiveMode&&!::grounded;
@@ -322,7 +324,11 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool at
  cb.offsetAnimationRoots=[](const AnimationTransform& root){graph.offsetSequenceRoots(root);};cb.playAnimation=crash.host.play;
  // 11FEC8(13) first runs the old controller's exit: control 1's 12FE98 (+0x330 = 0, +0x274 -> 0 at 1/60, +0x268 -> 0 at 1/30) when a
  // collision crashes a board press (PS2 hl2/crash-eba3 1409, hl2/rail-era5 2932: the press depth then posed the crash 0.5-1.7 cm off)
- cb.enterControl=[&](int control,OriginalHardCrashEntryState& value){if(control==13)board_press_crash_exit();physicsState.controlState=gs.controlState=control;if(control==13)return;
+ cb.enterControl=[&](int control,OriginalHardCrashEntryState& value){
+  // 111578 runs the old control's exit by +0xDE4 (table 0x456B90): control 7's 132048 sets the +0x238 target 0 at 1/15 (fuzz
+  // r2-0204-m0 2663: a crash on the rail; the fading rail cycle 18's slot blend reads the decaying +0x238 from 2664)
+  if(control==13&&physicsState.controlState==7)rail_control_exit();
+  if(control==13)board_press_crash_exit();physicsState.controlState=gs.controlState=control;if(control==13)return;
   OriginalCrashActorState actor;actor.position=value.physical.position;actor.quaternion=value.physical.rotation;actor.velocity=physicsState.velocity;actor.groundNormal=physicsState.normal; //rider+370: landing contact normal, air +180 copy, or ground normal
   actor.surfaceVelocity=physicsState.surfaceVelocity;actor.surface=physicsProfile.surface.id;actor.timeScale=physicsState.timeScale;actor.contactDistance=physicsState.distance;
   crash.beginControl(actor,pending_pose_translation()); /*12CA30: the control-8 entry adds rider+0x9D0 (the tick's 106538 translations: landing, body and pair pushes; score-uber 480, c0a-ws13 Allegra 5940) to the cached primary/secondary before 136D40 detaches the board*/tmpBegin[0]=float(animationTick);for(unsigned k=0;k<3;k++){tmpBegin[1+k]=crash.actor.detachedPosition[k];tmpBegin[4+k]=browserLandingTranslation[k];} /*TMPDEBUG*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
@@ -645,8 +651,13 @@ static void begin_reset(int reason){
  if(!crash.active&&::grounded&&!browserRailActive)originalLandingGroundLeave(physicsState,controllerGround.logicTick,lastGroundLeave); //116120 requestMotion(3) runs the ground exit 13F410 first: +0x208/+0x2BC/+0x2C8 decay to 0 (tech-select-ground 439)
  handplant_reset_exit(); // 116120: control 11's exit, then motion 5's (the velocity)
  resetReason=reason;resetControl={reason>0,0};rail_reset_leave();detach_rail_for_crash();browserResetActive=true;browserCrashActive=false;crash.active=false;
+ // 11FEC8(9) runs the old control's exit (111578): only control 5's 134CB0 zeroes the prewind triplets +0x2A4..+0x2B8. From control 0
+ // they keep their values through the reset ticks (fuzz r10-0153 1210: +0x2A8 / +0x2B4 stay 1/30); the placement (12F498) clears them.
+ const bool airControlExit=physicsState.controlState==5;
  physicsState.controlState=gs.controlState=9;graph.setRate(2,0);boostState.modifier=0;boostState.window=physicsState.boostWindow=0;
- heldAirMode=passiveMode=false;prewind={};air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;
+ if(airControlExit)prewind={};
+ prewind.jumpGate=0;
+ heldAirMode=passiveMode=false;air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;
  grab={};banked=scoreEvent=0;
 }
 // 116120 while control 9 is already running: the reset control restarts from progress 0 (12F398 state) with the new reason.
@@ -667,7 +678,7 @@ static void reset_place_at(const terrain_original::Vector& point,const terrain_o
   if(!cameraTerrain||!browserBodies)throw std::runtime_error("Reset placement requires original world collision");
   clear_reset_contacts();reset_body_queries();
   auto value=originalResetPlacement(point,direction,clearance,[](auto end,auto start,float preferred){return queryOriginalWorldSegment(*cameraTerrain,browserBodies.get(),end,start,0,preferred,true);});
-  reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,resetStance);crash.actor.detached=false;painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true;
+  reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,resetStance);board_press_placement_clear();crash.actor.detached=false;painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true;
   graph.sequences.clear();graph.sampledLocal.reset();graph.requestedSemantics.fill(438);graph.nextRate=1; /*311A50: animator +0x1C = 1*/graph.defaultMirror=resetStance;graph.defaultRoot={};
   auto sc=originalSinCos((resetStance?-3.1415927410125732f:-0.f)*.5f);graph.defaultRoot.rotation={0.f*sc[0],0.f*sc[0],sc[0],sc[1]};
   gs=physicsState;legWeight=1;poseContact=initialPoseContact;currentPivot={};completedMain=false;completedMainSemantic=-1;resetStaleWorld=cachedCrashWorld;cachedCrashWorld.clear();idleSeconds=0;upperRequest358=0; /*11D660 zeroes +0x35C (115D48 idle clock) and +0x358 (pending 10E028 reaction)*/
@@ -1090,7 +1101,12 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
    if(heldAirUpdate&&physicsAttached){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);}}
 
   bool airEntryTick=false;
-  if(passiveMode&&passiveDeparture==0){OriginalPassiveAirAccess access;access.upper=attack_passive_upper;access.rail=[](){return false;};access.handplant=[](bool){return false;}; /*0x107578 already ran before rail attach*/access.stopBoost=[](){gs.boost=0;};access.mainAnimation=[](){return OriginalPassiveAirAnimation{graph.requestedSemantics[2],graph.currentClass(2)};};access.requestAnimation=[](int semantic,float,uint32_t){if(!graph.enter(semantic))throw std::runtime_error("Missing passive air animation");};access.requestControl=[](int control){if(control==5){passiveMode=false;gs.controlState=5;air=originalAirControlBegin(0,0);}};tmpDebug[16]=gs.turn.current;tmpDebug[17]=gs.turn.rate;tmpDebug[18]=gs.turn.target;tmpDebug[19]=gs.crouch.current;tmpDebug[20]=gs.brake.current;tmpDebug[21]=float(animationTick); /*TMPDEBUG*/originalPassiveAirStep(passive,gs,passive_command(turn,jumpHeld),access);airEntryTick=!passiveMode;passiveEntryApproached=airEntryTick;groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);}
+  if(passiveMode&&passiveDeparture==0){OriginalPassiveAirAccess access;access.upper=attack_passive_upper;access.rail=[](){return false;};access.handplant=[](bool){return false;}; /*0x107578 already ran before rail attach*/access.stopBoost=[](){gs.boost=0;};access.mainAnimation=[](){return OriginalPassiveAirAnimation{graph.requestedSemantics[2],graph.currentClass(2)};};access.requestAnimation=[](int semantic,float,uint32_t){if(!graph.enter(semantic))throw std::runtime_error("Missing passive air animation");};access.requestControl=[](int control){if(control==5){passiveMode=false;gs.controlState=5;
+   // 133128, control 5's entry from 12F730: the prewind currents +0x2A4 / +0x2B0 seed the air rates (+0x2DC / +0x2E0), and with either
+   // nonzero 311B20's channel-2 head clip plays at (1 + 0.5 x trick) x max(spin, flip rate) x 1/7 (0x133274..0x1332DC; fuzz r2-0204-bones
+   // 2565: Mac's 287 at 1.2744 on the PS2, 1 here, his posed board drifting until the 2585 landing probe)
+   air=originalAirControlBegin(prewind.spin.current,prewind.flip.current);
+   if(prewind.spin.current!=0||prewind.flip.current!=0)graph.setRate(2,originalAirReleaseAnimationRate(airProfile.trickStat,air.spinRate,air.flipRate));}};tmpDebug[16]=gs.turn.current;tmpDebug[17]=gs.turn.rate;tmpDebug[18]=gs.turn.target;tmpDebug[19]=gs.crouch.current;tmpDebug[20]=gs.brake.current;tmpDebug[21]=float(animationTick); /*TMPDEBUG*/originalPassiveAirStep(passive,gs,passive_command(turn,jumpHeld),access);airEntryTick=!passiveMode;passiveEntryApproached=airEntryTick;groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);}
   if(passiveDeparture==2){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);passiveDeparture=0;} /*1211F8 approaches +1FC too (the kind-4 cycle blend reads it)*/ //1211F8 still runs while airborne control0 requests control4
   if(!passiveMode&&!heldAirMode&&!airReleaseTick&&!airEntryTick&&!passiveDeparture&&!bpAirTransition&&!board_press_air_frame()){
   constexpr std::array<int,15> masks={1,2,4,8,3,5,9,6,10,12,7,11,13,14,15};int index=-1;for(int i=0;i<15;i++)if(masks[i]==mask)index=i;
@@ -1232,7 +1248,10 @@ static float* animation_post_phase(){
   // (no air post in the tick the rail motion lost the rail, whatever the controller: a soft control 3 leaving a rail too; PS2 hl2/rail-bra2-a
   // 1760: the port bounced off an instance there)
   const bool landingRecovery=browserLandingRecoveryReset;browserLandingRecoveryReset=false; // 139C88's recovery branch skips its 13AA48 / 105398
- const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||landingRecovery||crashFrame||railStepConsumed||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
+ // 13F488 and 105398 both return at once while 11FEE8 (+0xDE4, the control) is 9: a 13F23C reset (116120) earlier in this post stage
+ // skips them (0x13F4B4 / 0x1053C8; fuzz r10-0153 1209: a reset-surface contact, the port's query pushed the rider 15 cm).
+ const bool resetInPost=physicsState.controlState==9;
+ const bool postContacts=!((startFrame&&browserStartFrozen)||resetFrame||resetInPost||landingRecovery||crashFrame||railStepConsumed||(railFrame&&(browserRailActive||(physicsState.controlState!=12&&!handplant_air_frame()))));
   // 139C88 runs 13AA48 after its touchdown too (13A718 -> 11E150 -> 13AA48 at 13A744, also after a landing crash): the query
   // keeps the air filter (query+0x10 = rider+0x180, not the new ground normal +0x370) and 13AA48's own response (no ground
   // projection or steering); only 105398 after it sees the ground motion 11FE78(0) set (PS2 allpeak/apr-start 3581: a landing
@@ -1725,6 +1744,10 @@ void browser_reseed_stats(){
 static void animation_state_dump(std::vector<float>& out){
  auto t3=[&](unsigned off,const GroundControlValue& t){out.push_back(float(off));out.push_back(t.current);out.push_back(float(off+4));out.push_back(t.rate);out.push_back(float(off+8));out.push_back(t.target);};
  t3(0x244,hpLean244);t3(0x2A4,prewind.spin);t3(0x2B0,prewind.flip);
+ // the rail triplets (web/rail_gameplay.inc): +0x238 drives the rail cycles' 18..20 slot blend, also while they fade out
+ t3(0x22C,railSteer);
+ t3(0x238,railBalance);
+ t3(0x25C,railTolerance);
 }
 // A computer rider's relationship row (0x155B50 levels for 10DBF0 attacks) after an in-race 0x155BF0 change (web/lineup.js).
 extern "C" EMSCRIPTEN_KEEPALIVE void npc_set_relationships(const float* row){for(unsigned k=0;k<6;++k)npc.relationship[k]=int(row[k]);}

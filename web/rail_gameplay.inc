@@ -53,7 +53,7 @@ static void rail_exit_contacts(OriginalRailRider& r){
  advance_pickup_timers(motionTick+1);
  originalRailExitContactPhases(browserBodyVolume->activeMask,r.controlState,railUber.identity,[&]{
   //105398 (a1=0): filter-1 selection, pickup copy and 1057B8 response.
-  const auto velocity=physicsState.velocity;const auto quaternion=physicsState.quaternion;const bool softBefore=browserSoftActive;
+  const auto velocity=physicsState.velocity;const auto quaternion=physicsState.quaternion;const bool softBefore=browserSoftActive;const bool crashBefore=crash.active;
   const auto moved=run_rider_instance_contacts(*browserBodyVolume,{},nullptr,r.motionMode,r.controlState,railMotion.direction);
   railExitDebug={moved[0],moved[1],moved[2],0.f,0.f,float(r.motionMode),float(r.controlState),float(browserBodyVolume->activeMask)};
   if(moved!=std::array<float,3>{}||physicsState.velocity!=velocity||physicsState.quaternion!=quaternion){
@@ -62,6 +62,9 @@ static void rail_exit_contacts(OriginalRailRider& r){
    const auto frame=originalRebuildOrientation(r.quaternion);r.right=frame.right;r.forward=frame.forward;r.up=frame.up;
   }
   if(browserSoftActive&&!softBefore)r=rail_view(); //a soft reaction (108388) replaced the controller's triplets: as the 13C140 path above
+  // a crash (1057B8 -> 10EB30 -> 11FEC8(13)) ran control 7's exit 132048 (enter_crash rail_control_exit): the pair phase's rail_apply
+  // must not restore the old +0x238 target (fuzz r2-0204-m0 2663, six riders)
+  if(crash.active&&!crashBefore)r=rail_view();
  },[&]{
   if(physicsState.controlState==9)return; //13C16C
   auto query=inspect_body_contacts(*browserBodyVolume,{0,0,0}); //13C1A0: 32F650 without the 13F488 normal filter (the response only rejects an opposed normal)
@@ -83,6 +86,8 @@ static void rail_exit_contacts(OriginalRailRider& r){
    // pair phase's rail_apply below does not restore the pre-reaction triplets (PS2 Kick Doubt Moby 2944: +0x238 0.4636 -> 0.3969 -> 0.3303).
    if(reaction.controlOneCancelled){board_press_soft_enter(reaction.animation,reaction.manualSpin);r=rail_view();} /*a press on the rail (control 1, motion 4)*/
    else if(reaction.kind==OriginalCollisionReactionKind::Soft&&!reaction.cancelControlOne){soft_collision_begin(reaction.animation,reaction.manualSpin);r=rail_view();}
+   // a crash (10EB30 -> 11FEC8(13)) ran the same exit (enter_crash rail_control_exit; fuzz r2-0204-m0 2663 with the pairs hosted)
+   else if(crash.active)r=rail_view();
   }
  },[&]{
   //107888 rider-pair dispatch (13C098) through the race host (web/ai-racers.js); single-rider: nothing.
@@ -139,6 +144,14 @@ static void clear_rails(){browserRailActive=railOwned=railPostPending=false;rail
 //13C5A0: every motion4 exit restarts the rail attachment tolerance ramp.
 static void rail_motion_exit(){railTolerance={std::bit_cast<float>(0xbe800000u),std::bit_cast<float>(0x3d088889u),1.f};}
 static void rail_reset_leave(){if(browserRailActive&&railOwned&&physicsState.controlState==7){auto view=rail_view();originalRailControlLeave(view);rail_apply(view);}}
+// 0x132048, control 7's exit (111578 from 11FEC8): +0x240 = 0, +0x23C = 1/15. Nothing else.
+RIDER_LOCAL static uint32_t railControlExits=0; // QA: rail_control_exit calls (rail_debug_info)
+static void rail_control_exit(){
+ auto view=rail_view();
+ originalRailControlLeave(view);
+ railBalance=view.balance;
+ ++railControlExits;
+}
 static void detach_rail_for_crash(){
  if(browserRailActive)rail_motion_exit();
  browserRailActive=railOwned=railHeldJump=railPreviousJump=false;
@@ -308,6 +321,12 @@ static void rail_tick_begin(){railReleaseFrame=false;browserRailJumpRelease=fals
 static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;browserRailTickBegin=rail_tick_begin;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_debug(){return railExitDebug.data();}
+// QA: [rail_control_exit calls, +0x238 current, +0x240 target, browserRailActive, railOwned]
+extern "C" EMSCRIPTEN_KEEPALIVE float* rail_debug_info(){
+ RIDER_LOCAL static float out[5];
+ out[0]=float(railControlExits);out[1]=railBalance.current;out[2]=railBalance.target;out[3]=browserRailActive;out[4]=railOwned;
+ return out;
+}
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_info(){RIDER_LOCAL static float out[4];out[0]=railExitPasses;out[1]=railExitHits;out[2]=railExitIncomplete;out[3]=railExitReactions;return out;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE void rail_shoulder_input(int mask){railShoulderMask=mask&15;}

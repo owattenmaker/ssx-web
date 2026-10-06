@@ -113,7 +113,8 @@ static void update_rider_fx(const OriginalBoostEffectParameters&){
   if(!(motionTick&1u)){const int old=st.cursor;st.cursor=(st.cursor+1)%25;if(st.count<st.capacity)++st.count;st.ring[size_t(st.cursor)]=st.ring[size_t(old)];}
  }else st.count=st.count>2?st.count-2:(st.count<=-3?st.count+2:0);
  const auto& v=physicsState.velocity;
- st.scroll=sub(st.scroll,mul(terrain_original::sqrt(add(add(mul(v[0],v[0]),mul(v[1],v[1])),mul(v[2],v[2]))),.000166666665f));
+ // 0x2EF8C4..0x2EF8D8: vaddw.x vf6 = 1.0, vadday x^2+y^2, vmaddaz 1.0 x z^2, vmaddw 1.0 x w (0), vsqrt
+ st.scroll=sub(st.scroll,mul(terrain_original::sqrt(add(add(mul(v[0],v[0]),mul(v[1],v[1])),mul(1.f,mul(v[2],v[2])))),.000166666665f));
  if(st.scroll<0.f)st.scroll=add(st.scroll,1.f);
  if(1.f<st.scroll)st.scroll=sub(st.scroll,1.f);
  // Draw 2EB198 (count >= 2): four faces from the board centre +/-12 Z (top / bottom caps, colour 1, alpha 1) through the

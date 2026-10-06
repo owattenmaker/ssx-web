@@ -305,9 +305,36 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
 - **A computer rider fires a stage trigger in a human-only capture** (r1-0066): Rival Time's Psymon (slot 1) fires the EBC3 rock
   trigger 15146 at 2397 (121818 0x12186C -> 30A060, RestoreNode 0x350F60, flags 0x200022 -> 0x200304); compare-ps2-capture runs only the
   human, so the port fires it at the human's 3475. A harness gap: event seeds need --ai-state and compare-ai-capture.
-- **Open: r2-0204-m0** (six riders): Mac's landing in pass 2585 hits the same patch (87597) and cache cell (8,5,1) as the PS2, but its
-  +0x370 normal differs in the 5th digit; the probe origin (0x13A834) is 1 ULP off, which points at his posed root. Computer riders'
-  bones are not recorded (--ai-state) and not gated.
+- **r2-0204-m0** (six riders), fixed:
+  - Mac's landing pose at 2585 (core38): the doubled animationTurn approach on a passive departure tick (web/animation_bridge.cpp).
+  - The human's crash on a rail at 2663 (core39). 11FEC8(13) -> 111538 -> 111578 runs the old control's exit from table 0x456B90 by
+    +0xDE4:
+    - 0 -> 131C30, 1 -> 12FE98, 2 -> 12E9B0 (empty), 4 -> 12FB68, 5 -> 134CB0, 7 -> 132048, 8 -> 12E690, 11 -> 132F98.
+    - Control 7's 132048 sets the +0x238 target to 0 (+0x240) and its rate to gp-0x7594 = 1/15 (+0x23C).
+    - From 2664 the fading rail cycle 18 (kind 5, 0x104238) blends its slots from the decaying +0x238 (1 -> 0.9333 -> 0.8667).
+    - The port's crash entry ran only control 1's exit, so +0x238 stayed at 1, the slot blend stayed 0 / 1, and the crash pose was
+      1.4 cm off: a 1.1 cm translate at 105398, then the velocity.
+    - Fix: enter_crash's enterControl(13) runs rail_control_exit() when the old control is 7.
+    - Verified: r2-0204-m0 human, fields and bones exact to the end (2704). Full ps2-captures on core39: 531 clean.
+    - With the rider pairs hosted (six riders, core41): rail_exit_contacts' pair phase rail_apply()s its rider view. The 105398 crash
+      (phase 1, 1057B8 -> 10EB30) left that view holding the old triplet, which put +0x240 back to 1. Both crash routes (105398 and
+      13C140's reaction) now re-read the view, as the soft route already did. r2-0204-m0 six riders: everything exact to the end.
+  - QA: ground_state_dump now lists the rail triplets +0x22C / +0x238 / +0x25C (compare-ps2-capture --fields).
+- **A section-built entity steps once before the next record** (r2-0249, and the baseline hl2/carve-s1-era5; core40):
+  - A PS2 record is taken after the human's 11B3F8. One record interval therefore holds the computer riders, 0x101B60's scan, the
+    next race_begin's entity pass (0x354F98), then the human. The port's tick runs its entity pass first.
+  - So an entity a slot-1 program builds in the scan steps in that same interval on the PS2. In the port it waited for the next
+    tick, and lagged one step for life.
+  - Snapshots (tools/ps2-float/ee_oracle/snap_at.py, mode 1, carve-s1-era5) of the Gravitude crash billboard 332333 (LiveComp entity,
+    words +0x1C time, +0x20 unclamped, +0x24 previous):
+    - 545: time 1/30 + 5/60; the port had 4 steps.
+    - 1150 / 1193: the port's value one record later (0x3FB332E8, 0x4007774F).
+  - Effect: program 85's builtin-55 crossing at 64/30 s, its two builtin-77 draws and the ice-piece breaks came one tick late. These
+    are the gravitude gate's RNG "blips" at 1195 / 1209 / 1239. In r2-0249 a rider draw interleaved, so the shared RNG diverged.
+  - Fix: section_pass() updates the entities built since the scan began (stage_world_tick_newer, after the visual pass).
+  - Verified: carve-s1-era5 and r2-0249 have no blips; the RNG and all six riders are exact to the end (3930).
+  - Not changed, likely the same offset, unverified: the section collision players (stage_section_collision_update: now - start
+    steps) and the JS section players.
 
 ## Exact start seeds (2026-10-05, physics-jank agent)
 

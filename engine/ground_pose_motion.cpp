@@ -18,7 +18,8 @@ float originalCosine(float x){
     return ((quadrant+1)&2)?-value:value;
 }
 void originalGroundBoardLift(OriginalGroundState&s,const std::array<float,3>&v){
-    Round round;float x=terrain_original::mul(v[0],v[0]),y=terrain_original::mul(v[1],v[1]),z=terrain_original::mul(v[2],v[2]);float speedSquared=terrain_original::add(x,y);speedSquared=terrain_original::add(speedSquared,z);speedSquared=terrain_original::add(speedSquared,0.f);float speed=terrain_original::sqrt(speedSquared);
+    // 0x13F07C..0x13F084: vadda x^2+y^2, vmadda vf0w 1.0 x z^2, vmadd 1.0 x w, then vsqrt (the speed)
+    Round round;float x=terrain_original::mul(v[0],v[0]),y=terrain_original::mul(v[1],v[1]),z=terrain_original::mul(v[2],v[2]);float speedSquared=terrain_original::add(x,y);speedSquared=terrain_original::add(speedSquared,terrain_original::mul(1.f,z));speedSquared=terrain_original::add(speedSquared,0.f);float speed=terrain_original::sqrt(speedSquared);
     float factor=terrain_original::mul(speed,f(0x39bcbe62u));factor=std::min(factor,1.f);float amplitude=originalScalarAdd(std::abs(s.turn.current),std::abs(s.brake.current));amplitude=originalScalarAdd(amplitude,.1f);amplitude=terrain_original::mul(factor,amplitude);
     float delta=terrain_original::mul(amplitude,f(0x4029999au));s.boardBouncePhase=originalScalarAdd(s.boardBouncePhase,delta);if(s.boardBouncePhase>=f(0x40c90fdcu))s.boardBouncePhase=originalScalarSubtract(s.boardBouncePhase,f(0x40c90fdcu));
     float lift=originalCosine(s.boardBouncePhase);lift=terrain_original::mul(lift,7.5f);s.boardLift=terrain_original::mul(lift,amplitude);
@@ -41,7 +42,8 @@ namespace ssx {
 void originalGroundBoardNormal(OriginalGroundState&s){
     Round round;std::array<float,3> value;
     for(unsigned i=0;i<3;++i){float term=terrain_original::mul(s.normal[i],.5f);value[i]=terrain_original::add(s.boardNormal[i],term);}
-    float x=terrain_original::mul(value[0],value[0]),y=terrain_original::mul(value[1],value[1]),z=terrain_original::mul(value[2],value[2]);float sum=terrain_original::add(x,y);sum=terrain_original::add(sum,z);sum=terrain_original::add(sum,0.f);float inverse=terrain_original::div(1.f,terrain_original::sqrt(sum));
+    // 0x13F32C..0x13F344: the horizontal VU dot (vadda x+y, vmadda vf0w 1.0 x z^2, vmadd 1.0 x w), then vrsqrt / vmul
+    float x=terrain_original::mul(value[0],value[0]),y=terrain_original::mul(value[1],value[1]),z=terrain_original::mul(value[2],value[2]);float sum=terrain_original::add(x,y);sum=terrain_original::add(sum,terrain_original::mul(1.f,z));sum=terrain_original::add(sum,0.f);float inverse=terrain_original::div(1.f,terrain_original::sqrt(sum));
     for(unsigned i=0;i<3;++i)s.boardNormal[i]=terrain_original::mul(value[i],inverse);
 }
 }

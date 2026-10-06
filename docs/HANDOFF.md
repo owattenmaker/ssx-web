@@ -1,3 +1,147 @@
+> **PS2 arithmetic: PAUSED 2026-10-05 ~20:00. Resume point (PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md) "Exact baselines". Nothing of mine is running, and the machine has 0 ARMSX2.
+> - **Chain run** (`tools/ps2-float/derive_exact_chain.py --attempts 4 --width 2 <17 states>`; the list is in ps2-float.md "Mode-1-base gates", the resolvable side). It is resumable: done states are skipped and finished steps are reused from local/reference-exact/chains/steps.json.
+>   - **Written (11):** ara1-screen10, fr-ebc3-late, frd-1800, fr-ebc3-14302, bra2-screen10, out-p2r-card, out-apr-card, ass1-screen10, fr-ebc3-arrival, fr-e-glide, out-apj-card.
+>   - **Failed (1):** ctm-parity/mountain/states/frdra4-lodgeD. Its step peak2/frdra4-3550 never reached tick 3370 in 4 attempts. Retry with --width 4 / more attempts, or move it to the mode-1-base list.
+>   - **Not started (5):** peak2/fr-c-arrive (interrupted; discard local/reference-exact/chains/work/fr-c-arrive/), menus/fr-courses/aba1-screen10, bhp1-screen10, peak3/fr-e-rode, peak3/for-peak2/fr-dbc2-arrival.
+>   - To resume, re-run the same command with all 17 states; done ones are skipped.
+> - **Exact-base bulk:** `python3 tools/ps2-float/recapture_exact.py --exact-baselines --jobs 2 --slots 4`, into local/ps2-capture/runs-exactbase/. It has not started: the queued launcher was stopped before its first job.
+>   - Order: most-gated baseline first (Snow Jam anchor / glide), then the six-rider races, then the peak / CTM long runs; riders/* skipped.
+>   - Slots (coordinator): 2 for this bulk, 1 for rider-parity's riders/* sweep (runs/riders-exact), and 1 shared by physics and the fuzzer.
+>   - Before scoring, link the riders: `python3 tools/ps2-float/link_riders_exact.py`. It only takes captures whose manifest baseline is under reference-exact.
+>   - Score (`score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base --core <exact core>`) once the Snow Jam slice is in. Send the tallies to the coordinator before the bulk finishes.
+> - **Matcher:** exact-base riders/zoe-race (local/ps2-capture/runs-exactbase/riders/zoe-race; rider-parity's link replaces it later).
+>   - With the physics agent's batches 6 and 7 (core42-exact), the first exact-only fields are 0x2DC@450 (also in mode 1, harmless), then 0x180/0x184@452, 0x370/0x374@453, q at 488, position at 491.
+>   - Next: rematch PS2 pass 451 on a fresh trace tree. `make_trace_tree.py local/ps2-float/tree-trace6` exists, but its core build was interrupted, so rebuild it.
+>   - Command: `MATCH_STATES=local/ps2-capture/runs-exactbase MATCH_RUNS=local/ps2-capture/runs-exactbase MATCH_ARITH=exact-base MATCH_TAG=-xb MATCH_ACTOR=0x14701a0 STAGE_WORLD=1 sh tools/ps2-float/match_tick.sh riders/zoe-race 451 <trace core> -- --zoe --event`. The snapshot and PS2 traces for 451 are cached.
+> - **Location states:** all 60 are done in local/reference-exact/, plus the Snow Jam anchor / glide / ready. The exact CTM session is in local/reference-exact/ctm/session-exact.f*.p2s.
+
+> **Paused 2026-10-05 (physics-jank agent): resume point.** Core41 is with the coordinator, deploying. Nothing of mine is running.
+> - **core42** (scratch: local/physics-jank/core42, built from the current tree; **its suite has not run**; no snapshot yet). It is
+>   core41 plus:
+>   - **Batch 7** (the arithmetic agent; mode-1 neutral). The VU horizontal-dot form, mul(1, z²), at three sites:
+>     - originalGroundBoardLift (0x13F07C);
+>     - the boost scroll (2EF6D0, 0x2EF8C4);
+>     - 117C28's speed (z² and w²).
+>     Exact-base zoe-race on local/physics-jank/core42-exact: 0x31C@244 is cleared; the next fields are 0x2DC@450, 0x180@452,
+>     0x370@453. Sent to the arithmetic agent.
+>   - **fuzz r10-0153** (a reset-surface ground contact, 13F23C -> 116120(rider, 0, 1)) is now exact to the end, with no field or bone
+>     differences. Three changes:
+>     - 13F488 and 105398 return at control 9 (0x13F4B4 / 0x1053C8): a reset in the post stage now skips them
+>       (animation_bridge.cpp resetInPost).
+>     - begin_reset keeps the prewind triplets unless the old control is 5. 111578's exit table: only 134CB0 zeroes +0x2A4..+0x2B8.
+>     - The 11D660 placement zeroes the board-press +0x268 / +0x274 triplets (0x11DB70..0x11DB84; board_press_placement_clear).
+>   - No new exports (export diff against core41: none). Add the r10-0153 notes to crash-motion.md when resuming.
+> - **To resume:**
+>   1. Run the full ps2-captures suite on a core42 snapshot (CORE_JS=...core42-snapshot/core.js). If green, hand core42 over.
+>   2. Then the open repros:
+>      - the fuzzer's new human repros: r1-0203 (Select reset from a board press, entry pose), r13-0191 (handplant to passive air
+>        at 2015, then the command word at 2219), r7-0036 (Uber to rail bones at 906);
+>      - r7-0038 (Mac 4998);
+>      - RNG: r4-0048 4094, r7-0028 4902, r7-0082 3623, r10-0134 1986;
+>      - the dra4 bone lead: Psymon's bones at 3772, before the RNG at 3773.
+>   3. Apply the arithmetic agent's **batch 8** (received while paused; mode-1 neutral). It is for web/generated/air_alignment.cpp and its
+>      identical engine/ copy, PS2 0x31BB4C..0x31BC70 and 0x121ECC..0x121EEC. The matcher files are
+>      local/ps2-float/match/riders/zoe-race-451-xb.*.
+>      - `cross`: the vopmsub products swap (0x31BB50, 0x121ED4).
+>      - `dot`: mul(1, z) (0x31BBE0).
+>      - The quaternion multiply's w lane: two mul(1, ·) terms, vmsuba.w / vmsub.w with vf0 (0x121EE4 / 0x121EE8).
+>      - `delta`: mul(sc[0], axis[i]) (0x31BC40).
+>      - Then check its **structural finding**. air_control.cpp presentationImpl composes spin and flip from an identity quaternion,
+>        while the PS2 multiplies the base orientation at once (0x134F3C..0x134F5C). The identity product is exact only in mode 1, so it
+>        is the likely source of the exact-only q drift at 488 / 491. Decomp first; this is not a form swap.
+>   4. Watch for the arithmetic agent's next batches.
+> - **Slot 4:** shared with the fuzzer under its protocol (local/ps2-capture/slot4/physics while I use it; wait for slot4/fuzz to clear).
+
+> **Fuzzing paused for the night (2026-10-05, fuzzing agent). Resume point:** see [fuzzing.md](fuzzing.md).
+> - **Stopped:** my processes only (mode-1 batch 6 and its ARMSX2). Nothing of mine is running.
+>   - Batch 6 compared 18 of 30.
+>   - The interrupted capture is in local/ps2-capture/runs/fuzz-mode1/interrupted/r1-0137.*. It's incomplete, so delete it; the
+>     next batch picks r1-0137 up again.
+>   - slot4/fuzz has been removed.
+> - **Resume:** `cd local/fuzz && FUZZ_FPU=mode1 nice python3 -u diff.py batch 30 7`.
+>   - It shares ARMSX2 slot 4 with the physics agent through local/ps2-capture/slot4/{physics,fuzz} (diff.py slot_turn).
+>   - Fuzz rounds: `nice python3 fuzz.py round r17 300 2`. Coverage keys have flattened (28023).
+>   - Recheck on a new core: `python3 recheck.py CORE_JS --jobs 3`.
+> - **Open on core41** (all sent to the physics agent, who has the list):
+>   - single rider: r10-0153 (forced ground reset 15.5 cm), r1-0203 (Select reset from a press, bones), r13-0191 / r2-0299
+>     (handplant -> passive air -> landing), r7-0036 (rail Uber -> rail bones), r6-0121 (air-steer-passive, control 7 at 1223,
+>     0.6 cm, not yet sent);
+>   - six riders: the RNG after a human pad change (r4-0048, r7-0028, r7-0082, r10-0134) and Mac in r7-0038 (cra3, 4998).
+> - **New in batch 6, not yet triaged:**
+>   - r13-0175 (hl/hl-metro-4): the RNG first at 2413;
+>   - r6-0135 (kick-doubt, six riders): the rival at 3825, near the finish.
+
+> **Rider-parity exact sweep: PAUSED 2026-10-05 20:03 (the user stopped everything for the night; the coordinator resumes).** All my processes and emulators are stopped. Nothing of mine is running.
+> - **Done (local/reference-exact/characters, each with provenance via derive_exact_states.py --provenance-only):**
+>   - Snow Jam countdown + glide for 26 of 31 riders: zoe moby psymon griff viggo elise nate mac allegra kaori brodi eddie jp luther marisol marty hiro jurgen sveltluther stretch cudmore bunnysan gutless snowballs nwlegend canhuck.
+>   - Missing: seeiah (stopped mid-run, partial folder removed), churchill, unknownrider, fareastmyth, brodi-on-psymon.
+>   - Course countdowns: only the folders with a countdown.p2s are done (courses-BRA2 / CRA3 / ESS3 for some riders). A folder without one is an unfinished derivation; the resume redoes it.
+>   - Captures: none yet in runs/riders-exact. The earlier mode-1-based exact runs are in runs/riders-exact-mode1base and are not for scoring.
+> - **Resume:**
+>   1. `cd ~/Documents/ChatGPT/ssx3 && nohup local/rider-parity/exact-sweep.sh > /dev/null 2>&1 &` (one ARMSX2; states that exist are kept). It finishes the Snow Jam states, captures them (race / hl / uber-a..f), then the courses.
+>   2. Then `nohup local/rider-parity/exact-states.sh > /dev/null 2>&1 &`: lineups*, grid-scales*, two-event and fe-screens. It waits for the sweep.
+>   - Logs: local/rider-parity/exact-sweep.log, exact-states.log.
+> - **Coordination:** the arithmetic agent's scorer links runs/riders-exact into runs-exactbase/riders.
+
+> **Deployed 2026-10-06 (coordinator): core41** (includes core38-40); the first attempt on 2026-10-05 was stopped by the pause. web/runtime core.wasm `620f582d…`, core.js `2fe50ccb…` (adds the QA export _rail_debug_info) copied from local/physics-jank/core41-snapshot (531 clean; the three aibones gates pass separately). On top of core37: the computer riders' pose fixes (double animationTurn approach, 133128 prewind rates, NPC settings stats), a rail crash runs control 7's exit 132048 (single and six-rider), a section-scan-built entity steps once before the next record (the Gravitude crash billboard), and batch 6 (mode-1-neutral).
+
+> **core38-core41: rail-crash exit, section-built entities step before the record, computer-rider bone gates (2026-10-05, physics-jank agent):**
+> see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures" and [set-pieces.md](set-pieces.md) (Gravitude crash billboards).
+> - **core40** (scratch: local/physics-jank/core40-snapshot, core.wasm `8d763ec8…`, core.js `f8ae9c9c…` unchanged). Full ps2-captures:
+>   531 clean. It contains core38 and core39:
+>   - **core38:**
+>     - the double animationTurn approach on a passive departure tick;
+>     - the 133128 prewind rates and channel rate;
+>     - NPC settings stats through browserStatFromSeed.
+>     These fix Luther's gravitude pose (2403) and Mac's r2-0204 landing (2585).
+>   - **core39:** a crash on a rail runs control 7's exit 132048. 11FEC8(13) -> 111578 runs the old control's exit from table
+>     0x456B90, which sets the +0x240 target to 0 at 1/15. The fading rail cycle 18 blends from +0x238 (fuzz r2-0204-m0 human 2664).
+>   - **core40:** an entity a section scan builds steps once before the next record. A PS2 record interval runs 0x101B60 and then the
+>     next race_begin's entity pass; the port's tick runs its entity pass first. Shown by snapshots of hl2/carve-s1-era5 at
+>     545 / 1150 / 1193.
+>     - The crash billboard 332333's program 85 no longer draws a tick late. The gravitude gate's RNG blips 1195 / 1209 / 1239
+>       are gone.
+>     - fuzz r2-0249 and r6-0103 are exact to the end.
+> - **core41** (local/physics-jank/core41-snapshot, core.wasm `620f582d…`, core.js `2fe50ccb…`; full suite running) is core40 plus:
+>   - The rail exit's pair phase re-applied a pre-crash rider view (six riders: r2-0204-m0 human 2664). It now re-reads the view after
+>     a 105398 or 13C140 crash.
+>   - QA exports rail_debug_info and the +0x22C / +0x238 / +0x25C triplets in ground_state_dump.
+>   - Batch 6 (the arithmetic agent; mode-1 neutral): originalGroundBoardNormal's z term is mul(1, z), from the 0x13F334 vmadda vf0w.
+>     Exact-base zoe-race clears 0x390@190, 0x2D0@202 and 0x2C8@214.
+> - **New gates** (test-ps2-captures.mjs): aibones/peak3/gravitude-race-ai, aibones/peak2/cra3-race-ai and aibones/peak2/dra4-race-ai.
+>   - These are the fuzzing agent's --ai-bones re-captures, with a per-slot `aiBones` check.
+>   - gravitude and cra3 are bone-exact to the end; dra4 is gated through its known limits.
+>   - coreExport `_rail_debug_info`: they skip until core41 is live.
+> - **Exact start seeds** regenerated from the arithmetic agent's 14 anchors (generated, git-ignored), including CHP2 and EBA3.
+>   EBC3's countdown state is a backcountry ready state, so it is not covered.
+> - **Open:**
+>   - r10-0153: a ground reset on a reset surface. The post-contact path differs from the PS2's 13F23C -> 116120 -> 11E150 /
+>     13F488 / 105398, and begin_reset clears the prewind rates.
+>   - r4-0048, r7-0028, r7-0082 (3623) and r10-0134: RNG.
+>   - r7-0038: Mac 4998.
+>   - The fuzzer's new human repros: r1-0203, r13-0191, r7-0036.
+>   - Probably the same one-step offset, unverified: the section collision players and the JS section players.
+
+> **Emulator windows and input (2026-10-05, coordinator):** tools/ps2_capture.py prepare_datapath(), which every ARMSX2 launcher uses, now sets [InputSources] Keyboard / Mouse / SDL = false and clears every [Hotkeys] binding. A run was pausing whenever its window had focus and the user pressed Space (TogglePause); Tab, F1 / F3 and the keyboard-bound pad could also reach a run. All tools inject pad input through the in-game hook, so nothing needs host input. The game window opens at a tile from the git-ignored local/emulator-window.json (Qt [UI] DisplayWindowGeometry; the slot picks the tile), on the user's second screen. Without that file the emulator's default placement is used. Long-running batch drivers pick this up on their next import.
+
+> **PS2 arithmetic, round 3: exact baselines from menu roots, the chain tool, exact-base matcher (2026-10-05, PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md) "Exact baselines" and "Mode-1-base gates".
+> - **Menu roots are enough** (oracle `--stale-ref`). In the rider pass of exact races derived from menu states (Snow Jam tick 345 and Ruthless Ridge tick 900, 5 computer riders each), every word read from the frontend era is an ELF constant, a copy of one, an integer-valued float, or INPUT.MAP bytecode. So only the event load onward runs in exact mode.
+> - **Tools:**
+>   - ps2_navigate.py / ps2_menu_capture.py follow PS2_CAPTURE_FPU and record fpu_mode.
+>   - `tools/ps2-float/derive_exact_baselines.py`: the 60 nav-derived location states → local/reference-exact/ (55 done, 5 retrying).
+>   - `tools/ps2-float/derive_exact_chain.py`: walks patches / navigation / capture records back to a menu or CTM-session root, then replays the chain in exact mode → local/reference-exact/chains/.
+>   - The CTM session (ctm.session.json from title-outcome-1) is being replayed in exact mode: local/reference-exact/ctm/session-exact.fNNNNN.p2s.
+>   - Comparers take `PS2_ARITH=exact-base`. match_tick.sh takes MATCH_STATES / MATCH_RUNS / MATCH_ARITH / MATCH_TAG / MATCH_ACTOR.
+>   - Oracle options: `--actor` (one rider's FPU trace), `--stale-ref`, `--poke`.
+>   - `web/bench-sim.mjs CORE:exact`.
+>   - check-rider-globals lists the ps2_fpu power-of-two table, so SSX_PS2_EXACT_FPU builds pass again.
+> - **First exact-base gate:** local/ps2-capture/runs-exactbase/riders/zoe-race, from rider-parity's exact Zoe countdown.
+>   - The physics agent's exact start seeds (12 courses) make it exact through tick 490.
+>   - The remaining drift is exact-mode-only: board normal 0x390 at 190, lift target 0x2D0 at 202, then the 452 → 488 chain into q.
+>   - Matcher files are in local/ps2-float/match/riders/zoe-race-{189,451,490}-xb.*.
+> - **Tail:** 59 gates on 17 non-reference baselines resolve to the CTM session root. 22 gates on 10 baselines are "mode-1 base", with a replacement scenario drafted for each in ps2-float.md.
+> - **Dropped:** the mode-1 ctm-events re-captures (c0a-full timed out twice), since those gates get exact CTM baselines.
+
 > **Switched on 2026-10-05 (coordinator): pv npcWorldNodes.** A Single Event's computer riders share the human's world node states (one world, as on the PS2; fuzz r7-0082 exact to its end). Verified: all 48 six-rider ps2-captures (physics agent) and test-rival-page.mjs through the real Single Event path in Chrome, 5 rival events exact as far as their gates. Core37 is live.
 
 > **Fuzzing, mode-1 differential: 15 repros, computer-rider pose capture (2026-10-05, fuzzing agent):** see [fuzzing.md](fuzzing.md)
@@ -67,6 +211,8 @@
 >   - two-event starts from the exact zoe/countdown.p2s;
 >   - one exact run per original run; a tick-bound save is accepted only at the original state's tick.
 > - **provenance.json** beside every exact state: reference, fpu_mode, root, recipe, tick, ee_sha256.
+> - **Order** (coordinator, 19:30; one dedicated slot): Snow Jam rider states, then their captures, then the course states, then theirs. The arithmetic agent's scorer links runs/riders-exact/<id>-<kind>.* into runs-exactbase/riders/ (PS2_RUNS=runs-exactbase, PS2_ARITH=exact-base). Each capture's <name>.json run summary is beside its .bin, as ps2_capture writes it.
+> - The 38 earlier exact captures, which started from mode-1 baselines, moved to runs/riders-exact-mode1base/ so that runs/riders-exact holds only exact-base runs.
 > - **Unresolved: career/* and career-freestyle/*.** They start from Conquer the Mountain world states (ctm-parity cards, results, peak2-arr), not a menu, so their chains go back through a new career and need tracing like tools/ps2-float/derive_exact_baselines.py. Not attempted.
 > - Not in scope here and untouched: zoe/gear/* (Equip Gear states), mac-junction.
 

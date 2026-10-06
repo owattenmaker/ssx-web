@@ -86,10 +86,11 @@ def session_roots():
 def nav_output_of(state):
     """(record, result) of the ps2_navigate run that wrote `state`: by name in its own folder, else by EE hash in the area."""
     state = Path(state)
-    record_path = state.parent / 'navigate.json'
-    if record_path.exists():
+    for record_path in [state.parent / 'navigate.json'] + sorted(state.parent.glob('*.navigate.json')):
+        if not record_path.exists():
+            continue
         record = json.loads(record_path.read_text())
-        for result in record['results']:
+        for result in record.get('results', []):
             if result.get('state') and Path(result['state']).name == state.name:
                 return record, result, state
     # Every navigation output under local/: the zip's CRC of eeMemory.bin filters, the EE hash decides.
@@ -112,8 +113,29 @@ _records = []
 
 def navigation_records():
     if not _records:
-        _records.extend(sorted(glob.glob(str(ROOT / 'local/**/out-*/navigate.json'), recursive=True)))
+        # The capture trees only (local/vendor, the emulator data paths and the assets are large and hold no runs).
+        for tree in ('ps2-capture', 'ctm-events', 'career-rival', 'ctm-parity', 'rider-parity'):
+            _records.extend(sorted(glob.glob(str(ROOT / 'local' / tree / '**/navigate.json'), recursive=True)))
+            _records.extend(sorted(glob.glob(str(ROOT / 'local' / tree / '**/*.navigate.json'), recursive=True)))
     return _records
+
+
+_sources = {}
+
+
+def source_hashes():
+    """Every patches.json source path in the capture trees -> its recorded EE hash (to name deleted files)."""
+    if not _sources:
+        for tree in ('ps2-capture', 'ctm-events', 'career-rival', 'ctm-parity', 'rider-parity', 'reference'):
+            for path in glob.glob(str(ROOT / 'local' / tree / '**/*.patches.json'), recursive=True):
+                try:
+                    spec = json.loads(Path(path).read_text())
+                except (json.JSONDecodeError, OSError):
+                    continue
+                source = spec.get('source') if isinstance(spec, dict) else None
+                if isinstance(source, dict) and source.get('ee_sha256'):
+                    _sources[str(resolve_path(source['path']))] = source['ee_sha256']
+    return _sources
 
 
 def ee_crc(path):
@@ -122,6 +144,31 @@ def ee_crc(path):
             return archive.getinfo('eeMemory.bin').CRC
     except (zipfile.BadZipFile, KeyError, OSError):
         return None
+
+
+def record_file(output):
+    """The navigation record that lists `output`."""
+    for record_path in [output.parent / 'navigate.json'] + sorted(output.parent.glob('*.navigate.json')):
+        if record_path.exists() and any(r.get('state') and Path(r['state']).name == output.name
+                                        for r in json.loads(record_path.read_text()).get('results', [])):
+            return record_path
+    return output.parent / 'navigate.json'
+
+
+def capture_run_of(state):
+    """(summary, snapshot) of the ps2_capture run that kept `state` as RUN.tickN.p2s."""
+    name = state.name
+    if '.tick' not in name:
+        return None
+    run_name = name.split('.tick')[0]
+    summary_path = state.parent / f'{run_name}.json'
+    if not summary_path.exists():
+        return None
+    summary = json.loads(summary_path.read_text())
+    for snapshot in summary.get('snapshots', []):
+        if snapshot.get('state') and Path(snapshot['state']).name == name:
+            return summary_path, summary, snapshot
+    return None
 
 
 def resolve_path(path):
@@ -144,10 +191,25 @@ def resolve(state, roots, depth=0):
     if found:
         record, result, output = found
         baseline = resolve_path(record['manifest']['baseline'])
-        if not baseline.exists():
-            baseline = nav_tool.baseline_of(record)
-        step = dict(kind='nav', state=relative(state), output=relative(output), record=relative(output.parent / 'navigate.json'),
+        step = dict(kind='nav', state=relative(state), output=relative(output), record=relative(record_file(output)),
                     sample=result['requested'] if result.get('requested') is not None else result['sample'], tick=result.get('tick'))
+        if not baseline.exists():
+            # A deleted baseline: the navigation state's own patches file names it by EE hash (a session root), else a
+            # reference with the manifest's file hash.
+            nav_patches = resolve_path(record['state']).with_suffix('.patches.json')
+            wanted = json.loads(nav_patches.read_text())['source'].get('ee_sha256') if nav_patches.exists() else None
+            wanted = wanted or source_hashes().get(str(baseline))
+            if wanted in roots:
+                frame, cleaning = roots[wanted]
+                return [dict(kind='session', frame=frame, cleaning=cleaning, state=record['manifest']['baseline'], recovered=True), step]
+            baseline = nav_tool.baseline_of(record)
+        return resolve(baseline, roots, depth + 1) + [step]
+    kept = capture_run_of(state)
+    if kept:
+        summary_path, summary, snapshot = kept
+        baseline = resolve_path(summary['manifest']['baseline'])
+        step = dict(kind='capture', state=relative(state), summary=relative(summary_path), tick=snapshot['tick'],
+                    first_tick=summary.get('first_tick'))
         return resolve(baseline, roots, depth + 1) + [step]
     if patches_path.exists():
         spec = json.loads(patches_path.read_text())
@@ -162,7 +224,28 @@ def resolve(state, roots, depth=0):
         raise ValueError(f'{state}: patch source {source} is gone and its EE hash is no known root')
     if state.exists() and nav_tool.game_tick(state) is None and not nav_tool.resident_locations(state):
         return [dict(kind='menu', state=relative(state))]
+    # A copy with no records of its own: another file with the same EE memory that has them.
+    if state.exists():
+        digest = ee_hash(state)
+        for alias in crc_index().get(ee_crc(state), []):
+            if alias == state or ee_hash(alias) != digest:
+                continue
+            if (alias.with_suffix('.patches.json').exists() or capture_run_of(alias)
+                    or (alias.parent / 'navigate.json').exists() or list(alias.parent.glob('*.navigate.json'))):
+                return resolve(alias, roots, depth + 1)
     raise ValueError(f'{state}: no patches, navigation or root record')
+
+
+_crcs = {}
+
+
+def crc_index():
+    """EE CRC -> savestates in the capture trees (zip central directories only)."""
+    if not _crcs:
+        for tree in ('ps2-capture', 'ctm-events', 'career-rival'):
+            for path in glob.glob(str(ROOT / 'local' / tree / '**/*.p2s'), recursive=True):
+                _crcs.setdefault(ee_crc(path), []).append(Path(path))
+    return _crcs
 
 
 def apply_patches(source, patches_path, output):
@@ -223,6 +306,41 @@ def nav_step(baseline, step, attempts, width, slots, log):
     return None
 
 
+def capture_step(baseline, step, attempts, width, slots, log):
+    """ps2_capture build + run from the exact baseline with the run's script and options, keeping the state at the tick."""
+    import recapture_exact
+    summary = json.loads((ROOT / step['summary']).read_text())
+    manifest = summary['manifest']
+    wanted = step['tick']
+    record = wanted - (step['first_tick'] or manifest.get('first_tick', 1)) + 1
+    for attempt in range(1, attempts + 1):
+        workdir = OUT / 'work' / Path(step['state']).with_suffix('').name / f'capture-a{attempt}'
+        if workdir.exists():
+            shutil.rmtree(workdir)
+        workdir.mkdir(parents=True)
+        built = workdir / 'run.p2s'
+        environment = dict(os.environ, PS2_CAPTURE_FPU='exact', SSX3_CAPTURE_DERIVED='1')
+        arguments = recapture_exact.build_arguments(dict(manifest, baseline=str(baseline)), built)
+        with open(workdir / 'build.log', 'w') as log_file:
+            if subprocess.run(arguments, cwd=ROOT, env=environment, stdout=log_file, stderr=subprocess.STDOUT).returncode:
+                raise ValueError(f'{step["state"]}: exact build failed ({workdir / "build.log"})')
+        snaps = ','.join(str(record + d) for d in range(-width, width + 1) if record + d > 0)
+        nav_tool.wait_for_slot(slots)
+        frames = record + width + 2
+        with open(workdir / 'run.log', 'w') as log_file:
+            code = subprocess.run(['nice', '-n', '5', sys.executable, str(ROOT / 'tools/ps2_capture.py'), 'run', str(built), str(workdir / 'run.bin'),
+                                   '--frames', str(frames), '--timeout', str(int(frames / 60 * 6) + 900), '--speed', 'turbo', '--snap', snaps,
+                                   '--keep-states'], cwd=ROOT, env=environment, stdout=log_file, stderr=subprocess.STDOUT).returncode
+        kept = workdir / f'run.tick{wanted}.p2s'
+        ticks = sorted(int(p.name.split('.tick')[1].split('.')[0]) for p in workdir.glob('run.tick*.p2s'))
+        log(f'  capture {Path(step["state"]).name} attempt {attempt}: exit {code}, kept ticks {ticks} (want {wanted})')
+        if kept.exists():
+            # Its patches file (the hooks the build installed) is what clean_capture_state.py restores.
+            shutil.copyfile(workdir / 'run.patches.json', kept.with_name(kept.stem + '.build-patches.json'))
+            return kept
+    return None
+
+
 def derive(target, roots, attempts, width, slots, log):
     target = Path(target).resolve()
     destination = OUT / relative(target).removeprefix('local/')
@@ -248,6 +366,11 @@ def derive(target, roots, attempts, width, slots, log):
             output.parent.mkdir(parents=True, exist_ok=True)
             apply_patches(current, ROOT / step['patches'], output)
             current = output
+        elif step['kind'] == 'capture':
+            current = capture_step(current, step, attempts, width, slots, log)
+            if current is None:
+                log(f'{relative(target)}: {step["state"]} not reached at tick {step["tick"]}')
+                return False
         elif step['kind'] == 'nav':
             current = nav_step(current, step, attempts, width, slots, log)
             if current is None:
@@ -282,7 +405,7 @@ def main():
                 chain = resolve(Path(state).resolve(), roots)
                 print(relative(Path(state).resolve()))
                 for step in chain:
-                    print('   ', step['kind'], step['state'], {k: v for k, v in step.items() if k in ('frame', 'cleaning', 'sample', 'tick', 'recovered')})
+                    print('   ', step['kind'], step['state'], {k: v for k, v in step.items() if k in ('frame', 'cleaning', 'sample', 'tick', 'recovered', 'first_tick')})
                 continue
             ok = derive(state, roots, args.attempts, args.width, args.slots, lambda text: print(text, flush=True)) and ok
         except Exception as error:

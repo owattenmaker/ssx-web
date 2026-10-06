@@ -102,10 +102,17 @@ void section_mark_dead(uint32_t resource){if(!sectionsRunning)return;if(auto* i=
 // 0x101B60 at the end of tick T (T = set-piece tick of the last race_begin).
 RIDER_LOCAL extern bool sharedWorldReplay; // web/shared_world.inc
 static int section_scan();static void stage_world_visual_pass(); // web/stage_world.inc
+static uint64_t stage_world_serial();static void stage_world_tick_newer(uint64_t serial); // web/stage_world.inc
 // 0x101B60 (end of the rider manager), then the post-rider world passes that draw from the visual stream.
 extern "C" EMSCRIPTEN_KEEPALIVE int section_pass(){
+ const uint64_t serial=stage_world_serial();
  const int events=section_scan();
  if(browserHumanRider&&chairliftTicks&&!sharedWorldReplay)stage_world_visual_pass();
+ // A PS2 record falls after the human's 11B3F8, so one record interval runs the computer riders, this 0x101B60 and then the next
+ // race_begin's entity pass; the port's tick runs its entity pass first. An entity this scan built (a slot-1 program) is updated in
+ // that entity pass on the PS2, before the next record: update it here (PS2 hl2/carve-s1-era5 snapshots 545 / 1150 / 1193: the crash
+ // billboard 332333 built by the 540 scan has 5 steps at 545; the port had 4, and its program 85 drew one tick late).
+ stage_world_tick_newer(serial);
  return events;
 }
 static int section_scan(){

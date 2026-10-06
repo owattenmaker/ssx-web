@@ -185,6 +185,12 @@ instances) are not yet wired into `main.js`; when they are, forward their `set_p
 - Builtin 91 (0x3050F0) shakes the camera of riders near the instance (15E360): ported 2026-09-28 (see [avalanche.md](avalanche.md) "Related stage builtins").
 - Gravitude's crash billboards (332333 / 669741): the trigger program 83 sets high = 149/30 s and once mode, then program 85 breaks
   the ice pieces (builtin 13) with builtin-77 randoms. PS2 ERA5 six-rider capture: exact to the end (docs/ai-racers.md).
+  - (2026-10-05, core40) An entity built by a section scan's slot-1 program is stepped once before the next record: a PS2 record
+    interval runs 0x101B60 and then the next race_begin's entity pass, while the port's tick runs its entity pass first.
+    section_pass() now updates the entities built since the scan began (web/section_gameplay.inc, stage_world_tick_newer).
+    - Before this, the billboard's clock lagged one step (snapshots 545 / 1150 / 1193). Program 85's draws came one tick late:
+      the RNG blips at 1195 / 1209 / 1239, and a lasting divergence in fuzz r2-0249.
+    - The section collision players (now - start steps) and the JS section players probably share the offset. Unverified.
 - The JS player takes the core's clock (pv `sectionClock`, on; 2026-09-28). `stage_world_section_clocks()` lists each alive
   section-player entity (resource, mode, enabled, done, delay, rate, low, high, time, sample time). After each frame's ticks,
   `syncSectionClocks` (web/livecomp-animation.js; called from set-pieces-renderer.js and peak-set-pieces.js) copies these into the

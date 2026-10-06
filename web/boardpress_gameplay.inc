@@ -30,6 +30,12 @@ static void clear_board_press(){bpControl={};bp268={};bp274={};bp330=0;bpActive=
  bpEntries=bpUpdates=bpOllies=bpLandings=bpEffects=bpRumbles=bpPivots=bpExits=bpAirborne=bpRailTicks=bpRailAttaches=0;bpLastExitControl=-1;bpLastStop=0;bpLastAward=0;
  graph.boardPress268=graph.boardPress274=graph.boardPress280=0;graph.boardPress330=0;}
 
+// 11D660 (a reset placement) zeroes the +0x268 / +0x274 triplets with the other ground-control triplets (0x11DB70..0x11DB84).
+static void board_press_placement_clear(){
+ bp268={};
+ bp274={};
+ graph.boardPress268=graph.boardPress274=0;
+}
 static OriginalBoardPressRider bp_view(){
  OriginalBoardPressRider r;const auto& s=physicsState;
  r.position={s.position[0],s.position[1],s.position[2],1.f};r.velocity={s.velocity[0],s.velocity[1],s.velocity[2],0.f};

@@ -344,7 +344,24 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
   - Output: `local/reference-exact/<name>.p2s` with `<name>.provenance.json`.
 - Snow Jam (the hand-made references): `snow-jam-countdown-anchor` / `-glide` / `-ready` come from Zoe's recorded menu path from character-selection.p2s.
 - Per-rider and per-course countdowns are the rider-parity agent's `make_course_states.py` with PS2_CAPTURE_FPU=exact, into `local/reference-exact/characters/`.
-- Captures from an exact baseline (`local/ps2-capture/runs-exactbase/`) compare with `PS2_ARITH=exact-base`: the setup runs on the console model too.
+- `tools/ps2-float/derive_exact_chain.py STATE...` handles states that do not start from a menu: free ride, CTM, world states. It walks a state's own records back to a root:
+  - patches.json sources (a deleted source is named by its recorded EE hash);
+  - ps2_navigate records (navigate.json or NAME.navigate.json);
+  - ps2_capture kept states (RUN.tickN.p2s with RUN.json);
+  - copies found by identical EE memory.
+
+  The root is a menu state or a CTM session state. Those come from `ctm.session.json` (title-outcome-1), replayed in exact mode by `ps2_menu_capture.py` into `local/reference-exact/ctm/session-exact.fNNNNN.p2s`. Session states are matched raw or hook-cleaned (0x321298 restored, arena zeroed from 0x90000 or 0x96000).
+
+  The tool replays each step in exact mode:
+  - patches go onto the exact source: hook and arena patches as written, game data checked;
+  - navigation and captures re-run, keeping the state at the original tick.
+
+  Output: `local/reference-exact/chains/<path under local/>`.
+- `tools/ps2-float/recapture_exact.py --exact-baselines` captures the gates from exact baselines:
+  - It rebuilds each gate from its baseline's exact copy (reference-exact, characters, chains), with the same script and options, into `local/ps2-capture/runs-exactbase/`.
+  - Gates run most-gated baseline first, and riders/* is skipped.
+  - The riders/* gates come from the rider-parity sweep (`runs/riders-exact`). `tools/ps2-float/link_riders_exact.py` links the ones captured from exact baselines under the gate names.
+- Captures from an exact baseline compare with `PS2_ARITH=exact-base`: the setup runs on the console model too. `score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base` scores them.
 - `tools/ps2-float/match_tick.sh` takes `MATCH_STATES` / `MATCH_RUNS` / `MATCH_ARITH` / `MATCH_TAG` for such gates, and `MATCH_ACTOR=<rider>` for a human-only PS2 trace (`oracle --actor`). The full pass mixes in the computer riders, whose values at the grid are often bit-identical to the human's.
 
 **First result** (riders/zoe-race from the exact Zoe countdown): the exact race load places the human 1 ULP away from the mode-1 grid start.
@@ -365,6 +382,26 @@ These gates keep their mode-1 baseline, because the state they start from can't 
 | peak1-lodge-attrs | `…/7fde9fd7…/scratchpad/ba/ps2/bought-t0.p2s` | the baseline lived in another session's scratchpad; file and recipe are gone |
 | peak1-green-start | `…/7fde9fd7…/scratchpad/lodgewall/ps2/navpre/s682.p2s` | the same |
 | weather/eba3-lightning | `…/7fde9fd7…/scratchpad/m2m-1620-clean.p2s` | the same |
+| peak1-race-abc1a | `local/ps2-capture/peak1/peak1-race-abc1a-entry.p2s` | no patches, navigation or capture record, and no other file with its EE memory |
+| peak1-race-abc1a-glide | `local/ps2-capture/peak1/peak1-race-abc1a-glide.p2s` | the same |
+| peak1-race-start | `local/ps2-capture/peak1/peak1-race-objectives.p2s` | the same |
+| peak1-fr-aara1 | `local/ps2-capture/peak1/fr-aara1-entry.p2s` | the same |
+| peak1-fr-aara1-glide, course-limits/p1-{neutral3000, right3000, left, right, left3000, zig3000} | `local/ps2-capture/peak1/fr-aara1-glide.p2s` | the same |
+| course-limits/gs-{zig3000, right3000, tuckleft3000, left3000, halfleft3000, halfright3000} | `local/ps2-capture/peak1/green-start-t0.p2s` | its patch source (`…/7fde9fd7…/lodgewall/ps2/navpre/.raw/00001.p2s`) is gone and matches no known root |
+| ctm-events/c0a-race, c0a-race-riders | `local/ctm-events/caps/c0a-cd/countdown.p2s` | built from `ctm-parity/states/sj-card-q.p2s` ("from an earlier ride-in"); that state's only records loop back to itself (race-q / race-q-clean) |
+
+So far that is 22 gates on 10 baselines. The other 59 gates on the tail's 17 baselines resolve to the CTM session root through `tools/ps2-float/derive_exact_chain.py`.
+
+**At the swap** each of these needs a replacement scenario from an exact root (the exact CTM session replay `local/reference-exact/ctm/session-exact.fNNNNN.p2s`, or a derived exact state), covering the same behaviour. If no such scenario can be made, it is retired with a note:
+
+| Gates | Behaviour covered | Replacement from an exact root |
+|---|---|---|
+| peak1-lodge-attrs | buying attributes in a lodge (score / stats words) | session frame 37044 (state-lodge-peak1) → the r3-attrs-buy menu path (`menus/ctm/r3-attrs-buy*.json`) → capture with the lodge-attrs watches |
+| peak1-green-start; course-limits/gs-* (6) | CTM last-lodge start, world load, then neutral / steered free ride against the course limits | session frame 33959 / 35576 (green cutscene, lodge prompt) → the same start → a new green-start-t0 → the same six scripts |
+| peak1-fr-aara1, peak1-fr-aara1-glide; course-limits/p1-* (6) | Peak 1 free-ride crossing A → A_ARA1 → ARA1 (unload / eviction / read), course limits | session frame 8992 (state-freeride-peak1) → ride to the ARA1 entry (autopilot or the recorded pads) → new entry and glide states → the same scripts |
+| peak1-race-abc1a, -abc1a-glide, peak1-race-start | Peak 1 race start, objectives and the ABC1 crossing | session frame 13976 (state-race-event-list) → the race → new entry / glide / objectives states |
+| ctm-events/c0a-race, c0a-race-riders | CTM first heat from its card: countdown, race with riders | the exact ara1-screen10 chain → the c0a card path (`ctm-events/caps/c0a-card.hooked.nav.json`) → a new countdown |
+| weather/eba3-lightning | Much 2 Much lightning around tick 1620 | the exact much-2-much anchor (local/reference-exact) → the original script to 1620 → the same watches; retire if the exact run never reaches lightning there |
 
 ### Status (2026-10-05)
 

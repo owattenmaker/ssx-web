@@ -899,6 +899,19 @@ const aiCases = [
   // runs the Single Event collect state; ctm-events/c0c-race-riders gates them with --in-world-ai).
   { name: 'careerrival/ara1-semi', args: ['--zoe', '--ctm-countdown', '--document', '../local/assets/native/ARA1/lineups-career/ARA1-semi-zoe.json'],
     humanThrough: 1398, ai: [862, 530, 862, 530, 793], rngThrough: 460, why: 'Snow Jam career semi on the event-load path: the fresh riders\' push-off with +0x434 = 0x31' },
+  // 2026-10-05: the three peak gates re-captured with --ai-bones (fuzzing agent, local/fuzz/aibones-capture.py; mode 1, the gates' own
+  // baselines, pads and isolation): each computer rider's bones 0..21 and board root 22 every tick (c.aiBones). Fixed for them on core38:
+  // Luther's gravitude pose (2403, the double animationTurn approach). They need a core38+ (coreExport: core41's rail QA export).
+  { name: 'aibones/peak3/gravitude-race-ai', coreExport: '_rail_debug_info', args: ['--zoe', '--isolate'], humanThrough: 5999,
+    ai: [5999, 5999, 5999, 5999, 5999], aiBones: [5999, 5999, 5999, 5999, 5999], rngThrough: 5999, ranks: true, records: true,
+    why: 'Gravitude six riders with computer-rider bones: all five riders bone-exact to the end' },
+  { name: 'aibones/peak2/cra3-race-ai', coreExport: '_rail_debug_info', args: ['--zoe', '--isolate'], humanThrough: 5999,
+    ai: [5999, 5999, 5999, 5999, 5999], aiBones: [5999, 5999, 5999, 5999, 5999], rngThrough: 5999, ranks: true, records: true,
+    why: 'Ruthless Ridge six riders with computer-rider bones: all five riders bone-exact to the end' },
+  // dra4: the gate's known limits; Psymon's bones leave at 3772, one tick before the RNG (3773), Luther's at 3923 before his 4189.
+  { name: 'aibones/peak2/dra4-race-ai', coreExport: '_rail_debug_info', args: ['--zoe', '--isolate'], humanThrough: 5087,
+    ai: [3926, 4532, 4029, 4435, 4188], aiBones: [3771, 4314, 4029, 4435, 3922], rngThrough: 3772, ranks: false,
+    why: 'Intimidator six riders with computer-rider bones: through the known dra4 limits (Psymon bones 3772 lead the RNG at 3773)' },
 ];
 for (const c of aiCases) {
   if (only && !only.has(c.name)) continue;
@@ -930,6 +943,13 @@ for (const c of aiCases) {
   c.ai.forEach((through, k) => { const bad = rows.find((r) => !r.ai[k].exact)?.tick ?? Infinity;
     if (bad <= through) throw new Error(`${c.name}: computer rider ${k + 1} (${summary.ai[k].character}) left the original at ${bad} (baseline ${through})`); });
   if (summary.firstRngMismatch && summary.firstRngMismatch.tick <= c.rngThrough) throw new Error(`${c.name}: shared RNG differs at ${summary.firstRngMismatch.tick} (baseline ${c.rngThrough})`);
+  // c.aiBones: each computer rider's bones (an --ai-bones capture: summary.ai[k].boneTicks) exact through that tick.
+  if (c.aiBones) c.aiBones.forEach((through, k) => {
+    const a = summary.ai[k];
+    if (!a.boneTicks) throw new Error(`${c.name}: no computer-rider bones compared (needs an --ai-bones capture)`);
+    const bad = a.firstBoneInexact?.tick ?? Infinity;
+    if (bad <= through) throw new Error(`${c.name}: computer rider ${k + 1} (${a.character}) bones left the original at ${bad} (baseline ${through})`);
+  });
   if (c.ranks && summary.firstRankMismatch) throw new Error(`${c.name}: race ranking +0xEC differs at ${summary.firstRankMismatch.tick}`);
   if (c.recordsThrough !== undefined && summary.firstPairRecordMismatch && summary.firstPairRecordMismatch.tick <= c.recordsThrough) throw new Error(`${c.name}: 10F560 pair record differs at ${summary.firstPairRecordMismatch.tick} (baseline ${c.recordsThrough})`);
   if (c.records && summary.firstPairRecordMismatch) throw new Error(`${c.name}: 10F560 pair record ${summary.firstPairRecordMismatch.slot}->${summary.firstPairRecordMismatch.other} differs at ${summary.firstPairRecordMismatch.tick}`);
