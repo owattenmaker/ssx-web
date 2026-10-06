@@ -5,9 +5,16 @@ RIDER_LOCAL extern bool browserStarting,browserStartFrame,browserStartFrozen;
 RIDER_LOCAL extern bool (*browserStartControl)();RIDER_LOCAL extern void (*browserStartClear)();
 extern "C" {void begin_event_clock();int event_phase();int event_ticks();void begin_event_rider();void start_ground_motion();void reset_animation();}
 RIDER_LOCAL static OriginalStartControlState startControl;RIDER_LOCAL static float startAxis=0,startTilt=0;
-static void clear_start(){browserStarting=browserStartFrame=browserStartFrozen=false;startControl={};startAxis=0;graph.startPose=0;}
+// The provider's control-6 word0 (127848 0x1285F4..0x128618: the raw GateAnticipate axis x 31, cvt.w, bits 12..17) when the pad provider
+// produced this tick's command (web/input_bridge.inc). Re-encoding the decoded axis instead gives 30 for a full stick (31 x 1/31 is one ULP
+// under 1); the start controller reads only its sign, so the two agree on everything but the word.
+RIDER_LOCAL static uint32_t startCommand=0;
+RIDER_LOCAL static bool startCommandFromPad=false;
+static void clear_start(){browserStarting=browserStartFrame=browserStartFrozen=false;startControl={};startAxis=0;startCommand=0;startCommandFromPad=false;graph.startPose=0;}
 static bool step_start(){
- OriginalRounding rounding;OriginalStartControlInput in;in.command=(uint32_t(int32_t(terrain_original::mul(std::clamp(startAxis,-1.f,1.f),31.f)))&63)<<12;
+ OriginalRounding rounding;OriginalStartControlInput in;
+ if(startCommandFromPad)in.command=startCommand&0x3f000u;
+ else in.command=(uint32_t(int32_t(terrain_original::mul(std::clamp(startAxis,-1.f,1.f),31.f)))&63)<<12;
  in.gamePhase=event_phase();in.raceTicks=event_ticks();in.delaySeconds=browserEventStartDelay;
  in.motion=browserStartFrozen?3: ::grounded?0:1;in.semantic=graph.requestedSemantics[2];in.mainTime=graph.channelProgress(2);in.tilt=startTilt;in.forward=physicsState.physicalForward;
  for(const auto&a:originalStartControlStep(startControl,in)){
@@ -24,7 +31,7 @@ static bool step_start(){
  graph.startPose=startControl.pose;return browserStarting;
 }
 static void setup_start(){browserStartControl=step_start;browserStartClear=clear_start;clear_start();}
-extern "C" EMSCRIPTEN_KEEPALIVE void start_input(float axis){if(!std::isfinite(axis))throw std::runtime_error("Invalid start input");startAxis=axis;}
+extern "C" EMSCRIPTEN_KEEPALIVE void start_input(float axis){if(!std::isfinite(axis))throw std::runtime_error("Invalid start input");startAxis=axis;startCommandFromPad=false;}
 void stage_event_visual_seed_apply(); // web/stage_world.inc: ready-state visual words, LCG and breath
 extern "C" void place_rider_region(float,float,float,float,float,float,int); // web/animation_bridge.cpp (11D390)
 void weather_event_seed_apply(); // web/weather.inc: the ready state's Weather painters, snowfall layers, camera splash

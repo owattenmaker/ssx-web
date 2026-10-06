@@ -90,7 +90,7 @@ static float* apply_command_words(int control,ssx::OriginalCommandWords words){
    turn=f.airAdjRotLR;crouch=std::max(f.airAdjRotFB,0.f);brake=std::max(-f.airAdjRotFB,0.f);board=float(f.boardPressStep);
    spin=f.spin;flip=f.flip;boost=f.tweak;tweak=f.tweak;grab=f.grab>=0?padGrabMasks.at(f.grab):0;rideLateSpin=f.lateSpin;
    animTurn=turn;animBrake=brake;animFlip=flip;break;
-  case 6: startAxis=f.gateAnticipate;break;
+  case 6: startAxis=f.gateAnticipate;startCommand=words.word0;startCommandFromPad=true;break;
   case 7: //rail control: balance is the left stick only; D-pad is RailSpin.
    turn=f.railBalance;board=f.boardPress;jump=f.jumpHeld;boost=f.boostHeld;railRotate=f.railSpin;
    railMask=f.railUberIdentity>=0?1<<f.railUberIdentity:0;animTurn=turn;break;

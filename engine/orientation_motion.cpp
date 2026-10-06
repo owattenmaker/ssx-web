@@ -15,15 +15,17 @@ using Round=OriginalRounding;
 std::array<float,4> originalRotateOrientation(std::array<float,4> q,std::array<float,3> axis,float angle){
     Round round;
     auto sc=originalSinCos(terrain_original::mul(angle,.5f));
-    std::array<float,4> delta={terrain_original::mul(axis[0],sc[0]),terrain_original::mul(axis[1],sc[0]),terrain_original::mul(axis[2],sc[0]),sc[1]},out;
+    // 0x11E024..0x11E06C: delta = sin x axis (mul.s f3,f0,f3); the cross is vopmsub vf6, vf5 (q), vf4; the w products go through vf0 (1.0)
+    std::array<float,4> delta={terrain_original::mul(sc[0],axis[0]),terrain_original::mul(sc[0],axis[1]),terrain_original::mul(sc[0],axis[2]),sc[1]},out;
     for(int i=0;i<3;i++){
         int j=(i+1)%3,k=(i+2)%3;
-        float cross=terrain_original::sub(terrain_original::mul(delta[j],q[k]),terrain_original::mul(delta[k],q[j]));
+        float cross=terrain_original::sub(terrain_original::mul(delta[j],q[k]),terrain_original::mul(q[j],delta[k]));
         float weighted=terrain_original::add(terrain_original::mul(delta[i],q[3]),terrain_original::mul(q[i],delta[3]));
         out[i]=terrain_original::add(weighted,cross);
     }
     float product=terrain_original::sub(terrain_original::mul(delta[3],q[3]),terrain_original::mul(delta[0],q[0]));
-    product=terrain_original::sub(product,terrain_original::mul(delta[1],q[1]));out[3]=terrain_original::sub(product,terrain_original::mul(delta[2],q[2]));
+    product=terrain_original::sub(product,terrain_original::mul(1.f,terrain_original::mul(delta[1],q[1])));
+    out[3]=terrain_original::sub(product,terrain_original::mul(1.f,terrain_original::mul(delta[2],q[2])));
     return out;
 }
 }
@@ -49,7 +51,7 @@ std::array<float,4> originalGroundAlignment(std::array<float,4> q,std::array<flo
     auto length=[](auto a){float x=terrain_original::mul(a[0],a[0]),y=terrain_original::mul(a[1],a[1]),z=terrain_original::mul(a[2],a[2]);return terrain_original::sqrt(terrain_original::add((terrain_original::add(x,y)),z));};
     float scale=terrain_original::div(1.f,length(n));for(float& x:n)x=terrain_original::mul(x,scale);
     std::array<float,3> axis;
-    for(int i=0;i<3;i++){int j=(i+1)%3,k=(i+2)%3;axis[i]=terrain_original::sub(terrain_original::mul(n[j],up[k]),terrain_original::mul(n[k],up[j]));}
+    for(int i=0;i<3;i++){int j=(i+1)%3,k=(i+2)%3;axis[i]=terrain_original::sub(terrain_original::mul(n[j],up[k]),terrain_original::mul(up[j],n[k]));} // 0x13EE04 vopmsub: b x a
     float sine=length(axis);
     if(!(f(0x3a83126fu)<sine))return q;
     scale=terrain_original::div(1.f,sine);for(float& x:axis)x=terrain_original::mul(x,scale);
@@ -61,8 +63,9 @@ std::array<float,4> originalGroundAlignment(std::array<float,4> q,std::array<flo
 namespace ssx {
 namespace {
 using V=std::array<float,3>;
-float dotV(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),z);}
-V crossV(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(a[2],b[1])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(a[0],b[2])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(a[1],b[0]))};}
+// 0x13E320: vadda x + y, then vmadda 1.0 x z. 0x13E53C crossV: vopmsub's fs is the second vector, so the subtracted product is b x a.
+float dotV(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),terrain_original::mul(1.f,z));}
+V crossV(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(b[1],a[2])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(b[2],a[0])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(b[0],a[1]))};}
 V scaleV(V a,float x){for(float& v:a)v=terrain_original::mul(v,x);return a;}
 float A(float x,float y){return originalScalarAdd(x,y);}
 float S(float x,float y){return originalScalarSubtract(x,y);}

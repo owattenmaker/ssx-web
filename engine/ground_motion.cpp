@@ -51,7 +51,9 @@ float groundForwardFriction(const GroundSurface& s,const GroundForceState& r,flo
     float edgeFactor=terrain_original::mul(edgeStat,f(0x3eeca3c4u));edgeFactor=originalScalarAdd(edgeFactor,1.f);
     float slip=curve(curveSpeed,s.slipFriction);
     float speedBlend=originalScalarDivide(std::abs(r.forwardSpeed),f(0x44d05556u));speedBlend=std::clamp(speedBlend,0.f,1.f);
-    float value=originalScalarSubtract(1.f,speedBlend);value=terrain_original::mul(inverse,value);value=originalScalarAdd(value,speedBlend);
+    float value=originalScalarSubtract(1.f,speedBlend);value=terrain_original::mul(inverse,value);
+    // 0x13CE90..0x13CEBC: f22 = 1.0 (0x13CD20) multiplies the blend before the add and the sum after it (mul.s f1,f22,f1; mul.s f0,f22,f0)
+    value=originalScalarAdd(value,terrain_original::mul(1.f,speedBlend));value=terrain_original::mul(1.f,value);
     slip=terrain_original::mul(slip,value);
     float slope=0;
     if (f(0x3dcccccdu)<=r.normalZ) {
@@ -146,7 +148,7 @@ float groundForwardDrive(const GroundDriveState& r) {
     }
     float result=terrain_original::mul(r.autoBoostFactor,drive);
     float crouch=terrain_original::mul(r.crouch,f(0x4261a6e4u));
-    result=terrain_original::mul(result,typeScale);result=originalScalarAdd(result,crouch);return terrain_original::mul(result,enabled);
+    result=terrain_original::mul(result,typeScale);result=originalScalarAdd(result,crouch);return terrain_original::mul(enabled,result); // 0x13CCB4 mul.s f0,f25,f0
 }
 void groundControlApproach(GroundControlValue& v) {
     Rounding rounding;
@@ -178,9 +180,11 @@ using V=std::array<float,3>;
 V add(V a,V b){for(unsigned i=0;i<3;++i)a[i]=terrain_original::add(a[i],b[i]);return a;}
 V sub(V a,V b){for(unsigned i=0;i<3;++i)a[i]=terrain_original::sub(a[i],b[i]);return a;}
 V mul(V a,float b){for(float& x:a)x=terrain_original::mul(x,b);return a;}
-float dot3(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);float xy=terrain_original::add(x,y);float xyz=terrain_original::add(xy,z);return terrain_original::add(xyz,0.f);}
+// VU0 horizontal dot: vadda x + y, vmadda ACC + vf0w (1.0) x z, vmadd ACC + 1.0 x w (w = +0)
+float dot3(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);float xy=terrain_original::add(x,y);float xyz=terrain_original::add(xy,terrain_original::mul(1.f,z));return terrain_original::add(xyz,0.f);}
 V normalize(V a){float length=terrain_original::sqrt(dot3(a,a));float inverse=terrain_original::div(1.f,length);return mul(a,inverse);}
-V cross3(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(a[2],b[1])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(a[0],b[2])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(a[1],b[0]))};}
+// vopmula a, b then vopmsub b, a (0x13D738): the subtracted products are b x a
+V cross3(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(b[1],a[2])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(b[2],a[0])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(b[0],a[1]))};}
 std::array<float,2> sincosRaw(float x) {
     float scaled=terrain_original::mul(x,f(0x3f22f983u));scaled=x<0?originalScalarSubtract(scaled,.5f):originalScalarAdd(scaled,.5f);
     int quadrant=int(scaled);float offset=terrain_original::mul(float(quadrant),f(0x3fc90fdbu));x=originalScalarSubtract(x,offset);

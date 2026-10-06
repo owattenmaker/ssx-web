@@ -3,6 +3,7 @@
 // presentation buffers once per drawn frame (every --read-fx ticks) and the skin palettes on the last two ticks of a frame.
 //   node web/bench-sim.mjs [--ticks 2000] [--read-fx 4] [--pad tuck|script] [CORE_DIR[:fast] ...]
 // CORE_DIR: a directory with core.js/core.wasm (default web/runtime); ":fast" turns the presentation fast mode on.
+// ":exact" runs every rider on the console arithmetic (a core built with SSX_PS2_EXACT_FPU=1, docs/ps2-float.md).
 // With several cores, one race per core runs in this process in alternating 50-tick chunks, so machine load hits them
 // alike; the median per-chunk ratio to the first core is printed.
 import fs from 'node:fs';
@@ -17,7 +18,8 @@ const TICKS = +opt('ticks', 2000), READ_FX = +opt('read-fx', 4), PAD = opt('pad'
 const specs = argv.length ? argv : [path.join(here, 'runtime')];
 const read = (p) => fs.readFileSync(path.join(here, 'public/assets', p)), text = (p) => read(p).toString('utf8');
 
-async function race(dir, fast) {
+async function race(dir, mode) {
+  const fast = mode === 'fast';
   const createCore = (await import(pathToFileURL(path.resolve(dir, 'core.js')).href + '?' + dir)).default;
   const human = await createCore(), course = 'ARA1';
   const put = (bytes) => { const p = human._malloc(bytes.length); human.HEAPU8.set(bytes, p); return p; }, str = (s) => put(Buffer.from(s + '\0'));
@@ -34,6 +36,10 @@ async function race(dir, fast) {
   human._reset_pad_history(); human._start_event(); racers.start();
   const cores = [human, ...racers.npcs.map((n) => n.core)];
   if (fast) for (const c of cores) c._set_presentation_fast?.(1);
+  if (mode === 'exact') {
+    if (!human._ps2_arith_exact) throw new Error(`${dir}: no ps2_arith_exact (build with SSX_CORE_CFLAGS=-DSSX_PS2_EXACT_FPU=1)`);
+    for (const c of cores) c._ps2_arith_exact(1);
+  }
   let t = 0;
   return () => {
     const pad = new Float32Array(24); if (PAD === 'script') pad.set(scriptedPad(t, 1)); else pad[22] = 1;
@@ -47,7 +53,7 @@ async function race(dir, fast) {
     t++;
   };
 }
-const ticks = []; for (const spec of specs) { const [dir, mode] = spec.split(':'); ticks.push(await race(dir, mode === 'fast')); }
+const ticks = []; for (const spec of specs) { const [dir, mode] = spec.split(':'); ticks.push(await race(dir, mode)); }
 for (const tick of ticks) for (let i = 0; i < 250; i++) tick(); // countdown and warm-up
 const cpu = specs.map(() => 0), chunks = specs.map(() => []);
 for (let done = 0, round = 0; done < TICKS; done += CHUNK, round++) for (let j = 0; j < ticks.length; j++) {

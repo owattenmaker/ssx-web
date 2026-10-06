@@ -157,8 +157,10 @@ inline RefinedContact refine(const Coefficients& c,Vector origin,Vector directio
     return {true,u,v,e.point,n};
 }
 inline Vector difference(Vector a,Vector b) {for(unsigned k=0;k<3;++k)a[k]=sub(a[k],b[k]);return a;}
-inline Vector cross(Vector a,Vector b) {return {sub(mul(a[1],b[2]),mul(a[2],b[1])),sub(mul(a[2],b[0]),mul(a[0],b[2])),sub(mul(a[0],b[1]),mul(a[1],b[0]))};}
-inline float dot(Vector a,Vector b){return sum3(mul(a[0],b[0]),mul(a[1],b[1]),mul(a[2],b[2]));}
+// 0x32BD1C cross: vopmsub's fs is the second vector, so the subtracted products are b x a. 0x32BD30 dot (and the other VU0
+// horizontal dots): vadda x + y, then vmadda 1.0 (vf0w) x z.
+inline Vector cross(Vector a,Vector b) {return {sub(mul(a[1],b[2]),mul(b[1],a[2])),sub(mul(a[2],b[0]),mul(b[2],a[0])),sub(mul(a[0],b[1]),mul(b[0],a[1]))};}
+inline float dot(Vector a,Vector b){return add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(1.f,mul(a[2],b[2])));}
 struct GroundProbe {
     Vector origin{},direction{};
     float preferredFraction=.5f;

@@ -27,7 +27,7 @@ void originalGroundBoardLift(OriginalGroundState&s,const std::array<float,3>&v){
 
 namespace ssx {
 void originalGroundPresentationTarget(const OriginalGroundProfile&p,OriginalGroundState&s,const OriginalGroundDiagnostics&d){
-    Round round;float x=terrain_original::mul(s.position[0],d.boardNormalForPose[0]),y=terrain_original::mul(s.position[1],d.boardNormalForPose[1]),z=terrain_original::mul(s.position[2],d.boardNormalForPose[2]);float projection=terrain_original::add(x,y);projection=terrain_original::add(projection,z);projection=terrain_original::add(projection,0.f);
+    Round round;float x=terrain_original::mul(s.position[0],d.boardNormalForPose[0]),y=terrain_original::mul(s.position[1],d.boardNormalForPose[1]),z=terrain_original::mul(s.position[2],d.boardNormalForPose[2]);float projection=terrain_original::add(x,y);projection=terrain_original::add(projection,terrain_original::mul(1.f,z)); /*0x13E15C vmadda 1.0 x z*/projection=terrain_original::add(projection,0.f);
     float difference=originalScalarSubtract(d.poseReferenceHeight,projection);difference=terrain_original::mul(difference,10.f);
     float candidate=originalScalarAdd(s.presentationLift.current,difference);float decay=terrain_original::mul(d.stepTime,20.f);decay=originalScalarSubtract(1.f,decay);candidate=terrain_original::mul(candidate,decay);
     float low=originalScalarSubtract(1.f,s.crouch.current);low=terrain_original::mul(low,(-20.f));float high=terrain_original::mul(s.crouch.current,10.f);
