@@ -1,3 +1,5 @@
+> **Deployed 2026-10-06 (coordinator): core-batch11.** web/runtime core.wasm `9300e7c0…` (core.js `2fe50ccb…`, unchanged) from local/ps2-float/core-batch11 (534/534). On top of core-batch10: handplant dot4 and the rail quaternion w lane (mode-1-neutral).
+
 > **Deployed 2026-10-06 (coordinator): core-batch10.** web/runtime core.wasm `9172f338…` (core.js `2fe50ccb…`, unchanged) copied from local/ps2-float/core-batch10 (full mode-1 suite 534/534). On top of core41: the physics agent's core42 tree changes (r10-0153 reset fixes, batch 7) and the arithmetic agent's batches 8-10 plus the exact glide seeds. All mode-1-neutral; exact-only parts are under SSX_PS2_EXACT_FPU (not in this build).
 
 > **PS2 arithmetic, round 4 (2026-10-06): exact glide seeds, matcher batches 8-11, Snow Jam exact-base slice 6 -> 113 of 187 (PS2 arithmetic agent; the physics agent was paused, so these touch its files):** see [ps2-float.md](ps2-float.md) "Exact baselines" and "The VU0 forms".
