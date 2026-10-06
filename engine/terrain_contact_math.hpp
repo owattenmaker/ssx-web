@@ -92,6 +92,12 @@ inline Evaluation evaluate(const Coefficients& c,float u,float v) {
     auto dot4=[](const std::array<float,4>& a,const std::array<float,4>& b) {
         return add(add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(a[2],b[2])),mul(a[3],b[3]));
     };
+    // The point and partials are VU0 horizontal sums (0x32EB24 style): vmul a x b, vadda x + y, vmadda 1.0 x z, vmadd 1.0 x w.
+    // The vmul operand order per output: point = row x vp (0x32EB28), du = vp x derivative (0x32EDA8), dv = dvp x row (0x32EC28).
+    // row and derivative stay the plain chain (0x32EA24: vmulax / vmadday / vmaddaz / vmaddw, columns x p).
+    auto dot4h=[](const std::array<float,4>& a,const std::array<float,4>& b) {
+        return add(add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(1.f,mul(a[2],b[2]))),mul(1.f,mul(a[3],b[3])));
+    };
     Evaluation e;
     for(unsigned k=0;k<3;++k) {
         std::array<float,4> row,derivative;
@@ -100,7 +106,7 @@ inline Evaluation evaluate(const Coefficients& c,float u,float v) {
             for(unsigned i=0;i<4;++i)values[i]=c[(3-j)*4+3-i][k];
             row[j]=dot4(values,up);derivative[j]=dot4(values,dup);
         }
-        e.point[k]=dot4(row,vp);e.du[k]=dot4(derivative,vp);e.dv[k]=dot4(row,dvp);
+        e.point[k]=dot4h(row,vp);e.du[k]=dot4h(vp,derivative);e.dv[k]=dot4h(dvp,row);
     }
     return e;
 }
@@ -151,8 +157,9 @@ inline RefinedContact refine(const Coefficients& c,Vector origin,Vector directio
         if(!std::isfinite(u)||!std::isfinite(v)||u<0||u>1||v<0||v>1)return {false,u,v,{},{}};
         e=evaluate(c,u,v);
     }
-    Vector n{sub(mul(e.dv[1],e.du[2]),mul(e.dv[2],e.du[1])),sub(mul(e.dv[2],e.du[0]),mul(e.dv[0],e.du[2])),sub(mul(e.dv[0],e.du[1]),mul(e.dv[1],e.du[0]))};
-    float length=sqrt(sum3(mul(n[0],n[0]),mul(n[1],n[1]),mul(n[2],n[2])));
+    // 0x32F5E0..0x32F618: vopmula dv, du then vopmsub du, dv (fs = du), and the horizontal length with 1.0 x z
+    Vector n{sub(mul(e.dv[1],e.du[2]),mul(e.du[1],e.dv[2])),sub(mul(e.dv[2],e.du[0]),mul(e.du[2],e.dv[0])),sub(mul(e.dv[0],e.du[1]),mul(e.du[0],e.dv[1]))};
+    float length=sqrt(add(add(mul(n[0],n[0]),mul(n[1],n[1])),mul(1.f,mul(n[2],n[2]))));
     float scale=div(1,length);for(auto& x:n)x=mul(x,scale);
     return {true,u,v,e.point,n};
 }

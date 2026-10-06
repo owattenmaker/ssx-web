@@ -333,9 +333,13 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool at
  };
  originalHardCrashEnter(state,semantic,attacked,0,event,cb);lastCrashSemantic=semantic;++crashSerial;
 }
+static int32_t board_press_style(); // web/boardpress_gameplay.inc: rider+0x330
 static bool landing_crash(const OriginalLandingState& state){
  if(!physicsAttached)return false;
  OriginalLandingClassification input;input.animationClass=graph.currentClass(2);input.animationFlags=graph.flags(2);input.landingStat=landingProfile.landingStat;
+ // 139C88 skips the nose / tail angle test (0x15C / 0x15D) while +0x330 holds an air BoardPress style: the rider lands into the
+ // press (fuzz r4-0005-m8 1217: the right stick held in the air, control 1 on the PS2; the port crashed 0x15C with +0x330 unread)
+ input.manualState330=board_press_style();
  auto choice=originalLandingClassify(state,input);if(choice.consumedRandom){input.randomWord=rng.nextMotion();choice=originalLandingClassify(state,input);}
  if(choice.crashAnimation==438)return false;
  OriginalCollisionEvent event;event.pointCm=state.groundPoint;event.normal=state.rider.normal;event.closingSpeedCmps=state.impactNormalSpeed;event.surface=state.surface;event.surfaceProperty44=browser_surface_property(state.surface);
@@ -627,12 +631,14 @@ static void clear_reset(){browserResetActive=false;resetRoute=initialResetRoute;
 static void score_wrong_way(); // web/score_gameplay.inc (11A088)
 static void rail_reset_leave(); // web/rail_gameplay.inc: 116120 from control 7 runs the control exit 132048
 RIDER_LOCAL static bool resetDecline=false; // begin_decline_reset: 1235F8's entry, not 116120's
+static void handplant_reset_exit(); // web/handplant_gameplay.inc
 static void begin_reset(int reason){
  if(browserResetActive)return;if(!resetDecline){audio_event(AE_RESET,float(reason)); /*116198: 29A220 (snd 0x7B, 28F108)*/if(reason==1||reason==4)score_wrong_way();} /*116120: reasons 1/4 call 11A088 first*/clear_start();if(resetPaths.empty()&&!evictedResetPaths.empty()){resetPaths=std::move(evictedResetPaths);evictedResetPaths.clear();resetRoute=evictedResetRoute;}if(resetPaths.empty())throw std::runtime_error("Original reset route data unavailable");
  if(!crash.active&&!::grounded){if(!landingAirExitBaked)landing_air_exit();commit_rider_physics();}
  // 13F410 stamps 1298C8, this tick's: a 121818 stage-trigger reset ("Wrong Way!", reason 4) comes after the step's motion tick
  // advanced, so stamp the tick the step began with (PS2 hl2/attack-bra2 1531: the next landing's speed factor 0.98, the port's 0.97)
  if(!crash.active&&::grounded&&!browserRailActive)originalLandingGroundLeave(physicsState,controllerGround.logicTick,lastGroundLeave); //116120 requestMotion(3) runs the ground exit 13F410 first: +0x208/+0x2BC/+0x2C8 decay to 0 (tech-select-ground 439)
+ handplant_reset_exit(); // 116120: control 11's exit, then motion 5's (the velocity)
  resetReason=reason;resetControl={reason>0,0};rail_reset_leave();detach_rail_for_crash();browserResetActive=true;browserCrashActive=false;crash.active=false;
  physicsState.controlState=gs.controlState=9;graph.setRate(2,0);boostState.modifier=0;boostState.window=physicsState.boostWindow=0;
  heldAirMode=passiveMode=false;prewind={};air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;

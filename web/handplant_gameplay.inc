@@ -53,6 +53,17 @@ static void hp_upper_exit(){const int upper=graph.currentClass(1);if(upper==3||u
 // Leave control 11 (0x132F98) for another controller.
 static void hp_end(OriginalHandplantRider& r){originalHandplantControlExit(r);hp_apply(r);hpActive=false;hpMotionMode=0;hpClip=438;graph.handplantBalance=hpLean244.current;}
 //0x11FA10(rider,rider+0x110): bake the presented root, then 0x11E098.
+// 116120 (a reset requested in a handplant): 11FEC8(9) runs control 11's exit 132F98 (phase 0), then 11FE78(3) runs motion 5's
+// exit 139178: 139548 launches from phase 0 (no launch: +0x10 stays 0) and +0x1E0 = +0x10, so the reset starts from rest
+// (fuzz r5-0165-min 544: the PS2's +0x1E0 is 0 after a Select in control 11 / motion 5).
+static void handplant_reset_exit(){
+ if(!hpActive)return;
+ auto r=hp_view();
+ originalHandplantControlExit(r);
+ if(hpMotionMode==5)originalHandplantMotionExit(hpMotion,r);
+ hp_apply(r);
+ hpActive=false;hpMotionMode=0;hpClip=438;browserHandplantMotion5=false;graph.handplantBalance=hpLean244.current;
+}
 static void hp_bake(OriginalHandplantRider& r){
  if(!graph.sampledLocal||graph.sampledLocal->size()<=22)throw std::runtime_error("Handplant root bake needs a sampled pose");
  RiderRootPresentation p;p.turn=r.turn.current;p.brake=physicsState.brake.current;p.extraLean=r.extraLean.current;p.roll=r.roll250.current;p.liftCm=physicsState.presentationLift.current;p.lateral=physicsState.lateral;p.controlState=13;

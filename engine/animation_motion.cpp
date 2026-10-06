@@ -34,7 +34,7 @@ AnimationTransform originalAnimationCompose(const AnimationTransform& parent,con
     for(unsigned i=0;i<3;++i)p[i]=terrain_original::mul(local.position[i],scale[i]);
     auto v=cross(av,bv);AnimationTransform result;
     for(unsigned i=0;i<3;++i){float x=terrain_original::mul(a[i],b[3]),y=terrain_original::mul(b[i],a[3]);x=terrain_original::add(x,y);result.rotation[i]=terrain_original::add(x,v[i]);}
-    float w=terrain_original::mul(a[3],b[3]),x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);w=terrain_original::sub(w,x);w=terrain_original::sub(w,y);result.rotation[3]=terrain_original::sub(w,z);
+    float w=terrain_original::mul(a[3],b[3]),x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);w=terrain_original::sub(w,x);w=terrain_original::sub(w,terrain_original::mul(1.f,y));result.rotation[3]=terrain_original::sub(w,terrain_original::mul(1.f,z)); /*0x310310..0x310318 vmsuba.w / vmsub.w: fs = vf0 (1.0)*/
     auto first=cross(av,p),second=cross(av,first);
     for(unsigned i=0;i<3;++i){float term=terrain_original::mul(first[i],a[3]);float r=terrain_original::add(p[i],term);r=terrain_original::add(r,term);r=terrain_original::add(r,second[i]);r=terrain_original::add(r,second[i]);result.position[i]=terrain_original::add(r,parent.position[i]);}
     return result;
@@ -100,7 +100,12 @@ std::vector<AnimationTransform> originalAnimationLocalPose(const std::vector<Ani
             if(bones[i].parent<0){auto transformed=originalAnimationCompose(layer.root,pose);if(t>=0)pose.position=transformed.position;if(q>=0)pose.rotation=transformed.rotation;}
             if(weight==1){result[i]=pose;continue;}
             if(t>=0)for(unsigned k=0;k<3;++k){float old=result[i].position[k],sub=terrain_original::mul(old,weight),add=terrain_original::mul(pose.position[k],weight);old=terrain_original::sub(old,sub);result[i].position[k]=terrain_original::add(old,add);}
-            if(q>=0){float dot=0;for(unsigned k=0;k<4;++k){float product=terrain_original::mul(result[i].rotation[k],pose.rotation[k]);dot=terrain_original::add(dot,product);}float squared=0;for(unsigned k=0;k<4;++k){float old=result[i].rotation[k],sub=terrain_original::mul(old,weight),add=terrain_original::mul((dot<0?-pose.rotation[k]:pose.rotation[k]),weight);old=terrain_original::sub(old,sub);result[i].rotation[k]=terrain_original::add(old,add);float product=terrain_original::mul(result[i].rotation[k],result[i].rotation[k]);squared=terrain_original::add(squared,product);}float norm=terrain_original::div(1.f,terrain_original::sqrt(squared));for(float&v:result[i].rotation)v=terrain_original::mul(v,norm);}
+            if(q>=0){
+             // 0x30FF0C..0x30FF5C: both 4-lane sums are VU0 horizontal dots: x + y, then 1.0 x z, then 1.0 x w
+             auto hsum=[](const std::array<float,4>& p){return terrain_original::add(terrain_original::add(terrain_original::add(p[0],p[1]),terrain_original::mul(1.f,p[2])),terrain_original::mul(1.f,p[3]));};
+             std::array<float,4> products;for(unsigned k=0;k<4;++k)products[k]=terrain_original::mul(result[i].rotation[k],pose.rotation[k]);const float dot=hsum(products);
+             std::array<float,4> squares;for(unsigned k=0;k<4;++k){float old=result[i].rotation[k],sub=terrain_original::mul(old,weight),add=terrain_original::mul((dot<0?-pose.rotation[k]:pose.rotation[k]),weight);old=terrain_original::sub(old,sub);result[i].rotation[k]=terrain_original::add(old,add);squares[k]=terrain_original::mul(result[i].rotation[k],result[i].rotation[k]);}const float squared=hsum(squares);
+             float norm=terrain_original::div(1.f,terrain_original::sqrt(squared));for(float&v:result[i].rotation)v=terrain_original::mul(v,norm);}
         }
     }return result;
 }

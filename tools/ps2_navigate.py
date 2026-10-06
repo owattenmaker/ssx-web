@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from reference_replay import patch_state, pad_frame  # noqa: E402
-from ps2_capture import Asm, Pine, prepare_datapath, axis_byte, PCSX2, ISO, DATAPATH, GP, BUTTONS  # noqa: E402
+from ps2_capture import Asm, Pine, prepare_datapath, axis_byte, PCSX2, ISO, DATAPATH, GP, BUTTONS, fpu_mode  # noqa: E402
 from ps2_capture import T0, T1, T2, T3, T4, T5, ZERO, SP  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,7 +207,9 @@ def run(state, outdir, frames, speed='normal', timeout=900, snap_every=0, saves=
     requests = sorted(set(requests), key=lambda r: (r[0], r[1] or ''))
     slot = random.randint(28100, 28999)
     datapath = DATAPATH.parent / f'pcsx2-nav-{slot}'
-    prepare_datapath(datapath, slot)
+    # The arithmetic profile: PS2_CAPTURE_FPU (mode1 | exact, default mode1), recorded in navigate.json (docs/ps2-float.md).
+    fpu = fpu_mode(manifest)
+    prepare_datapath(datapath, slot, fpu)
     args = [str(PCSX2), '-datapath', str(datapath), '-batch', '-nogui', '-statefile', str(state)]
     if speed == 'unlimited': args.append('-unlimited')
     elif speed == 'turbo': args.append('-turbo')
@@ -279,7 +281,7 @@ def run(state, outdir, frames, speed='normal', timeout=900, snap_every=0, saves=
         results.append(entry); raw.unlink()
         print(json.dumps(entry), flush=True)
     shutil.rmtree(rawdir, ignore_errors=True)
-    summary = dict(state=str(state), manifest=manifest, frames=frames, results=results)
+    summary = dict(state=str(state), manifest=manifest, frames=frames, results=results, fpu_mode=fpu)
     (outdir / 'navigate.json').write_text(json.dumps(summary, indent=2) + '\n')
     return summary
 

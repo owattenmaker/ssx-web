@@ -48,7 +48,7 @@ std::array<float,4> originalGroundAlignment(std::array<float,4> q,std::array<flo
     if(rotated)*rotated=false;
     if(!(clearance<5.f))return q;
     n[2]=terrain_original::add(n[2],terrain_original::mul(n[2],.5f));
-    auto length=[](auto a){float x=terrain_original::mul(a[0],a[0]),y=terrain_original::mul(a[1],a[1]),z=terrain_original::mul(a[2],a[2]);return terrain_original::sqrt(terrain_original::add((terrain_original::add(x,y)),z));};
+    auto length=[](auto a){float x=terrain_original::mul(a[0],a[0]),y=terrain_original::mul(a[1],a[1]),z=terrain_original::mul(a[2],a[2]);return terrain_original::sqrt(terrain_original::add((terrain_original::add(x,y)),terrain_original::mul(1.f,z)));}; // 0x13EDCC / 0x13EE28
     float scale=terrain_original::div(1.f,length(n));for(float& x:n)x=terrain_original::mul(x,scale);
     std::array<float,3> axis;
     for(int i=0;i<3;i++){int j=(i+1)%3,k=(i+2)%3;axis[i]=terrain_original::sub(terrain_original::mul(n[j],up[k]),terrain_original::mul(up[j],n[k]));} // 0x13EE04 vopmsub: b x a

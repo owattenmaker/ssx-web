@@ -531,14 +531,15 @@ inline OriginalRailMotionStepResult originalRailMotionStep(OriginalRailMotionSta
 // 0x13BFA8 motion4 focus loss. The recovered decisions are the steer reset,
 // the motion1 request after a lost rail and the final speed clamp; the effect
 // block runs through the mandatory leaveEffects callback.
-struct OriginalRailMotionLeaveEffects {bool lostRail=false,requestAirMotion=false;int scoreEventKind=22;};
+// predictionVelocity: +0x1E0 when 11FE78(1) ran: motion 1's enter 1399E0 seeds the predictor (1135B8) there, before the clamp below.
+struct OriginalRailMotionLeaveEffects {bool lostRail=false,requestAirMotion=false;int scoreEventKind=22;RailVector predictionVelocity{};};
 inline OriginalRailMotionLeaveEffects originalRailMotionLeave(const OriginalRailMotionState& m,OriginalRailRider& r,const OriginalRailAccess& access) {
     using namespace rail_original;Rounding rounding;OriginalRailMotionLeaveEffects e;
     if(r.controlState==12&&!access.exitContacts)throw std::runtime_error("Rail Uber exit requires original contact-mask/query callbacks (13BFA8)");
     if(m.lostRail){r.steer22C.target=0;r.steer22C.rate=bits(0x3d088889u);e.lostRail=true;}
     need(access.leaveEffects,"leaveEffects")();
     if(access.exitContacts)access.exitContacts(r);
-    if(m.lostRail&&r.motionMode==4){e.requestAirMotion=true;need(access.requestMotion,"requestMotion")(1);}
+    if(m.lostRail&&r.motionMode==4){e.requestAirMotion=true;need(access.requestMotion,"requestMotion")(1);e.predictionVelocity=r.velocity;}
     float speed=length(r.velocity);if(r.speedLimit<speed)r.velocity=scale(r.velocity,sdiv(r.speedLimit,speed));
     return e;
 }

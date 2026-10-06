@@ -292,6 +292,23 @@ on the user's Xbox Wireless (045e:0b22, Bluetooth, macOS):
     web/rider_attributes.hpp), and ps2_arith_exact recomputes them in its context. A no-op in mode 1.
 - **Open:** none from the mode-1 batches. New batches are exact-mode captures (PS2_CAPTURE_FPU=exact, one ARMSX2 slot).
 
+## Fuzz repros on mode-1 captures (2026-10-05, physics-jank agent)
+
+The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzzing.md), traced with oracle snapshots:
+- **A reset in a handplant** (r5-0165-min 544): 116120 runs 11FEC8(9) (control 11's exit 132F98, phase 0), then 11FE78(3), which runs
+  motion 5's exit 139178: 139548 launches from phase 0 (+0x10 stays 0) and +0x1E0 = +0x10, so the reset starts from rest.
+  web/handplant_gameplay.inc handplant_reset_exit, called by begin_reset.
+- **A landing with an air press pending** (r4-0005-m8 1217): 139C88's nose / tail angle test (0x15C / 0x15D) only runs with +0x330 = 0;
+  an air BoardPress style lands into control 1. landing_crash now passes board_press_style() as manualState330.
+- **Event delta rounding** (engine/animation_events.cpp): the event window's delta was a native float product, which rounds to
+  nearest in wasm (no rounding modes there); the PS2's mul.s chops (r2-0204-m0 2585: 3CD9ED93, the port 3CD9ED94).
+- **A computer rider fires a stage trigger in a human-only capture** (r1-0066): Rival Time's Psymon (slot 1) fires the EBC3 rock
+  trigger 15146 at 2397 (121818 0x12186C -> 30A060, RestoreNode 0x350F60, flags 0x200022 -> 0x200304); compare-ps2-capture runs only the
+  human, so the port fires it at the human's 3475. A harness gap: event seeds need --ai-state and compare-ai-capture.
+- **Open: r2-0204-m0** (six riders): Mac's landing in pass 2585 hits the same patch (87597) and cache cell (8,5,1) as the PS2, but its
+  +0x370 normal differs in the 5th digit; the probe origin (0x13A834) is 1 ULP off, which points at his posed root. Computer riders'
+  bones are not recorded (--ai-state) and not gated.
+
 ## Computer riders' stage triggers (2026-10-05, physics-jank agent)
 
 - **PS2 order (decomp + EE oracle, hl2/attack-bra2-b tick 1161):**

@@ -11,13 +11,15 @@
 namespace ssx {namespace {
 using Round=OriginalRounding;
 using V=AnimationVector;
-float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),z);}
+// 0x11F5B8: the VU0 horizontal dot (x + y, then 1.0 x z)
+float dot(V a,V b){float x=terrain_original::mul(a[0],b[0]),y=terrain_original::mul(a[1],b[1]),z=terrain_original::mul(a[2],b[2]);return terrain_original::add((terrain_original::add(x,y)),terrain_original::mul(1.f,z));}
 V cross(V a,V b){return {terrain_original::sub(terrain_original::mul(a[1],b[2]),terrain_original::mul(b[1],a[2])),terrain_original::sub(terrain_original::mul(a[2],b[0]),terrain_original::mul(b[2],a[0])),terrain_original::sub(terrain_original::mul(a[0],b[1]),terrain_original::mul(b[0],a[1]))};}
 V subtract(V a,V b){for(unsigned k=0;k<3;++k)a[k]=terrain_original::sub(a[k],b[k]);return a;}
 V scaled(V a,float s){for(float&x:a)x=terrain_original::mul(x,s);return a;}
 V normalized(V a){return scaled(a,terrain_original::div(1.f,terrain_original::sqrt(dot(a,a))));}
 AnimationQuaternion product(AnimationQuaternion a,AnimationQuaternion b){return originalAnimationCompose({{},a},{{},b}).rotation;}
-AnimationQuaternion axisQuaternion(V axis,float halfAngle){auto sc=originalSinCos(halfAngle);return {terrain_original::mul(axis[0],sc[0]),terrain_original::mul(axis[1],sc[0]),terrain_original::mul(axis[2],sc[0]),sc[1]};}
+// 0x11F644 mul.s f1,f0,f1 (f0 = sin)
+AnimationQuaternion axisQuaternion(V axis,float halfAngle){auto sc=originalSinCos(halfAngle);return {terrain_original::mul(sc[0],axis[0]),terrain_original::mul(sc[0],axis[1]),terrain_original::mul(sc[0],axis[2]),sc[1]};}
 // Original31BF60, not the31BE50 sine/cosine pair: odd quadrants use
 // the authored cosine polynomial instead of sqrt(1-sin²).
 float legBlendSin(float x){
@@ -90,6 +92,10 @@ AnimationTransform originalRiderRootPresentation(AnimationTransform root,V board
 namespace ssx {
 OriginalCollisionFrame originalRiderCollisionFrame(const AnimationTransform&root){
     Round round;const auto&q=root.rotation;float dx=terrain_original::add(q[0],q[0]),dy=terrain_original::add(q[1],q[1]),dz=terrain_original::add(q[2],q[2]);float xx=terrain_original::mul(dx,q[0]),yy=terrain_original::mul(dy,q[1]),zz=terrain_original::mul(dz,q[2]),wx=terrain_original::mul(dx,q[3]),wy=terrain_original::mul(dy,q[3]),wz=terrain_original::mul(dz,q[3]);float yz=terrain_original::mul(dy,q[2]),zx=terrain_original::mul(dz,q[0]),xy=terrain_original::mul(dx,q[1]);yz=terrain_original::add(0.f,yz);zx=terrain_original::add(0.f,zx);xy=terrain_original::add(0.f,xy);
-    OriginalCollisionFrame frame;float diagonal=terrain_original::sub(1.f,yy);frame.right={terrain_original::sub(diagonal,zz),terrain_original::add(xy,wz),terrain_original::sub(zx,wy)};diagonal=terrain_original::sub(1.f,zz);frame.forward={terrain_original::sub(xy,wz),terrain_original::sub(diagonal,xx),terrain_original::add(yz,wx)};diagonal=terrain_original::sub(1.f,xx);frame.up={terrain_original::add(zx,wy),terrain_original::sub(yz,wx),terrain_original::sub(diagonal,yy)};frame.origin=root.position;return frame;
+    // 0x11E114 / 0x31018C (the 11E098 form): the second term of every element goes through 1.0 (vf0)
+    auto one=[](float x){return terrain_original::mul(1.f,x);};
+    OriginalCollisionFrame frame;float diagonal=terrain_original::sub(1.f,yy);frame.right={terrain_original::sub(diagonal,one(zz)),terrain_original::add(xy,one(wz)),terrain_original::sub(zx,one(wy))};
+    diagonal=terrain_original::sub(1.f,zz);frame.forward={terrain_original::sub(xy,one(wz)),terrain_original::sub(diagonal,one(xx)),terrain_original::add(yz,one(wx))};
+    diagonal=terrain_original::sub(1.f,xx);frame.up={terrain_original::add(zx,one(wy)),terrain_original::sub(yz,one(wx)),terrain_original::sub(diagonal,one(yy))};frame.origin=root.position;return frame;
 }
 }

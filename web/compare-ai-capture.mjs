@@ -31,6 +31,11 @@ const human = await createCore();
 if (process.env.PS2_ARITH === 'exact' && human._ps2_arith_exact) {
   human._ps2_arith_exact(0);
 }
+// PS2_ARITH=exact-base: a capture from an exact-mode baseline (local/reference-exact, docs/ps2-float.md "Exact baselines") has no
+// mode-1 history, so the setup runs on the console model too.
+if (process.env.PS2_ARITH === 'exact-base' && !human._ps2_arith_exact) {
+  throw new Error('PS2_ARITH=exact-base needs a core with ps2_arith_exact');
+}
 process.on('uncaughtException', (e) => { console.error(e instanceof Error ? e.stack : (human.getExceptionMessage ? human.getExceptionMessage(e) : e)); if (!(e instanceof Error) && e?.stack) console.error(e.stack); console.error('at record', globalThis.__compareTick, 'stage', globalThis.__compareStage); process.exit(1); });
 const put = (core, bytes) => { const p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); return p; };
 const str = (core, s) => put(core, Buffer.from(s + '\0'));
@@ -334,7 +339,7 @@ const particleEval = stageDump ? await import('./set-piece-particle-eval.js') : 
 // PS2_ARITH=exact: a core built with SSX_PS2_EXACT_FPU=1 (web/build-core.sh SSX_CORE_CFLAGS) computes on the console model
 // (engine/ps2_fpu.hpp) from here, the capture's first tick. The setup above ran in mode 1, as the baseline's own history did
 // (docs/ps2-float.md "Mode-1 history").
-if (process.env.PS2_ARITH === 'exact') {
+if (process.env.PS2_ARITH === 'exact' || process.env.PS2_ARITH === 'exact-base') {
   if (!human._ps2_arith_exact) {
     throw new Error('PS2_ARITH=exact needs a core with ps2_arith_exact');
   }

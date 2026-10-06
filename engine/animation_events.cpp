@@ -1,5 +1,6 @@
 #include "animation_events.hpp"
 #include "original_float.hpp"
+#include "terrain_contact_math.hpp"
 #include <cfenv>
 #include <cmath>
 #pragma STDC FENV_ACCESS ON
@@ -8,7 +9,10 @@ void originalAnimationPrimaryStep(OriginalAnimationSlot&slot,float rate,float dt
         OriginalAnimationEventFlags&state,std::span<const OriginalAnimationEventMarker>markers){
     struct Round{int old=std::fegetround();Round(){std::fesetround(FE_TOWARDZERO);}~Round(){std::fesetround(old);}}round;
     if(!slot.enabled)return;
-    float old=slot.time,delta=slot.rate*rate;delta=delta*dt;
+    // 0x3135xx: delta = rate x rate, then x dt, both chopped mul.s (0x31360C adds it). The wasm build has no hardware rounding
+    // modes (the Round above is a no-op there), so a native product rounds to nearest: 3CD9ED94 for the PS2's 3CD9ED93
+    // (fuzz r2-0204-m0 2585, Mac's channel clock).
+    float old=slot.time,delta=terrain_original::mul(slot.rate,rate);delta=terrain_original::mul(delta,dt);
     float advanced=originalScalarAdd(old,delta);
     state.raised=0;state.completed=false;
     auto raise=[&](unsigned bit){uint64_t flag=uint64_t(1)<<(bit&63);state.raised|=flag&~state.latched;state.latched|=flag;};

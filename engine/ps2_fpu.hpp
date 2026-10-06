@@ -23,6 +23,7 @@
 // Everything here works on the raw words in integers, or in double arithmetic whose results are exact (the fast
 // paths, a square-root seed), so no host rounding mode, FTZ / DAZ or FMA contraction can change a result: native and
 // WebAssembly give the same bits.
+#include <array>
 #include <bit>
 #include <cstdint>
 
@@ -585,7 +586,40 @@ inline bool normalSingleRange(uint64_t bits) {
     return addSubResult(a, b, false).bits;
 }
 
+// With fs a power of two (significand 2^23) the array's outcome depends only on ft's low 16 bits: the Booth windows of
+// digits 0..7 read ft bits 0..15, fs's partial products are fixed, and the exact product (ft's significand << 23) has a
+// zero tail and a clear bit 15. One bit per low half answers multiplyOneUlpLow for every such pair (8 KiB).
+inline bool powerOfTwoProductLow(uint32_t ft) {
+    static const std::array<uint64_t, 1024> table = [] {
+        std::array<uint64_t, 1024> bits{};
+        for (uint32_t low = 1; low < 0x10000u; ++low) {
+            const uint32_t b = hiddenBit | low;
+            const uint64_t exact = uint64_t(hiddenBit) * uint64_t(b);
+            if ((exact >> 23) != (multiplyArray(hiddenBit, b) >> 23)) {
+                bits[low >> 6] |= uint64_t(1) << (low & 63u);
+            }
+        }
+        return bits;
+    }();
+    const uint32_t low = ft & 0xFFFFu;
+    return (table[low >> 6] >> (low & 63u)) & 1u;
+}
+
 [[gnu::noinline]] inline uint32_t mulSlow(uint32_t fs, uint32_t ft) {
+    const uint32_t ea = exponentOf(fs);
+    const uint32_t eb = exponentOf(ft);
+    // 1.0 x term (a VU0 FMAC with vf0.w as fs) and other power-of-two fs inside the normal range: mulResult's word
+    // (ft's significand with the summed exponent), less the table's ULP. The smallest normal is never decremented.
+    if ((fs & mantissaMask) == 0 && ea != 0 && ea != 255 && eb != 0 && eb != 255) {
+        const int exponent = int(ea) + int(eb) - 127;
+        if (exponent >= 1 && exponent <= 254) {
+            const uint32_t word = ((fs ^ ft) & signBit) | (uint32_t(exponent) << 23) | (ft & mantissaMask);
+            if ((word & magnitudeMask) == hiddenBit) {
+                return word;
+            }
+            return powerOfTwoProductLow(ft) ? word - 1u : word;
+        }
+    }
     return mulResult(fs, ft).bits;
 }
 

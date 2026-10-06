@@ -127,8 +127,16 @@ So **a mul site whose ft is a short constant is provably native-RTZ**: a per-sit
   - a gate whose savestate is gone is rebuilt from its capture.json and checked: same patch list, or a mode-1 rerun byte-equal to the gate;
   - rng-order sidecars are regenerated;
   - other capture flows (booth/*, peak1-green-start, peak1-lodge-attrs) are listed as manual.
+- Gates outside the plain `ps2_capture.py run` flow:
+  - allpeak/{apr,p2r,apj}-start come from closed-loop autopilot runs. `tools/ps2_autopilot.py run STATE OUT --frames N --replay GATE.script.json` feeds the gate's consumed pads open loop instead of steering. The mode-1 replay of p2r-start equals the gate byte for byte, so the exact replays use the gate's own inputs.
+  - peak3/fr-throne-unload is records 5602..7000 of a 7000-frame run. The whole script runs (the mode-1 slice equals the gate), and the exact gate is the same slice of the exact run (`fr-throne-unload.json` `slice`).
+  - ctm-events/c0a-ws13-splines is an alias of c0a-ws13 (links, as in `runs/`).
+- rng-order sidecars where the exact runs differ in length:
+  - An exact gate one record longer than its companion: the sidecar covers the shared records. A missing record falls back in the comparer.
+  - peak1/rnb-event-tuck: in exact mode the tick restarts at record 10181 in both the gate and its companion, so the sidecar covers the records before the restart.
+- Still to re-capture: ctm-events/c0a-ret3 and c0a-ret2-coast (ring overrun near record 995 on a loaded machine, at both speeds) and c0a-full / c0a-full-ai (timed out).
 - `PS2_RUNS=<tree>` points `web/test-ps2-captures.mjs` at another capture tree.
-- `tools/ps2-float/score_gates.mjs --runs DIR --core CORE.js` scores every gate one by one, with the human's first inexact tick and a per-area tally.
+- `tools/ps2-float/score_gates.mjs --runs DIR --core CORE.js [--arith exact]` scores every gate one by one, with the human's first inexact tick and a per-area tally. `--arith exact` sets `PS2_ARITH=exact` for the comparers.
 
 ## 6. The EE oracle (`tools/ps2-float/ee_oracle`)
 
@@ -183,6 +191,10 @@ python3 tools/ps2-float/ee_oracle/vudis.py DIR/vu0MicroMem.bin 0x6E0  # read a m
   - the world pass.
 - The rider manager is `*(*(*(gp-0x848)+0x84)+0xC)`; its +8 is the tick.
 - Any other function can be called the same way with its own arguments (`--a0..--a3`, `--f12`, `--f13`). The oracle sets gp = 0x4A30F0, a private stack outside the PS2 map, and a sentinel ra.
+- `--sp ADDR` runs on the game's own stack instead. state.py prints the frozen sp of a snap_at.py state (from the savestate's cpuRegs). Use it when the code reads stack words it never wrote.
+  - Example: event-race-ai rider+0xA9C. 0x105398 copies its sp+0x80..0xBF record to rider+0xA60 (0x10570C..0x105718) but never writes sp+0xB4..0xBF.
+  - At tick 1599 the stale sp+0xBC is the last overlap flag of the 0x33B748 spatial-tree cell test in the same pass (its sp+0x1C, 0x33BAD8 / 0x33BB0C): 1 in both profiles, as in the interpreter capture.
+  - It is a float-dependent stale word, so it stays out of comparisons (engine/instance_contact.hpp).
 
 **Not modelled:**
 
@@ -205,13 +217,13 @@ python3 tools/ps2-float/ee_oracle/vudis.py DIR/vu0MicroMem.bin 0x6E0  # read a m
 
 ### The switch core
 
-- `tools/ps2-float/make_swap_tree.py OUT` builds a scratch tree of symlinks with the helper headers patched.
-- Every helper gets an early return on a runtime switch, `software_float::exactArithmetic`. It defaults off (mode-1 results, bit for bit), so one core runs both profiles.
+- In the live tree, behind the compile-time `SSX_PS2_EXACT_FPU` (default off; the default build is byte-identical).
+  - Build: `SSX_CORE_CFLAGS=-DSSX_PS2_EXACT_FPU=1 CORE_OUT=… sh web/build-core.sh`.
+  - Every helper returns early on the runtime switch `software_float::exactArithmetic` (default on in such a core).
   - Covered: software_float add / mul / div / sqrt, the EE add / sub / DIV.S / SQRT.S, terrain_original in both rounding policies, collision_scalar, the LUN VM.
-- Exported as `ps2_arith_exact(on)`.
-- Build it with `CORE_OUT=… sh OUT/web/build-core.sh`. The scratch build skips the rider-global check, since the switch is a plain global.
-- With the switch off, the core passes the mode-1 gates (zoe-race, zoe-hl, hl-sj-1, neutral-3000).
-- `PS2_ARITH=exact` (default off) in `web/compare-ps2-capture.mjs` / `web/compare-ai-capture.mjs` turns the switch on at the capture's first tick.
+  - `web/check-rider-globals.mjs` lists the switch as shared.
+- Exported as `ps2_arith_exact(on)`. It also re-derives the seeded stats in the calling rider context, so the comparers call it in every context.
+- `PS2_ARITH=exact` (default off) in `web/compare-ps2-capture.mjs` / `web/compare-ai-capture.mjs` runs the setup in mode 1 and turns the switch on at the capture's first tick.
 
 **Mode-1 history.** Every baseline savestate was made in mode 1, so an exact capture carries mode-1 history up to its first tick. With `--event` the comparer simulates the grid start and countdown up to that tick itself, so those ticks must stay in mode 1 too. Only an exact-mode baseline made from a state with no float history (the title or a menu) would remove this.
 
@@ -221,8 +233,14 @@ Per tick:
 
 1. A frozen snapshot: `snap_at.py CAP.p2s TICK OUT.p2s`.
 2. The PS2 trace: `oracle --trace-fpu`, which also logs a MAC's product and RSQRT's inner SQRT.
-3. The port trace: a trace core (`make_swap_tree.py OUT --trace`; every helper records its call site through `std::source_location`, see `tools/ps2-float/ps2_trace.hpp`), run with `PS2_ARITH=exact PS2_MATCH_TICK=T+1 PS2_MATCH_OUT=port.json TICK_HOOK=../tools/ps2-float/trace_hook.mjs`. The comparer's row T+1 is the PS2's pass T.
+3. The port trace: a trace core, run with `PS2_ARITH=exact PS2_MATCH_TICK=T+1 PS2_MATCH_OUT=port.json TICK_HOOK=../tools/ps2-float/trace_hook.mjs`. The comparer's row T+1 is the PS2's pass T.
+   - `tools/ps2-float/make_trace_tree.py OUT` mirrors the live tree as symlinks and patches copies of the helpers, so every call records its site through `std::source_location` (`tools/ps2-float/ps2_trace.hpp`).
+   - It never writes through a symlink.
+   - Build the tree with `SSX_CORE_CFLAGS=-DSSX_PS2_EXACT_FPU=1 CORE_OUT=… sh OUT/web/build-core.sh`. A trace core is an instrument, never a deploy candidate.
+   - Candidate fixes are tried on the tree's copies (unlink the symlink, write the edited text) before they go to the core owner.
 4. `tools/ps2-float/match.py port.json oracle.fpu`.
+
+`tools/ps2-float/match_tick.sh GATE TICK TRACE_CORE_DIR -- COMPARER_ARGS` runs steps 1-4 against `local/ps2-capture/runs-exact/GATE.bin`. It caches the snapshot and the PS2 trace under `local/ps2-float/match/`. Rider gates need `STAGE_WORLD=1`.
 
 What match.py does:
 
@@ -238,6 +256,34 @@ What match.py does:
 - **The general rule:** wherever the port dropped a ×1.0, a 1.0×, or a normalisation because it was the identity in mode 1, the console disagrees when 1.0 is the fs operand.
 - Operand-order fixes (`mul(a,b)` → `mul(b,a)`) are mode-1-neutral (the mode-1 product is commutative), so they can land without the switch.
 
+### The VU0 forms (matcher batches 2-5, riders/zoe-race tick 186)
+
+The console forms a vector op's products in a fixed operand order and runs sums through the MAC with vf0 (1.0) as fs, so the port must spell them out. All of these are mode-1-neutral.
+
+| PS2 pattern | Port form | Sites (examples) |
+|---|---|---|
+| horizontal dot: `vmul`, `vadda x+y`, `vmadda vf0w·z`, `vmadd vf0w·w` | `add(add(x,y),mul(1.f,z))` (+ `mul(1.f,w)` for four lanes) | ground_motion dot3, orientation dotV / length, terrain dot, rider_pose dot, animation blend dot / norm, patch normal length |
+| cross product `vopmula fs=a,ft=b` / `vopmsub fs=b,ft=a` | `sub(mul(a[j],b[k]),mul(b[j],a[k]))` | terrain cross, orientation crossV / axis, quaternion products, patch normal (a = dv, b = du) |
+| quaternion w lane: `vsuba.w`, `vmsuba.w vf0`, `vmsub.w vf0` | `sub(sub(sub(ww,xx),mul(1.f,yy)),mul(1.f,zz))` | originalAnimationCompose (0x310310), originalRotateOrientation (0x11E060) |
+| basis from a quaternion (11E098 style): every element is an ACC stage plus an FMAC with fs = 1.0 | second term `mul(1.f,x)`, cross terms start at `0 + M` | orientation rebuild, originalRiderCollisionFrame (0x11E114, 0x31018C) |
+| matrix × vector `vmulax / vmadday / vmaddaz / vmaddw` (ft = the vector's lane) | the plain chain `add(add(add(c0·p0,c1·p1),c2·p2),c3·p3)` | terrain Bezier rows and derivatives (0x32EA24) |
+| Bezier horizontal outputs (0x32EB28 / 0x32EDA8 / 0x32EC28) | `point = dot4h(row,vp)`, `du = dot4h(vp,derivative)`, `dv = dot4h(dvp,row)` | terrain evaluate |
+| scalar `mul.s fd, sin, axis` | `mul(sin, axis[i])` | axis quaternions (0x11E024, 0x11F644) |
+| scalar 1.0 factors (f22 = 1.0 in 0x13CCF0) | `mul(1.f, x)` where the code multiplies by the register | groundForwardFriction |
+
+In this tick the drifts went 953 → 16 with batches 4 and 5. The originalAnimationCompose w lane alone took them from 621 to 147: through 0x149E730 the skeleton feeds the next pass's secondary motion.
+
+**Mode-1 history seen in the matcher:**
+
+- Triangle normals cached before the baseline (0x32E4EC reads B895D946, the mode-1 normal of vertices whose exact normal is B895D947).
+- Records that run past the baseline's own history (peak1/rnb-event-tuck restarts its tick at 10181 in exact mode).
+- Only exact-mode baselines remove these.
+
+**Not a form:**
+
+- start_gameplay re-encodes the decoded command axis (31 × 0x3D042108 = 3F7FFFFF → 30) where 0x128610 multiplies the raw channel (1.0 × 31).
+- That loss happens in both modes, so it is a separate port fix.
+
 ### Performance
 
 Measured on a loaded machine.
@@ -247,17 +293,83 @@ Native ns per op:
 | Op | software_float (mode 1) | ps2_fpu |
 |---|---|---|
 | add | 4.0 | 2.8 (exact double fast path) |
-| mul | 1.2 | 2.3 (fast path, array only on short tails) |
-| div | 3.1 | 110 (SRT recurrence on 56% of operands) |
+| mul | 1.2 | 2.3 (fast path; array only on short tails; a power-of-two fs reads an 8 KiB table) |
+| div | 3.1 | 110 (SRT recurrence; a power-of-two divisor is exact) |
 | sqrt | 1.4 | 79 |
 
-`web/bench-sim.mjs`, six riders, node: live 1.59 ms/tick, switch core in mode 1 1.53 (0.998x), switch core exact 2.16 (1.43x). One rider-tick makes ~120 divides and ~200 square roots, which dominate. Making the divide unit faster is open.
+Proofs behind the fast paths:
 
-### Status
+- A mul whose ft has its low 16 bits clear is never low (exhaustive).
+- Division by a power of two is exact.
+- With a power-of-two fs, the array's outcome depends only on ft's low 16 bits. The table equals mulResult on 1.34G pairs (8 fs × 10 exponents × all significands × both signs).
+- mul(1.0, x) is low for 98.44% of x.
 
-No-go for the swap. Remaining work:
+Six-rider race, `web/bench-sim.mjs` (`CORE_DIR:exact` runs a switch core in exact mode) and `web/bench-sim-browser.mjs --browser webkit`, cores built from the same tree:
 
-- the per-site form / order fixes (matcher batches to the physics agent);
-- the remaining bulk captures;
-- divide / square-root speed;
-- landing the helper switch in the live tree behind `SSX_PS2_EXACT_FPU` (core-file owner: the physics agent).
+| Core | node | WebKit |
+|---|---|---|
+| default build | 1.00x | 1.31 ms/tick |
+| SSX_PS2_EXACT_FPU=1 (runtime switch), exact | 1.26-1.29x | 1.67 ms (1.27x) |
+| the same with the switch a compile-time constant | 1.17-1.18x | 1.55 ms (1.18x) |
+| that, with the power-of-two table | 1.14x | |
+
+- The runtime switch itself costs ~8% (a load and branch in every helper). A shipping exact core would make it a constant, once exact baselines remove the mode-1 prefix.
+- What is left: the multiplier's array (mulSlow, ~5.6% of a tick before the table) and the SRT divide (~3%). The rest is the helpers' fast paths, inlined into the animation, cross-product and terrain code.
+- Nothing here adds input latency. The wasm is 6.59 MB against 6.85 MB for the live core.
+
+### Exact baselines
+
+Every gate's baseline was made in mode 1, so even an exact capture starts from mode-1 history: cached triangle normals, patch tessellation and the grid placement. Exact baselines are derived from frontend (menu) states, with the event load and everything after it run in exact mode.
+
+**Why a menu root is enough:**
+
+- `oracle --stale-ref FRONTEND/eeMemory.bin` lists every float-looking RAM word a call reads that it never wrote and that still holds the frontend value.
+- Rider pass checks, each a race with 5 computer riders:
+  - Snow Jam tick 345, from character-selection.p2s;
+  - Ruthless Ridge (CRA3) tick 900, from characters/zoe/select.p2s.
+- Every such word is one of:
+  - an ELF data constant, or a copy of one (the tuning table at *(gp-0x1FB0) read by 0x13D0A0..0x13EAF0);
+  - an integer-valued float;
+  - not a float at all (INPUT.MAP bytecode at 0xA18BD0, read by 0x32549C as integers).
+- Nothing arithmetic-derived crosses from the menu into the race. The load rebuilds the caches.
+
+**Tools:**
+
+- `tools/ps2_navigate.py` follows `PS2_CAPTURE_FPU` and records `fpu_mode` in navigate.json.
+- `tools/ps2-float/derive_exact_baselines.py` handles the location states:
+  - It finds each reference state's navigation run by EE hash (`local/reference-exact/provenance-map.json`) and follows the chain back to a menu root.
+  - A root must have no rider manager and no resident locations; a mid-load root is refused.
+  - It re-runs each step in exact mode, reusing steps shared between targets.
+  - A tick-bound save is kept only at the reference's own tick: it is requested at sample−1, sample and sample+1, with retries.
+  - Output: `local/reference-exact/<name>.p2s` with `<name>.provenance.json`.
+- Snow Jam (the hand-made references): `snow-jam-countdown-anchor` / `-glide` / `-ready` come from Zoe's recorded menu path from character-selection.p2s.
+- Per-rider and per-course countdowns are the rider-parity agent's `make_course_states.py` with PS2_CAPTURE_FPU=exact, into `local/reference-exact/characters/`.
+- Captures from an exact baseline (`local/ps2-capture/runs-exactbase/`) compare with `PS2_ARITH=exact-base`: the setup runs on the console model too.
+- `tools/ps2-float/match_tick.sh` takes `MATCH_STATES` / `MATCH_RUNS` / `MATCH_ARITH` / `MATCH_TAG` for such gates, and `MATCH_ACTOR=<rider>` for a human-only PS2 trace (`oracle --actor`). The full pass mixes in the computer riders, whose values at the grid are often bit-identical to the human's.
+
+**First result** (riders/zoe-race from the exact Zoe countdown): the exact race load places the human 1 ULP away from the mode-1 grid start.
+
+| | x | z | velocity z |
+|---|---|---|---|
+| exact | C800C650 | C85F68B3 | BF4365B2 |
+| mode 1 | C800C64F | C85F68B4 | BF4365B3 |
+
+The port's `--event` setup reproduces the mode-1 bits, so its grid placement is the next form to fix.
+
+### Status (2026-10-05)
+
+No-go for the swap. Per-gate scores against `local/ps2-capture/runs-exact`. The exact run also has the gates added later: allpeak/*-start, fr-throne-unload, c0a-ws13-splines.
+
+| Core | pass | fail |
+|---|---|---|
+| live mode-1 core (wasm a8894cb8) | 3 | 441 |
+| SSX_PS2_EXACT_FPU core from the 16:44 tree, `--arith exact` | 3 | 445 |
+
+The exact core reaches a later first-inexact tick than the live core on 123 gates and an earlier one on none, but it is still about one tick: most rider gates stop at 186-187.
+
+Remaining:
+
+- batch 5 into the tree, then matcher rounds past tick 186 on more gates;
+- exact-mode baselines, made from states with no float history (removes the mode-1 history drifts);
+- the four ctm-events re-captures above;
+- divide speed.

@@ -117,18 +117,37 @@ its labels were 2-5 lines off. Every label here comes from the v2 snapshot (cov-
 - boost meter within -0.01..1.01 (the PS2 dips to -0.0014);
 - control 0..13;
 - no core exception;
-- no terrain 0.75..2 m above a grounded rider's root on a floor (normal y > 0.9, not in a crash). The one deep-powder spot the
-  exact replays show (CRA3, 1949) is whitelisted;
-- control transitions no exact replay shows are flagged as unverified states.
+- inside the ground: a terrain surface 0.8..2 m above a grounded rider's root on a floor (normal y > 0.9, not in a crash) and no
+  floor at its feet (a cast from +0.6 m finds nothing from 0.3 m below to 0.55 m above the root). Walls, lips, overhangs and
+  tunnel roofs above a grounded rider are not flagged;
+- control transitions no PS2 capture shows are flagged as unverified states. The control is rider_control_info [0], the
+  controller 121068 runs, which equals the records' control word on every tick of the exact seeds. reference_motion [11]
+  (physicsState.controlState) keeps 0 / 4 through the air controls and disagreed on 114k exact-seed ticks; r1-r8 used it.
+  The PS2 set is local/fuzz/ps2-transitions.json (ps2states.py, every capture under runs/ including the fuzz ones).
 
 **Targets and the exact-mode queue** (local/fuzz/targets.py, local/fuzz/exact-queue.json):
 - A kept variant is checked against the targets above: functions, and the missing side of one-sided branches by line and column.
 - Variants that reach a target or an unverified state are queued for exact-mode ARMSX2 capture.
 
-**Differential step** (local/fuzz/diff.py, paused until exact mode lands):
-- `build ID` captures a variant on ARMSX2. It uses one instance, silent and niced, and waits while `pgrep -x ARMSX2` shows 4.
-- `compare ID` compares as the gate does.
-- `chunks` / `revert` minimise a divergence by reverting the variant's pad changes chunk by chunk.
+**Differential step** (local/fuzz/diff.py):
+- Captures are built from the seed's baseline, pokes and isolation, with the variant's whole pad. One ARMSX2 instance runs at a
+  time, silent and niced (turbo, with a normal-speed rerun on a ring overrun). The build waits while `pgrep -x ARMSX2` shows 4.
+- `FUZZ_FPU=mode1` puts them in runs/fuzz-mode1; the default `exact` puts them in runs/fuzz-exact.
+  - **Mode 1 is the decisive reference.** The port is bit-exact with ARMSX2 mode 1, so a mode-1 capture's first divergence is
+    logic. This is the one exception to exact-mode captures (coordinator, 2026-10-05).
+  - Exact-mode captures drift from the port within 1-340 ticks. They only answer whether the PS2 can reach a state at all.
+- **Event seeds** (races, rival time): captured with --ai-state and compared with compare-ai-capture.mjs --zoe --world-draws
+  (--isolate when isolated). An "isolated" event capture still runs the computer riders on the PS2: the Rival Time rival fires
+  stage triggers (r1-0066, traced by the physics agent), and the human-only comparer never runs them. Watches are dropped when
+  --ai-state is added to a seed captured without it.
+- Commands:
+  - `build ID`, `compare ID`;
+  - `trace ID`: the PS2's and the port's control transitions;
+  - `batch N`: N kept variants, target reaches first;
+  - `minimise ID`: greedy. It reverts each pad-change chunk before the divergence, latest first, and keeps a revert when the
+    capture still diverges with the same signature. The signature is (PS2 control, port control) for a human-only compare; for
+    six riders, the earliest of human, RNG and each computer rider.
+  - `chunks` / `revert`.
 
 ## Rounds
 
@@ -141,22 +160,36 @@ plus every kept variant so far.
 | baseline v2 | - | - | 22974 | 83.9% | 76.3% | - | - | - |
 | r2 (2 wide) | 300 | 140 | 24402 | 84.2% | 76.6% | 0 | rail-attach 566 (press in reverse stance), 569 (board upside down) | 2>9 4>11 7>8 5>9 8>5 |
 | r3teeter (guide only) | 80 | 28 | 24507 | - | - | 0 | - (grinds the 0x1d08 teeter rail) | - |
-| r4 | 300 | 105 | 25338 | 84.4% | 76.9% | 0 | collision 129 (fast low 342 / 332), 135, 142 (classes 18 / 19 -> 351), 155 (328 / 329); rail-attach 583 (106D9C press onto a rail, 26); rail-motion 507 | - |
+| r4 | 300 | 105 | 25338 | 84.4% | 76.9% | 0 | collision 129 (342 / 332), 135, 142 (351), 155 (328 / 329); rail-attach 583 (106D9C); rail-motion 507 | - |
 | r5 | 300 | 91 | 25841 | 84.4% | 77.0% | 0 | - | 11>9 |
+
+| r6-r8 (3 wide) | 900 | 189 | 26725 | - | - | 0 (sink false alarms fixed) | collision 150 (classes 20 / 21 -> 361), rail-attach 567 / 568 / 591 | 5>3 12>7 (PS2 has both) |
+| r9 | 300 | 62 | 26998 | - | - | 0 | pair-react 317 / 319 (a pair contact in a board press, hl/hl-ai-9) | 2>0 |
+| r10 | 300 | 54 | 27193 | - | - | 0 | - | 2>8 9>8 12>8 |
 
 Coverage has levelled off: r5 added 8 regions and 17 branches. Most of what is left is unreachable from a pad (always-set
 callback checks, online and native paths) or needs situations the seeds never reach (a pair crash, control 11 / 9 collisions).
 
 ## Findings
 
-- **Port invariants:**
-  - 1280 variants in five rounds: 0 core exceptions, 0 NaN / inf, 0 speed or dv cap violations.
-  - The ground-sink hits were all false alarms: the CRA3 deep-powder spot that the exact replays show too (whitelisted), one
-    single-tick 0.76 m landing dip, and one reading of a computer rider's context. fuzz-hook.mjs now reads the human through its
-    own context view in six-rider runs.
-- **Unverified port states:** control transitions no PS2-exact replay shows: 7>0 7>3 4>3 10>0 2>10 8>3 1>9 5>11 2>9 4>11 7>8 5>9
-  8>5 11>9. They are queued for exact-mode capture.
-- **Exact-mode queue** (local/fuzz/exact-queue.json, 22 entries):
-  - every target reach and unverified state, each with its seed and variant directory;
-  - the r1 entries were re-checked on core v2 (`rechecked`).
-- **PS2 divergences handed over:** none yet. The differential step is paused until the exact-mode core swap.
+- **Port invariants:** 3080 variants in ten rounds.
+  - 0 core exceptions, 0 NaN / inf, 0 speed or dv cap violations.
+  - Every ground-sink hit was a false alarm. They led to the floor check above, and to reading the human through its own
+    context view in six-rider runs.
+- **Unverified states:** the mode-1 captures show the PS2 making the same transition at the same tick for 7>3, 1>9, 2>9, 4>11,
+  7>8, 5>9, 8>5, 11>9, 5>3 and 12>7. 2>10 and 8>3 show in the exact captures. 2>0, 2>8, 9>8 and 12>8 are being captured.
+- **Mode-1 divergences handed to the physics agent** (minimised, live core):
+
+  | # | variant | what | status |
+  |---|---|---|---|
+  | 1 | r1-0066 (throne) | the human hits EBC3 fallingRocks_1003 at 3586 | harness gap: the rival fires the rock trigger on the PS2; withdrawn |
+  | 2 | r5-0165-min (Junction) | a Select reset from a handplant keeps +0x1E0 (PS2: 116120's 11FE78(3) runs 139178) | fixed (core32) |
+  | 3 | r2-0204-m0 (gravitude, six riders) | Mac's landing normal +0x370 at 2585 (1 ULP via his posed root), then pairs, human | open |
+  | 4 | r4-0005-m8 (Snow Jam) | landing with an air board press pending: the port crashes (348), the PS2 lands in control 1 | fixed (core34: manualState330 in landing_crash) |
+  | 5 | r7-0082-m0 (gravitude, six riders) | a Select tap at 1079: the shared RNG at 3003, the riders exact until 3894 | sent |
+  | 6 | r8-0022-m5 (dra4, six riders) | Mac at 5921, then the RNG, the pairs and the human | sent |
+  | 7 | r6-0273 (dra4, six riders) | Luther crashes at 3982; the human exact to the end | sent |
+  | 8 | r7-0053 (press-ice-rnb) | the rail-release velocity 1-2 ULP at 836 | sent |
+- **Gap seen by the physics agent:** --ai-state records no computer-rider bones, so their pose parity is not gated.
+- **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries
+  are in mode 1 too.

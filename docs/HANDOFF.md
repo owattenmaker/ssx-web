@@ -1,3 +1,64 @@
+> **Deployed 2026-10-05 (coordinator): core34.** web/runtime core.wasm `6e4ed21f…` (core.js `f8ae9c9c…`, unchanged) copied from local/physics-jank/core34-snapshot (531 clean). On top of core31, from the fuzzer's mode-1 repros: a Select reset during a handplant runs control 11's and motion 5's exits (116120 -> 11FEC8(9), 11FE78(3) -> 139178); the landing classification reads +0x330, so a pending air press lands into control 1 (139C88); animation_events.cpp uses the chopped mul.s. Plus matcher batch 5 (mode-1-neutral).
+
+> **core34: fuzz logic fixes, matcher batches 4-5, the start word (2026-10-05, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures".
+> - **Scratch core:** local/physics-jank/core34-snapshot, core.wasm `6e4ed21f…`, core.js `f8ae9c9c…` (no export changes). Full ps2-captures: 531 clean.
+> - **Logic (fuzz repros, oracle-traced):**
+>   - a reset in a handplant runs control 11's and motion 5's exits (+0x1E0 = 0; r5-0165-min exact to its end);
+>   - the landing classification reads +0x330 (an air press lands into control 1; r4-0005-m8 exact to its end, bones and score included);
+>   - engine/animation_events.cpp's event delta chops (it was a native product: nearest in wasm).
+> - **Exact side (mode-1-neutral):**
+>   - the start controller takes the provider's control-6 word0;
+>   - matcher batches 4-5: VU0 horizontal dots with 1.0 x z / w, vopmsub operand order, 11E098-style one() terms, the terrain Bezier dot4h, the animation compose / blend sums, rider_pose_motion's forms. The trace core leaves zoe-race 186 with 16 drifts, all mode-1 history.
+> - **Not fixed:** r1-0066 is a harness gap (Rival Time's Psymon fires the rock trigger; human-only comparer). r2-0204-m0 is open (Mac's landing normal, his posed root 1 ULP off; computer riders' bones are not recorded).
+> - **Gates:** hl/hl-aimetro-17 and hl2/attack-bra2-b at END since core29 (raised in test-ps2-captures.mjs).
+> - **Exact batch 3** (local/ps2-capture/runs-exact/hl2/x3-*, 20 captures): stopped; the mode-1 baselines carry mode-1 history, so they are redone from exact baselines.
+
+> **Exact-mode rider states from the menu roots (2026-10-05, rider-parity agent; running on one shared ARMSX2 slot):** the frontend-root check passed (arithmetic agent, CRA3 tick 900), so every derived characters/* state is re-made with PS2_CAPTURE_FPU=exact from its menu state into local/reference-exact/characters/ (the originals are only read).
+> - **local/rider-parity/exact-sweep.sh** (characters/scripts/make_course_states.py, ARA1 now included): each rider's Snow Jam countdown + glide at the mode-1 set's ticks (31 riders), the other-course countdowns (6 sweep riders x 13 courses), then the captures into runs/riders-exact.
+> - **local/rider-parity/exact-states.sh** (characters/scripts/derive_exact_states.py), queued after the sweep:
+>   - lineups*, grid-scales*, two-event and fe-screens/options re-run from their own records: navigate.json / .nav.json segments and save samples, with the baseline rebuilt from poke.patches.json or the unlocked-selection patches;
+>   - two-event starts from the exact zoe/countdown.p2s;
+>   - one exact run per original run; a tick-bound save is accepted only at the original state's tick.
+> - **provenance.json** beside every exact state: reference, fpu_mode, root, recipe, tick, ee_sha256.
+> - **Unresolved: career/* and career-freestyle/*.** They start from Conquer the Mountain world states (ctm-parity cards, results, peak2-arr), not a menu, so their chains go back through a new career and need tracing like tools/ps2-float/derive_exact_baselines.py. Not attempted.
+> - Not in scope here and untouched: zoe/gear/* (Equip Gear states), mac-junction.
+
+> **PS2 arithmetic, round 2: bulk exact captures, go / no-go tallies, VU0 forms (batches 4-5), perf (2026-10-05, PS2 arithmetic agent):** see [ps2-float.md](ps2-float.md) §5, §6, §7.
+> - **Exact captures:** local/ps2-capture/runs-exact holds every gate except four ctm-events re-captures:
+>   - c0a-ret3 and c0a-ret2-coast: ring overrun near record 995 on a loaded machine;
+>   - c0a-full and c0a-full-ai: timed out.
+>   - New this round:
+>     - allpeak/{apr,p2r,apj}-start, via `tools/ps2_autopilot.py run … --replay GATE.script.json` (open-loop replay of the gate's consumed pads; mode-1 replay byte-equal to the gate);
+>     - peak3/fr-throne-unload, the slice 5602..7000 of the whole 7000-frame run (mode-1 slice byte-equal);
+>     - the c0a-ws13-splines alias;
+>     - rng-order sidecars for marty-hl, canhuck-race and rnb-event-tuck. In exact mode, rnb-event-tuck restarts its tick at record 10181 in both rings.
+> - **Go / no-go: no-go.** `tools/ps2-float/score_gates.mjs --runs local/ps2-capture/runs-exact [--arith exact]`:
+>   - the live mode-1 core (a8894cb8): 3 pass / 441 fail;
+>   - an SSX_PS2_EXACT_FPU core from the 16:44 tree: 3 / 445. It gets a later first-inexact tick than the live core on 123 gates, earlier on none.
+>   - Most rider gates still stop at 186-187.
+>   - Results are in local/ps2-float/score-{live,exact}-vs-exact.json.
+> - **Matcher, zoe-race 186:**
+>   - Batch 4 (now in the tree) and batch 5 (sent to the physics agent) spell out the VU0 forms. The table is in ps2-float.md "The VU0 forms".
+>   - On a trace tree with both batches, drifts went 953 → 16.
+>   - What remains: a mode-1-history cached triangle normal, a computed half (3EFFFFFD) at 0x312E38, and 1-2 ULP inputs into instance_contact's dot4.
+>   - start_gameplay re-encodes the decoded command axis (3F7FFFFF × 31 → 30, against 1.0 × 31 at 0x128610) in both modes. The physics agent has it.
+> - **event-race-ai rider+0xA9C** is a stale stack word: 0x105398 copies an sp+0x80..0xBF record whose sp+0xB4..0xBF it never writes. On the game stack (oracle `--sp`; state.py prints sp) it is 0x33B748's last cell-overlap flag, which is float-dependent. It stays out of comparisons; the note is in engine/instance_contact.hpp.
+> - **Performance** (same tree, six riders), node / WebKit:
+>   - exact with the runtime switch: 1.27x / 1.27x (1.67 ms against 1.31 ms per tick);
+>   - with the switch a compile-time constant: 1.18x / 1.18x;
+>   - plus the new power-of-two multiply table in engine/ps2_fpu.hpp: 1.14x (node). The table is checked against mulResult on 1.34G pairs, and tools/ps2-float/test_ps2_fpu.sh passes.
+>   - `web/bench-sim.mjs CORE_DIR:exact` runs a switch core in exact mode.
+>   - Proposal: an exact-only build (constant switch) once exact baselines remove the mode-1 prefix.
+> - **Small tool changes:**
+>   - oracle `--sp`;
+>   - score_gates `--arith`;
+>   - autopilot `--replay`, which records `fpu_mode` in its summary;
+>   - the comparers' PS2_ARITH comments now point at SSX_PS2_EXACT_FPU.
+> - **Next:**
+>   - matcher rounds past 186 once batch 5 lands;
+>   - exact-mode baselines;
+>   - the four ctm-events re-captures on a quieter machine.
+
 > **Deployed 2026-10-05 (coordinator): core31.** web/runtime core.wasm `0a66434f…` (core.js `f8ae9c9c…`, unchanged) copied from local/physics-jank/core31-snapshot (531 clean, mode-1-neutral). On top of core29: the start controller takes the provider's control-6 word0 (127848), and matcher batch 4 (1.0 products, VU0 dot forms, vopmsub operand order in the crosses, originalRotateOrientation's forms), groundwork for the exact core.
 
 > **Deployed 2026-10-05 (coordinator): core29.** web/runtime core.wasm `b3313f6c…`, core.js `f8ae9c9c…` copied from local/physics-jank/core29-snapshot (531 clean), shipped with the tree JS that no longer calls _stage_foreign_contact / _stage_apply_effect. On top of core26: rider-parity's posed pickups (spinning pickup collision follows its LiveComp; one shared posed table for every rider context), the octree's reflected Gray child order in 33B748 (originalSpatialBefore), arithmetic batches 2 and 3 (mode-1-neutral), and npcStageTriggers removed (computer riders run their triggers in their own context, as on the PS2). Memory: the per-context stage world already existed on core26; core29 adds about 5 MB RSS in a six-rider BRA2 race.
@@ -42,6 +103,8 @@
 >   - The queue (local/rider-parity/exact-queue.jobs) runs into local/ps2-capture/runs/riders-exact.
 >   - local/rider-parity/sweep.sh (detached) then derives every peak's race and freestyle countdowns for Griff, Hiro, Allegra, Stretch, NW Legend and Far East Myth, and captures them (characters/scripts/make_course_states.py now knows 13 events).
 >   - These are the exact-mode reference; no gates yet.
+>   - **Paused (coordinator, 17:00):** the arithmetic agent found that the baselines' cached mode-1 history drives most of the remaining exact drift, so the 37 runs in riders-exact and the derived characters/courses-* states inherit it. The sweep resumes from exact baselines (characters-exact/, PS2_CAPTURE_FPU=exact make_course_states.py) once the arithmetic agent reports.
+>   - psymon-uber-e's FAILED flag was riders-capture.sh being edited at 15:27:45, the second its capture finished. sh reads a script as it runs. The capture is complete (1089 records). riders-batch.sh now runs a snapshot of the script.
 
 > **Deployed 2026-10-05 (coordinator): core26.** web/runtime core.wasm `a8894cb8…`, core.js `2fd64a91…` (new exports _stage_foreign_contact / _stage_apply_effect) copied from local/physics-jank/core26-snapshot (531 clean). On top of core24: the computer riders' stage-trigger routing (inert; pv npcStageTriggers off, waiting on the per-context trigger loader) and the two mode-1-neutral 11E098 fixes (rebuild sums with the x1.0 products; the countdown hold renormalises every held tick).
 

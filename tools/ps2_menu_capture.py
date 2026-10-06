@@ -35,6 +35,7 @@ import argparse, hashlib, json, os, random, shutil, struct, subprocess, sys, tim
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ps2_capture import fpu_mode  # noqa: E402
 from ps2_capture import (Asm, Pine, prepare_datapath, decode_pad, BUTTONS, PCSX2, ISO,  # noqa: E402
                          T0, T1, T2, T3, T4, T5, T6, T7, A0, A1, A2, S0, S1, SP, ZERO)
 
@@ -190,7 +191,9 @@ class Emulator:
         self.datapath = ROOT / f'local/ps2-capture/pcsx2-menu-{self.slot}'
         self.derived = self.datapath.with_name(self.datapath.name + '.state.p2s')
         self.end = derive(self.baseline, events, self.derived)
-        prepare_datapath(self.datapath, self.slot)
+        # PS2_CAPTURE_FPU (mode1 | exact, default mode1), recorded in NAME.json (docs/ps2-float.md "Exact baselines").
+        self.fpu = fpu_mode()
+        prepare_datapath(self.datapath, self.slot, self.fpu)
         if os.environ.get('MEMCARD'):   # a memory card in slot 1: a copy of MEMCARD, or (no such file) an unformatted one ARMSX2 makes
             import re
             card = self.datapath / 'memorycards/Mcd001.ps2'; card.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +300,8 @@ def run(baseline, script_path, name, snaps=(), frames=None, keep_final=False, ke
         emu.close()
     summary = dict(baseline=rel(baseline), baseline_sha256=hashlib.sha256(Path(baseline).read_bytes()).hexdigest(),
                    script=events, frames=frames, snaps=snaps, shots=shots,
-                   hook=dict(address=hex(PAD_HOOK), drain_ra=hex(DRAIN_RA), stats=stats), seconds=round(time.time() - started, 1))
+                   hook=dict(address=hex(PAD_HOOK), drain_ra=hex(DRAIN_RA), stats=stats), seconds=round(time.time() - started, 1),
+                   fpu_mode=emu.fpu)
     (OUT / f'{name}.json').write_text(json.dumps(summary, indent=2) + '\n')
     return summary
 

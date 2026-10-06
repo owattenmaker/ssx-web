@@ -11,6 +11,10 @@
 //               [--watch ADDR:LEN ...] [--dump ADDR:LEN ...] [--max-steps N] [--save DIR] [--arith exact|mode1] [--sp ADDR]
 //   --sp runs on the game's own stack (state.py prints the frozen sp) instead of the private one: needed when the code
 //   reads a stack word it never wrote (stale locals left by earlier calls).
+//   --poke ADDR:WORD (repeatable) writes a 32-bit word into EE RAM before the call (e.g. a fuzzed pad channel).
+//   --actor ADDR limits --trace-fpu to calls entered with a0 == ADDR (one rider of the pass).
+//   --stale-ref RAM.bin lists the float-looking RAM words the call reads that it never wrote and that still equal RAM.bin
+//   (e.g. a frontend state's eeMemory.bin): state that may have survived from that earlier state.
 //   numbers are hex with 0x or decimal; --f12 takes a float or 0x bits.
 #include "arith.hpp"
 #include "ps2_fpu.hpp"
@@ -25,6 +29,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <map>
 #include <vector>
 
 namespace {
@@ -82,6 +87,11 @@ struct Machine {
 
     bool traceCalls = false;
     bool traceFpu = false;
+    // --actor: log FPU / VU0 ops only inside calls entered with a0 == actor (one rider's work in a pass over several).
+    uint32_t actor = 0;
+    int actorDepth = -1;
+    uint32_t actorCallee = 0;
+    bool actorPending = false;
     std::vector<Watch> watches;
     int depth = 0;
     uint64_t steps = 0;
@@ -108,6 +118,54 @@ struct Machine {
         throw Stop(std::string(write ? "write" : "read") + " outside RAM / scratchpad at " + hex(address) + " (pc " + hex(pc) + ")");
     }
 
+    // --stale-ref: the reference RAM, the words this run wrote, and per stale word read: the first pc and the read count.
+    std::vector<uint8_t> staleRef;
+    std::vector<uint8_t> writtenWords;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> staleReads;
+
+    bool ramAddress(uint32_t address) const {
+        const uint32_t segment = address & 0xE0000000u;
+        const bool ramSegment = segment == 0x00000000u || segment == 0x20000000u || segment == 0x80000000u || segment == 0xA0000000u;
+        return ramSegment && (address & 0x1E000000u) == 0;
+    }
+
+    void noteWrite(uint32_t address, uint32_t size) {
+        if (writtenWords.empty() || !ramAddress(address)) {
+            return;
+        }
+        const uint32_t physical = address & 0x1FFFFFFFu;
+        for (uint32_t word = physical >> 2; word < (physical + size + 3) >> 2 && word < writtenWords.size(); ++word) {
+            writtenWords[word] = 1;
+        }
+    }
+
+    void noteRead(uint32_t address, uint32_t size) {
+        if (staleRef.empty() || !ramAddress(address)) {
+            return;
+        }
+        const uint32_t physical = address & 0x1FFFFFFFu;
+        for (uint32_t offset = 0; offset < size; offset += 4) {
+            const uint32_t word = (physical + offset) >> 2;
+            if (word >= writtenWords.size() || writtenWords[word]) {
+                continue;
+            }
+            uint32_t now;
+            uint32_t before;
+            std::memcpy(&now, &ram[word * 4], 4);
+            std::memcpy(&before, &staleRef[word * 4], 4);
+            const uint32_t exponent = (now >> 23) & 0xFFu;
+            // Float-looking: a magnitude between 2^-64 and 2^64 (small integers and pointers have exponent fields outside).
+            if (now != before || exponent < 63 || exponent > 191) {
+                continue;
+            }
+            auto& entry = staleReads[word * 4];
+            if (entry.second == 0) {
+                entry.first = pc;
+            }
+            ++entry.second;
+        }
+    }
+
     template <typename T>
     T load(uint32_t address) {
         if (address % sizeof(T)) {
@@ -115,6 +173,7 @@ struct Machine {
         }
         T value;
         std::memcpy(&value, locate(address, sizeof(T), false), sizeof(T));
+        noteRead(address, sizeof(T));
         return value;
     }
 
@@ -129,11 +188,13 @@ struct Machine {
             }
         }
         std::memcpy(locate(address, sizeof(T), true), &value, sizeof(T));
+        noteWrite(address, sizeof(T));
     }
 
     void load128(uint32_t address, uint64_t out[2]) {
         address &= ~15u;
         std::memcpy(out, locate(address, 16, false), 16);
+        noteRead(address, 16);
     }
 
     void store128(uint32_t address, const uint64_t in[2]) {
@@ -144,6 +205,7 @@ struct Machine {
             }
         }
         std::memcpy(locate(address, 16, true), in, 16);
+        noteWrite(address, 16);
     }
 
     int64_t s64(unsigned reg) const {
@@ -175,7 +237,7 @@ struct Machine {
 
     void logFpu(const char* op, uint32_t a, uint32_t b, uint32_t c, uint32_t result) {
         fpuOps++;
-        if (traceFpu) {
+        if (traceFpu && (actor == 0 || actorDepth >= 0)) {
             std::printf("fpu %s pc %s %08X %08X %08X -> %08X\n", op, hex(pc).c_str(), a, b, c, result);
         }
     }
@@ -260,6 +322,13 @@ void Machine::run(uint64_t maxSteps) {
 }
 
 void Machine::step() {
+    // A call's a0 is final at its first instruction (the jal's delay slot often sets it).
+    if (actorPending && pc == actorCallee) {
+        actorPending = false;
+        if (actorDepth < 0 && u32(4) == actor) {
+            actorDepth = depth;
+        }
+    }
     const uint32_t code = load<uint32_t>(pc);
     const uint32_t next = pc + 4;
     const bool inDelay = branchPending;
@@ -288,6 +357,10 @@ void Machine::step() {
             std::printf("call %*s%s -> %s\n", depth * 2, "", hex(pc).c_str(), hex(callee).c_str());
         }
         depth++;
+        if (actor) {
+            actorPending = true;
+            actorCallee = callee;
+        }
         set64(31, uint64_t(int64_t(int32_t(pc + 8))));
         branch(true, callee, false);
         break;
@@ -552,6 +625,9 @@ void Machine::special(uint32_t code) {
     case 0x08: {
         const uint32_t target = u32(rs);
         if (rs == 31 && depth > 0) {
+            if (actorDepth >= 0 && depth <= actorDepth) {
+                actorDepth = -1;
+            }
             depth--;
         }
         branch(true, target, false);
@@ -563,6 +639,10 @@ void Machine::special(uint32_t code) {
             std::printf("call %*s%s -> %s (jalr)\n", depth * 2, "", hex(pc).c_str(), hex(target).c_str());
         }
         depth++;
+        if (actor) {
+            actorPending = true;
+            actorCallee = target;
+        }
         set64(rd, uint64_t(int64_t(int32_t(pc + 8))));
         branch(true, target, false);
         break;
@@ -2447,6 +2527,8 @@ int main(int argc, char** argv) {
     uint32_t call = 0;
     uint64_t maxSteps = 50000000;
     uint32_t stackPointer = kStackBase + kStackSize - 0x100;
+    std::string staleRefPath;
+    std::vector<std::pair<uint32_t, uint32_t>> pokes;
     std::vector<std::pair<uint32_t, uint32_t>> dumps;
     for (int k = 1; k < argc; ++k) {
         const std::string option = argv[k];
@@ -2492,6 +2574,14 @@ int main(int argc, char** argv) {
             save = value();
         } else if (option == "--sp") {
             stackPointer = parseNumber(value());
+        } else if (option == "--poke") {
+            const std::string text = value();
+            const size_t colon = text.find(':');
+            pokes.push_back({parseNumber(text.substr(0, colon)), parseNumber(text.substr(colon + 1))});
+        } else if (option == "--actor") {
+            machine.actor = parseNumber(value());
+        } else if (option == "--stale-ref") {
+            staleRefPath = value();
         } else {
             std::fprintf(stderr, "unknown option %s\n", option.c_str());
             return 2;
@@ -2505,6 +2595,14 @@ int main(int argc, char** argv) {
         throw std::runtime_error("cannot set FE_TOWARDZERO for --arith mode1");
     }
     readFile(state + "/eeMemory.bin", machine.ram, true);
+    for (const auto& [address, word] : pokes) {
+        machine.store<uint32_t>(address, word);
+    }
+    if (!staleRefPath.empty()) {
+        machine.staleRef.resize(kRamSize);
+        readFile(staleRefPath, machine.staleRef, true);
+        machine.writtenWords.assign(kRamSize / 4, 0);
+    }
     readFile(state + "/Scratchpad.bin", machine.scratch, false);
     readFile(state + "/vu0Memory.bin", machine.vu0Data, false);
     readFile(state + "/vu0MicroMem.bin", machine.microMem, false);
@@ -2521,6 +2619,16 @@ int main(int argc, char** argv) {
     } catch (const Stop& stop) {
         std::printf("STOP %s after %llu steps\n", stop.what(), (unsigned long long)machine.steps);
         code = 3;
+    }
+    if (!machine.staleRef.empty()) {
+        std::printf("stale-ref words read %zu\n", machine.staleReads.size());
+        for (const auto& [address, entry] : machine.staleReads) {
+            uint32_t word;
+            std::memcpy(&word, &machine.ram[address], 4);
+            float asFloat;
+            std::memcpy(&asFloat, &word, 4);
+            std::printf("stale %s %08X %.9g first-pc %s reads %u\n", hex(address).c_str(), word, asFloat, hex(entry.first).c_str(), entry.second);
+        }
     }
     for (const auto& [begin, length] : dumps) {
         for (uint32_t offset = 0; offset < length; offset += 4) {
