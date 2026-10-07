@@ -28,7 +28,9 @@ export async function startServer() {
 export async function startBrowser({ init = '', width = 1280, height = 960 } = {}) {
   const chrome = findChrome(); if (!chrome) return null;
   const port = 27000 + Math.floor(Math.random() * 2000), profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ssx-headless-'));
+  // --use-mock-keychain / --password-store=basic: a fresh profile otherwise asks the macOS keychain for "Chrome Safe Storage".
   const proc = spawn(chrome, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--headless=new', '--mute-audio', '--no-first-run', '--no-default-browser-check',
+    '--use-mock-keychain', '--password-store=basic',
     `--window-size=${width},${height}`, '--enable-unsafe-webgpu', '--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'], { stdio: 'ignore' });
   let page;
   for (let i = 0; i < 200 && !page; i++) { await sleep(150); try { page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page'); } catch {} }

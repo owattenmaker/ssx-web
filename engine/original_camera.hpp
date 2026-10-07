@@ -248,7 +248,12 @@ inline Quad qsub(const Quad& a,const Quad& b){return {vsub(a[0],b[0]),vsub(a[1],
 inline Quad qadd(const Quad& a,const Quad& b){return {vadd(a[0],b[0]),vadd(a[1],b[1]),vadd(a[2],b[2]),vadd(a[3],b[3])};}
 inline Quad qscale(const Quad& a,float s){return {vmul(a[0],s),vmul(a[1],s),vmul(a[2],s),vmul(a[3],s)};}
 // vmul.xyzw; vadday.x; vmaddaz.x (x1.0); vmaddw.x (x1.0): ((xx+yy)+zz)+ww, w included.
-inline float dot4(const Quad& a,const Quad& b){return vadd(vadd(vadd(vmul(a[0],b[0]),vmul(a[1],b[1])),vmul(a[2],b[2])),vmul(a[3],b[3]));}
+// The z and w products go through the 1.0 vector as fs (vf6 = vaddw.x vf0, vf0w; e.g. 0x160610): 1.0 x (zz), 1.0 x (ww).
+inline float dot4(const Quad& a,const Quad& b){
+    float sum=vadd(vmul(a[0],b[0]),vmul(a[1],b[1]));
+    sum=vadd(sum,vmul(1.f,vmul(a[2],b[2])));
+    return vadd(sum,vmul(1.f,vmul(a[3],b[3])));
+}
 inline float vsqrt(float x){return terrain_original::sqrt(x);}
 inline float len4(const Quad& a){return vsqrt(dot4(a,a));}
 // VU DIV Q = n/d and RSQRT Q = n/sqrt(d); PCSX2 saturates a zero divisor to 0x7F7FFFFF.
@@ -958,7 +963,17 @@ inline void finish(OriginalChaseAlgorithmState& s,const OriginalCameraInput& in)
     computeAngles(s.lookAt,s.eye,s.yaw,s.pitch);
     if(s.variantType!=0x44)pitchLagFilter(s,in);
     snapGuard(s,in);
-    s.eye[3]=1;s.outputEye=s.eye;   // 0x166F90 (quaternion output not reproduced; the view is eye + angles, zero roll)
+    s.eye[3]=1;
+    // 0x166F90 (quaternion output not reproduced; the view is eye + angles, zero roll). The position goes through the identity
+    // matrix at 0x4FF1A0 first (0x167004..0x167010: vmula / vmadda / vmadd with the identity columns as fs and the eye lanes
+    // broadcast as ft), so each lane is 1.0 x eye on the console model; the later rotation products carry it with 1.0 as ft
+    // (exact) and add zeros, and 0x31B748 copies it out.
+    for(unsigned i=0;i<4;++i){
+        float lane=vmul(i==0?1.f:0.f,s.eye[0]);
+        lane=vadd(lane,vmul(i==1?1.f:0.f,s.eye[1]));
+        lane=vadd(lane,vmul(i==2?1.f:0.f,s.eye[2]));
+        s.outputEye[i]=vadd(lane,vmul(i==3?1.f:0.f,s.eye[3]));
+    }
 }
 
 // 0x166C60 base set-target followed by the DEFAULT_3 override 0x176FE0 (POST_RACE_1: 0x178E90,

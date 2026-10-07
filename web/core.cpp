@@ -171,6 +171,7 @@ void begin_airborne(bool keepPrewind=false){
 void retain_jump_camera(const OriginalJumpState&);
 void browser_controller_takeoff_wind(const std::array<float,3>&); // web/animation_bridge.cpp: 120378 reads the takeoff +0x1E0
 void browser_controller_stance(bool); // web/animation_bridge.cpp: 120378 reads the post-controller +0x320
+void browser_handplant_tick_begin(); // web/handplant_gameplay.inc: clears the handplant step's per-tick flags
 void browser_rail_idle_approach(); // web/rail_gameplay.inc: 1211F8 approaches +0x22C/+0x238/+0x25C in every control
 // 0x114298(rider,charge) requested by a controller (board-press R3 ollie 0x1307B8, charge 1),
 // then motion 1 (0x13F410 ground leave, 0x1399E0 enter).
@@ -322,8 +323,16 @@ void browser_wind_push(bool air){
 // QA: [pushes, last push tick, last dv x y z].
 extern "C" EMSCRIPTEN_KEEPALIVE float* wind_push_info(){RIDER_LOCAL static std::array<float,5> v{};v={float(windPushes),float(windLastTick),windLastPush[0],windLastPush[1],windLastPush[2]};return v.data();}
 // Air motion 139A20: predictor step (113648) or plain integration, then 139A80/139A8C.
+// 139A80 / 139A8C: air motion copies the presentation up (+0x180) into the contact normal (+0x370) and clears the surface velocity
+// (+0x3D0 = 4FF120, zero) every tick. The native normal follows, or publish_motion() would rebuild +0x370 from the old one.
+void browser_air_contact_frame(){
+ physicsState.normal=physicsState.presentationUp;
+ normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};
+ physicsState.surfaceVelocity={0,0,0};
+}
 static void translate_air_motion(){auto airborne=OriginalAirState{physicsState.position,physicsState.velocity};effectiveSpeedLimit=3333.33349609375f;if(!advance_prediction(airborne))airborne.step(effectiveSpeedLimit);physicsState.position=airborne.position;physicsState.velocity=airborne.velocity;position=airborne.nativePosition();velocity=airborne.nativeVelocity();
-  /*139A80/139A8C: air motion copies presentation up (+180) into the contact normal (+370) and clears surface velocity (+3D0 = 4FF120 zero) every tick*/physicsState.normal=physicsState.presentationUp;normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};physicsState.surfaceVelocity={0,0,0};}
+ browser_air_contact_frame();
+}
 // 0x114DB8 (in-flight stance switch) belongs to the control-5 update, which the original runs before
 // this translation; the browser runs it later (animation_tick). Keep the pre-motion state so a switch
 // can restart the flight from it and translate again (browser_air_switch_redo).
@@ -715,6 +724,10 @@ static void nis_hold_ground_probe(){
  normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};
 }
 EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boost) {
+ // The handplant step's per-tick flags (hpTick / hpAirTick, read by the animation tick) belong to this tick: a tick that does not reach
+ // the step (an attack held in passive air, 12F7AC; a crash or reset) must not read the last one's (fuzz r13-0191 2015: control 4
+ // after the handplant's exit tick skipped 139A20's orientation tail 0x139A64).
+ browser_handplant_tick_begin();
  physicsState.modeTiming=browser_finish_elapsed(); //rider+0x470 finish marker: 13C948 drops the forward drive and 12E778 hands over to control 10 once it is >= 0 (pipe-run-event 2213)
  // The world job refreshes one rider's scope a tick, in roster order: rider k after the ticks whose record tick is k mod 3 (PS2
  // metro-scope watches of all six rider+0xB50 lists: the human 0, computer riders 1..5 at 1, 2, 0, 1, 2).

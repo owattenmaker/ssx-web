@@ -53,7 +53,9 @@ void originalGroundVisualTargets(const OriginalGroundProfile& profile,OriginalGr
  Round round;bool lean=s.controlState!=1&&(profile.surface.id==2||profile.surface.id==3);
  float rate=terrain_original::mul(dt,3.f);
  if(lean){
-  float a=terrain_original::mul(v[0],v[0]),b=terrain_original::mul(v[1],v[1]),c=terrain_original::mul(v[2],v[2]);float norm=terrain_original::add(a,b);norm=terrain_original::add(norm,c);norm=terrain_original::add(norm,0.f);float speed=terrain_original::sqrt(norm);speed=terrain_original::mul(speed,f(0x3d1374bc));
+  float a=terrain_original::mul(v[0],v[0]),b=terrain_original::mul(v[1],v[1]),c=terrain_original::mul(v[2],v[2]);float norm=terrain_original::add(a,b);
+  // 0x13EF34..0x13EF3C: the horizontal VU dot (vadda x+y, vmadda vf0w 1.0 x z^2, vmadd 1.0 x w)
+  norm=terrain_original::add(norm,terrain_original::mul(1.f,c));norm=terrain_original::add(norm,0.f);float speed=terrain_original::sqrt(norm);speed=terrain_original::mul(speed,f(0x3d1374bc));
   const auto& curve=profile.extraLeanCurve;unsigned i=0;float target;
   if(curve[1].x<speed){i=1;if(curve[2].x<speed){i=2;if(curve[3].x<speed)i=3;}}
   if(speed<curve[0].x)target=curve[0].y;

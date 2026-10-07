@@ -51,7 +51,7 @@ async function startChrome() {
   fs.mkdirSync(PROFILE, { recursive: true });
   const port = 29500 + Math.floor(Math.random() * 400);
   const proc = spawn('/usr/bin/nice', ['-n', '19', CHROME, `--remote-debugging-port=${port}`, `--user-data-dir=${PROFILE}`, '--headless=new', '--mute-audio',
-    '--no-first-run', '--no-default-browser-check', '--window-size=640,480', '--enable-unsafe-webgpu', '--disable-background-timer-throttling',
+    '--no-first-run', '--no-default-browser-check', '--use-mock-keychain', '--password-store=basic', '--window-size=640,480', '--enable-unsafe-webgpu', '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding', 'about:blank'], { stdio: 'ignore' });
   let target;
   for (let i = 0; i < 200 && !target; i++) { await sleep(150); try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === 'page'); } catch {} }

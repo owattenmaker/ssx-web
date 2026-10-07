@@ -170,7 +170,18 @@ static void board_press_rail_update(){
  bpRailTick=!railOwned; //the R3 ollie released the rail: step_rider continues this tick without another controller
 }
 // 10EB30's 11FEC8(13) from control 1 (a collision crash during a press): the 12FE98 exit before the crash control enters.
-static void board_press_crash_exit(){if(!bpActive)return;auto r=bp_view();originalBoardPressExit(r);bp_apply(r);bpActive=false;bpLastExitControl=13;++bpExits;bp_publish_graph();}
+// 11FEC8(next) from control 1 runs its exit 12FE98 (111578's table 0x456B90): a crash (13) or a reset (9, 116120).
+static void board_press_control_exit(int next){
+ if(!bpActive)return;
+ auto r=bp_view();
+ originalBoardPressExit(r);
+ bp_apply(r);
+ bpActive=false;
+ bpLastExitControl=next;
+ ++bpExits;
+ bp_publish_graph();
+}
+static void board_press_crash_exit(){board_press_control_exit(13);}
 // 10EB30 clears +0x330 with the 1F0/208/250 triplets.
 static void board_press_clear_style(){bp330=0;graph.boardPress330=0;}
 // ---- A soft collision during a board press (108388 from control 1) ----

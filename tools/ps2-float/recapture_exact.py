@@ -128,6 +128,30 @@ def same_patches(a, b):
     return same_source and first['patches'] == second['patches']
 
 
+# Heap objects a gate's --watch window may sit in: the manifest names their addresses, and an exact baseline places them elsewhere.
+HEAP_OBJECTS = (('camera', 0x390), ('outer_camera', 0x480))
+
+
+def moved_watches(manifest, built):
+    """manifest's watches moved by the heap objects' shift from manifest to the built state's manifest (None: none moved)."""
+    watches = manifest.get('layout', {}).get('watches', [])
+    moved = []
+    changed = False
+    for watch in watches:
+        address = int(str(watch['address']), 0)
+        for key, length in HEAP_OBJECTS:
+            if not manifest.get(key) or not built.get(key):
+                continue
+            old = int(str(manifest[key]), 0)
+            new = int(str(built[key]), 0)
+            if old <= address < old + length and old != new:
+                address += new - old
+                changed = True
+                break
+        moved.append(dict(watch, address=hex(address)))
+    return moved if changed else None
+
+
 def build_arguments(manifest, output_state):
     arguments = [sys.executable, str(ROOT / 'tools/ps2_capture.py'), 'build', manifest['baseline'], manifest['script'], str(output_state)]
     if manifest.get('isolated_from_computer_riders'):
@@ -203,6 +227,8 @@ def run_one(job, out, slots, log):
     out_bin = out / f'{name}.bin'
     out_bin.parent.mkdir(parents=True, exist_ok=True)
     if finished(out_bin, job['records']):
+        # A capture that outlived a stopped driver finished without its inputs linked (link_inputs keeps existing links).
+        link_inputs(name, job['source'], out)
         return name, 'done'
     environment = dict(os.environ, PS2_CAPTURE_FPU=ENV_MODE)
     with open(out / f'{name}.recapture.log', 'w') as status:
@@ -211,6 +237,13 @@ def run_one(job, out, slots, log):
             state = out / f'{name}.p2s'
             subprocess.run(build_arguments(job['manifest'], state), cwd=ROOT, env=dict(environment, SSX3_CAPTURE_DERIVED='1'),
                            stdout=status, stderr=subprocess.STDOUT, check=True)
+            # A watch on a heap object (the camera block) follows it to its address in the exact state: build again with it moved.
+            built = json.loads(state.with_suffix('.capture.json').read_text())
+            watches = moved_watches(job['manifest'], built)
+            if watches:
+                manifest = dict(job['manifest'], layout=dict(job['manifest']['layout'], watches=watches))
+                subprocess.run(build_arguments(manifest, state), cwd=ROOT, env=dict(environment, SSX3_CAPTURE_DERIVED='1'),
+                               stdout=status, stderr=subprocess.STDOUT, check=True)
         elif job['kind'] == 'rebuild':
             state = out / f'{name}.p2s'
             subprocess.run(build_arguments(job['manifest'], state), cwd=ROOT, env=environment, stdout=status, stderr=subprocess.STDOUT, check=True)

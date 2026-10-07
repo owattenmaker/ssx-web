@@ -12,6 +12,7 @@
 RIDER_LOCAL extern bool (*browserHandplantStep)(float&,float&,float&,bool&);RIDER_LOCAL extern void (*browserHandplantReset)();RIDER_LOCAL extern int browserAirModeFlag;RIDER_LOCAL extern bool browserHandplantMotion5;
 RIDER_LOCAL extern float effectiveSpeedLimit;RIDER_LOCAL extern double airtime,charge;RIDER_LOCAL extern bool held,airbornePrewind;
 void begin_prediction(OriginalAirState);bool advance_prediction(OriginalAirState&);
+bool advance_prediction_unscaled(OriginalAirState&);
 void browser_wind_push(bool air); // web/core.cpp 0x125970
 
 RIDER_LOCAL static OriginalHandplantMotionState hpMotion;RIDER_LOCAL static OriginalHandplantControlState hpControl;
@@ -24,6 +25,7 @@ RIDER_LOCAL static float hpLastAward=0;
 
 static bool handplant_owned(){return hpTick;}
 static bool handplant_air_frame(){return hpTick&&hpAirTick;}
+void browser_handplant_tick_begin(){hpTick=hpAirTick=false;}
 static void clear_handplant(){hpMotion={};hpControl={};hpLean244={};hpActive=hpTick=hpAirTick=false;hpPhase=0;hpMotionMode=0;hpClip=438;hpEntryControl=-1;
  hpAttempts=hpEntries=hpLaunches=hpAttaches=hpStats=hpFailedCruise=hpLastExitPhase=0;hpLastScoreKind=hpLastReject=0;hpLastAward=0;browserAirModeFlag=0;browserHandplantMotion5=false;graph.handplantBalance=0;}
 
@@ -72,7 +74,8 @@ static void hp_bake(OriginalHandplantRider& r){
 }
 static bool hp_step_predictor(HandplantQuad& p,HandplantQuad& v){
  OriginalAirState s{{p[0],p[1],p[2]},{v[0],v[1],v[2]}};
- if(!advance_prediction(s))throw std::runtime_error("Handplant launch prediction unavailable");
+ // 0x13940C / 0x1394F4: the motion-5 steps pass 1/60 itself, not scaled by the time scale (web/prediction_bridge.cpp).
+ if(!advance_prediction_unscaled(s))throw std::runtime_error("Handplant launch prediction unavailable");
  for(unsigned k=0;k<3;k++){p[k]=s.position[k];v[k]=s.velocity[k];}return true;
 }
 // Motion 1 entered from motion 5 (0x139178 exit, then 0x1399E0 enter).
@@ -88,7 +91,16 @@ static OriginalHandplantAccess hp_access(OriginalHandplantRider& r,bool& attache
  a.motionMode=[](){return hpMotionMode;};
  a.semanticDuration=[](int semantic){return graph.semanticDuration(semantic);};
  a.play=hp_play;a.fade=[](unsigned channel,float seconds){graph.fade(channel,seconds);};
- a.rotateAnimation=[](float angle){auto sc=originalSinCos(terrain_original::mul(angle,.5f));graph.offsetSequenceRoots({{},{0,0,sc[0],sc[1]}});};
+ // 0x311B48 rotates the roots by -angle: neg.s, mul.s(-angle, 0.5), sincos 0x31BE50, then sin x the axis (0,0,1) at 0x4FF160
+ // (fs = sin), composed onto every root by 0x311BF0. The handplant's pi gives (-0, -0, -1, cos), as web/animation_bridge.cpp's
+ // rotateAnimationRoot does.
+ a.rotateAnimation=[](float angle){
+  terrain_original::Rounding rounding;
+  auto sc=originalSinCos(terrain_original::mul(-angle,.5f));
+  AnimationTransform delta;
+  delta.rotation={terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],1.f),sc[1]};
+  graph.offsetSequenceRoots(delta);
+ };
  a.stat=[](){++hpStats;audio_event(AE_HANDPLANT);}; /*1328F8 -> 29DC48*/
  // Select.pressed is already routed to request_rider_reset by pad_tick; 0x116120 then returns 1.
  a.resetPath=[](bool requested){return requested;};
@@ -156,6 +168,7 @@ static bool hp_try_entry(float& steering,float& crouch,float& brake,bool& skipRa
  return true;
 }
 
+void browser_air_contact_frame(); // web/core.cpp (139A80 / 139A8C)
 static bool step_handplant_tick(float& steering,float& crouch,float& brake,bool& skipRail);
 //11B3F8 runs at frame begin with the motion that the previous tick left (motion 5 is not motion 1).
 static bool step_handplant(float& steering,float& crouch,float& brake,bool& skipRail){const bool consumed=step_handplant_tick(steering,crouch,brake,skipRail);browserHandplantMotion5=hpActive&&hpMotionMode==5;return consumed;}
@@ -199,6 +212,8 @@ static bool step_handplant_tick(float& steering,float& crouch,float& brake,bool&
   auto airborne=OriginalAirState{physicsState.position,physicsState.velocity};effectiveSpeedLimit=3333.33349609375f;
   if(!advance_prediction(airborne))airborne.step(effectiveSpeedLimit);
   physicsState.position=airborne.position;physicsState.velocity=airborne.velocity;airMotionThisTick=true;::grounded=false;
+  // 139A80 / 139A8C, after 113648, as in every air motion tick (fuzz r13-0191 1963: the port kept the handplant's ground normal)
+  browser_air_contact_frame();
   if(browserPredictionAvailable){
    OriginalAirAlignmentContext context;context.normal=browserTrajectory.normal;context.heading=browserTrajectory.heading;
    context.physicalForward=physicsState.physicalForward;context.predictedTime=browserTrajectory.predictedTime;context.elapsedTime=browserTrajectory.elapsed;

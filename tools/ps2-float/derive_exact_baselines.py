@@ -65,6 +65,36 @@ def game_tick(path):
         return None
 
 
+def race_phase(path):
+    """The race clock's phase, or None with no race loaded.
+
+    The clock is the object whose +8 is the game tick (game_tick's chain). 0x113B10(C, phase) keeps the old phase at C+4 and
+    0x113B48 enters the new one: C+0 = phase (1..7), C+0x98 = C+0xAC + 4 * (phase - 1), C+0xA0 = its handler. Phases 3 PreRace
+    (course flythrough and the event brief), 4 Countdown, 5 Race, 6 EndRace (docs/ctm-events-in-world.md). The game tick also counts
+    during PreRace, so a tick alone does not tell the flythrough's tick 18 from the countdown's.
+    """
+    with zipfile.ZipFile(path) as archive:
+        memory = archive.read('eeMemory.bin')
+
+    def word(address):
+        return struct.unpack_from('<I', memory, address & 0x1FFFFFF)[0]
+
+    try:
+        pointer = word(GP - 0x848)
+        for offset in (0x84, 0x0C):
+            pointer = word(pointer + offset)
+            if pointer == 0:
+                return None
+        return word(pointer)
+    except struct.error:
+        return None
+
+
+def same_phase(state, reference):
+    """False when a tick-bound state is in another race phase than its reference (no reference: True)."""
+    return not Path(reference).exists() or race_phase(state) == race_phase(reference)
+
+
 def resident_locations(path):
     sys.path.insert(0, str(ROOT / 'tools'))
     import ps2_navigate
@@ -209,7 +239,9 @@ def derive(name, mapping, slots, attempts, log):
             code, out = exact_run(baseline, record, candidates, workdir, slots)
             for candidate, _ in candidates:
                 state = out / f'{candidate}.p2s'
-                if state.exists() and (wanted_tick is None or game_tick(state) == wanted_tick):
+                if not state.exists():
+                    continue
+                if wanted_tick is None or (game_tick(state) == wanted_tick and same_phase(state, ROOT / output)):
                     chosen = state
                     break
             log(f'{name} step {index} {step_name} attempt {attempt}: exit {code}, {"kept " + chosen.name if chosen else "no state at tick " + str(wanted_tick)}')

@@ -1,3 +1,132 @@
+> **PS2 arithmetic, round 6 (2026-10-07): core-batch14 shipped, camera watch fix, camera forms, Snow Jam exact-base 147 of 187.** See [ps2-float.md](ps2-float.md) "Exact baselines" and "Camera forms".
+> - **core-batch14** (0dd7ac38, deployed by the coordinator): full mode-1 suite 534 of 534. It holds round 5's files and the physics agent's r1-0203 fix.
+> - **Exact-base Snow Jam slice:** 147 of 187 on the trace core. Since round 5: handplant-ground / -leanR / -spin, hl-glide-6, hl-rail-15, plant-ara1, air-steer-lr, tech-strong-jump and -right now pass.
+> - **Recapture fix** (tools/ps2-float/recapture_exact.py): --watch windows inside the camera / outer-camera blocks move to the exact state's address (moved_watches).
+>   - The 8 cam-* gates had watched the mode-1 camera address; they are recaptured, and the old copies are in runs-exactbase/.stale-camera-watch/.
+>   - cam-air-tricks and cam-mix-glide-0x3C now pass. cam-mix-glide leaves at 502 (it was 339).
+> - **Files changed (mode-1-neutral forms):**
+>   - engine/original_camera.hpp: dot4 (1.0 x z^2, 1.0 x w^2), and the output eye 1.0 x eye through 0x166F90's identity matrix.
+>   - The mode-1 suite for these is running: core-batch15, local/ps2-float/suite-batch15.log.
+> - **New tool:** tools/ps2-float/match_camera.sh, a camera matcher round on an exact-base gate.
+> - **Sent to the physics agent:** the early-leaver list, all arithmetic (their mode-1 twins are exact to the end), plus three field gaps that are logic: 0x370..0x378, 0x2DC and 0x35C.
+> - **Open:**
+>   - cam-event-start / cam-event-race leave at tick 19. The exact ARA1 event seed's camera words come from characters/zoe/countdown.p2s, a different exact run from the snow-jam-countdown-anchor these gates start from. Rider physics is the same (event-start / event-race are exact to the end); the camera's velocity filter is a few ULPs off.
+>     - A fix needs a per-capture camera seed in event mode under exact-base: the core re-arms browserEventCamera at the anchor tick, which overrides a JS seed. That touches web/core.cpp, so it needs agreement with the physics agent.
+>   - cam-mix-glide 502: at 0x1630E0, the port's direction from angles against the PS2's vector.
+> - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad bulk4.sh) and the core-batch15 suite.
+
+> **Deployed 2026-10-07 (coordinator): core-batch14.** web/runtime core.wasm `0dd7ac38…` (core.js `2fe50ccb…`, unchanged) from local/ps2-float/core-batch14 (534/534). On top of core-batch11: the handplant predictor step (constant 1/60, 0x13940C / 0x1394F4) and root rotation sign (0x311B48), the physics agent's r1-0203 reset fix (12FE98, +0x360 latch), and batch 12 plus the extra-lean speed dot (mode-1-neutral).
+
+> **Fuzzing resumed (2026-10-07, fuzzing agent): core-batch11 recheck and triage.** See [fuzzing.md](fuzzing.md).
+> - **Running:** mode-1 batch 8 (local/fuzz/chain-15.sh), one ARMSX2 on slot 4, shared through local/ps2-capture/slot4/. After it,
+>   chain-16.sh captures six-rider baselines of the press-ice and carve-ice-rnb seed pads.
+> - **Recheck on core-batch11 (9300e7c0), all 236 mode-1 captures** (local/fuzz/recheck-batch11{,b}.log):
+>   - fixed: r10-0153;
+>   - open, single rider: r6-0121, r13-0191 / r2-0299, r7-0036 bones. r1-0203 is fixed in the physics agent's tree.
+>   - open, six riders: the RNG in r4-0048, r7-0028, r7-0082, r10-0134 and r13-0175; Mac in r7-0038.
+> - **Triage, sent to the physics agent:**
+>   - r13-0063 (ASS1) and r4-0236 (CRA3): the PS2 runs builtin 19's Spline constructor (0x35955C, an RNG draw) from a trigger and
+>     the port doesn't. In r13-0063 it's computer rider 1's contact, six draws; in r4-0236 it's during the human's reset.
+>   - r7-0000 (ERA5): Allegra's rail attach is 41 cm off, after the human's changed line.
+>   - r2-0185 / r10-0247 / r14-0252 / r5-0060: the DSS2 style-mile countdown seeds' own six-rider run has Moby off on a rail
+>     around 2530-2632. These seeds have only human gates.
+
+> **Paused 2026-10-06 (physics-jank agent): resume point.** Nothing of mine is running.
+> - **In the live tree, not in a deployed core yet:** fuzz r1-0203, a Select reset from a board press, is exact to the end with fields
+>   and bones. Two changes:
+>   - 116120 -> 11FEC8(9) -> 111578 runs control 1's exit 12FE98: +0x330 = 0, and the +0x268 / +0x274 targets go to 0 at 1/30 / 1/60.
+>     begin_reset calls board_press_control_exit(9), which board_press_crash_exit now wraps.
+>   - begin_reset keeps the +0x360 jump latch. Only 1162C8 and the control 0 / 1 / 7 enters write it; 116120 doesn't. My core42
+>     `prewind.jumpGate=0`, and the older `prewind={}`, were wrong.
+>   - Targeted ps2-captures (53 reset / select / board-press / boardflex cases, ONLY=...) on scratch local/physics-jank/core43: all
+>     pass. **The full suite has not run.**
+> - **Reviewed and approved:** the arithmetic agent's two handplant logic edits (advance_prediction_unscaled; the rotateAnimation
+>   sign). We agreed ownership: it owns mode-1-neutral forms, I own logic.
+> - **r13-0191 (open):** the handplant launch (motion 5 -> 1 at 1963, control 11). The PS2's +0x370 becomes +0x180 at 1963, which is
+>   139A20's copy at 0x139A80. The port keeps the handplant's ground normal, and the landing at 2016 aligns to it.
+>   - Adding the copy to handplant_gameplay.inc's motion-1 branch changed nothing at 1963. Something else must write +0x370 after it,
+>     or that branch doesn't run on the launch tick. I reverted it; it is not in the tree.
+>   - Next: trace the port's launch tick (hp_launch, then which path runs motion 1 that tick) and the 2219 command word.
+> - **Queue after that:**
+>   - r7-0036: Uber to rail bones at 906.
+>   - r7-0038: Mac at 4998.
+>   - RNG: r4-0048 at 4094, r7-0028 at 4902, r7-0082 at 3623, r10-0134 at 1986.
+>   - The dra4 bone lead: Psymon's bones at 3772.
+>   - The arithmetic agent's list of exact-base physics leavers (pending).
+
+> **Fuzzing paused again (2026-10-06, fuzzing agent). Resume point:** see [fuzzing.md](fuzzing.md).
+> - **Stopped:** my own PIDs only. Nothing of mine is running.
+>   - Batch 7 (chain-14.sh / diff.py) was stopped at 11 of 30 compared. The interrupted capture is set aside in
+>     local/ps2-capture/runs/fuzz-mode1/interrupted/r12-0162.*; delete it.
+>   - The ARMSX2 run was stopped.
+>   - The core-batch11 recheck (recheck.py) was stopped at 185 captures. Its per-capture results are in
+>     local/fuzz/recheck-batch11.log; there is no JSON summary.
+>   - slot4/fuzz has been removed.
+> - **Resume:**
+>   - delete fuzz-mode1/interrupted/;
+>   - `cd local/fuzz && FUZZ_FPU=mode1 nice python3 -u diff.py batch 30 8` (slot 4, shared with the physics agent);
+>   - finish the recheck: `python3 recheck.py ../ps2-float/core-batch11/core.js --jobs 2`.
+> - **On live core-batch11 (9300e7c0)** (partial recheck):
+>   - r10-0153 is fixed: exact, bones too.
+>   - Still open: r6-0121, r13-0191 / r2-0299, r1-0203 (bones from 2306), r7-0036 (bones from 906), r4-0048, r7-0028, r10-0134,
+>     r7-0038 (Mac 4998).
+> - **Not yet sent to the physics agent** (the pause came first):
+>   - **r6-0121** (air-steer-passive, mode 1, single rider).
+>     - Pad: the seed plus an L1+L2+Square chord on script 355..379. The pad also differs from the seed at script 408..867 and
+>       894..991 (inherited from its parent variant).
+>     - On the rail (control 7, motion 4, semantic 68) at 1223, the position is 0.60 cm off and the velocity 16.6 cm/s off; the
+>       bones are off too.
+>     - Then the command word at 1243: web control 4 21ff0000 against PS2 control 7 43fe0000.
+>   - **r13-0175** (hl/hl-metro-4 pad with --ai-state, six riders, BRA2).
+>     - Air (5) to rail (7) at 2411 while a DPadLeft+R2 spin-grab is held.
+>     - On the second rail tick, 2412, the port's human makes 2 controller-phase RNG draws where the PS2 makes 1 (at 0x3117B8).
+>     - So the shared RNG differs from 2413, with every rider exact.
+>     - Repro: `RNG_TRACE=2410:2413 node compare-ai-capture.mjs ../local/ps2-capture/runs/fuzz-mode1/r13-0175.bin --zoe
+>       --world-draws --isolate`.
+> - **Triaged, low priority:** r6-0135 (kick-doubt): Moby at 3825 is past the seed's own six-rider finish limit (human 3782).
+> - **New in batch 7, not yet triaged** (six riders, the RNG or a computer rider first):
+>   - r2-0185 (press-ice);
+>   - r7-0000 (carve-ice-era5: Allegra at 2086, RNG at 2142);
+>   - r13-0063 (carve-ice-rnb, RNG at 4606);
+>   - r4-0236 (crash-cra3, RNG at 3954).
+
+> **PS2 arithmetic, round 5: PAUSED 2026-10-06 (the user paused everything).** All my processes and emulators are stopped. Machine ARMSX2 count at the pause: 0.
+> - **Snow Jam exact anchor fixed.** The 2026-10-05 `local/reference-exact/snow-jam-countdown-anchor.p2s` was tick 18 of the course flythrough (race phase 3), not the countdown.
+>   - The replacement comes from the same Zoe exact path as snow-jam-glide: sample 3560, phase 4, tick 18. The old one is kept as `snow-jam/flythrough-tick18.p2s`.
+>   - `tools/ps2-float/derive_exact_baselines.py` race_phase() / same_phase() read the decompiled race clock (C+0, 0x113B10 / 0x113B48; docs/ps2-float.md "Exact baselines").
+>   - The 20 gates built on the old anchor were moved to `runs-exactbase/.flythrough-anchor/` and recaptured. All 20 are verified: new baseline hash, exact, ticks from 18, full record count.
+> - **Files changed** (with the physics agent's agreement: forms are mine, logic is theirs; it approved both handplant edits):
+>   - web/prediction_bridge.cpp: advance_prediction_unscaled(). The motion-5 0x113648 calls pass 1/60 itself (0x13940C, 0x1394F4); 0x139A20 scales it (0x139A58). Mode-1 neutral.
+>   - web/handplant_gameplay.inc: hp_step_predictor uses the unscaled step. a.rotateAnimation now follows 0x311B48: -angle, sin x (0,0,1). **May change mode-1 bits; suite not yet run.**
+>   - engine/ground_pose_motion.cpp, plus the web/generated copy (new inode, both identical): the extra-lean speed dot 1.0 x z^2 (0x13EF38). Mode-1 neutral.
+>   - Batch 12 (still to be listed in round 4): engine/air_entry.cpp speed dot, engine/ground_motion.cpp speed (line ~141), engine/crash_motion.hpp detached-quaternion norm.
+>   - tools/ps2-float/recapture_exact.py: a finished gate still links its inputs.
+> - **Exact-base Snow Jam fails, rescored on the trace core with the handplant fixes:** 9 of the 58 earlier fails now pass (score-uber, the bf-score-uber family, handplant-nat36, tech-fc-uber-*).
+>   - handplant-ground's bones moved from 639 to 684. The lean dot above is the next cause; its effect is not yet scored.
+> - **Resume point:**
+>   1. Mode-1 suite on a fresh scratch core of the current tree. core-batch13 is built without the lean dot, so rebuild as core-batch14:
+>      `CORE_OUT=$PWD/local/ps2-float/core-batch14 sh web/build-core.sh`, then `cd web && CORE_JS=../local/ps2-float/core-batch14/core.js node test-ps2-captures.mjs > ../local/ps2-float/suite-batch14.log 2>&1`.
+>      Run the test file with node directly: `npm test` stops it at 15 minutes. If handplant gates fail, send the names to the physics agent.
+>   2. Rescore the 49 fails on local/ps2-float/core-trace7, which is already rebuilt with the lean dot:
+>      `node tools/ps2-float/score_gates.mjs --runs local/ps2-capture/runs-exactbase --core local/ps2-float/core-trace7/core.js --arith exact-base --par 3 --only <the fail lines of local/ps2-float/score-fails-t8.log>`.
+>   3. Bulk exact-baseline recapture at 1 job (2-slot plan): `python3 tools/ps2-float/recapture_exact.py --exact-baselines --jobs 1 --slots 4`. Finished gates are skipped.
+>   4. Send the physics agent the physics early leavers with first tick and field, plus a mode-1 twin check: carve / carve-bag 612, handplant-flip 857, hl-rail-10 911, rail-fence-b 816, rail-slide 779, rail-slide-b 772, uber-ara1 980, uber-rail-6 1159, score-rail-uber 821, tech-oob-* 1801.
+>   5. Possible form, from the physics agent: cb.rotateAnimationRoot in animation_bridge.cpp writes z = sc[0] where 0x311B48 does mul(sin, 1.0). Check it against the trace.
+>   6. Camera-seed check for cam-mix-glide (camera words at 339).
+
+> **Rider-parity exact sweep: PAUSED again 2026-10-06 (the user paused everything).** All my processes and emulators are stopped. Nothing of mine is running.
+> - **Since the last pause:**
+>   - Phase check: every exact countdown / glide state passed tools/ps2-float/derive_exact_baselines.py race_phase (countdowns phase 4, glides 5).
+>   - make_course_states.py and derive_exact_states.py now accept a save only in the original's phase. The old Snow Jam anchor's flythrough-phase tick 18 cannot be picked again.
+>   - Snow Jam countdown + glide are done for 30 of 31 riders (seeiah, churchill, unknownrider and fareastmyth added); provenance written.
+> - **Resume point:**
+>   - brodi-on-psymon's Snow Jam state, stopped mid-run (partial folder removed).
+>   - Then the Snow Jam captures (none yet in runs/riders-exact), the course states, their captures, and exact-states.sh.
+> - **Resume:**
+>   1. `cd ~/Documents/ChatGPT/ssx3 && nohup local/rider-parity/exact-sweep.sh > /dev/null 2>&1 &` (existing states are kept; one ARMSX2; machine total 4 or fewer).
+>   2. Then `nohup local/rider-parity/exact-states.sh > /dev/null 2>&1 &` (it waits for the sweep).
+>   - The outputs feed the arithmetic agent's scorer through link_riders_exact.py.
+
 > **Deployed 2026-10-06 (coordinator): core-batch11.** web/runtime core.wasm `9300e7c0…` (core.js `2fe50ccb…`, unchanged) from local/ps2-float/core-batch11 (534/534). On top of core-batch10: handplant dot4 and the rail quaternion w lane (mode-1-neutral).
 
 > **Deployed 2026-10-06 (coordinator): core-batch10.** web/runtime core.wasm `9172f338…` (core.js `2fe50ccb…`, unchanged) copied from local/ps2-float/core-batch10 (full mode-1 suite 534/534). On top of core41: the physics agent's core42 tree changes (r10-0153 reset fixes, batch 7) and the arithmetic agent's batches 8-10 plus the exact glide seeds. All mode-1-neutral; exact-only parts are under SSX_PS2_EXACT_FPU (not in this build).
@@ -71,16 +200,9 @@
 >      - r7-0038 (Mac 4998);
 >      - RNG: r4-0048 4094, r7-0028 4902, r7-0082 3623, r10-0134 1986;
 >      - the dra4 bone lead: Psymon's bones at 3772, before the RNG at 3773.
->   3. Apply the arithmetic agent's **batch 8** (received while paused; mode-1 neutral). It is for web/generated/air_alignment.cpp and its
->      identical engine/ copy, PS2 0x31BB4C..0x31BC70 and 0x121ECC..0x121EEC. The matcher files are
->      local/ps2-float/match/riders/zoe-race-451-xb.*.
->      - `cross`: the vopmsub products swap (0x31BB50, 0x121ED4).
->      - `dot`: mul(1, z) (0x31BBE0).
->      - The quaternion multiply's w lane: two mul(1, ·) terms, vmsuba.w / vmsub.w with vf0 (0x121EE4 / 0x121EE8).
->      - `delta`: mul(sc[0], axis[i]) (0x31BC40).
->      - Then check its **structural finding**. air_control.cpp presentationImpl composes spin and flip from an identity quaternion,
->        while the PS2 multiplies the base orientation at once (0x134F3C..0x134F5C). The identity product is exact only in mode 1, so it
->        is the likely source of the exact-only q drift at 488 / 491. Decomp first; this is not a form swap.
+>   3. ~~Batch 8 and the presentationImpl finding~~: done by the arithmetic agent while I was paused (batches 8-11; the
+>      presentationImpl finding was corrected: it feeds only the renderer's presentedFrame, and poseRoot already composes on 0x134F3C).
+>      Core42's tree changes shipped in core-batch10 / core-batch11 (534/534).
 >   4. Watch for the arithmetic agent's next batches.
 > - **Slot 4:** shared with the fuzzer under its protocol (local/ps2-capture/slot4/physics while I use it; wait for slot4/fuzz to clear).
 

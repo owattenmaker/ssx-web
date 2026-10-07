@@ -207,6 +207,14 @@ callback checks, online and native paths) or needs situations the seeds never re
     (aibones-capture.py).
   - **On core40:** gravitude and cra3 are bone-exact for every rider to the end. In dra4, Psymon's bones split at 3772, one tick
     before the gate's known RNG split.
+- **2026-10-07, on core-batch11:**
+  - Spline constructor (builtin 19, 0x35955C) draws from a trigger are missing in the port: r13-0063 (ASS1, a computer rider's
+    contact) and r4-0236 (CRA3, the human's reset).
+  - Others sent: r7-0000 (Allegra's rail attach after the human's line), r1-0204 (control 3 kept into the air), r8-0165 (a
+    false hit on mdl_ASS1_railADD_panel_23), r5-0194 / r5-0160 (handplant landing; crash slide), r4-0279 (an Allegra-Mac pair
+    contact).
+  - The DSS2 style-mile countdown seeds' own six-rider run has Moby off around 2530-2632 (press-ice-seed-six). These seeds
+    have only human gates.
 - **Rechecks:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against each seed's own
   six-rider gate limit, diff.py six_limit). Results are in recheck-<core>.json.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries

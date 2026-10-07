@@ -335,6 +335,17 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
   - Verified: carve-s1-era5 and r2-0249 have no blips; the RNG and all six riders are exact to the end (3930).
   - Not changed, likely the same offset, unverified: the section collision players (stage_section_collision_update: now - start
     steps) and the JS section players.
+- **A reset from a reset surface on the ground** (fuzz r10-0153 1210; core42, live in core-batch10). 13F178 runs 13F23C ->
+  116120(rider, 0, 1) for a surface with table+0x44 or patch flag 2, then 11E150 / 13F488 / 105398 / 107888. Three port gaps:
+  - 13F488 and 105398 begin with 11FEE8 (+0x77C -> +0xDE4, the control) == 9 -> return (0x13F4B4, 0x1053C8). After the reset they
+    do nothing. The port ran its ground query anyway and pushed the rider 15.5 cm (animation_bridge.cpp resetInPost). 107888 has no
+    such check.
+  - 11FEC8(9) -> 111578 runs the old control's exit (table 0x456B90). Only control 5's 134CB0 zeroes the prewind triplets
+    +0x2A4..+0x2B8, so from control 0 they keep their values (+0x2A8 / +0x2B4 stay 1/30). begin_reset now clears them only when
+    leaving control 5.
+  - 11D660 (the placement) zeroes every ground-control triplet +0x1F0..+0x2DC, including board press +0x268 / +0x274
+    (0x11DB70..0x11DB84). The port kept the press rates; board_press_placement_clear now clears them.
+  - Verified: r10-0153 fields and bones exact to the end (899 records).
 
 ## Exact start seeds (2026-10-05, physics-jank agent)
 

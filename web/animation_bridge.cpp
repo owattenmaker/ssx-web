@@ -301,6 +301,7 @@ static void rail_control_exit(); // web/rail_gameplay.inc: control 7's exit 1320
 // victim's score +0x12C and posts popup 0x2D, else +0x124. Only 107E70 (0x1082F4) passes a nonzero a2, its own a3, which is 1
 // from 107888's attack branch (0x107E0C) alone; 105D98 (0x1064E4), 1311B8 / 1311D0, 13A530 and 13F22C (surface 18) pass 0.
 static void board_press_crash_exit();static void board_press_clear_style(); // web/boardpress_gameplay.inc
+static void board_press_control_exit(int next); // web/boardpress_gameplay.inc
 static void board_press_placement_clear(); // web/boardpress_gameplay.inc
 static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool attacked=false){
  if(crash.active)return;clear_start();
@@ -654,9 +655,13 @@ static void begin_reset(int reason){
  // 11FEC8(9) runs the old control's exit (111578): only control 5's 134CB0 zeroes the prewind triplets +0x2A4..+0x2B8. From control 0
  // they keep their values through the reset ticks (fuzz r10-0153 1210: +0x2A8 / +0x2B4 stay 1/30); the placement (12F498) clears them.
  const bool airControlExit=physicsState.controlState==5;
+ // control 1's exit 12FE98: +0x330 = 0, the +0x268 / +0x274 targets 0 at 1/30 / 1/60 (fuzz r1-0203 2306: a Select reset from a press)
+ board_press_control_exit(9);
  physicsState.controlState=gs.controlState=9;graph.setRate(2,0);boostState.modifier=0;boostState.window=physicsState.boostWindow=0;
+ // the jump latch +0x360 is not an exit's: 116120 / 111578 leave it (r1-0203 2306: 1 through the reset)
+ const float jumpLatch=prewind.jumpGate;
  if(airControlExit)prewind={};
- prewind.jumpGate=0;
+ prewind.jumpGate=jumpLatch;
  heldAirMode=passiveMode=false;air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;
  grab={};banked=scoreEvent=0;
 }

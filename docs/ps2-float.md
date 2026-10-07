@@ -284,6 +284,13 @@ In this tick the drifts went 953 → 16 with batches 4 and 5. The originalAnimat
 - start_gameplay re-encodes the decoded command axis (31 × 0x3D042108 = 3F7FFFFF → 30) where 0x128610 multiplies the raw channel (1.0 × 31).
 - That loss happens in both modes, so it is a separate port fix.
 
+**Camera forms (2026-10-07, `tools/ps2-float/match_camera.sh`):**
+
+- The camera code uses the same horizontal dot: 1.0 is fs for the z and w products (vf6 = vaddw.x vf0, vf0w; e.g. 0x160610, 0x162604). `original_camera.hpp dot4`.
+- The output eye (+0x60, 0x166F90) goes through the identity matrix at 0x4FF1A0 first (0x167004..0x167010, identity columns as fs, eye lanes broadcast as ft), so each lane is 1.0 × eye. The later rotation products carry it with 1.0 as ft (exact).
+- match_camera.sh: the oracle runs pass TICK−1's rider pass 0x128AF0, saves, then traces the DEFAULT_3 update 0x176E10 on the gate's camera block. Only `original_camera*` port sites are matched.
+- cam-mix-glide went from camera words at 339 to 502 with these two forms. Open: the 0x1630E0 direction (port angles vs the PS2 vector) at 502, and the swap at 0x163434 (1.0 × 3F41003C).
+
 ### Performance
 
 Measured on a loaded machine.
@@ -340,9 +347,17 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
   - It finds each reference state's navigation run by EE hash (`local/reference-exact/provenance-map.json`) and follows the chain back to a menu root.
   - A root must have no rider manager and no resident locations; a mid-load root is refused.
   - It re-runs each step in exact mode, reusing steps shared between targets.
-  - A tick-bound save is kept only at the reference's own tick: it is requested at sample−1, sample and sample+1, with retries.
+  - A tick-bound save is kept only at the reference's own tick and race phase. It is requested at sample−1, sample and sample+1, with retries.
+  - The race phase is the race clock's C+0, the same object whose C+8 is the game tick: [[gp−0x848]+0x84]+0x0C.
+    - 0x113B10(C, phase) keeps the old phase at C+4. Then 0x113B48 sets C+0 = phase (1..7), C+0x98 = C+0xAC + 4·(phase−1) and C+0xA0 = the phase handler (table 0x456CA0).
+    - Phases: 3 PreRace (the course flythrough and the event brief), 4 Countdown, 5 Race, 6 EndRace.
+    - The game tick also counts during PreRace, so a tick alone cannot tell the flythrough's tick 18 from the countdown's.
+    - All 64 exact baselines match their references' phase (26 PreRace, 14 Countdown, 24 Race).
   - Output: `local/reference-exact/<name>.p2s` with `<name>.provenance.json`.
-- Snow Jam (the hand-made references): `snow-jam-countdown-anchor` / `-glide` / `-ready` come from Zoe's recorded menu path from character-selection.p2s.
+- Snow Jam (the hand-made references): `snow-jam-countdown-anchor` / `-glide` / `-ready` come from Zoe's recorded menu path from character-selection.p2s (local/ps2-float/baselines/nav/zoe.p2s).
+  - The anchor is saved at sample 3560: Countdown, tick 18. The same run's glide is tick 339 at sample 3881.
+  - The first anchor (2026-10-05) was PreRace tick 18, in the flythrough. It is kept as `snow-jam/flythrough-tick18.p2s`.
+  - Its gates stopped at record 401: the script's Cross skips the flythrough and the game waits on the event brief. Twenty exact-base gates were built on it; they were moved to `runs-exactbase/.flythrough-anchor/` and recaptured on 2026-10-06.
 - Per-rider and per-course countdowns are the rider-parity agent's `make_course_states.py` with PS2_CAPTURE_FPU=exact, into `local/reference-exact/characters/`.
 - `tools/ps2-float/derive_exact_chain.py STATE...` handles states that do not start from a menu: free ride, CTM, world states. It walks a state's own records back to a root:
   - patches.json sources (a deleted source is named by its recorded EE hash);
@@ -359,6 +374,7 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
   Output: `local/reference-exact/chains/<path under local/>`.
 - `tools/ps2-float/recapture_exact.py --exact-baselines` captures the gates from exact baselines:
   - It rebuilds each gate from its baseline's exact copy (reference-exact, characters, chains), with the same script and options, into `local/ps2-capture/runs-exactbase/`.
+  - A --watch window inside a heap object the manifest names (the camera block, the outer camera) is moved to that object's address in the exact state: the build runs once, reads the new addresses, and runs again with the moved windows. Before 2026-10-07 the 8 cam-* gates watched the mode-1 camera address (0x1A58650; exact 0x1A584D0) and lost their camera seed beyond +0x15C. The stale copies are in `runs-exactbase/.stale-camera-watch/`.
   - Gates run most-gated baseline first, and riders/* is skipped.
   - The riders/* gates come from the rider-parity sweep (`runs/riders-exact`). `tools/ps2-float/link_riders_exact.py` links the ones captured from exact baselines under the gate names.
 - Captures from an exact baseline compare with `PS2_ARITH=exact-base`: the setup runs on the console model too. `score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base` scores them.

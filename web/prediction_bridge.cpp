@@ -1,6 +1,7 @@
 #include "rider_local.hpp"
 #include "../engine/air_trajectory_world.hpp"
 #include <emscripten/emscripten.h>
+#include <bit>
 using namespace ssx;
 extern std::unique_ptr<CollisionWorld> cameraTerrain;
 RIDER_LOCAL extern std::unique_ptr<WorldBodyCollision> browserBodies;
@@ -10,7 +11,10 @@ RIDER_LOCAL static bool predictionFailed=false,trajectorySeeded=false;RIDER_LOCA
 void reset_prediction(){trajectorySeeded=false;browserTrajectory={};browserPredictionAvailable=false;predictionFailed=false;}
 void begin_prediction(OriginalAirState current){trajectorySeeded=true;browserTrajectory.begin(current);browserPredictionAvailable=false;predictionFailed=false;}
 void reseed_prediction(OriginalAirState current){if(trajectorySeeded)browserTrajectory.reseed(current);else{browserTrajectory.begin(current);trajectorySeeded=true;}browserPredictionAvailable=false;}
-bool advance_prediction(OriginalAirState& current){
+// scaled: 0x139A20's step, seconds = mul.s(rider+0x300 time scale 1.0 as fs, 1/60) at 0x139A58.
+// Not scaled: the handplant motion-5 steps pass the constant 1/60 straight in (0x13940C gp-0x71FC, 0x1394F4 gp-0x71F4).
+// The two differ only on the console model, where 1.0 as fs gives 3C888888 (docs/ps2-float.md); mode 1 gives 3C888889 for both.
+static bool advance_prediction_by(OriginalAirState& current,bool scaled){
  if(predictionFailed)return false;
  if(!trajectorySeeded)begin_prediction(current);
  if(!cameraTerrain||!browserBodies){predictionFailed=true;browserPredictionAvailable=false;return false;}
@@ -18,9 +22,16 @@ bool advance_prediction(OriginalAirState& current){
  try{
   //Original113648/113200 prediction, with original mode0/2 world queries.
   //Publish the same integrated state used by original139A20, exactly once.
-  auto next=candidate.stepLogic(1,current,[](auto end,auto start,int mode){return queryOriginalAirTrajectoryWorld(*cameraTerrain,browserBodies.get(),end,start,mode);});
+  auto query=[](auto end,auto start,int mode){return queryOriginalAirTrajectoryWorld(*cameraTerrain,browserBodies.get(),end,start,mode);};
+  auto next=scaled?candidate.stepLogic(1,current,query):candidate.step(std::bit_cast<float>(0x3c888889u),current,query);
   browserTrajectory=std::move(candidate);browserPredictionAvailable=true;current=lastIntegrated=next;return true;
  }catch(const OriginalAirTrajectoryUnavailable&){predictionFailed=true;browserPredictionAvailable=false;return false;}
+}
+bool advance_prediction(OriginalAirState& current){
+ return advance_prediction_by(current,true);
+}
+bool advance_prediction_unscaled(OriginalAirState& current){
+ return advance_prediction_by(current,false);
 }
 extern "C" EMSCRIPTEN_KEEPALIVE float* prediction_info(){
  RIDER_LOCAL static float result[19];result[0]=browserPredictionAvailable;result[1]=browserTrajectory.status;
