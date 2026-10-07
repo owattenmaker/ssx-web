@@ -1608,6 +1608,12 @@ function setKeyboardMode(mode) {
 let padCarryAcc = 0;
 function padCarryFeed(input, dt) {
   if (!pv('padCarry') || !core?._pad_history_sample || !padPtr) return;
+  // A playing replay simulates on this core from its own recorded pad: the viewer's pad must not enter its button history (the
+  // extra samples changed button combos in real-time Watch Replay and the verifier; TAS agent, local/tas, 2026-10-07).
+  if (replay?.active) {
+    padCarryAcc = 0;
+    return;
+  }
   padCarryAcc = Math.min(padCarryAcc + dt, 4 / 60);
   while (padCarryAcc >= 1 / 60 - 1e-9) {
     padCarryAcc -= 1 / 60;

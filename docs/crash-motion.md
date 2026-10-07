@@ -354,6 +354,19 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
   - 131D30 calls 115B58 at 0x131E18 (before 115D48 and its rotation 132060), in the controller phase.
 - **Soft re-entry on a departure tick** (r1-0204; core46): 13F178 runs 13F488 / 105D98 after the 13F194 departure, while the motion
   is still 0 (11FE78(1) comes at 0x13F2CC). A soft reaction there enters control 3, also right after 12E778 ended the previous soft clip.
+- **The rail motion pushes its entity every tick** (r6-0121; core47): 13AF28 (0x13B4D0..0x13B534) calls the rail instance's entity
+  vt+0x15C with the rail gravity (0, 0, -980) minus along x 0 at the hit point, before integrating the velocity. For an AnimTeeter
+  (0x4908F8) that is 342538, the lever torque, so the log teeter tips under the rider. The port only pushed at the 106848 attach.
+- **The instance record after 106F78** (r8-0165; core49): 105398 runs 106F78 (the rail-body contact; its 105D98 can change +0x1E0)
+  before 32F650 / 104E70, and the record's closing speed and direction use the velocity after it.
+- **The contact cache's detail mode** (r5-0160; core49): 32B6E0's cache is {patch, cell u / v, half, detail +0xC}. A query in the
+  other detail mode (138640 coarse against 137860's human detailed) skips the cached cell and keeps it.
+- **108388 reads the live control** (ai-idle 1797; core51): one 105398 pass can run 108388 twice, from 106F78's notify and then from the
+  instance contact. After the first enters control 3 (11FEC8(3)), the second's 11FEE8 check (0x1083D0) sees 3 and returns before its
+  draws. The port's run_rider_instance_contacts passes liveControl.
+- **A script destroys a set-piece entity** (r4-0236, the CRA3 blimp; core51): builtin2 / builtin29 use the same deleting destructor
+  (vt+0x8 mode 3) as the section leave 0x34FD90. stage_destroy_entity tears down the spline piece and attached LiveComp
+  (set_piece_entity_destroyed) and clears the section entry, so the next enter runs slot 1 again. See set-pieces.md.
 
 ## Exact start seeds (2026-10-05, physics-jank agent)
 

@@ -159,7 +159,12 @@ inline OriginalRailSnapResult originalRailSnapContact(OriginalRailBodyContactRid
     const RailVector P=rider.hipsPosition;
     rounding.reset();out.hit=need(host.query,"query")(P);rounding.emplace();
     out.stage=1;if(!out.hit.found)return out;
-    auto vdot=[](const RailVector& a,const RailVector& b){return add(add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(a[2],b[2])),mul(0.f,0.f));};
+    // VU0 horizontal dot (0x107104..0x107110): x + y, then 1.0 x z and 1.0 x w through the 1.0 vector as fs.
+    auto vdot=[](const RailVector& a,const RailVector& b){
+        float sum=add(mul(a[0],b[0]),mul(a[1],b[1]));
+        sum=add(sum,mul(1.f,mul(a[2],b[2])));
+        return add(sum,mul(1.f,mul(0.f,0.f)));
+    };
     auto vscale=[](RailVector a,float s){for(auto& x:a)x=mul(x,s);return a;};
     auto vadd3=[](RailVector a,const RailVector& b){for(unsigned k=0;k<3;++k)a[k]=add(a[k],b[k]);return a;};
     auto vsub3=[](RailVector a,const RailVector& b){for(unsigned k=0;k<3;++k)a[k]=sub(a[k],b[k]);return a;};

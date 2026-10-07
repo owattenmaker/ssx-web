@@ -251,10 +251,13 @@ public:
                 float depth=terrain_original::sqrt(dot(contact.translationCm,contact.translationCm));reciprocal=depth>0?div(1,depth):std::numeric_limits<float>::max();
                 normal=contact.translationCm;for(auto& x:normal)x=mul(x,reciprocal);
                 offer({true,depth,contact.pointCm,normal,{},patch.resource,u*9+v,half,patch.surface,true});
-                if(terrainCache)*terrainCache={true,patch.resource,u,v,half?0u:1u};
+                if(terrainCache)*terrainCache={true,patch.resource,u,v,half?0u:1u,humanDetailed};
                 return true;
             };
-            if(terrainCache&&terrainCache->valid&&terrainCache->resource==patch.resource) {
+            // 32B6E0 (0x32B7A4..0x32B7AC) takes the cached cell only when its detail mode (+0xC) is this query's; otherwise it skips it
+            // and keeps it (fuzz r5-0160 1366: the coarse sliding query 138640 dropped the detailed air query's cell (3, 1), and the next
+            // air contact 137860 found another triangle).
+            if(terrainCache&&terrainCache->valid&&terrainCache->resource==patch.resource&&terrainCache->detailed==humanDetailed) {
                 if(terrainCache->cellU<cells&&terrainCache->cellV<cells)found=test(terrainCache->cellU,terrainCache->cellV,terrainCache->half?0:1);
                 if(!found)terrainCache->valid=false;
             }

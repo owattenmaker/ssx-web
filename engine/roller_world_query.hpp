@@ -78,8 +78,12 @@ using terrain_original::Vector;
 inline Quad qadd(Quad a,const Quad& b){for(unsigned k=0;k<4;++k)a[k]=terrain_original::add(a[k],b[k]);return a;}
 inline Quad qsub(Quad a,const Quad& b){for(unsigned k=0;k<4;++k)a[k]=terrain_original::sub(a[k],b[k]);return a;}
 inline Quad qscale(Quad a,float s){for(auto& x:a)x=terrain_original::mul(x,s);return a;}   // vmulx / vmulq
-inline float qdot(const Quad& a,const Quad& b){                                            // vmul, vadday.x, vmaddaz.x, vmaddw.x
-    using namespace terrain_original;return add(add(add(mul(a[0],b[0]),mul(a[1],b[1])),mul(a[2],b[2])),mul(a[3],b[3]));
+// vmul, vadday.x, vmaddaz.x, vmaddw.x: the z and w products go through the 1.0 vector as fs (vf6; e.g. 0x32DBA4).
+inline float qdot(const Quad& a,const Quad& b){
+    using namespace terrain_original;
+    float sum=add(mul(a[0],b[0]),mul(a[1],b[1]));
+    sum=add(sum,mul(1.f,mul(a[2],b[2])));
+    return add(sum,mul(1.f,mul(a[3],b[3])));
 }
 // vmulax/vmadday/vmaddaz/vmaddw: lane k = ((m[k]x + m[4+k]y) + m[8+k]z) + m[12+k]w.
 inline Quad qapply(const collision_transform::Matrix& m,const Quad& v){

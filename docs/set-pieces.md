@@ -191,6 +191,12 @@ instances) are not yet wired into `main.js`; when they are, forward their `set_p
     - Before this, the billboard's clock lagged one step (snapshots 545 / 1150 / 1193). Program 85's draws came one tick late:
       the RNG blips at 1195 / 1209 / 1239, and a lasting divergence in fuzz r2-0249.
     - The section collision players (now - start steps) and the JS section players probably share the offset. Unverified.
+- (2026-10-07, core51) **A slot-3 program can destroy a launched piece.** The CRA3 blimp mdl_CRA3_blimpa_1000 (649496; program 59
+  slot 1, program 60 slot 3) is the only section-launched spline piece whose slot-3 program destroys it (builtin2 mode 1 on it and on
+  its ad children 633112 / 604952, fuzz r4-0236 3480). 0x30A460 keeps an entity that has a slot-3 program, and the program destroys
+  it. The next enter runs slot 1 again: builtin3, then builtin19, two shared-RNG draws.
+  - web/stage_world.inc stage_destroy_entity -> set_piece_entity_destroyed + section_entity_destroyed.
+  - The renderer's restMesh draws it at rest meanwhile. Checked in headless Chrome; WebKit's mesh check is pending a visible window.
 - The JS player takes the core's clock (pv `sectionClock`, on; 2026-09-28). `stage_world_section_clocks()` lists each alive
   section-player entity (resource, mode, enabled, done, delay, rate, low, high, time, sample time). After each frame's ticks,
   `syncSectionClocks` (web/livecomp-animation.js; called from set-pieces-renderer.js and peak-set-pieces.js) copies these into the

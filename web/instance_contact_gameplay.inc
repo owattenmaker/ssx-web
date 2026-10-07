@@ -131,6 +131,9 @@ static int board_press_soft_cancel();static void board_press_soft_enter(int,floa
 // Browser rider (physicsState) in motion 0/1/4.
 static std::array<float,3> run_rider_instance_contacts(BodyCollisionVolume& volume,std::array<float,3> queryOffset,const std::array<float,3>* callerDirection,int motion,int eventControl,const std::array<float,3>& railDirection){
  BrowserInstanceActor actor;actor.motion=motion;actor.controlState=physicsState.controlState;actor.ownerWord30=0;
+ // 108388 reads the control (11FEE8) when it runs: after an earlier reaction of this pass entered control 3 (11FEC8(3): a 106F78
+ // rail-body notify, then the instance contact's), the next one sees 3 and returns before its draws (fuzz r8-0165 / ai-idle 1797).
+ int liveControl=eventControl;
  actor.position=&physicsState.position;actor.velocity=&physicsState.velocity;actor.quaternion=&physicsState.quaternion;
  actor.groundNormal=physicsState.normal;actor.railDirection=railDirection;actor.presentationUp=physicsState.presentationUp;
  actor.channelTime=surface_landing_channel_time;actor.landingAward=surface_landing_award;actor.scoreBoundary=surface_landing_boundary;
@@ -141,19 +144,19 @@ static std::array<float,3> run_rider_instance_contacts(BodyCollisionVolume& volu
  // 108388 gates on the motion mode (11FE98 == 0 or 4), not on contact: 13F178 runs 105398 after a passive
  // departure (114298) while the motion is still 0, so that tick's soft reaction enters control 3 (pipe-uber 1142).
  actor.notify=[&](const OriginalCollisionEvent& event){
-  auto reaction=dispatch_body_event(event,volume,physicsState.velocity,motion,eventControl,[](){return rng.nextMotion();});
-  if(reaction.controlOneCancelled)board_press_soft_enter(reaction.animation,reaction.manualSpin); /*108388 from control 1 (web/boardpress_gameplay.inc)*/
-  else if(reaction.kind==OriginalCollisionReactionKind::Soft&&(motion==0||motion==4)&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7)))soft_collision_begin(reaction.animation,reaction.manualSpin);
+  auto reaction=dispatch_body_event(event,volume,physicsState.velocity,motion,liveControl,[](){return rng.nextMotion();});
+  if(reaction.controlOneCancelled){board_press_soft_enter(reaction.animation,reaction.manualSpin);liveControl=3;} /*108388 from control 1 (web/boardpress_gameplay.inc)*/
+  else if(reaction.kind==OriginalCollisionReactionKind::Soft&&(motion==0||motion==4)&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7))){soft_collision_begin(reaction.animation,reaction.manualSpin);liveControl=3;}
  };
  actor.soft=[&](const OriginalCollisionEvent& event){
   terrain_original::Rounding rounding;auto physical=originalOrientationBasis(physicsState.quaternion);OriginalCollisionContext context;
   if(volume.reactionFrame)context.presentation=*volume.reactionFrame;
   context.physical={physical.right,physical.forward,physical.up,physicsState.position};context.velocityCmps=physicsState.velocity;
-  context.motionMode=motion;context.controlState=eventControl;context.reverseStance=physicsState.reverseStance;context.manualSpin=physicsState.manualSpin;
-  if(eventControl==1)context.cancelControlOne=board_press_soft_cancel; // 108388's 131348 (web/boardpress_gameplay.inc)
+  context.motionMode=motion;context.controlState=liveControl;context.reverseStance=physicsState.reverseStance;context.manualSpin=physicsState.manualSpin;
+  if(liveControl==1)context.cancelControlOne=board_press_soft_cancel; // 108388's 131348 (web/boardpress_gameplay.inc)
   auto reaction=originalSoftCollisionReaction(collisionProfile,context,event,[](){return rng.nextMotion();});
-  if(reaction.controlOneCancelled)board_press_soft_enter(reaction.animation,reaction.manualSpin); /*108388 from control 1 (web/boardpress_gameplay.inc)*/
-  else if(reaction.kind==OriginalCollisionReactionKind::Soft&&(motion==0||motion==4)&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7)))soft_collision_begin(reaction.animation,reaction.manualSpin);
+  if(reaction.controlOneCancelled){board_press_soft_enter(reaction.animation,reaction.manualSpin);liveControl=3;} /*108388 from control 1 (web/boardpress_gameplay.inc)*/
+  else if(reaction.kind==OriginalCollisionReactionKind::Soft&&(motion==0||motion==4)&&!reaction.cancelControlOne&&(physicsState.controlState==0||physicsState.controlState==2||(browserRailActive&&physicsState.controlState==7))){soft_collision_begin(reaction.animation,reaction.manualSpin);liveControl=3;}
  };
  actor.beginPredictor=[&]{if(!::grounded)begin_prediction({physicsState.position,physicsState.velocity});}; // 1135B8: full restart (113198 + 113618)
  // rider+9D0 here: this tick's landing (query offset) and accepted 13F488/13AA48 body-response translations.

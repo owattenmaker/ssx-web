@@ -92,10 +92,18 @@ let beam = [{ key: nodeKey++, save: ready[0].save, mem: ready[0].mem, frames: pr
 let best = null;
 const t0 = Date.now();
 let simTicks = 0;
+// Backtracking: the beam every 200 ticks (the last 6 kept); when the lead gained less than STUCK metres in its last 300 ticks, the
+// search goes back to a checkpoint at least 400 ticks earlier (3 tries per checkpoint) with twice the candidates for 600 ticks.
+const STUCK = +opt('stuck', 40);
+const checkpoints = [];
+const history = [];
+const retries = new Map();
+let wideUntil = -1;
 while (beam.length && beam[0].frames.length < UNTIL && !best) {
   // every (node, macro) pair, spread over the workers; one message per (worker, node)
   const jobs = [];
-  for (const node of beam) for (const m of candidates(node.macro, node.info.grounded, node.info.tricky, CANDS)) jobs.push({ node, m });
+  const count = beam[0].frames.length < wideUntil ? CANDS * 2 : CANDS;
+  for (const node of beam) for (const m of candidates(node.macro, node.info.grounded, node.info.tricky, count)) jobs.push({ node, m });
   const per = Math.ceil(jobs.length / workers.length);
   const results = await Promise.all(workers.map(async (w, k) => {
     const mine = jobs.slice(k * per, (k + 1) * per);
@@ -140,6 +148,26 @@ while (beam.length && beam[0].frames.length < UNTIL && !best) {
   beam = next.filter((n) => !n.finish);
   const lead = best ?? beam[0];
   if (!lead) break;
+  const now = lead.frames.length;
+  history.push({ tick: now, remaining: lead.info.remaining });
+  if (now % 200 === 0) {
+    checkpoints.push({ tick: now, beam });
+    if (checkpoints.length > 6) checkpoints.shift();
+  }
+  const back = history.find((h) => h.tick === now - 300);
+  if (!best && back && (back.remaining - lead.info.remaining) / 100 < STUCK) {
+    const cp = [...checkpoints].reverse().find((c) => c.tick <= now - 400 && (retries.get(c.tick) ?? 0) < 3);
+    if (cp) {
+      retries.set(cp.tick, (retries.get(cp.tick) ?? 0) + 1);
+      console.log(`stuck at ${now} (${Math.round((back.remaining - lead.info.remaining) / 100)} m in 300 ticks): back to ${cp.tick}, try ${retries.get(cp.tick)}`);
+      fs.appendFileSync(logPath, JSON.stringify({ stuck: now, back: cp.tick, try: retries.get(cp.tick) }) + '\n');
+      beam = cp.beam;
+      while (history.length && history[history.length - 1].tick > cp.tick) history.pop();
+      while (checkpoints.length && checkpoints[checkpoints.length - 1].tick > cp.tick) checkpoints.pop();
+      wideUntil = cp.tick + 600;
+      continue;
+    }
+  }
   const row = { tick: lead.frames.length, v: +lead.v.toFixed(1), remaining: Math.round(lead.info.remaining), speed: +lead.info.speed.toFixed(2),
     meter: +lead.info.meter.toFixed(3), tier: lead.info.tier, superTime: +lead.info.superTime.toFixed(1), macro: lead.macro,
     secs: Math.round((Date.now() - t0) / 1000), ticksPerSec: Math.round(simTicks / ((Date.now() - t0) / 1000)) };

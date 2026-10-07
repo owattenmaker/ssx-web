@@ -402,6 +402,10 @@ static void stage_destroy_entity(uint32_t resource){
  if(auto* st=stage_instance(resource))st->entity=StageNoEntity;
  stage_set_flags(resource,ssx::originalPickupRestoredFlags(stage_flags(resource)));
  if(any)stage_log_entity(resource,1);
+ // The same destructor takes a set piece's Spline / loop entity (web/set_piece_gameplay.inc), and instance+0xC = 0: the section
+ // list sees no entity, so the next enter runs the slot-1 program again (0x30A3A0; fuzz r4-0236, the CRA3 blimp).
+ set_piece_entity_destroyed(resource);
+ section_entity_destroyed(resource);
 }
 static int stage_node_state(uint32_t resource){auto it=stageNodeState.find(resource);return it==stageNodeState.end()?0:it->second;}
 // DeadNode 0x3506D8 (type 6) / Hide 0x350E90 (type 16) / RestoreNode 0x350F60 (type 19): flags &~0x60 &~2 |4, empty

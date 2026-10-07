@@ -111,7 +111,8 @@ def plan(name, source=None):
         exact = manifest.get('baseline') and Path(manifest['baseline']).exists() and exact_baseline_of(manifest['baseline'])
         if not exact or not manifest.get('script') or not Path(manifest['script']).exists():
             return dict(name=name, kind='no exact baseline', records=records, source=str(source))
-        return dict(name=name, kind='rebase', records=records, manifest=dict(manifest, baseline=str(exact)), source=str(source))
+        return dict(name=name, kind='rebase', records=records, manifest=dict(manifest, baseline=str(exact), mode1_baseline=manifest['baseline']),
+                    source=str(source))
     if state and (ROOT / state).exists() and resolve(ROOT / state).with_suffix('.capture.json').exists():
         return dict(name=name, kind='run', state=str(resolve(ROOT / state)), records=records, manifest=manifest, source=str(source))
     script = manifest.get('script')
@@ -132,22 +133,58 @@ def same_patches(a, b):
 HEAP_OBJECTS = (('camera', 0x390), ('outer_camera', 0x480))
 
 
+# Content search for a watch window in the exact baseline: the first bytes of the window in the mode-1 baseline, looked up within
+# this many bytes either side. A unique match with enough set bytes gives the window's shift.
+WATCH_PROBE = 64
+WATCH_SEARCH = 0x4000
+WATCH_MIN_SET_BYTES = 6
+
+
+def baseline_memory(path):
+    import zipfile
+    with zipfile.ZipFile(path) as archive:
+        return archive.read('eeMemory.bin')
+
+
+def content_shift(old_memory, new_memory, address, length):
+    """The shift that finds the window's mode-1 baseline bytes in the exact baseline, or None (not unique or too few set bytes)."""
+    size = min(length, WATCH_PROBE)
+    probe = old_memory[address:address + size]
+    if len(probe) < size or sum(1 for b in probe if b) < WATCH_MIN_SET_BYTES:
+        return None
+    shifts = [d for d in range(-WATCH_SEARCH, WATCH_SEARCH + 1, 4) if new_memory[address + d:address + d + size] == probe]
+    return shifts[0] if len(shifts) == 1 else None
+
+
 def moved_watches(manifest, built):
-    """manifest's watches moved by the heap objects' shift from manifest to the built state's manifest (None: none moved)."""
+    """manifest's watches moved to the exact state's objects (None: none moved).
+
+    A window inside a heap object the manifests name (the camera block) moves with it. Any other window is found by content: its
+    bytes in the mode-1 baseline, looked up in the exact baseline (the roller pool sits 0x180 lower in the exact Snow Jam states).
+    """
     watches = manifest.get('layout', {}).get('watches', [])
+    # A rebase job's manifest names the exact baseline; the gate's own (mode-1) baseline is kept as mode1_baseline.
+    old_baseline = manifest.get('mode1_baseline') or manifest.get('baseline')
+    old_memory = baseline_memory(old_baseline) if old_baseline and Path(old_baseline).exists() else None
+    new_memory = baseline_memory(built['baseline']) if built.get('baseline') and Path(built['baseline']).exists() else None
     moved = []
     changed = False
     for watch in watches:
         address = int(str(watch['address']), 0)
+        shift = None
         for key, length in HEAP_OBJECTS:
             if not manifest.get(key) or not built.get(key):
                 continue
             old = int(str(manifest[key]), 0)
             new = int(str(built[key]), 0)
-            if old <= address < old + length and old != new:
-                address += new - old
-                changed = True
+            if old <= address < old + length:
+                shift = new - old
                 break
+        if shift is None and old_memory and new_memory:
+            shift = content_shift(old_memory, new_memory, address, int(watch['length']))
+        if shift:
+            address += shift
+            changed = True
         moved.append(dict(watch, address=hex(address)))
     return moved if changed else None
 

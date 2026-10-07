@@ -218,6 +218,12 @@ callback checks, online and native paths) or needs situations the seeds never re
 - **Stopping point (2026-10-07):** mode-1 batch 9 (28 variants) found no new divergence; its three hits are the known seed limits
   (kick-doubt's finish, DSS2 Moby 2632; now in diff.py KNOWN_SIX_LIMITS). The fuzz rounds' coverage keys have flattened (+102 in
   r16). Both stop conditions of the brief are met; further batches only after core fixes land (recheck.py first).
+- **2026-10-07, core45 (d2d116ff):** fixed r13-0191, r5-0194, r2-0299, r7-0036, r13-0175, r1-0203, r4-0048, r10-0153, r2-0204.
+  Batch 10 (27 variants) found 4 new: r3teeter-0010 / r4-0026 (rail, the mirror of r6-0121), r15-0070 (a 10.8 cm one-tick jump
+  in an airborne crash), r15-0108 (a ULP on a soft-collision entry). All sent to the physics agent.
+- **2026-10-07, core51 (b77960c5):** fixed r1-0204, r6-0121 / r3teeter-0010 / r4-0026 (13AF28 pushes the teeter entity every
+  rail tick), r5-0160, r4-0236, r15-0070, r7-0053. r8-0165's human is fixed (the RNG differs at 3967 now). Open: r15-0108,
+  r4-0279, r7-0000, r7-0038, r13-0063, r10-0134, r7-0028, r7-0082.
 - **Rechecks:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against each seed's own
   six-rider gate limit, diff.py six_limit). Results are in recheck-<core>.json.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries

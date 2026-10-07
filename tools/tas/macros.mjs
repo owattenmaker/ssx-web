@@ -54,8 +54,14 @@ export function candidates(prev, grounded, tricky, count) {
         m.program = randomProgram(tricky);
       } else if (r < 0.75) {
         m.program = randomProgram(tricky);
-      } else if (r < 0.88) {
+      } else if (r < 0.82) {
         m.boost = pick(['off', 'auto', 'on']);
+      } else if (r < 0.88) {
+        // a turn too fast for the tuck: brake, or just stand up
+        const b = rand() < 0.5;
+        m.brake = b;
+        m.tuck = !b && rand() < 0.5 ? false : !b;
+        if (b) m.boost = 'off';
       } else {
         m.look = pick([8, 12, 16, 22]);
       }

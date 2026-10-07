@@ -1,3 +1,73 @@
+> **Fixed 2026-10-07 (coordinator): real-time replays used the viewer's pad.** web/main.js padCarryFeed (pv padCarry) fed the viewer's neutral pad into core._pad_history_sample every frame while a replay was playing, on the same core the replay simulates, so button combos decoded differently. Real-time Watch Replay, the results' Replay and the auto replay could leave the recorded run (the TAS agent's best-8964 left at 323), and the verifier could fail a combo across a yield. It now returns while replay?.active. Verified: watch-replay.mjs --realtime is exact on all 9144 ticks; test-replay and test-records-verifier pass.
+
+> **Fuzzing: core51 recheck (2026-10-07, fuzzing agent):** all 324 mode-1 captures on core51: 8 more repros exact (the rail class,
+> r1-0204, r5-0160, r4-0236, r15-0070, r7-0053). Open list in [fuzzing.md](fuzzing.md) "Findings". Nothing of mine is running; batch
+> 11 waits for the coordinator (`cd local/fuzz && FUZZ_FPU=mode1 python3 -u diff.py batch 30 11`, slot 4 shared).
+
+> **Deployed 2026-10-07 (coordinator): core51** (core49 withdrawn). web/runtime core.wasm `b77960c5…` (core.js `2fe50ccb…`, unchanged) from local/physics-jank/core51-snapshot (534/534). On top of core45: r1-0204 (soft control 3 into the air), r6-0121 (13AF28 pushes the teeter entity every rail tick), r8-0165 (the 104E70 record uses the post-106F78 velocity; 108388 reads the live control), r5-0160 (ContactCache detail mode), r4-0236 (builtin2 tears down set-piece entities: the CRA3 blimp relaunches on the next section enter), and the arithmetic agent's batch 16-18 tree changes (mode-1-neutral). The blimp's WebKit visual check is pending (screen locked); Chrome matched.
+
+> **core51: four more fuzz repros exact; the CRA3 blimp's script teardown (2026-10-07, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures" and [set-pieces.md](set-pieces.md).
+> - **Snapshot:** local/physics-jank/core51-snapshot (wasm `b77960c5…`, js `2fe50ccb…`, no export changes). It is core47 plus the
+>   fixes below. Full ps2-captures: 534 of 534, including peak2/cra3-race-ai, aibones/peak2/cra3-race-ai and parity-ai/ass1.
+>   core49 failed (ai-idle Psymon 2207) and is superseded.
+> - **r8-0165:** the 104E70 record reads +0x1E0 after 106F78 (OriginalInstanceContactPhaseHost::velocity).
+>   - It needed a second fix. The PS2's 108388 reads the control (11FEE8) when it runs, so after 106F78's notify entered control 3,
+>     the instance contact's 108388 returns before its draws (ai-idle 1797: two 108388 calls on the PS2).
+>   - The port dispatched with the control captured at the start of the run. run_rider_instance_contacts now carries liveControl.
+> - **r5-0160:** ContactCache's detail mode (32B6E0 +0xC; 0x32B7A4..0x32B7AC).
+> - **r4-0236** (six riders, CRA3, the RNG at 3954): the blimp mdl_CRA3_blimpa_1000 (649496) is a section-launched spline piece with
+>   an attached LiveComp.
+>   - At its section leave (3480), 0x30A460 keeps the entity and runs slot 3 (program 60). That program's builtin2 (mode 1) destroys
+>     the blimp and its two ParentModifier children (vt+0x8 mode 3: the same destructor as 0x34FD90).
+>   - The next enter (3953) runs slot-1 program 59 again: builtin3 LiveComp, then builtin19 Spline, two draws.
+>   - The port's builtin2 destroyed only stage-world entities, and nothing told the section list.
+>   - Fix: stage_destroy_entity runs set_piece_entity_destroyed (factored out of section_stop_piece: the piece / loop, the attached
+>     LiveComp and children, relocation to its own bounds) and section_entity_destroyed.
+>   - Class survey (every location's set_piece_seed tables): the CRA3 blimp is the only section-launched spline piece whose slot-3
+>     program destroys it. The resident loops with slot-3 programs (Junction 63247, CHP2 231191) have empty ones and keep their
+>     entity. The wrong comment in set_piece_gameplay.inc is fixed. No exporter change was needed: the blimp already had its
+>     slot-1 seed.
+>   - **Visual:** set-pieces-renderer.js needs no change. A torn-down player falls back to the rest draw (restMesh), and the
+>     attached delta returns with the relaunch.
+>     - Checked in headless Chrome on a private web root running core51 (local/physics-jank/dbgtree/web/blimp-check.mjs:
+>       place_rider_region near / far / near). Launched and moving, then torn down at the rest draw, then relaunched from its
+>       path start with the same values as the first launch.
+>     - WebKit: the sim side is the same (piece launched / gone / relaunched), but the WebKit window reported
+>       visibilityState hidden (no rAF, also offscreen), so the mesh check could not run. Rerun
+>       `BROWSER=webkit node blimp-check.mjs` there when the display is available.
+> - **Open:**
+>   - r4-0279 (Allegra / Mac pair at 1242): 107888's 1231A8 ground projection is modeled (originalPairGrounded), so look at the
+>     pair inputs.
+>   - New from the fuzzer: r3teeter-0010, r4-0026 (rails, the r6-0121 class), r15-0070, r15-0108.
+>   - From the arithmetic agent: exact-base bag/carve-bag 614 (104E70 packet count).
+
+> **Fuzzing on core45 (2026-10-07, fuzzing agent):** see [fuzzing.md](fuzzing.md). Recheck of all 297 mode-1 captures: 9 repros now
+> exact (incl. the 5 core45 targets). Batch 10: 4 new divergences, sent (two rail cases mirroring r6-0121, a crash-ragdoll jump, a
+> soft-collision ULP). Nothing of mine is running; batch 11 is held until core49 is live (slot 4 is the physics agent's meanwhile): recheck first, then (`FUZZ_FPU=mode1 python3 -u diff.py
+> batch 30 11`).
+
+> **core47 / core49: four more fuzz repros exact (2026-10-07, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures".
+> - **core47** (local/physics-jank/core47-snapshot, wasm `3aacd0d7…`, js `2fe50ccb…`, no export changes): full ps2-captures 534 of 534.
+>   - **r1-0204:** in the body-contact soft gate, the 13F194 departure tick counts as motion 0 (browserDeparturePrePosition).
+>   - **r6-0121:** 13AF28's per-tick entity push (0x13B4D0..0x13B534): a rail on an instance with an entity gets vt+0x15C (gravity
+>     (0, 0, -980) at the rail point) every rail tick.
+>     - New: OriginalRailAccess::motionForce, browser_teeter_motion_force (web/rail_bridge.cpp).
+>     - The Snow Jam log teeter now tips under the rider; 70 teeter / rail / Snow Jam gates unchanged.
+> - **core49** (local/physics-jank/core49-snapshot; full suite running) = core47 plus:
+>   - **r8-0165:** 105398's 104E70 record takes rider+0x1E0 after 106F78's rail-body contact (OriginalInstanceContactPhaseHost::velocity).
+>     The record had the pre-106F78 velocity: closing 1278 instead of 295, so the airborne frontal crash 347 replaced the PS2's
+>     no-op soft (108388 in motion 1).
+>   - **r5-0160:** ContactCache gains the 32B6E0 detail mode (+0xC). The body query takes the cached cell only when the mode
+>     matches, and otherwise keeps it (0x32B7A4..0x32B7AC). The coarse sliding query 138640 had dropped the detailed air query's
+>     cell (3, 1), so the next air contact picked another triangle.
+
+> **Mac on Metro City for the TAS agent (2026-10-07, rider-parity agent):** Single Event Metro City countdowns with Mac as the human (default outfit, fresh profile), made with characters/scripts/make_course_states.py BRA2 mac from characters/mac/select.p2s. Both are phase 4 (race_phase), tick 18.
+> - Mode 1 (for the live port): local/reference-exact/characters/mac/courses-BRA2-mode1/countdown.p2s.
+> - Exact: local/reference-exact/characters/mac/courses-BRA2/countdown.p2s.
+> - Lineup psymon, allegra, moby, zoe, luther (cheat 13). Page: `aiRace.fixedNext = { values: [8, 2, 0, 4, 13], round: 3 }`. Roster seed 0xB57109A9, shared RNG seed 0 after 23 draws, the same in both modes.
+> - Each folder's countdown.provenance.json holds the facts and the relationship banks.
+> - The exact riders sweep paused for it between captures and resumed after (106 captures in runs/riders-exact by then).
+
 > **Deployed 2026-10-07 (coordinator): core45.** web/runtime core.wasm `d2d116ff…` (core.js `2fe50ccb…`, unchanged) from local/physics-jank/core45-snapshot (534/534). On top of core-batch14, from fuzz repros: stale handplant per-tick flags cleared before step_rider, and 139A80's +0x370 = +0x180 copy updates the native normal (r13-0191, r5-0194, r2-0299); the air-to-rail attach posts its 10E028 reaction, and control 7 runs 115B58 before its rotation (r7-0036, r13-0175).
 
 > **core45: six fuzz repros exact (2026-10-07, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures".
@@ -75,7 +145,27 @@
 >   - **Open:**
 >     - hl-sj-1: 752.
 >     - ai-idle: 1802, the same tick as the tech-oob gates.
-> - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad anchor2.sh, then the bulk) and the core-batch16 mode-1 suite.
+> - **core-batch16** (local/ps2-float/core-batch16, wasm 3aacd0d7…, js 2fe50ccb…): full mode-1 suite 534 of 534. A default core built after the camera-seed change is the same bytes. It is the snapshot candidate for batch 15 + 16.
+> - **Clip duration form** (engine/rider_animation_player.mm OriginalRiderAnimation::duration, generated into web/generated/animation_graph.cpp):
+>   - 0x313CA8..0x313CAC: the PS2 makes a played clip's duration at every play as (header frames - 1) x 1/30, with the frame count as fs. Every one of the 497 asset durations is that chopped mode-1 product, so the port now makes the product again: mode-1 neutral, and on the console model a power-of-two frame count gives the low result (64 x 1/30 = 40088888).
+>   - This fixes the bones at 903 on the rail family: exact-base Snow Jam is **172 of 187**.
+>   - **Only under SSX_PS2_EXACT_FPU with exactArithmetic on.** The core-batch17 suite showed the recomputed product moves mode-1 ai-idle (Psymon at 2207). A build with only this change reverted passes.
+>   - Likely cause: the port's mode-1 terrain_original::mul on WASM rounds to nearest, not chop, so k x 1/30 there is not the asset's chopped value. Mode 1 keeps the asset value; the default build is unchanged by it.
+> - **Roller fixes for carve / carve-bag** (612 -> 616):
+>   - tools/ps2-float/recapture_exact.py moved_watches also finds a watch window by content: its first bytes in the mode-1 baseline, unique within 0x4000 in the exact baseline.
+>   - Rebase jobs keep the gate's mode-1 baseline as manifest mode1_baseline.
+>   - bag/carve-bag watched the mode-1 roller pool (0x1CEF540; exact 0x1CEF3C0). It is recaptured; the stale copies are in runs-exactbase/.stale-roller-watch/. A scan of every exact-base gate's watches found no other stale window.
+>   - engine/roller_world_query.hpp qdot: the 1.0 x z / w form (0x32DBA4), mode-1-neutral. The first roller is now exact 605-614.
+>   - **Open:** the second roller at 614 (rider pass, 0x104E70).
+>     - The PS2's 0x334458 returned fewer than 2 packets, so 0x105248 skips the normal aggregation.
+>     - The port got 2 or more and renormalised the summed normal (instance_contact.hpp ~84). That vector is 3F7FFFFE long on the console model.
+>     - The likely cause is a borderline extra contact in the exact sphere-tree query. Next step: match sphere_tree_collision against 0x334458.
+> - **engine/rail_snap_torque.hpp vdot:** the 1.0 x z / w form (0x107104..0x107110), mode-1-neutral. Exact-base Snow Jam is **178 of 187**: rail-slide, hl-rail-10, rail-fence-b, uber-ara1, score-rail-uber and bf-score-rail-uber now pass.
+>   - Left: rail-slide-b (1171), uber-rail-6 (1159), the tech-oob-* gates and ai-idle (2539), carve / carve-bag (616), handplant-flip (857) and bf-score-uber-R1.
+>   - tech-oob 2539 (sent to the physics agent): the body query reads the sphere centres (C8880887) before this tick's pose compose, while the PS2 composes first (0x31038C -> C8880884, then the body query at 0x329EC0). A stationary rider would hide this in mode 1.
+>   - Mode-1 suite: core-batch19 is running.
+> - **core-batch18** (local/ps2-float/core-batch18, default build of the tree at 12:1x: roller qdot form, gated duration, the physics agent's in-tree edits): full mode-1 suite 534 of 534.
+> - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad anchor2.sh, then the bulk) and the core-batch17 suite.
 
 > **Deployed 2026-10-07 (coordinator): core-batch14.** web/runtime core.wasm `0dd7ac38…` (core.js `2fe50ccb…`, unchanged) from local/ps2-float/core-batch14 (534/534). On top of core-batch11: the handplant predictor step (constant 1/60, 0x13940C / 0x1394F4) and root rotation sign (0x311B48), the physics agent's r1-0203 reset fix (12FE98, +0x360 latch), and batch 12 plus the extra-lean speed dot (mode-1-neutral).
 

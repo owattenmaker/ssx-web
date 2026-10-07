@@ -184,7 +184,8 @@ inline bool preferGroundCandidate(bool haveCurrent,bool currentAligned,float cur
     return metric<currentMetric||(metric==currentMetric&&resource<currentResource);
 }
 struct CoarseContact {bool hit=false;float fraction=0;Vector point{},normal{};unsigned cellU=0,cellV=0,half=0;};
-struct ContactCache {bool valid=false;unsigned resource=0,cellU=0,cellV=0,half=0;};
+// The rider's contact caches (+0x864 / +0x868: 32B6E0 words patch, cell u / v, half, detail mode +0xC).
+struct ContactCache {bool valid=false;unsigned resource=0,cellU=0,cellV=0,half=0;bool detailed=false;};
 // Rider query scope (rider+0x860): 120E50 rebuilds it with 332DB8 from the rider query bounds
 // rider+0x400/+0x410 (11E150), and the rider's world queries (3342D0: landing probe 13A7B0, ...)
 // only visit its lists. 332DB8 keeps a terrain patch (node+0x24 list, box patch+0x158/+0x164)

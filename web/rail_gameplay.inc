@@ -151,6 +151,14 @@ static void clear_rails(){browserRailActive=railOwned=railPostPending=false;rail
 static void rail_motion_exit(){railTolerance={std::bit_cast<float>(0xbe800000u),std::bit_cast<float>(0x3d088889u),1.f};}
 static void rail_reset_leave(){if(browserRailActive&&railOwned&&physicsState.controlState==7){auto view=rail_view();originalRailControlLeave(view);rail_apply(view);}}
 // 0x132048, control 7's exit (111578 from 11FEC8): +0x240 = 0, +0x23C = 1/15. Nothing else.
+// 11D660 (a reset placement) clears the rail triplets with the other ground-control triplets (0x11DB2C..0x11DB6C): +0x22C / +0x238
+// to zero, the +0x25C tolerance to 1.0 with rate 0 (f20 = 1.0 from 0x11D9E8; fuzz r15-0070 1817).
+static void rail_placement_clear(){
+ railSteer={};
+ railBalance={};
+ railTolerance={1.f,0.f,1.f};
+ graph.railBalance=0;
+}
 RIDER_LOCAL static uint32_t railControlExits=0; // QA: rail_control_exit calls (rail_debug_info)
 static void rail_control_exit(){
  auto view=rail_view();

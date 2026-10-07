@@ -7,6 +7,7 @@
 //   offset: lateral metres from the guide line (+ = left of the direction of travel),
 //   look:   lookahead metres along the guide,
 //   tuck:   left stick up on the ground (the crouch that raises the speed limit 11B3F8 reads),
+//   brake:  left stick down on the ground instead (slows for a turn),
 //   boost:  'off' | 'on' (Square on the ground) | 'auto' (Square while the meter is above 2/3, or Super Uber holds it at 1),
 //   jump:   true: Cross held (the prewind); the next macro without jump releases it: the ollie (control 5 air, the D-pad tricks),
 //   pre:    with jump: the D-pad direction held in the prewind ('DPadLeft' ...),
@@ -22,7 +23,7 @@ import { nearestIndex, pointAhead } from './guide.mjs';
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
-export const DEFAULT_MACRO = Object.freeze({ offset: 0, look: 12, tuck: true, boost: 'auto', jump: false, pre: null, program: null, cancel: false });
+export const DEFAULT_MACRO = Object.freeze({ offset: 0, look: 12, tuck: true, brake: false, boost: 'auto', jump: false, pre: null, program: null, cancel: false });
 
 export function newPolicyMemory() {
   return { index: 0, last: null, air: 0, heading: null, armed: null, active: null };
@@ -81,6 +82,8 @@ export function policyFrame(guide, macro, mem, state, boost, gain = 3) {
       f.sticks[0] = Math.max(0, Math.min(255, Math.round(128 - steer * 127.5)));
     }
     if (macro.tuck && !macro.jump) f.sticks[1] = 0;
+    // brake: left stick down (CruiseBrake), instead of the tuck
+    if (macro.brake && !macro.jump) f.sticks[1] = 255;
     const meter = boost[0];
     const tier = boost[3];
     const on = macro.boost === 'on' || (macro.boost === 'auto' && (meter > 0.6667 || tier >= 10));

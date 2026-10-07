@@ -373,7 +373,7 @@ static void mission_rider_teleport(const std::array<float,16>& mat){
  if(browserResetActive)clear_reset();rail_reset_leave();detach_rail_for_crash();crash.active=false;browserCrashActive=false;
  clear_reset_contacts();reset_body_queries();
  auto value=originalResetPlacement(P,D,0.f,[](auto end,auto start,float preferred){return queryOriginalWorldSegment(*cameraTerrain,browserBodies.get(),end,start,0,preferred,true);});
- reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,physicsState.reverseStance);crash.actor.detached=false;painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true; /*+0x460 = the placed position (web/animation_bridge.cpp update_trail)*/
+ reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,physicsState.reverseStance);board_press_placement_clear();rail_placement_clear();crash.actor.detached=false; /*11D660 also clears the press and rail triplets*/painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true; /*+0x460 = the placed position (web/animation_bridge.cpp update_trail)*/
  heldAirMode=passiveMode=false;prewind={};air={};landingAirExitBaked=false;browserSoftActive=browserSoftFrame=false;grab={};
  gs=physicsState;legWeight=1;poseContact=initialPoseContact;currentPivot={};completedMain=false;completedMainSemantic=-1;cachedCrashWorld.clear();idleSeconds=0;upperRequest358=0;
  // 1234D0 -> 11D660(rider, P, D, semantic 5, clearance 0) before 11FEC8(rider, 6): the placement plays 5 (RNORM_FWD_CYC) with one

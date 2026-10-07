@@ -303,6 +303,7 @@ static void rail_control_exit(); // web/rail_gameplay.inc: control 7's exit 1320
 static void board_press_crash_exit();static void board_press_clear_style(); // web/boardpress_gameplay.inc
 static void board_press_control_exit(int next); // web/boardpress_gameplay.inc
 static void board_press_placement_clear(); // web/boardpress_gameplay.inc
+static void rail_placement_clear(); // web/rail_gameplay.inc
 static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool attacked=false){
  if(crash.active)return;clear_start();
  const bool crashFromAirControl=gs.controlState==5&&!heldAirMode&&!passiveMode&&!::grounded;
@@ -683,7 +684,7 @@ static void reset_place_at(const terrain_original::Vector& point,const terrain_o
   if(!cameraTerrain||!browserBodies)throw std::runtime_error("Reset placement requires original world collision");
   clear_reset_contacts();reset_body_queries();
   auto value=originalResetPlacement(point,direction,clearance,[](auto end,auto start,float preferred){return queryOriginalWorldSegment(*cameraTerrain,browserBodies.get(),end,start,0,preferred,true);});
-  reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,resetStance);board_press_placement_clear();crash.actor.detached=false;painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true;
+  reset_trail();reset_snow(false);reset_impact_fx(false);reset_boost_fx();weather_rider_fx_reset();apply_reset_placement(value,resetStance);board_press_placement_clear();rail_placement_clear();crash.actor.detached=false;painterPlacement=physicsState.position;painterPlacementTrail=browserTrailContact;painterPlacementPending=true;
   graph.sequences.clear();graph.sampledLocal.reset();graph.requestedSemantics.fill(438);graph.nextRate=1; /*311A50: animator +0x1C = 1*/graph.defaultMirror=resetStance;graph.defaultRoot={};
   auto sc=originalSinCos((resetStance?-3.1415927410125732f:-0.f)*.5f);graph.defaultRoot.rotation={0.f*sc[0],0.f*sc[0],sc[0],sc[1]};
   gs=physicsState;legWeight=1;poseContact=initialPoseContact;currentPivot={};completedMain=false;completedMainSemantic=-1;resetStaleWorld=cachedCrashWorld;cachedCrashWorld.clear();idleSeconds=0;upperRequest358=0; /*11D660 zeroes +0x35C (115D48 idle clock) and +0x358 (pending 10E028 reaction)*/

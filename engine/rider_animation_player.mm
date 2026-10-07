@@ -18,7 +18,18 @@ OriginalRiderAnimation::OriginalRiderAnimation(std::shared_ptr<const AnimationRi
 }
 float OriginalRiderAnimation::duration(uint32_t id)const {
     auto clip=std::find_if(rig->clips.begin(),rig->clips.end(),[&](const auto&c){return c.id==id;});
-    if(clip==rig->clips.end())throw std::runtime_error("Missing original cycle asset");return clip->duration;
+    if(clip==rig->clips.end())throw std::runtime_error("Missing original cycle asset");
+#if SSX_PS2_EXACT_FPU
+    // 0x313CA8..0x313CAC: a played clip's duration is (header frames - 1) x 1/30 (gp-0x3224) with the frame count as fs, made again
+    // at every play. The asset holds the mode-1 product (each clip a chopped k x 1/30); on the console model the product is made
+    // again from k. Mode 1 keeps the asset value: the recomputed product moved a mode-1 gate (ai-idle, Psymon at 2207), cause open.
+    if(ssx::software_float::exactArithmetic){
+        OriginalRounding rounding;
+        const float frames=float(std::lround(clip->duration*30.0));
+        return terrain_original::mul(frames,std::bit_cast<float>(0x3d088889u));
+    }
+#endif
+    return clip->duration;
 }
 float OriginalRiderAnimation::semanticDuration(int semantic)const{
     auto definition=rig->stateDefinitions.find(semantic);if(definition==rig->stateDefinitions.end())throw std::runtime_error("Missing animation duration semantic");

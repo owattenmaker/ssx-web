@@ -398,8 +398,10 @@ struct BrowserLoopSpline {const SetPieceLoopSeed* seed=nullptr;bool ready=false;
 RIDER_LOCAL static std::vector<BrowserLoopSpline> browserLoopSplines;
 // A resident looping Spline whose own slot-1 program builds it again (a slot-1 seed of the same resource, R&B
 // ravensplineanimb / program 66; tools/export_location_set_pieces.py): its entity is section-streamed like a launched
-// piece (relocated by its bounds 0x3568B0, destroyed on a leave, relaunched on the next enter). Loops without one
-// (the blimps, whose leave runs an empty slot-3 program) keep their static section cell.
+// piece (relocated by its bounds 0x3568B0, destroyed on a leave, relaunched on the next enter). A loop with a slot-3
+// program keeps its entity through the leave (0x30A460 runs slot 3 instead of destroying), but that program may destroy it:
+// the Ruthless Ridge (CRA3) blimp's program 60 runs builtin2 (mode 1) on the blimp and its two ad children (fuzz r4-0236 3480), and the
+// next enter runs slot-1 program 59 (builtin3 LiveComp, builtin19 Spline: two draws at 3953). See stage_destroy_entity.
 static const BrowserSplinePieceSeed* loop_relaunch_seed(uint32_t resource){
  if(!setPieceTables)return nullptr;
  for(const auto& s:setPieceTables->pieces)if(s.resource==resource&&s.owner==resource&&s.slot==1)return &s;
@@ -725,9 +727,9 @@ void browser_spline_piece_released(uint32_t resource){
   splineOwnersFired.erase(std::remove(splineOwnersFired.begin(),splineOwnersFired.end(),seed->owner*8+seed->slot),splineOwnersFired.end());
  }else ++k;
 }
-static void section_stop_piece(uint32_t resource,bool multiSplineRelease){
- stage_world_section_leave(resource); // 0x34FD90: the entity's effects / LiveComp go with it
- browser_dynamic_rails_unbind(resource);browser_location_teeter_section(resource,false); // its RailModifiers / the location teeter (web/rail_dynamic.inc)
+// The set-piece side of an entity destructor (vt+0x8 mode 3: a section leave's 0x34FD90, or a script's builtin2 / builtin29 through
+// web/stage_world.inc stage_destroy_entity): its Spline / Position piece or resident loop, the attached LiveComp and its children.
+static void set_piece_entity_destroyed(uint32_t resource){
  const BrowserSplinePieceSeed* moved=nullptr; // the destroyed entity carried a Spline / Position modifier
  for(size_t k=0;k<browserSplinePieces.size();)if(browserSplinePieces[k].seed->resource==resource){
   const auto* seed=browserSplinePieces[k].seed;moved=seed;browserSplinePieces.erase(browserSplinePieces.begin()+long(k));spline_piece_collision_stop(seed->resource);
@@ -740,5 +742,10 @@ static void section_stop_piece(uint32_t resource,bool multiSplineRelease){
   attached_destroy(resource);auto f=[](uint32_t b){return std::bit_cast<float>(b);};
   sectionActivation.relocate(resource,{f(moved->low[0]),f(moved->low[1]),f(moved->low[2])},{f(moved->high[0]),f(moved->high[1]),f(moved->high[2])});
  }
+}
+static void section_stop_piece(uint32_t resource,bool multiSplineRelease){
+ stage_world_section_leave(resource); // 0x34FD90: the entity's effects / LiveComp go with it
+ browser_dynamic_rails_unbind(resource);browser_location_teeter_section(resource,false); // its RailModifiers / the location teeter (web/rail_dynamic.inc)
+ set_piece_entity_destroyed(resource);
  if(multiSplineRelease)for(auto& lift:browserChairlifts)if(lift.resource==resource&&lift.active&&lift.seed->activation==1){browser_release_section_lift(resource);shared_world_log({7u,resource});}
 }
