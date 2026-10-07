@@ -564,7 +564,7 @@ static float* camera_for_head(Vec3 head){
  for(;cameraSetTargets>0;--cameraSetTargets){original_camera::Rounding rounding;for(auto& node:chase.director.nodes)original_camera::setTarget(node.algorithm,input);}
  pendingCameraView=0;
  if(pendingCameraFinish){originalDirectedCameraFinish(chase,input);pendingCameraFinish=false;}
- if(eventCameraSeedArmed&&uint32_t(motionTick)>browserEventCameraAnchorTick){ /*motionTick counts this tick: the anchor words are the state after anchor-tick steps*/eventCameraSeedArmed=false;std::array<uint8_t,271> all;all.fill(1);pendingCameraSeed={*browserEventCamera,all};apply_camera_seed();
+ if(eventCameraSeedArmed&&uint32_t(motionTick)>browser_event_camera_anchor_tick()){ /*motionTick counts this tick: the anchor words are the state after anchor-tick steps*/eventCameraSeedArmed=false;std::array<uint8_t,271> all;all.fill(1);pendingCameraSeed={*browser_event_camera(),all};apply_camera_seed();
   // Rolling start (anchor 0 = the ready savestate): the Continue re-places every rider before race tick 0 (rider manager
   // 0x1297C8 -> 11D390: 112180 -> 11D660 and 11DE60 -> 11D660; 11D390 runs while rider+0x880 == 7, as in the ready states).
   // Each 11D660 tail (the human: rider+0x870 < 2) is director vt+0x24 15CCF0 -> 166F28 -> DEFAULT_3 set-target 0x176FE0, so

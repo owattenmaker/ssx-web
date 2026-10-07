@@ -24,7 +24,21 @@ const trace = args.includes('--trace') ? args[args.indexOf('--trace') + 1].split
 const limit = args.includes('--ticks') ? Number(args[args.indexOf('--ticks') + 1]) : Infinity;
 if (!capturePath) throw new Error('capture path required');
 const root = new URL('public/assets/', import.meta.url);
-const read = (p) => fs.readFileSync(new URL(p, root));
+// PS2_ARITH=exact-base: the exact anchor's own seeds where they exist (local/assets/native-exact, as compare-ps2-capture.mjs): the
+// human's initial / start and the computer riders' npc-riders.json (tools/export_npc_riders.py --exact).
+const exactAssets = new URL('../local/assets/native-exact/', import.meta.url);
+const exactAssetPath = (p) => {
+  if (process.env.PS2_ARITH !== 'exact-base') {
+    return null;
+  }
+  const match = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start|npc-riders)\.json$/.exec(p) || []).slice(1);
+  if (match.length !== 2) {
+    return null;
+  }
+  const file = new URL(`${match[0]}/${match[1]}.json`, exactAssets);
+  return fs.existsSync(file) ? file : null;
+};
+const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const text = (p) => read(p).toString('utf8');
 const human = await createCore();
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
@@ -36,6 +50,10 @@ if (process.env.PS2_ARITH === 'exact' && human._ps2_arith_exact) {
 // mode-1 history, so the setup runs on the console model too.
 if (process.env.PS2_ARITH === 'exact-base' && !human._ps2_arith_exact) {
   throw new Error('PS2_ARITH=exact-base needs a core with ps2_arith_exact');
+}
+// ... and the exact glide seeds compiled into the core (as compare-ps2-capture.mjs).
+if (process.env.PS2_ARITH === 'exact-base' && human._ps2_exact_seeds) {
+  human._ps2_exact_seeds(1);
 }
 process.on('uncaughtException', (e) => { console.error(e instanceof Error ? e.stack : (human.getExceptionMessage ? human.getExceptionMessage(e) : e)); if (!(e instanceof Error) && e?.stack) console.error(e.stack); console.error('at record', globalThis.__compareTick, 'stage', globalThis.__compareStage); process.exit(1); });
 const put = (core, bytes) => { const p = core._malloc(bytes.length); core.HEAPU8.set(bytes, p); return p; };

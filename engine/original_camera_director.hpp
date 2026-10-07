@@ -230,9 +230,10 @@ inline void blendLens(const std::vector<OriginalCameraDirectorNode>& nodes,float
 inline OriginalCameraOutput composite(OriginalDirectedCameraState& state,const OriginalCameraInput& in){
     OriginalCameraDirectorState& d=state.director;OriginalCameraCompositorState& o=state.compositor;
     const OriginalChaseAlgorithmState& head=d.nodes.front().algorithm;
-    if(singleAlgorithm(d)){o.eye=head.outputEye;o.lookAt=head.lookAt;}
-    else blendEyeLookAt(d.nodes,o.eye,o.lookAt);
-    o.lookAt[3]=1;o.eye[3]=1;
+    // A single node (0x15E72C..0x15E76C): the look-at keeps the algorithm's w (on the console model its blends can leave
+    // 0x3F7FFFFF; cam-boost-slow 463), the eye's w is 1. The running means force both w lanes to 1 (0x15E8E4).
+    if(singleAlgorithm(d)){o.eye=head.outputEye;o.lookAt=head.lookAt;o.eye[3]=1;}
+    else {blendEyeLookAt(d.nodes,o.eye,o.lookAt);o.lookAt[3]=1;o.eye[3]=1;}
     float fov,near,far;blendLens(d.nodes,fov,near,far);
     OriginalCameraOutput out=compositeCamera(o,in,fov,near,far);
     out.algorithmEye=head.outputEye;out.algorithmLookAt=head.lookAt;out.resetFired=head.resetPending!=0;

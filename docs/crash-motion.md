@@ -346,6 +346,14 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
   - 11D660 (the placement) zeroes every ground-control triplet +0x1F0..+0x2DC, including board press +0x268 / +0x274
     (0x11DB70..0x11DB84). The port kept the press rates; board_press_placement_clear now clears them.
   - Verified: r10-0153 fields and bones exact to the end (899 records).
+- **Handplant to passive air to a landing** (r13-0191, r5-0194, r2-0299; core45): the handplant's per-tick flags (hpTick / hpAirTick,
+  read by the animation tick as "handplant-owned") are cleared at the top of step_rider. A tick that never reaches the step (12F7AC: an
+  attack held in passive air) used to keep the exit tick's flags and skip 139A20's orientation tail 0x139A64.
+- **Upper reactions on a rail** (r7-0036, r13-0175; core45):
+  - 106848's air-to-rail attach calls 10E910 (0x106CB8), whose human tail 10EA28..10EAA4 posts the 10E028 reaction (score_upper_reaction).
+  - 131D30 calls 115B58 at 0x131E18 (before 115D48 and its rotation 132060), in the controller phase.
+- **Soft re-entry on a departure tick** (r1-0204; core46): 13F178 runs 13F488 / 105D98 after the 13F194 departure, while the motion
+  is still 0 (11FE78(1) comes at 0x13F2CC). A soft reaction there enters control 3, also right after 12E778 ended the previous soft clip.
 
 ## Exact start seeds (2026-10-05, physics-jank agent)
 

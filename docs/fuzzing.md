@@ -215,6 +215,9 @@ callback checks, online and native paths) or needs situations the seeds never re
     contact).
   - The DSS2 style-mile countdown seeds' own six-rider run has Moby off around 2530-2632 (press-ice-seed-six). These seeds
     have only human gates.
+- **Stopping point (2026-10-07):** mode-1 batch 9 (28 variants) found no new divergence; its three hits are the known seed limits
+  (kick-doubt's finish, DSS2 Moby 2632; now in diff.py KNOWN_SIX_LIMITS). The fuzz rounds' coverage keys have flattened (+102 in
+  r16). Both stop conditions of the brief are met; further batches only after core fixes land (recheck.py first).
 - **Rechecks:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against each seed's own
   six-rider gate limit, diff.py six_limit). Results are in recheck-<core>.json.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries

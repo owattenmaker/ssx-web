@@ -143,6 +143,17 @@ void browser_teeter_attach_force(const ssx::OriginalRailQueryResult& hit,const s
   return;
  }}
 }
+// 0x13AF28's per-tick push on the rail's entity (0x13B534: vtable+0x15C 0x342538 at the hit point with the rail gravity).
+void browser_teeter_motion_force(const ssx::OriginalRailQueryResult& hit,const ssx::RailVector& force){
+ if(!hit.record)return;
+ for(unsigned ti=0;ti<teeters.size();ti++){auto& t=teeters[ti];for(auto& [m,record]:t.rails)if(record==hit.record){
+  const ssx::RollerQuad f{force[0],force[1],force[2],0.f};
+  auto b=[](float x){return std::bit_cast<uint32_t>(x);};
+  shared_world_log({3u,ti,uint32_t(m.node),b(hit.point[0]),b(hit.point[1]),b(hit.point[2]),b(f[0]),b(f[1]),b(f[2]),b(f[3])});
+  if(ssx::originalAnimTeeterApplyForce(t.entity,m.node,{hit.point[0],hit.point[1],hit.point[2],1.f},f))++teeterForces;
+  return;
+ }}
+}
 // The same log shoved by another rider (web/shared_world.inc replay).
 void browser_teeter_apply_force(unsigned teeter,unsigned node,const std::array<float,3>& point,const ssx::RollerQuad& force){
  if(teeter>=teeters.size())return;

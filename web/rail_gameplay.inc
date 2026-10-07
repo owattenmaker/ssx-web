@@ -19,6 +19,7 @@ static float rail_held_balance(float steering); // control 2 RailBalance (web/in
 RIDER_LOCAL static unsigned railExitPasses=0,railExitHits=0,railExitIncomplete=0,railExitReactions=0;
 RIDER_LOCAL static OriginalRailUberState railUber;RIDER_LOCAL static int railShoulderMask=0;RIDER_LOCAL static unsigned railUberEntries=0,railUberCompletions=0,railUberUnavailable=0;
 RIDER_LOCAL static OriginalRailMotionState railMotion;RIDER_LOCAL static OriginalRailControlState railControl;
+static void score_upper_reaction(int32_t ubersBefore,int32_t combosBefore,int32_t totalBefore); // web/score_gameplay.inc (10E910 tail)
 RIDER_LOCAL static GroundControlValue railSteer,railBalance,railTolerance,initialRailSteer,initialRailBalance,initialRailTolerance;
 RIDER_LOCAL static unsigned railQueryBone=22;RIDER_LOCAL static RailVector railQueryOffset{};
 static void setup_rail_context(const json&config){const auto&c=config.at("original_rail_context");railQueryBone=c.at("board_root_bone");if(railQueryBone!=22)throw std::runtime_error("Unverified rail query bone");railQueryOffset=c.at("offset9d0").get<RailVector>();auto triplet=[](const json&v){return GroundControlValue{v.at(0),v.at(1),v.at(2)};};initialRailSteer=triplet(c.at("steer"));initialRailBalance=triplet(c.at("balance"));initialRailTolerance=triplet(c.at("tolerance"));railSteer=initialRailSteer;railBalance=initialRailBalance;railTolerance=initialRailTolerance;}
@@ -107,7 +108,7 @@ static bool rail_entity_velocity(const OriginalRailQueryResult& hit,RailVector& 
  return true;
 }
 static OriginalRailAccess rail_access(){
- OriginalRailAccess a;a.exitContacts=rail_exit_contacts;a.query=browserRailQuery;a.attachForce=browser_teeter_attach_force; /*log teeters (rail_bridge.cpp)*/a.entityVelocity=rail_entity_velocity; /*13B094: a moving entity rail's +0x3D0*/a.channel2Class=[](){return graph.currentClass(2);};a.channel2SequenceFlag=[](unsigned bit){return bool(graph.flags(2)&(uint64_t(1)<<bit));};a.currentSemantic=[](){return graph.requestedSemantics[2];};
+ OriginalRailAccess a;a.exitContacts=rail_exit_contacts;a.query=browserRailQuery;a.attachForce=browser_teeter_attach_force; /*log teeters (rail_bridge.cpp)*/a.motionForce=browser_teeter_motion_force; /*0x13B534 (rail_bridge.cpp)*/a.entityVelocity=rail_entity_velocity; /*13B094: a moving entity rail's +0x3D0*/a.channel2Class=[](){return graph.currentClass(2);};a.channel2SequenceFlag=[](unsigned bit){return bool(graph.flags(2)&(uint64_t(1)<<bit));};a.currentSemantic=[](){return graph.requestedSemantics[2];};
  a.playAnimation=[](int semantic,float,int){if(!graph.enter(semantic))throw std::runtime_error("Missing authored rail animation");};
  // 0x311B48 rotates the sequence roots by -angle: sincos(-angle*0.5) scaling 0x4FF160 = (0,0,1,0), then 0x311BF0.
  a.rotateAnimation=[](float angle){terrain_original::Rounding rounding;auto sc=originalSinCos(terrain_original::mul(-angle,.5f));graph.offsetSequenceRoots({{}, {terrain_original::mul(sc[0],0.f),terrain_original::mul(sc[0],0.f),sc[0],sc[1]}});};
@@ -117,7 +118,9 @@ static OriginalRailAccess rail_access(){
  // Grind-specific audiovisual observers remain unported.
  a.railEntryScore=[](bool stance,int style,int flag){++railObservers;return rail_score_entry(stance,style,flag).meterDelta;};a.awardScore=[](float value){++railObservers;award_rail_meter(value);};a.airborneRailEvent=[](int style,int flag,float speed,const OriginalRailQueryResult& hit){++railObservers;
   {auto normal=hit.tangent;if(terrain_original::dot(physicsState.velocity,hit.tangent)<0)for(auto& x:normal)x=-x;record_snow_crash(hit.point,normal,speed,hit.surface);} //106CB8: 10E910 -> 111AA0(rail point, tangent toward v, rail speed f23, rail surface)
-  auto award=rail_score_entry(!physicsState.state320Equals324,style,flag);audio_event(AE_LANDING,award.meterDelta,audioImpact770,1);audio_event(AE_RUMBLE_IMPACT,speed*0.5f); /*106CB8 -> 10E910 -> 2948D0; 10EAD8 rumble*/originalLandingUberProgression(boostState,0,award.committedUbers);award_rail_meter(award.meterDelta);if(award.meterDelta>0)boostState.modifier=0;};a.recordRailSurface=[](int value){railSurface=value;};
+  // 10E910's reaction tail reads the score object around this commit (fuzz r7-0036 898: an air-to-rail attach posts kind 1)
+  const int32_t ubersBefore=scoreObject.i(0x114),combosBefore=scoreObject.i(0x134),totalBefore=scoreObject.i(0x198);
+  auto award=rail_score_entry(!physicsState.state320Equals324,style,flag);score_upper_reaction(ubersBefore,combosBefore,totalBefore);audio_event(AE_LANDING,award.meterDelta,audioImpact770,1);audio_event(AE_RUMBLE_IMPACT,speed*0.5f); /*106CB8 -> 10E910 -> 2948D0; 10EAD8 rumble*/originalLandingUberProgression(boostState,0,award.committedUbers);award_rail_meter(award.meterDelta);if(award.meterDelta>0)boostState.modifier=0;};a.recordRailSurface=[](int value){railSurface=value;};
  a.balanceStat=[](){return landingProfile.landingStat;};a.railSpinScore=[](int style,float spin){++railObservers;return score_rail_rotation(style,spin);};
  a.recovery=[](bool requested){if(requested)browserCrashResetReason=1;return requested;};a.upperAction=[](bool held,bool pressed){
   if(!originalCrouchRequest(prewind.jumpGate,held,pressed))return false;
@@ -137,7 +140,10 @@ static OriginalRailAccess rail_access(){
   begin_rail_uber_score(entry.tier,entry.scoreStyle);r.style=entry.newStyle;railUber.phase=0;
   graph.fade(1,entry.channelFade);graph.fade(0,entry.channelFade);++railUberEntries;return true;
  };
- a.upperReactions=[](){railUpperReactions=true;}; /*0x115B58/0x115D48 then run in animation_tick*/a.restoreStance=[](){restore_stance(physicsState.prewindStyle);};a.leaveEffects=[](){++railObservers;};return a;
+ // 0x131E18: 115B58 plays the pending 10E028 reaction here, inside 131D30 and before its rotation 132060 enters a rail spin (fuzz
+ // r7-0036 906: the 898 air-to-rail attach's kind-1 request plays 315 on the rail; r13-0175 2411: the air entry 69 (class 5) still
+ // holds it, then 54 enters). Its 3128E8 variant draw is controller-phase. 0x115D48 runs in animation_tick (railUpperReactions).
+ a.upperReactions=[](){railUpperReactions=true;ControllerDraws controllerDraws;upper_request_play();};a.restoreStance=[](){restore_stance(physicsState.prewindStyle);};a.leaveEffects=[](){++railObservers;};return a;
 }
 static void clear_rails(){browserRailActive=railOwned=railPostPending=false;railMotion={};railControl={};railUber={};railShoulderMask=0;railUberEntries=railUberCompletions=railUberUnavailable=0;railSteer=initialRailSteer;railBalance=initialRailBalance;railTolerance=initialRailTolerance;railAttachments=railExits=railTicks=railObservers=0;railExitPasses=railExitHits=railExitIncomplete=railExitReactions=0;railSurface=-1;railHeldJump=railPreviousJump=railReleaseFrame=false;railFlipInput=railRotationInput=railBalanceInput=0;railJumps=railRotations=0;graph.railBalance=0;}
 // Crash motion replaces rail ownership without clearing accumulated rail stats.

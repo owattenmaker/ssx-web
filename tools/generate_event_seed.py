@@ -100,15 +100,7 @@ def course_tail(code,event,lines,constants):
  # Live DEFAULT_3 camera (0x390 bytes) and the outer compositor words (original_camera_words.hpp compositorOffsets)
  # at the countdown anchor (web/core.cpp camera_seed_words layout). The anchor is game tick 18:
  # the browser applies these words before the camera step that follows its 18th event tick (docs/CAMERA_RECOVERY.md).
- import zipfile
- from ps2_capture import discover,GP
- memory=zipfile.ZipFile(location_state(code,'countdown')).read('eeMemory.bin')
- if hashlib.sha256(memory).hexdigest()!=event['provenance']['ee_sha256']:raise ValueError('Camera seed state differs from the event seed state')
- u=lambda a:struct.unpack_from('<I',memory,a&0x1FFFFFF)[0];found=discover(memory);cam,outer=found['camera'],found['outer']
- anchor=u(u(u(u(GP-0x848)+0x84)+0x0C)+8)
- offsets=[int(x,16) for x in re.search(r'compositorOffsets\{([^}]*)\}',(ROOT/'engine/original_camera_words.hpp').read_text()).group(1).split(',')]
- words=[u(cam+o) for o in range(0,0x390,4)]+[u(outer+o) for o in offsets]
- header+='inline constexpr std::array<uint32_t,%d> camera='%(len(words))+'{'+','.join('0x%08xu'%w for w in words)+'};inline constexpr uint32_t cameraAnchorTick=%du;\n'%anchor
+ header+=camera_seed_line(location_state(code,'countdown'),event['provenance']['ee_sha256'])
  return lines,header+constants,audit['source_sha256']
 
 def streamed_scripted(course_resources):
@@ -173,6 +165,19 @@ def generate(output):
   start+=[f' if(l=="{code}")return browser_start_{code}::{name}();' for code in seeds]
   start.append(' throw std::runtime_error("No event start seed for this course");}')
  Path(output).write_text('\n'.join(start)+'\n')
+def camera_seed_line(state,ee_sha256):
+ """The DEFAULT_3 camera block (0x390 bytes) and the outer compositor words (original_camera_words.hpp compositorOffsets) of a
+ countdown anchor state (web/core.cpp camera_seed_words layout), as the camera / cameraAnchorTick constants."""
+ import zipfile
+ from ps2_capture import discover,GP
+ memory=zipfile.ZipFile(state).read('eeMemory.bin')
+ if hashlib.sha256(memory).hexdigest()!=ee_sha256:raise ValueError('Camera seed state differs from the event seed state')
+ u=lambda a:struct.unpack_from('<I',memory,a&0x1FFFFFF)[0];found=discover(memory);cam,outer=found['camera'],found['outer']
+ anchor=u(u(u(u(GP-0x848)+0x84)+0x0C)+8)
+ offsets=[int(x,16) for x in re.search(r'compositorOffsets\{([^}]*)\}',(ROOT/'engine/original_camera_words.hpp').read_text()).group(1).split(',')]
+ words=[u(cam+o) for o in range(0,0x390,4)]+[u(outer+o) for o in offsets]
+ return 'inline constexpr std::array<uint32_t,%d> camera='%(len(words))+'{'+','.join('0x%08xu'%w for w in words)+'};inline constexpr uint32_t cameraAnchorTick=%du;\n'%anchor
+
 def generate_exact(output,native_root=ROOT/'local/assets/native-exact'):
  """The console-arithmetic start seeds (SSX_PS2_EXACT_FPU builds with exactArithmetic on): the same ground profile, ground state and
  participant functions, from countdown exports of the exact-derived anchors (tools/export_exact_event_starts.py ->
@@ -182,9 +187,18 @@ def generate_exact(output,native_root=ROOT/'local/assets/native-exact'):
   '#include "ground_motion.hpp"','#include "race_session.hpp"','#include "event_instance_seed.hpp"','#include <bit>','#include <stdexcept>','#include <string_view>']
  for code in codes:
   event=json.loads((Path(native_root)/code/'event-start.json').read_text())
-  start+=[f'namespace browser_start_exact_{code} {{']+start_lines(event)+['}']
+  # The camera seed of the same exact anchor (the mode-1 one is event_instance_seed.hpp's browser_event_<code>::camera).
+  camera=camera_seed_line(ROOT/event['provenance']['snapshot'],event['provenance']['ee_sha256']).rstrip('\n')
+  start+=[f'namespace browser_start_exact_{code} {{']+start_lines(event)+[camera,'}']
  if 'ARA1' in codes:start.append('#define SSX_EXACT_SNOW_JAM_SEED 1 // browser_start_exact_ARA1 (web/event_start_select.hpp)')
  start.append('inline bool browserEventExactSeeded(){const std::string_view l=browserEventLocation;return '+('||'.join(f'l=="{c}"' for c in codes) or 'false')+';}')
+ start.append('#define SSX_EXACT_EVENT_CAMERA_SEEDS 1 // browserEventCameraExact (web/event_start_select.hpp)')
+ start.append('inline const std::array<uint32_t,271>* browserEventCameraExact(){const std::string_view l=browserEventLocation;')
+ start+=[f' if(l=="{code}")return &browser_start_exact_{code}::camera;' for code in codes]
+ start.append(' return nullptr;}')
+ start.append('inline uint32_t browserEventCameraAnchorTickExact(){const std::string_view l=browserEventLocation;')
+ start+=[f' if(l=="{code}")return browser_start_exact_{code}::cameraAnchorTick;' for code in codes]
+ start.append(' return 0;}')
  for kind,name in [('ssx::OriginalGroundProfile','browserEventGroundProfile'),('ssx::OriginalGroundState','browserEventGroundState'),('ssx::OriginalRaceParticipant','browserEventParticipant')]:
   start.append(f'inline {kind} {name}Exact(){{const std::string_view l=browserEventLocation;')
   start+=[f' if(l=="{code}")return browser_start_exact_{code}::{name}();' for code in codes]

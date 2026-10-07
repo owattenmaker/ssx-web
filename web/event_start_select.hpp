@@ -46,6 +46,26 @@ inline ssx::OriginalRaceParticipant browser_event_participant() {
     return browserEventParticipant();
 }
 
+// The countdown anchor's camera words (web/core.cpp's event camera seed): the exact anchor's own block where the exact seed is in
+// use and the generator wrote one (SSX_EXACT_EVENT_CAMERA_SEEDS), the mode-1 block (event_instance_seed.hpp) otherwise.
+inline const std::array<uint32_t, 271>* browser_event_camera() {
+#if SSX_EXACT_EVENT_SEEDS && SSX_EXACT_EVENT_CAMERA_SEEDS
+    if (browser_event_exact_seed() && browserEventCameraExact()) {
+        return browserEventCameraExact();
+    }
+#endif
+    return browserEventCamera;
+}
+
+inline uint32_t browser_event_camera_anchor_tick() {
+#if SSX_EXACT_EVENT_SEEDS && SSX_EXACT_EVENT_CAMERA_SEEDS
+    if (browser_event_exact_seed() && browserEventCameraExact()) {
+        return browserEventCameraAnchorTickExact();
+    }
+#endif
+    return browserEventCameraAnchorTick;
+}
+
 // Snow Jam's human seed (the reference the per-course character seeds are mapped from, web/animation_bridge.cpp).
 inline ssx::OriginalGroundState browser_event_snow_jam_ground_state() {
 #if SSX_EXACT_EVENT_SEEDS && SSX_EXACT_SNOW_JAM_SEED

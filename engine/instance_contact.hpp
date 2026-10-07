@@ -111,6 +111,7 @@ struct OriginalInstanceContactPhaseHost {
     std::function<uint32_t(const OriginalInstanceContactPacket&)> instanceFlags; // re-read after 1057B8 (optional)
     std::function<void(const OriginalInstanceContactPacket&)> audio;          // 0x296088
     std::function<void()> finish;                                             // 0x16D320, 32F708(query,2)
+    std::function<ContactQuad()> velocity;                                    // rider+0x1E0 after 106F78 (optional)
 };
 struct OriginalInstanceContactPhaseResult {
     bool ran=false,contact=false,projected=false,stored=false,responded=false,audio=false;
@@ -122,6 +123,9 @@ inline OriginalInstanceContactPhaseResult originalInstanceContactPhase(const Ori
     using namespace instance_contact_math;OriginalInstanceContactPhaseResult r;
     if(rider.controlState==9)return r;
     r.ran=true;if(host.boundaryContacts)host.boundaryContacts();
+    // 104E70 reads rider+0x1E0 after 106F78, whose notification (105D98) may have changed it (fuzz r8-0165 2607: a rail-body
+    // contact first, then the panel's record took the old velocity, 1278.5 cm/s closing instead of 295.0, and crashed).
+    ContactQuad velocity=host.velocity?host.velocity():rider.velocity;
     if(!host.query)throw std::runtime_error("Original instance contact query unavailable");
     OriginalInstanceContactPacket& hit=r.packet;r.depth=host.query(hit);
     {
@@ -138,8 +142,8 @@ inline OriginalInstanceContactPhaseResult originalInstanceContactPhase(const Ori
             hit.normal=0<along?rider.railDirection:scale4(rider.railDirection,-1.f);r.projected=true;
         }
         float closing=0;
-        {auto negative=scale4(hit.normal,-1.f);float d=dot4(negative,sub4(rider.velocity,hit.surfaceVelocity));if(0<=d)closing=d;}
-        r.record.point=hit.point;r.record.direction=scale4(rider.velocity,vuRsqrt(dot4(rider.velocity,rider.velocity)));
+        {auto negative=scale4(hit.normal,-1.f);float d=dot4(negative,sub4(velocity,hit.surfaceVelocity));if(0<=d)closing=d;}
+        r.record.point=hit.point;r.record.direction=scale4(velocity,vuRsqrt(dot4(velocity,velocity)));
         r.record.normal=hit.normal;r.record.closingSpeed=closing;
     }
     if((hit.descriptor.flags&2)&&!(hit.instanceFlags&0x2000)){r.stored=true;if(host.store)host.store(hit,r.record);}

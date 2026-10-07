@@ -89,6 +89,7 @@ static std::array<float,3> run_instance_contacts(BodyCollisionVolume& volume,std
   auto result=originalRailSnapContact(rb,bh,browser_rail_snap_hooks());railBodyContactStage=result.stage;
   railBodyContactProbe={rb.hipsPosition[0],rb.hipsPosition[1],rb.hipsPosition[2],result.hit.point[0],result.hit.point[1],result.hit.point[2],incoming[0],incoming[1],incoming[2]};
    };
+ host.velocity=[&]{return contact_quad(*actor.velocity);}; // 104E70 after 106F78
  host.store=[&](const OriginalInstanceContactPacket& p,const OriginalInstanceContactRecord& record){browser_set_piece_contact(p.instance);stage_trigger_store(p,record);if(!browser_scripted_contact(p,record))collect_pickup_contact(*query,p.instance);}; // rider+A30 -> 121818
  host.respond=[&](const OriginalInstanceContactPacket& hit,const OriginalInstanceContactRecord& record,float depth){
   ++instanceContactResponses;

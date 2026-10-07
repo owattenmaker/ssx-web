@@ -6,6 +6,7 @@ ssx::OriginalRailQueryResult browserHandplantQuery(ssx::RailVector point);
 // Snow Jam log teeters (AnimTeeter + RailModifier, rail_bridge.cpp).
 void browser_advance_teeters();void browser_reset_teeters();
 void browser_teeter_attach_force(const ssx::OriginalRailQueryResult&,const ssx::RailVector&,const ssx::RailVector&);
+void browser_teeter_motion_force(const ssx::OriginalRailQueryResult&,const ssx::RailVector&); // 0x13AF28 per-tick entity push
 std::vector<std::pair<uint32_t,ssx::RollerMatrix>> browser_teeter_transforms();std::array<float,4> browser_teeter_info();
 #include "../engine/rail_snap_torque.hpp"
 // 0x106F78 entity hooks (web/rail_snap_teeter.inc) and the Snow Jam falling billboard (web/falling_billboard.inc).

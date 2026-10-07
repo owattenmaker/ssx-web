@@ -1,3 +1,45 @@
+> **Deployed 2026-10-07 (coordinator): core45.** web/runtime core.wasm `d2d116ff…` (core.js `2fe50ccb…`, unchanged) from local/physics-jank/core45-snapshot (534/534). On top of core-batch14, from fuzz repros: stale handplant per-tick flags cleared before step_rider, and 139A80's +0x370 = +0x180 copy updates the native normal (r13-0191, r5-0194, r2-0299); the air-to-rail attach posts its 10E028 reaction, and control 7 runs 115B58 before its rotation (r7-0036, r13-0175).
+
+> **core45: six fuzz repros exact (2026-10-07, physics-jank agent):** see [crash-motion.md](crash-motion.md) "Fuzz repros on mode-1 captures".
+> - **Snapshot:** local/physics-jank/core45-snapshot (core.wasm `d2d116ff…`, core.js `2fe50ccb…`), on core-batch14. Full ps2-captures:
+>   534 of 534. No export changes.
+> - **Fixed (each exact to the end, with fields, bones, command words and RNG):**
+>   - **r13-0191, r5-0194, r2-0299:** a handplant to passive air, then a landing.
+>     - hpTick / hpAirTick were cleared only inside the handplant step. A tick that skips the step (12F7AC: an attack held in
+>       passive air) kept the exit tick's flags. The animation tick then treated the rider as handplant-owned and skipped 139A20's
+>       orientation tail (0x139A64 -> 121AA0).
+>     - Fix: browser_handplant_tick_begin() at the top of step_rider.
+>   - **139A80 / 139A8C:** shared as browser_air_contact_frame() (core.cpp). The handplant's own motion-1 branch now runs it too, and
+>     it updates the native normal, which publish_motion() otherwise rebuilt +0x370 from.
+>   - **r7-0036** (bones after a rail Uber, control 12, to rail 7):
+>     - 106848's air-to-rail attach calls 10E910 (0x106CB8), and its human tail 10EA28..10EAA4 posts the 10E028 reaction (kind 1 at
+>       898). The port's rail entry committed the score without it. Shared as score_upper_reaction().
+>     - 131D30 calls 115B58 at 0x131E18, before its rotation 132060. The port ran only 115D48 on the rail. It now plays the request
+>       inside the rail controller's upperReactions callback, in the controller phase (3128E8's variant draw).
+>   - **r13-0175** (six riders: one extra human controller draw on a rail after a spin-grab landing): the same 115B58 placement.
+>     The air entry 69 (class 5) blocks it on the first rail tick, and the spin 54 enters after it.
+> - **Scratch core46** (not suite-run): **r1-0204**, soft control 3 kept into the air.
+>   - 13F178 runs 13F488 / 105D98 after the 13F194 departure, while the motion is still 0. A soft reaction there re-enters control 3,
+>     also when 12E778 just ended the previous soft clip. The port's gate refused it.
+>   - Fix: browserDeparturePrePosition in the body-contact soft gate. r1-0204 is exact to the end.
+> - **Process:** instrumentation goes only in a private copy of the tree (local/physics-jank/dbgtree, with local/ entries linked).
+>   A CORE_OUT build of the shared tree still regenerates the shared snapshot registry.
+> - **Open (fuzzing.md "Findings"):**
+>   - r6-0121 (a rail at 1223);
+>   - r8-0165 (a passive-air crash on ASS1 railADD_panel_23);
+>   - r5-0160 (a crash slide);
+>   - r4-0279 (an Allegra-Mac pair);
+>   - r13-0063 and r4-0236 (the Spline constructor 0x35955C draws);
+>   - r7-0000 (Allegra's rail attach);
+>   - r7-0038 (Mac 4998);
+>   - the RNG cases r4-0048, r7-0028, r7-0082, r10-0134;
+>   - the dra4 Psymon bone lead at 3772.
+
+> **Fuzzing: stop condition reached (2026-10-07, fuzzing agent).** Mode-1 batch 9 (28 variants) found no new divergence; its hits
+> are known seed limits (kick-doubt finish 3782, DSS2 Moby 2632; diff.py KNOWN_SIX_LIMITS). Coverage keys flattened (r16 +102).
+> Nothing of mine is running; slot 4 is free. Open repros are with the physics agent (list in fuzzing.md "Findings"). Next step when
+> a new core lands: `cd local/fuzz && python3 recheck.py CORE_JS --jobs 2`, then `FUZZ_FPU=mode1 python3 -u diff.py batch 30 10`.
+
 > **PS2 arithmetic, round 6 (2026-10-07): core-batch14 shipped, camera watch fix, camera forms, Snow Jam exact-base 147 of 187.** See [ps2-float.md](ps2-float.md) "Exact baselines" and "Camera forms".
 > - **core-batch14** (0dd7ac38, deployed by the coordinator): full mode-1 suite 534 of 534. It holds round 5's files and the physics agent's r1-0203 fix.
 > - **Exact-base Snow Jam slice:** 147 of 187 on the trace core. Since round 5: handplant-ground / -leanR / -spin, hl-glide-6, hl-rail-15, plant-ara1, air-steer-lr, tech-strong-jump and -right now pass.
@@ -6,14 +48,34 @@
 >   - cam-air-tricks and cam-mix-glide-0x3C now pass. cam-mix-glide leaves at 502 (it was 339).
 > - **Files changed (mode-1-neutral forms):**
 >   - engine/original_camera.hpp: dot4 (1.0 x z^2, 1.0 x w^2), and the output eye 1.0 x eye through 0x166F90's identity matrix.
->   - The mode-1 suite for these is running: core-batch15, local/ps2-float/suite-batch15.log.
+>   - Mode-1 suite: 534 of 534 on local/ps2-float/core-batch15 (wasm 66bddd6e…, js 2fe50ccb…). It is a snapshot candidate, but it changes no mode-1 results.
 > - **New tool:** tools/ps2-float/match_camera.sh, a camera matcher round on an exact-base gate.
 > - **Sent to the physics agent:** the early-leaver list, all arithmetic (their mode-1 twins are exact to the end), plus three field gaps that are logic: 0x370..0x378, 0x2DC and 0x35C.
 > - **Open:**
 >   - cam-event-start / cam-event-race leave at tick 19. The exact ARA1 event seed's camera words come from characters/zoe/countdown.p2s, a different exact run from the snow-jam-countdown-anchor these gates start from. Rider physics is the same (event-start / event-race are exact to the end); the camera's velocity filter is a few ULPs off.
 >     - A fix needs a per-capture camera seed in event mode under exact-base: the core re-arms browserEventCamera at the anchor tick, which overrides a JS seed. That touches web/core.cpp, so it needs agreement with the physics agent.
 >   - cam-mix-glide 502: at 0x1630E0, the port's direction from angles against the PS2's vector.
-> - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad bulk4.sh) and the core-batch15 suite.
+> - **Later on 2026-10-07:**
+>   - **Canonical anchor:** local/reference-exact/snow-jam-countdown-anchor.p2s is now a byte copy of characters/zoe/countdown.p2s, the file the exact ARA1 event seed comes from. The sample-3560 derivation is kept as snow-jam/countdown-s3560.p2s. Its 20 gates were recaptured; the old copies are in runs-exactbase/.anchor-s3560/.
+>   - **Exact event camera seed** (approved by the physics agent and the coordinator; additive, exact build only; the default core is byte-identical, wasm 3aacd0d7 before and after):
+>     - tools/generate_event_seed.py: camera_seed_line(), shared with the mode-1 camera seed. generate_exact writes each code's camera / cameraAnchorTick from its exact anchor, plus browserEventCameraExact / browserEventCameraAnchorTickExact and SSX_EXACT_EVENT_CAMERA_SEEDS, into the git-ignored web/generated/event_start_seed_exact.hpp.
+>     - web/event_start_select.hpp: browser_event_camera() / browser_event_camera_anchor_tick() take the exact words when the exact seed is in use, and the mode-1 words otherwise.
+>     - web/core.cpp: the event camera seed (line ~567) reads them.
+>   - **More camera forms** (mode-1-neutral):
+>     - engine/original_camera.hpp directionFromAngles operand order (0x166BD4);
+>     - the compositor eye w is set to 1 after clearance and shake (0x15E944);
+>     - engine/original_camera_director.hpp: the single-node compositor path keeps the look-at w (0x15E72C); originalChaseCameraStep matches it.
+>   - **Camera gates:** 6 of 8 pass (cam-mix-glide, -0x3C, -0x3E, cam-air-tricks, cam-boost-slow, cam-event-start).
+>     - cam-event-race: a shake starts a tick apart at 967.
+>     - cam-rail-balance-lr: rail bones at 903.
+>   - **AI comparer** (web/compare-ai-capture.mjs): under PS2_ARITH=exact-base it reads local/assets/native-exact/<code>/{initial,start,npc-riders}.json where they exist, and turns the exact glide seeds on, as compare-ps2-capture.mjs does.
+>     - The exact npc-riders.json comes from the canonical anchor (tools/export_npc_riders.py --exact).
+>     - Now passing: event-race-ai, event-race-ai-pairs, hl-ai-9 and parity-ai/ara1-full.
+>     - Still failing: ko-attack and ko-attack-moby (268), and hl-ai-16 (Allegra at 2586).
+>   - **Open:**
+>     - hl-sj-1: 752.
+>     - ai-idle: 1802, the same tick as the tech-oob gates.
+> - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad anchor2.sh, then the bulk) and the core-batch16 mode-1 suite.
 
 > **Deployed 2026-10-07 (coordinator): core-batch14.** web/runtime core.wasm `0dd7ac38…` (core.js `2fe50ccb…`, unchanged) from local/ps2-float/core-batch14 (534/534). On top of core-batch11: the handplant predictor step (constant 1/60, 0x13940C / 0x1394F4) and root rotation sign (0x311B48), the physics agent's r1-0203 reset fix (12FE98, +0x360 latch), and batch 12 plus the extra-lean speed dot (mode-1-neutral).
 

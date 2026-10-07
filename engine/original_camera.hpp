@@ -296,7 +296,8 @@ inline float unitRandom(OriginalRandomState& r){uint32_t v=r.next();return esub(
 inline Quad directionFromAngles(float yaw,float pitch){
     auto [sp,cp]=sincosEE(-pitch);auto [sy,cy]=sincosEE(-yaw);
     float m22=eadd(esub(1.f,cy),cy);
-    return {vmul(cp,cy),vmul(cp,-sy),vmul(sp,m22),0};
+    // 0x166BD4..0x166BDC: the yaw rotation's entries are fs, the pitch row's lanes the broadcast ft.
+    return {vmul(cy,cp),vmul(-sy,cp),vmul(m22,sp),0};
 }
 
 // Per-frame scratch (the 0x70-byte stack context filled by 0x162568 etc.)
@@ -1194,6 +1195,8 @@ inline OriginalCameraOutput compositeCamera(OriginalCameraCompositorState& o,con
     computeAngles(o.lookAt,o.eye,o.yaw,o.pitch);
     cameraCollision(o,in);
     shakeTrigger(o,in);
+    // 0x15E944: 0x166F90 on the compositor block writes its eye w (+0x10C) = 1 after the clearance and shake moves.
+    o.eye[3]=1;
     computeAngles(o.lookAt,o.eye,o.yaw,o.pitch);
     far=(o.nearMinimum<=far)?emin(far,in.farCap):o.nearMinimum;
     fov=(0.f<=fov)?emin(fov,o.fovMaximum):0.f;
@@ -1220,7 +1223,8 @@ inline OriginalCameraOutput originalChaseCameraStep(OriginalCameraState& state,c
     OriginalCameraCompositorState& o=state.compositor;
     stepAlgorithm(a,in);
     // 0x15E668: single algorithm at full weight -> compositor eye/look-at are exact copies.
-    o.eye=a.outputEye;o.lookAt=a.lookAt;o.lookAt[3]=1;o.eye[3]=1;
+    // The look-at keeps the algorithm's w (original_camera_director.hpp composite); the eye's w is 1.
+    o.eye=a.outputEye;o.lookAt=a.lookAt;o.eye[3]=1;
     // fov / near / far blend with a single raw weight of 1.0.
     float fov=eadd(emul(1.f,a.fov),emul(0.f,0.f)),near=eadd(emul(1.f,a.near),emul(0.f,0.f)),far=eadd(emul(1.f,a.far),emul(0.f,0.f));
     OriginalCameraOutput out=compositeCamera(o,in,fov,near,far);

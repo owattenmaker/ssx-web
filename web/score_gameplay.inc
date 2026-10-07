@@ -86,14 +86,20 @@ static OriginalTrickCommitResult score_landing_args(int a1,int a2,int a3){
  if(physicsAttached){
   originalLandingUberProgression(boostState,before,after);award_boost(result.meterDelta,1);
   if(0<result.meterDelta)boostState.modifier=0;physicsState.boostTierCounter=boostState.tier;
-  // 10EA28..10EAA4 (human riders): a combo paid out at this landing -> reaction 3, else committed Ubers -> 2 (Uber landing),
-  // else a "great trick" (149778) -> 1 (315 + 29FF80 easy speech in 115B58; PS2 trick-stall 724).
-  if(browserHumanRider){const int kind=combosBefore<scoreObject.i(0x134)?3:before<after?2:score_great_trick(scoreObject.i(0x198)-totalBefore)?1:0;
-   // +0x354 = the logic tick 1298C8 of this landing's 10E910, as the other 10E028 requests: 115B58 expires the request at age 180
-   // (runs/riders/nate-uber-b: requested at 1081, expired at 1261 unplayed; motionTick, one ahead, played 315).
-   if(kind){upperRequest358=kind;upperRequestTick354=int32_t(controllerGround.logicTick);}}
+  score_upper_reaction(before,combosBefore,totalBefore);
  }
  return result;
+}
+// 10EA28..10EAA4, the tail of 10E910 (a landing 139C88, a rail attach from the air 106848 at 0x106CB8, a scenery top 1057B8):
+// for a human rider, a combo paid out by this commit -> reaction 3, else committed Ubers -> 2 (Uber landing), else a "great
+// trick" (149778) -> 1 (315 + 29FF80 easy speech in 115B58; PS2 trick-stall 724). Arguments: +0x114 / +0x134 / +0x198 before it.
+static void score_upper_reaction(int32_t ubersBefore,int32_t combosBefore,int32_t totalBefore){
+ if(!browserHumanRider)return;
+ const int32_t after=scoreObject.i(0x114);
+ const int kind=combosBefore<scoreObject.i(0x134)?3:ubersBefore<after?2:score_great_trick(scoreObject.i(0x198)-totalBefore)?1:0;
+ // +0x354 = the logic tick 1298C8 of this 10E910, as the other 10E028 requests: 115B58 expires the request at age 180
+ // (runs/riders/nate-uber-b: requested at 1081, expired at 1261 unplayed; motionTick, one ahead, played 315).
+ if(kind){upperRequest358=kind;upperRequestTick354=int32_t(controllerGround.logicTick);}
 }
 static OriginalTrickCommitResult score_landing(){return score_landing_args(int(physicsState.normal[2]<std::bit_cast<float>(0x3f333333u)),0,board_press_style());}
 // 119E38 from 114298 (charged, passive and controller takeoffs): commit with t1=1, then 10E098.

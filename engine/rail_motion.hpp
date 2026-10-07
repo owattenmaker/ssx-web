@@ -273,6 +273,7 @@ struct OriginalRailAccess {
     std::function<void(int style,int flag330,float speed,const OriginalRailQueryResult&)> airborneRailEvent; // 0x10E910
     std::function<void(int surface)> recordRailSurface;                  // global(gp+0x410)+0x598C
     std::function<void(const OriginalRailQueryResult&,const RailVector& before,const RailVector& after)> attachForce; // optional: 0x106848 -> hit entity vtable+0x15C (AnimTeeter 0x342538) with v_before - v_after
+    std::function<void(const OriginalRailQueryResult&,const RailVector& force)> motionForce; // optional: 0x13AF28 (0x13B4D0..0x13B534) -> hit entity vtable+0x15C every rail motion tick
     // optional: 0x13B07C..0x13B098, an entity-owned rail (out+0x50 instance, its entity +0xC): vtable+0x154 writes the contact
     // velocity at the rail point to out+0x20, which 0x13B0C8 stores as +0x3D0 (a log teeter swinging under the rider)
     std::function<bool(const OriginalRailQueryResult&,RailVector&)> entityVelocity;
@@ -481,6 +482,9 @@ inline OriginalRailMotionStepResult originalRailMotionStep(OriginalRailMotionSta
     RailVector gravity{0,0,-980.f}; // 0x4A5E50, initialized once at 0x13B3DC
     RailVector acceleration=vsub(scale(tangent,dot(gravity,tangent)),scale(alongVelocity,0.f));
     if(0<r.boost){float f0=0<along?mul(r.boost,2450.f):mul(r.boost,-2450.f);acceleration=vadd(acceleration,scale(tangent,f0));}
+    // 0x13B4D0..0x13B534: a rail on an instance with an entity (hit +0x50 -> +0xC) gets entity vt+0x15C(hit point, gravity - along x 0)
+    // every tick: the rider's weight on a log teeter (AnimTeeter 0x342538; fuzz r6-0121 1222, Snow Jam).
+    if(access.motionForce)access.motionForce(hit,vsub(gravity,scale(alongVelocity,0.f)));
     r.velocity=vadd(r.velocity,scale(acceleration,dt));
     r.position=vadd(r.position,scale(r.velocity,dt));
     float speedFactor=bits(0x3f000000u)<=f20?minS(f20,2.f):.5f;

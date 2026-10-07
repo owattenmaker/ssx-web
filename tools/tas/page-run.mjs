@@ -79,10 +79,10 @@ try {
         round:ui.careerUI?.career?.active?.ev?.round??3,career:!!ui.careerUI?.career?.active?.ev?.career,enabled:ai.enabled!==false}:null}})())`);
   fs.writeFileSync(path.join(outDir, 'start.json'), start);
   const base = await E('window.__simTrace.ticks.length');
-  // per tick: the human's rider state (16 floats), the shared game RNG (6 words), each computer rider's position (3 floats each)
+  // per tick: the human's rider state (16 floats), the shared game RNG (6 words), each computer rider's rider state (16 floats each)
   await E(`(()=>{window.__tasDump=[];window.__tasRow=()=>{const c=window.ssxEffects.core,ai=ssxQA.aiRace?.();
     const row=[...new Float32Array(c.HEAPF32.buffer,c._rider_state(),16),...new Uint32Array(c.HEAPU8.buffer,c._animation_rng_words(),6)];
-    for(const n of ai?.racers?.npcs??[])row.push(...new Float32Array(n.core.HEAPF32.buffer,n.core._rider_state(),3));
+    for(const n of ai?.racers?.npcs??[])row.push(...new Float32Array(n.core.HEAPF32.buffer,n.core._rider_state(),16));
     window.__tasDump.push(row)};return 1})()`);
   // the run's pad, 400 ticks a call; then neutral until the results
   const CHUNK = 400;
@@ -101,7 +101,7 @@ try {
   const info = JSON.parse(await E(`JSON.stringify((()=>{const ui=ssxQA.ui(),r=ssxQA.replay(),cu=ui.careerUI,ai=ssxQA.aiRace?.();
     return {screen:ui.screen,finishTick:r.finishTick,finish:r.finishInfo,result:cu?.result??null,
       standings:ai?.standings?.()??null,lineup:ai?.lineup??null,attributes:cu?.me?.attributes??null}})())`));
-  const trace = await E(`window.__simTrace.ticks.slice(${base},${base}+${Math.max(0, finishTick + 1)})`);
+  const trace = await E(`window.__simTrace.ticks.slice(${base},${base}+window.__tasDump.length)`);
   let file = null;
   if (finishTick >= 0) {
     file = await E(`(async()=>{const f=await ssxQA.ui().cb.onlineReplayFile({event:'0:${course}',mode:0,course:'${course}',name:'TAS',

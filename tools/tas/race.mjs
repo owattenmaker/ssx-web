@@ -98,6 +98,24 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
   if (core._init_weather) core._init_weather(str(text(`${code}/weather.json`)));
   core._init_rider_lighting(str(text(`${code}/local-lights.json`)), str(text(`${code}/light-tree.json`)));
   core._init_rails(str(text(`${code}/rails.json`)), hash);
+  // web/set-pieces-renderer.js: section activation 0x101B60 (its slot-1 programs draw the shared RNG), the stage world (LiveComp
+  // timer players, particles, the stage programs: Metro City's booth teleports are builtin 34), the flag manager, the avalanches
+  const sections = path.join(ASSETS, code, 'SECTIONS', 'sections.json');
+  const ready = path.join(ASSETS, code, 'SECTIONS', 'ready-state.json');
+  let sectionsNative = false;
+  if (core._init_sections && fs.existsSync(sections) && fs.existsSync(ready)) sectionsNative = core._init_sections(str(fs.readFileSync(sections, 'utf8'))) > 0;
+  const particles = path.join(ASSETS, code, 'PARTICLES', 'particles.json');
+  const live = path.join(ASSETS, code, 'LIVECOMP', 'livecomp.json');
+  const stage = path.join(ASSETS, code, 'STAGE', 'stage-world.json');
+  const optional = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+  if (core._init_stage_world && fs.existsSync(particles)) core._init_stage_world(str(optional(particles)), str(optional(live)), str(optional(stage)));
+  const flags = path.join(ASSETS, code, 'FLAGS', 'flags.json');
+  if (sectionsNative && core._init_stage_flags && fs.existsSync(flags)) {
+    core._init_stage_flags(str(fs.readFileSync(flags, 'utf8')), str(fs.readFileSync(ready, 'utf8')));
+  }
+  const avalanches = path.join(ASSETS, code, 'avalanches.json');
+  if (core._init_avalanches && fs.existsSync(avalanches)) core._init_avalanches(str(fs.readFileSync(avalanches, 'utf8')), 0);
+  else core._avalanche_clear?.();
   // the computer riders (main.js: createAiRace with no scene)
   const aiRace = await createAiRace({ T: null, scene: null, human: core, course, loader: null, origin: null, humanName: () => entry.name, isolate: false });
   // the human rider (main.js loadRiderNow -> initializeRiderAnimation): its settings over the course initial.json, its rig
@@ -126,7 +144,7 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
     core._free(p);
   }
   const R = start.snapshot;
-  const host = { lastRescues: 0, finished: false, finish: null, tick: 0 };
+  const host = { lastRescues: 0, finished: false, finish: null, tick: 0, solo: false };
   // main.js startRun(R): the restart path a replay runs
   function startRun() {
     core._race_time_limit?.(R.timeLimit);
@@ -155,7 +173,7 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
   // web/game-tick.js simulate, aiActive (the presentation's reads left out; the collect / career queues drained as a replay does)
   function tick(input) {
     core.HEAPF32.set(input, padPtr >> 2);
-    aiRace.beginTick();
+    if (!host.solo) aiRace.beginTick();
     const cmd = f32(core._pad_tick(padPtr), 24).slice();
     core._race_begin();
     let state = f32(core._step_rider(cmd[0], cmd[6], cmd[2] ? 1 : 0, cmd[7]), 16).slice();
@@ -166,7 +184,12 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
     core._animation_tick(state[7], cmd[10], cmd[11], state[9], +state[8], cmd[6], cmd[8], cmd[7], cmd[7], 0, state[15], cmd[13]);
     const pose = f32(core._pose_physical(), 12).slice();
     const raceInfo = f32(core._race_end(), 8).slice();
-    aiRace.endTick();
+    // host.solo (search experiments only): the computer riders do not ride; the solo path's FX and section passes run instead
+    if (!host.solo) aiRace.endTick();
+    else {
+      core._fx_pass?.(-1);
+      core._section_pass?.();
+    }
     core._step_camera_head(pose[9], pose[10], pose[11]);
     let finish = null;
     if (raceInfo[2]) {
@@ -182,21 +205,37 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
     host.tick++;
     return { finish, raceInfo };
   }
-  // A branch point: the core's whole memory and the JS state of the riders' orchestrators (web/ai-racers.js saveState) and of
-  // this harness. The buffer is reused when given.
-  function save(into = null) {
-    const heap = core.HEAPU8;
-    const mem = into?.mem && into.mem.length === heap.length ? into.mem : new Uint8Array(heap.length);
-    mem.set(heap);
-    return { mem, racers: aiRace.racers.saveState(), host: { ...host }, ai: aiExtra() };
+  // A branch point: the core's memory and the JS state of the riders' orchestrators (web/ai-racers.js saveState) and of this
+  // harness. The memory is kept as the 16 KB chunks that differ from the race's start (about 11 MB of the core's 128 MB in a whole
+  // race); a restore writes those back and puts every other chunk that changed since back to the start's bytes.
+  const CHUNK = 1 << 14;
+  let base = null;
+  const heapBuffer = () => Buffer.from(core.HEAPU8.buffer, core.HEAPU8.byteOffset, core.HEAPU8.byteLength);
+  function takeBase() {
+    base = Buffer.from(core.HEAPU8);
+  }
+  function save() {
+    const heap = heapBuffer();
+    if (heap.length !== base.length) throw new Error('core memory grew since the race start');
+    const chunks = new Map();
+    for (let at = 0; at < heap.length; at += CHUNK) {
+      if (heap.compare(base, at, at + CHUNK, at, at + CHUNK) !== 0) chunks.set(at, Buffer.from(heap.subarray(at, at + CHUNK)));
+    }
+    return { chunks, racers: aiRace.racers.saveState(), host: { ...host }, ai: aiExtra() };
   }
   function restore(s) {
-    if (core.HEAPU8.length !== s.mem.length) throw new Error('core memory grew since the save');
-    core.HEAPU8.set(s.mem);
+    const heap = heapBuffer();
+    if (heap.length !== base.length) throw new Error('core memory grew since the race start');
+    for (let at = 0; at < heap.length; at += CHUNK) {
+      const want = s.chunks.get(at);
+      if (want) heap.set(want, at);
+      else if (heap.compare(base, at, at + CHUNK, at, at + CHUNK) !== 0) base.copy(heap, at, at, at + CHUNK);
+    }
     aiRace.racers.restoreState(s.racers);
     Object.assign(host, s.host);
     restoreAiExtra(s.ai);
   }
+  const saveBytes = (s) => s.chunks.size * CHUNK;
   // web/ai-race.js keeps the relationship tables (changed by rider-pair reactions) outside the core
   function aiExtra() {
     return JSON.stringify({ tables: aiRace.relationships, scores: aiRace.doc.relationships.scores, kinds: aiRace.doc.relationships.kinds });
@@ -208,5 +247,6 @@ export async function createTasRace({ start, course: code = 'BRA2', coreJs = pro
   const progress = () => f32(core._race_progress_info(), 8).slice();
   const state = () => f32(core._rider_state(), 16).slice();
   const rng = () => u32(core._animation_rng_words(), 6).slice();
-  return { core, aiRace, tick, save, restore, progress, state, rng, host, startRun, boneCount, spawn };
+  takeBase();
+  return { core, aiRace, tick, save, restore, saveBytes, progress, state, rng, host, startRun, boneCount, spawn };
 }

@@ -356,6 +356,7 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
   - Output: `local/reference-exact/<name>.p2s` with `<name>.provenance.json`.
 - Snow Jam (the hand-made references): `snow-jam-countdown-anchor` / `-glide` / `-ready` come from Zoe's recorded menu path from character-selection.p2s (local/ps2-float/baselines/nav/zoe.p2s).
   - The anchor is saved at sample 3560: Countdown, tick 18. The same run's glide is tick 339 at sample 3881.
+  - Since 2026-10-07 the anchor is a byte copy of the canonical exact Zoe countdown, `characters/zoe/countdown.p2s` (same lineup and grid). The exact ARA1 event seed and its camera seed come from that file, so the anchor gates' baseline and the comparer's seeds agree by construction. The sample-3560 derivation is kept as `snow-jam/countdown-s3560.p2s`, and its 20 gates are in `runs-exactbase/.anchor-s3560/`. With it, cam-event-start / cam-event-race left at tick 19 on camera words, because the event camera seed came from the other derivation.
   - The first anchor (2026-10-05) was PreRace tick 18, in the flythrough. It is kept as `snow-jam/flythrough-tick18.p2s`.
   - Its gates stopped at record 401: the script's Cross skips the flythrough and the game waits on the event brief. Twenty exact-base gates were built on it; they were moved to `runs-exactbase/.flythrough-anchor/` and recaptured on 2026-10-06.
 - Per-rider and per-course countdowns are the rider-parity agent's `make_course_states.py` with PS2_CAPTURE_FPU=exact, into `local/reference-exact/characters/`.
