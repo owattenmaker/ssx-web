@@ -84,6 +84,8 @@ RIDER_LOCAL static float grabStatSeed=0;
 RIDER_LOCAL float browserSettingsTrickStat=0;
 RIDER_LOCAL float browserSettingsLandingStat=0;
 RIDER_LOCAL static bool grabStatSeeded=false;
+// A passive departure pending (1: next tick's control 0 requests control 4; 2: that request ran this tick).
+RIDER_LOCAL static int passiveDeparture=0;
 RIDER_LOCAL static bool passiveMode=false,heldAirMode=false;RIDER_LOCAL static OriginalPassiveAirState passive;RIDER_LOCAL static OriginalAirPrewindState prewind;RIDER_LOCAL static OriginalAirControlState air;RIDER_LOCAL static bool airAdjustLive=false; //air control owned rider+0x28C/+0x298 last tick
 RIDER_LOCAL static OriginalAirAnimationState airAnimation;RIDER_LOCAL_LAZY static OriginalAirControlProfile airProfile;
 RIDER_LOCAL static bool previousGround=true,previousHeld=false;
@@ -386,7 +388,12 @@ static void setup_crash(){
   if(physicsState.controlState==8&&control!=8)audio_event(AE_CRASH_EXIT); //12E690 -> 2A02D8 wipeout speech
   if(physicsState.controlState==8&&control!=8&&(controllerGround.logicTick&1u)==0&&browserHumanRider){/*12E6BC: +6C0 isHuman*/upperRequest358=4;upperRequestTick354=int32_t(controllerGround.logicTick);}
   physicsState.controlState=gs.controlState=control;};crash.host.stanceDiffers=[](){return !physicsState.state320Equals324;};
- crash.host.leaveMotion=[](int mode){leave_crash_motion(crash.actor,mode);crashGroundGetUpTick=mode==0;previousGround=mode==0;previousHeld=false;heldAirMode=passiveMode=false;prewind={};air=mode==1?originalAirControlBegin(0,0):OriginalAirControlState{};landingAirExitBaked=false;gs.controlState=mode==0?0:5;};
+ crash.host.leaveMotion=[](int mode){leave_crash_motion(crash.actor,mode);crashGroundGetUpTick=mode==0;previousGround=mode==0;previousHeld=false;heldAirMode=passiveMode=false;
+  // 12D848 -> 11FEC8(0 / 5): control 8's exit 12E690 leaves the prewind triplets +0x2A4..+0x2B8 (PS2 TAS best-8964 3353: the rates
+  // stay 1/30). Control 0's entry 131608 clears the jump latch +0x360; control 5's entry 133128 seeds the air rates from the
+  // prewind currents +0x2A4 / +0x2B0.
+  if(mode==0)prewind.jumpGate=0;
+  air=mode==1?originalAirControlBegin(prewind.spin.current,prewind.flip.current):OriginalAirControlState{};landingAirExitBaked=false;gs.controlState=mode==0?0:5;};
  crash.host.requestReset=[](int reason){if(browserResetBegin)browserResetBegin(reason);else browserCrashResetReason=reason;};crash.host.observer=[](int observer){lastCrashObserver=observer;++crashObservers;
   // 12D848's air exit (owner+0x30 != 0): 119E38(*(rider+0x790), +0x320 != +0x324, 0) at 0x12D984 before clip 287 and control 5
   // (engine/crash_control.hpp setAirScoringStance; runs/riders/viggo-uber-a 1892: the score's +0x30 / +0xA4).
@@ -723,7 +730,9 @@ static bool step_reset(){
  cb.awardBoost=[](float delta){award_boost(delta,1);physicsState.boost=boostState.amount;};
  cb.finishDeviceFade=[](){++resetObservers;};cb.clearScoringStance=[](){score_reset_stance();++resetObservers;}; /*119E38(score,0,0)*/cb.setAnimationRate=[](float rate){graph.setRate(2,rate);};
  cb.enterControl=[](int state){if(state!=4)throw std::runtime_error("Unexpected reset control handoff");physicsState.controlState=gs.controlState=4;};
- cb.enterMotion=[](int mode){if(mode!=1)throw std::runtime_error("Unexpected reset motion handoff");leave_reset_motion();previousGround=false;previousHeld=false;heldAirMode=false;passiveMode=true;originalPassiveAirBegin(passive,gs,prewind);++resetCompletions;};
+ // 11FEC8(9) replaced the controller, so a passive departure pending from before the reset is gone: control 4 is entered here, and 12F730
+ // runs on the next tick (fuzz r11-0118 482: control 5 at 483 on the PS2; the port kept a get-up's departure and skipped that tick's step).
+ cb.enterMotion=[](int mode){if(mode!=1)throw std::runtime_error("Unexpected reset motion handoff");leave_reset_motion();previousGround=false;previousHeld=false;heldAirMode=false;passiveMode=true;passiveDeparture=0;originalPassiveAirBegin(passive,gs,prewind);++resetCompletions;};
  resetInputs.timeScale=physicsState.timeScale;originalResetControlStep(resetControl,resetInputs,cb);browser_controller_takeoff_wind(physicsState.velocity); /*12F398 runs before 1211F8 -> 120378: the placement tick's wind is the resumed velocity (score-uber 739)*/
  // ... and the placement's stance: 120378 reads +0x320 after 12F398 (0x12051C / 0x1207DC / 0x120A9C), and the placement turns a goofy rider
  // to +0x320 = 1 (runs/riders/moby-uber-d 2443: Moby's mop channels pick 416 / 430 with it, 414 / 431 with the old stance).
@@ -813,7 +822,7 @@ static void step_secondary_motion(){
 static void seed_initial_sequences(){graph.sequences=initialSequences;graph.requestedSemantics=initialRequested;}
 // Original131870/12E9B8 choose the main animation during controller dispatch, so the
 // same tick's 13D818 integration (lift/alignment suppression by class) sees it.
-RIDER_LOCAL static bool groundControllerRan=false;RIDER_LOCAL static int passiveDeparture=0;
+RIDER_LOCAL static bool groundControllerRan=false;
 // The CTM plane drop (web/plane-drop.js, pv dropPose) as the PS2 has it 10 ticks after its placement (menus/fr/ctmstart f02700): in the
 // air controller (control 5; +0xDE4 = 5 through the fall) with its air clip 287 on channel 2 and 416 on channel 3 (the sequences JSON).
 // The port's run starts from a grounded seed, so its first air tick would take a passive departure instead (control 4, clip 10 for
@@ -966,11 +975,22 @@ static OriginalGroundState human_event_seed_for_course(const OriginalGroundState
  return out;
 }
 // begin_event_rider (web/core.cpp) applied Zoe's compiled grid seed; a selected human replaces the rider-specific state.
-static void human_event_seed_apply(){if(!humanEventSeed)return;physicsState=human_event_seed_for_course(*humanEventSeed);const auto actor=OriginalAirState{physicsState.position,physicsState.velocity};position=actor.nativePosition();velocity={};normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};physicsState.controlState=6;publish_motion();}
+static void human_event_seed_apply(){
+ if(!humanEventSeed)return;
+ // An exact core: this rider's own exact grid state on this course where one was exported (web/event_start_select.hpp).
+#if SSX_EXACT_CHARACTER_SEEDS
+ if(!browser_event_character_ground_state(physicsState))
+#endif
+ physicsState=human_event_seed_for_course(*humanEventSeed);
+ const auto actor=OriginalAirState{physicsState.position,physicsState.velocity};position=actor.nativePosition();velocity={};normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};physicsState.controlState=6;publish_motion();}
 static void human_event_seed_restore(){browserEventRiderSeed=humanEventSeed?human_event_seed_apply:nullptr;}
 EMSCRIPTEN_KEEPALIVE void init_animation(const char* metadata,const char* skeleton,const char* settings,const uint8_t* packets,int packetBytes){
  setup_crash();setup_rails();setup_start();browserLandingAirExit=landing_air_exit;browserRestoreStance=restore_stance;browserReverseAnimation=reverse_animation;
- auto m=animation_document(metadata),r=animation_document(skeleton),config=animation_document(settings);setup_skin_bind(r);graph={};graph.scale=config["original_animation"]["scale"].get<std::array<float,3>>();for(float value:graph.scale)if(!std::isfinite(value)||value<=0)throw std::runtime_error("Invalid authored rider scale");graph.rig=std::make_shared<BrowserRig>();graph.variantFlags=config["original_animation"].value("variant_flags",0u);graph.defaultMirror=config["original_animation"].value("default_mirror",false);graph.defaultRoot.position=config["original_animation"]["default_root_position"].get<std::array<float,3>>();graph.defaultRoot.rotation=config["original_animation"]["default_root_rotation"].get<std::array<float,4>>();initialDefaultRoot=graph.defaultRoot;initialDefaultMirror=graph.defaultMirror;{/* channel-1 masks rider+0x8C0/+0x8C8/+0x8D0 (11C298/310CE8, per character): a selected human's own (web/character-roster.js, tools/export_characters.py), else Zoe's; npc_configure sets the computer riders' */const auto id=config.value("original_rider_identity",json::object());auto mask=[&](const char* key,uint64_t fallback){return id.contains(key)?std::stoull(id.at(key).get<std::string>(),nullptr,16):fallback;};riderMask8C0=mask("upper_mask8c0",0x8000fffeu);riderMask8C8=mask("upper_mask8c8",0x8000fff8u);riderMask8D0=mask("upper_mask8d0",0x870u);}{/* the selected human's grid spot and body scale (its own countdown actor: the spot follows the scale, reverse stance the base rider); none = Zoe's compiled seed */const auto start=config.value("original_event_start",json());humanEventSeed.reset();browserHumanBodyScale=0;if(start.is_object()){humanEventSeed=browserJsonGroundState(start.at("state"));browserHumanBodyScale=start.at("body_scale").get<float>();}if(humanEventSeed)browserEventRiderSeed=human_event_seed_apply;else if(browserEventRiderSeed==human_event_seed_apply)browserEventRiderSeed=nullptr;}setup_reset(config);setup_trick_names(config);setup_rail_context(config);setup_pickups(config);crash.host.recoveryInputs=[](){OriginalCrashRecoveryInputs in;in.deviceIndex870=resetInputs.deviceIndex;in.deviceEnabled87C=resetInputs.deviceEnabled;return in;};setup_trail(config);setup_snow(config);setup_impact_fx(config);reset_boost_fx();
+ auto m=animation_document(metadata),r=animation_document(skeleton),config=animation_document(settings);setup_skin_bind(r);graph={};graph.scale=config["original_animation"]["scale"].get<std::array<float,3>>();for(float value:graph.scale)if(!std::isfinite(value)||value<=0)throw std::runtime_error("Invalid authored rider scale");graph.rig=std::make_shared<BrowserRig>();graph.variantFlags=config["original_animation"].value("variant_flags",0u);graph.defaultMirror=config["original_animation"].value("default_mirror",false);graph.defaultRoot.position=config["original_animation"]["default_root_position"].get<std::array<float,3>>();graph.defaultRoot.rotation=config["original_animation"]["default_root_rotation"].get<std::array<float,4>>();initialDefaultRoot=graph.defaultRoot;initialDefaultMirror=graph.defaultMirror;{/* channel-1 masks rider+0x8C0/+0x8C8/+0x8D0 (11C298/310CE8, per character): a selected human's own (web/character-roster.js, tools/export_characters.py), else Zoe's; npc_configure sets the computer riders' */const auto id=config.value("original_rider_identity",json::object());auto mask=[&](const char* key,uint64_t fallback){return id.contains(key)?std::stoull(id.at(key).get<std::string>(),nullptr,16):fallback;};riderMask8C0=mask("upper_mask8c0",0x8000fffeu);riderMask8C8=mask("upper_mask8c8",0x8000fff8u);riderMask8D0=mask("upper_mask8d0",0x870u);}{/* the selected human's grid spot and body scale (its own countdown actor: the spot follows the scale, reverse stance the base rider); none = Zoe's compiled seed */const auto start=config.value("original_event_start",json());humanEventSeed.reset();
+#if SSX_EXACT_CHARACTER_SEEDS
+ browser_human_event_character().clear(); // a new human: its id comes again from human_event_character (web/core.cpp)
+#endif
+ browserHumanBodyScale=0;if(start.is_object()){humanEventSeed=browserJsonGroundState(start.at("state"));browserHumanBodyScale=start.at("body_scale").get<float>();}if(humanEventSeed)browserEventRiderSeed=human_event_seed_apply;else if(browserEventRiderSeed==human_event_seed_apply)browserEventRiderSeed=nullptr;}setup_reset(config);setup_trick_names(config);setup_rail_context(config);setup_pickups(config);crash.host.recoveryInputs=[](){OriginalCrashRecoveryInputs in;in.deviceIndex870=resetInputs.deviceIndex;in.deviceEnabled87C=resetInputs.deviceEnabled;return in;};setup_trail(config);setup_snow(config);setup_impact_fx(config);reset_boost_fx();
  for(auto&b:r["bones"]){AnimationBone bone;bone.parent=b["parent"];bone.part=b["file"];bone.translationChannel=b["animation_translation_channel"];bone.rotationChannel=b["animation_rotation_channel"];auto t=b["translation"].get<std::array<double,3>>();auto q=b["rotation"].get<std::array<float,4>>();bone.bind={{float(t[0]*100),float(-t[2]*100),float(t[1]*100)},{q[0],-q[2],q[1],q[3]}};bone.mirrorQuaternion=b["mirror_quaternion_map"].get<std::array<uint8_t,4>>();for(int k=0;k<3;k++)bone.mirrorTranslation[k]=b["mirror_translation_scale"][k];graph.rig->bones.push_back(bone);}
  for(unsigned i=0;i<r["bones"].size();i++)for(unsigned j=0;j<r["bones"].size();j++)if(r["bones"][i]["file"]==r["bones"][j]["file"]&&r["bones"][i]["mirror_index"]==r["bones"][j]["index"])graph.rig->bones[i].mirrorSource=j;
  for(auto&c:m["clips"]){AnimationClip clip;clip.id=c["id"];clip.duration=c["duration"];clip.eventTimes=c["event_times"].get<std::vector<float>>();for(auto&p:c["packets"]){size_t offset=p["offset"],size=p["size"];if(offset+size>size_t(packetBytes))throw std::runtime_error("Animation packet bounds");clip.segments.push_back({p["part"],AnimationPacket({packets+offset,size},p["frames"])});}graph.rig->clips.push_back(std::move(clip));}
@@ -1134,7 +1154,10 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
   }
  }
  // Control 7 (0x131D30) runs 0x115B58/0x115D48 whenever its update reaches them, including the tick motion 4 loses the rail.
- if(!groundControllerRan&&!startFrame&&!resetFrame&&!crashFrame&&!browserCrashExitFrame&&!softFrame&&(railOwned&&physicsState.controlState==7?railUpperReactions:grounded&&(!physicsAttached||previousGround))&&!jumpHeld){ControllerDraws controllerDraws; /*115D48 is controller-phase (pass 121068)*/OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick,riderMask8C0,riderMask8D0};auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);}
+ // 115D48 (the idle clock +0x35C and its reactions) runs from controls 0 (131620), 1 (12FC80) and 7 (131D30) only. The rail
+ // Uber's control 12 leaves the clock (PS2 TAS best-8964 1375..: +0x35C stays 0.05 through the Uber). Control 7 runs it inside
+ // its controller (web/rail_gameplay.inc upperReactions).
+ if(!groundControllerRan&&!startFrame&&!resetFrame&&!crashFrame&&!browserCrashExitFrame&&!softFrame&&!(railOwned&&(physicsState.controlState==12||physicsState.controlState==7))&&grounded&&(!physicsAttached||previousGround)&&!jumpHeld){ControllerDraws controllerDraws; /*115D48 is controller-phase (pass 121068)*/OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick,riderMask8C0,riderMask8D0};auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);}
  // 139A20's orientation tail (0x139A64) runs in every air motion tick, whatever the controller: a rider that left a rail and is
  // still in control 7 (0x132770 waits for the rotation clip) turns toward its trajectory too (PS2 The Throne Psymon 2925).
  if(physicsAttached&&(!railFrame||(physicsState.controlState==12&&!browserRailActive)||(physicsState.controlState==7&&!browserRailActive&&!railStepConsumed))&&!resetFrame&&!crashFrame&&!grounded){align_air_orientation(startFrame?physicsState.controlState:physicsState.controlState==12?12:physicsState.controlState==7&&railFrame?7:softFrame?3:board_press_air_frame()?1:heldAirMode?2:passiveMode?4:5,air.adjustSpin);gs.forward=physicsState.forward;gs.physicalForward=physicsState.physicalForward;gs.lateral=physicsState.lateral;gs.boardUp=physicsState.boardUp;}
@@ -1144,9 +1167,16 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  // 1211F8 approaches +0x1FC once a tick: a 12F730 -> control 5 request already approached it in the passive step above (fuzz
  // r2-0204-bones 2162: Mac's +0x1FC 0.101 -> 0.051 on the PS2, 0.001 here; his posed lean and bones 2 cm off from there)
  if(physicsAttached&&!(startFrame&&browserStartFrozen)&&!railFrame&&!resetFrame&&!browserCrashExitFrame&&!crashFrame&&(!passiveMode||passiveDeparture==1)&&!softFrame&&!passiveEntryApproached)groundControlApproach(gs.animationTurn); /*passive departure tick: control0 already ran, 1211F8 advances +1FC*/if(physicsAttached)step_secondary_motion();
- if(!railFrame)originalAirPrewindApproach(prewind); //1211F8 approaches the prewind pair every tick, after controller selection.
+ // 1211F8 approaches the prewind pair once every tick, after controller selection. The rail step's held-jump branch already
+ // ran it when the rail motion then lost the rail in the same tick (PS2 TAS best-8964 1137: +0x2A4 -0.7289 -> -0.7515, one step).
+ if(!railFrame&&!railPrewindApproached)originalAirPrewindApproach(prewind);
+ railPrewindApproached=false;
  attack_control_changes(browser_control_state()); //0x131C30/0x12FB68 upper-attack exit
  if(physicsAttached){gs.adjustment28C=physicsState.adjustment28C;gs.adjustment298=physicsState.adjustment298;} //1043F8 (kind 11) reads rider+0x28C/+0x298, also while a landed air adjust fades out
+ // 312598 reads the rider's +0x300 time scale itself: the NPC provider (120090) rewrites it every tick, and the air controls never
+ // copy it into the animation state (PS2 TAS best-8964 5956: computer rider 4 at 0.958 lands; its board root, the 13A7B0 probe centre,
+ // was 0.24 cm off after its passive flight).
+ gs.timeScale=physicsState.timeScale;
  graph.advance(gs,prewind.spin.current,prewind.flip.current);audio_animation_events(graph);auto layers=originalAnimationLayers(graph.sequences);auto local=originalAnimationLocalPose(graph.rig->bones,graph.rig->clips,layers);riderMorphPosed=board_morph_sample(layers);graph.sampledLocal=local;currentPivot=(startFrame||railFrame||grounded||heldAirMode||passiveMode)?std::array<float,3>{}:local.at(pivotBone).position;{terrain_original::Rounding rounding;for(unsigned k=0;k<3;++k)currentPivot[k]=terrain_original::mul(currentPivot[k],graph.scale[k]);} /*134DD0 scales the pivot with EE mul.s (chop)*/const bool airControlPose=!(softFrame||board_press_air_frame()); /*11EB98 applies 134DD0 only while 11FEE8 reports control 5 (not soft control 3 or board-press control 1 in the air)*/auto presentation=(startFrame||resetFrame||crashFrame||railFrame||grounded||heldAirMode||passiveMode||!airControlPose)?originalAirPresentationCurrent(air,{{0,0,0},{0,0,0,1}},currentPivot):originalAirPresentation(air,{{0,0,0},{0,0,0,1}},currentPivot);for(unsigned i=0;i<3;i++)info[16+i]=presentation.position[i];RiderRootPresentation rootState;rootState.controlState=(startFrame||resetFrame||crashFrame||railFrame||browserCrashExitFrame)?physicsState.controlState:softFrame?physicsState.controlState:grounded?(jumpHeld?2:0):heldAirMode?2:passiveMode?4:5;rootState.turn=gs.turn.current;rootState.brake=gs.brake.current;rootState.lateral={1,0,0};poseContact=initialPoseContact;
  // 11EB98 runs FK from the physical root in world space (control5 first applies 134DD0
  // around the animated pivot), with world-space lateral/contact vectors. Building the

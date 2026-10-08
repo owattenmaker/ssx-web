@@ -59,8 +59,10 @@ def game_mode(memory):
     return dict(course=struct.unpack_from('<i', memory, 0x535C08)[0], kind=memory[0x535C10], path=memory[0x535C11], mode=memory[0x535C12])
 
 
-def event_start(code):
-    snapshot = location_state(code, 'countdown')
+def event_start(code, snapshot=None, output=None):
+    # snapshot / output: another ready state of the same event and where its export goes (tools/export_exact_event_starts.py:
+    # the exact-derived ready state, local/assets/native-exact/<code>/event-start.json); by default the location's own.
+    snapshot = Path(snapshot) if snapshot else location_state(code, 'countdown')
     memory = zipfile.ZipFile(snapshot).read('eeMemory.bin'); digest = hashlib.sha256(memory).hexdigest()
     race, participants = rolling_participants(memory)
     mode = game_mode(memory)
@@ -71,7 +73,8 @@ def event_start(code):
                   configuration=race['provenance']['configuration_bytes'], course_sha256=race['provenance']['course_sha256'],
                   provenance=dict(snapshot=str(snapshot), ee_sha256=digest,
                                   purpose='Rolling-start ready state (no countdown) and source profiles; every later tick runs natively'))
-    out = ROOT / f'local/assets/native/{code}/event-start.json'; out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(output) if output else ROOT / f'local/assets/native/{code}/event-start.json'
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(dict(output=str(out), mode=mode, clock=race['clock'], riders=[p['character'] for p in participants]), indent=1))
 
@@ -169,8 +172,15 @@ def rivals(code):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('command', choices=['event-start', 'npc', 'rivals']); p.add_argument('--location', default='ABC1')
+    p.add_argument('--snapshot', help='event-start only: the ready state to export (default: the location\'s own)')
+    p.add_argument('--output', help='event-start only: the event-start.json to write (default: local/assets/native/<code>/)')
     a = p.parse_args()
-    dict(**{'event-start': event_start, 'npc': npc, 'rivals': rivals})[a.command](a.location)
+    if a.command == 'event-start':
+        event_start(a.location, a.snapshot, a.output)
+        return
+    if a.snapshot or a.output:
+        p.error('--snapshot / --output are for event-start')
+    dict(**{'npc': npc, 'rivals': rivals})[a.command](a.location)
 
 
 if __name__ == '__main__':

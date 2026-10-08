@@ -721,11 +721,15 @@ void shared_world_spline_released(uint32_t resource,uint32_t key); // web/shared
 // the human's context only): this context's copy goes, and with it its owner's builtin52 guard. PS2 program 136 (dragontrig_1000) starts
 // `Debounce; if builtin52(0x85308) == 1 return` (303130: an entity at instance +0xC), so the next contact relaunches the dragons with
 // two 0x359460 draws (c0a-ws13: Griff at 11944, after the 10752 launch's section leave).
-void browser_spline_piece_released(uint32_t resource){
+// The guard goes even where this context holds no copy of the piece: a context whose launch replica made none (its section not
+// loaded) kept the owner's key, and the next world_triggers sync launched it everywhere again with that guard (fuzz r8-0075 3789:
+// trigger 521261's two splines, destroyed by the human's 3741 section leave, relaunch on Nate's contact with two 0x359460 draws).
+void browser_spline_piece_released(uint32_t resource,uint32_t key){
  for(size_t k=0;k<browserSplinePieces.size();)if(browserSplinePieces[k].seed->resource==resource){
   const auto* seed=browserSplinePieces[k].seed;browserSplinePieces.erase(browserSplinePieces.begin()+long(k));spline_piece_collision_stop(seed->resource);
   splineOwnersFired.erase(std::remove(splineOwnersFired.begin(),splineOwnersFired.end(),seed->owner*8+seed->slot),splineOwnersFired.end());
  }else ++k;
+ splineOwnersFired.erase(std::remove(splineOwnersFired.begin(),splineOwnersFired.end(),key),splineOwnersFired.end());
 }
 // The set-piece side of an entity destructor (vt+0x8 mode 3: a section leave's 0x34FD90, or a script's builtin2 / builtin29 through
 // web/stage_world.inc stage_destroy_entity): its Spline / Position piece or resident loop, the attached LiveComp and its children.

@@ -26,7 +26,13 @@ std::array<float,3> originalResetPathDirection(const OriginalRacePath& path,floa
 OriginalResetRouteEffects originalResetRoute(std::span<const OriginalNpcPath> paths,OriginalNpcRouteState& state,
         std::array<float,3> position,bool allowPathEnd){
  OriginalRounding round;
- auto square=[](std::array<float,3> v){float x=terrain_original::mul(v[0],v[0]),y=terrain_original::mul(v[1],v[1]),z=terrain_original::mul(v[2],v[2]);return terrain_original::add((terrain_original::add((terrain_original::add(x,y)),z)),0.f);};
+ // VU0 horizontal dot (0x112EA0..0x112EAC): x + y, then 1.0 x z and 1.0 x w through the 1.0 vector as fs.
+ auto square=[](std::array<float,3> v){
+  float x=terrain_original::mul(v[0],v[0]),y=terrain_original::mul(v[1],v[1]),z=terrain_original::mul(v[2],v[2]);
+  float sum=terrain_original::add(x,y);
+  sum=terrain_original::add(sum,terrain_original::mul(1.f,z));
+  return terrain_original::add(sum,terrain_original::mul(1.f,0.f));
+ };
  float best=std::bit_cast<float>(0x7cf0bdc2u);int selected=-1;
  for(int index:originalNpcPathCandidates(paths,position,6,true)){
   const auto& path=paths[index].geometry;OriginalRacePathCache empty;

@@ -116,7 +116,12 @@ RIDER_LOCAL static std::optional<OriginalGroundState> humanGridSeed;
 static void human_event_seed_restore(); // web/animation_bridge.cpp: the rider's own seed callback, or none
 static void human_grid_seed_apply(){
  if(!humanGridSeed)return;
- physicsState=*humanGridSeed;const auto actor=OriginalAirState{physicsState.position,physicsState.velocity};position=actor.nativePosition();velocity={};
+ // An exact core: this rider's own exact grid state on this course where one was exported (web/event_start_select.hpp).
+#if SSX_EXACT_CHARACTER_SEEDS
+ if(!browser_event_character_ground_state(physicsState))
+#endif
+ physicsState=*humanGridSeed;
+ const auto actor=OriginalAirState{physicsState.position,physicsState.velocity};position=actor.nativePosition();velocity={};
  normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};if(!browserEventRolling)physicsState.controlState=6;publish_motion();
 }
 

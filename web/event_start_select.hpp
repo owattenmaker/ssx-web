@@ -75,3 +75,27 @@ inline ssx::OriginalGroundState browser_event_snow_jam_ground_state() {
 #endif
     return browser_start_ARA1::browserEventGroundState();
 }
+
+#if SSX_EXACT_EVENT_SEEDS && SSX_EXACT_CHARACTER_SEEDS
+#include <string>
+// The human rider's id (local/reference-exact/characters/<id>, set by the comparers through human_event_character, web/core.cpp):
+// an exact core then seeds that rider's own exact grid state on this course where tools/export_exact_event_starts.py exported one,
+// in place of the mode-1 seed it was handed (settings original_event_start, lineups.json humanGridState). init_animation clears it.
+// A function-local static (per rider context, outside the snapshot registry: a comparer setting, set before the race starts).
+inline std::string& browser_human_event_character() {
+    RIDER_LOCAL static std::string id;
+    return id;
+}
+#endif
+
+// That rider's exact grid state on this course: false (keep the mode-1 seed) outside the console model, without a character id or
+// without an export for this course and character.
+inline bool browser_event_character_ground_state(ssx::OriginalGroundState& out) {
+#if SSX_EXACT_EVENT_SEEDS && SSX_EXACT_CHARACTER_SEEDS
+    if (ssx::software_float::exactArithmetic && !browser_human_event_character().empty()) {
+        return browserEventCharacterGroundStateExact(browserEventLocation, browser_human_event_character(), out);
+    }
+#endif
+    (void)out;
+    return false;
+}

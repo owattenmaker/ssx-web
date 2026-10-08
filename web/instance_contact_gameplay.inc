@@ -98,6 +98,7 @@ static std::array<float,3> run_instance_contacts(BodyCollisionVolume& volume,std
   // 119E38's stance argument of a surface landing (+0x320 != +0x324): it was never set, so a switch-stance rider landing on a bouncy
   // instance cleared score +0x00 (PS2 hl2/crash-eba3 1664, hl2/press-bra2 1221: +0x00 stays 1)
   r.stanceDiffers=!physicsState.state320Equals324;
+  r.surface=-1; // +0x438: the response writes 0 on a surface landing (below)
   OriginalInstanceResponseHost h;
   h.entityRigid=[&]{return browser_entity_rigid(hit.instance);};
   h.softCollision=[&](const OriginalInstanceContactRecord& rec){++instanceContactSoft;if(actor.soft)actor.soft(instance_contact_event(rec,hit.surface));};
@@ -119,6 +120,10 @@ static std::array<float,3> run_instance_contacts(BodyCollisionVolume& volume,std
   h.beginPredictor=[&]{*actor.velocity=contact_xyz(r.velocity);if(actor.beginPredictor)actor.beginPredictor();};
   auto result=originalInstanceContactResponse(r,hit,record,depth,h);
   *actor.velocity=contact_xyz(r.velocity);collisionHistory.secondaryCounter=r.secondaryCounter;instanceContactVelocity=*actor.velocity;
+  // 0x105C54 / 0x105C78: a surface landing that awards (channel 2 not on 0x10C, or 0x10C past 0.2 s) writes rider+0x438 = 0, the
+  // surface the camera's velocity filter, the sparks and the ground controls read until the next contact writes it (exact-base
+  // cam-metro-mix-glide 1089: the PS2's camera takes the surface-0 filter from 1090).
+  if(r.surface==0){physicsProfile.surface.id=0;sparkSurface438=0;}
   instanceContactLast={float(result.path),result.closingSpeed,result.impulse,result.upAlignment,float(hit.instance),float(hit.node),hit.depth,hit.normal[0],hit.normal[1],hit.normal[2],record.closingSpeed,float(motionTick),moved[0],moved[1],moved[2],float(actor.motion)};
  };
  // 105770: 296088(audio, rider, instance, node) unless instance flag 0x2000 (audio observer).
@@ -207,6 +212,9 @@ static void crash_instance_contacts(BodyCollisionVolume& volume,const std::funct
 static std::array<float,3> crash_post_instance_contacts(BodyCollisionVolume& volume,std::array<float,3> queryOffset,const std::array<float,3>* callerDirection){
  crash.actor.position=physicsState.position;
  crash.actor.velocity=physicsState.velocity;
+ // 13AA48's response rebuilt +0x120 (11E098) on the same rider: the ragdoll continues from it (exact-base hl2/uber-rail-6 999: q.x
+ // 3E46D4E1 -> E2; publish_crash_actor wrote the crash actor's older copy back)
+ crash.actor.quaternion=physicsState.quaternion;
  BrowserInstanceActor actor;crash_contact_actor(actor);
  actor.translate=[&](const std::array<float,3>& d){
   terrain_original::Rounding rounding;

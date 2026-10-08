@@ -28,27 +28,35 @@ def course_seed(code):
  def f(v):return 'std::bit_cast<float>(0x%08xu)'%struct.unpack('<I',struct.pack('<f',float(v)))[0]
  constants=f'inline constexpr int startDelay={human["start_delay_seconds"]};inline constexpr float progressOrigin='+f(human['progress_origin'])+';\n'
  return course_tail(code,event,lines,constants)
+def seed_float(v):
+ return 'std::bit_cast<float>(0x%08xu)'%struct.unpack('<I',struct.pack('<f',float(v)))[0]
+def seed_literal(v):
+ if isinstance(v,bool):return str(v).lower()
+ if isinstance(v,list):return '{'+','.join(seed_literal(x) for x in v)+'}'
+ if isinstance(v,dict):return '{'+','.join(seed_float(v[k]) for k in ['current','rate','target'])+'}'
+ return seed_float(v)
+def ground_state_lines(state,name='browserEventGroundState'):
+ """One ground state (an extract_ground 'state') as a seed function (C++ lines), field by field as engine/replay_io.mm reads it."""
+ source=(ROOT/'engine/replay_io.mm').read_text();literal=seed_literal
+ lines=[f'inline ssx::OriginalGroundState {name}(){{ssx::OriginalGroundState state;']
+ fragment=source[source.index('static ssx::OriginalGroundState readOriginalPoseState'):source.index('void initializeNativeReplay')]
+ for field,kind,key in re.findall(r'state\.(\w+)=(vec|value|boolean)\(s,@"([^"]+)"\)',fragment):lines.append(f'state.{field}={literal(state[key])};')
+ for field,key in re.findall(r'state\.(\w+)=control\(@"([^"]+)"\)',fragment):lines.append(f'state.{field}={literal(state[key])};')
+ for field,key in re.findall(r'state\.(\w+)=(?:signedInteger|unsigned32)\(s\[@"([^"]+)"\]',fragment):lines.append(f'state.{field}={int(state[key])};')
+ lines+=['state.quaternion='+literal(state['quaternion'])+';','return state;}']
+ return lines
 def start_lines(event):
  """The human's ground profile, ground state and race participant seed functions (C++ lines) from a countdown export."""
  human=next(p for p in event['participants'] if p['race']['human']);source=(ROOT/'engine/replay_io.mm').read_text();ground=human['original_ground']
- def f(v):return 'std::bit_cast<float>(0x%08xu)'%struct.unpack('<I',struct.pack('<f',float(v)))[0]
- def literal(v):
-  if isinstance(v,bool):return str(v).lower()
-  if isinstance(v,list):return '{'+','.join(literal(x) for x in v)+'}'
-  if isinstance(v,dict):return '{'+','.join(f(v[k]) for k in ['current','rate','target'])+'}'
-  return f(v)
+ f=seed_float;literal=seed_literal
  profile=ground['profile'];objects={'p':profile,'surface':profile['surface'],'h':profile['heading_profile']};lines=['inline ssx::OriginalGroundProfile browserEventGroundProfile(){ssx::OriginalGroundProfile profile;']
  fragment=source[source.index('ssx::OriginalGroundProfile profile;'):source.index('auto state=readOriginalPoseState(s);')]
  for field,kind,obj,key in re.findall(r'profile\.([\w.]+)=(value|curve)\((\w+),@"([^"]+)"\)',fragment):
   v=objects[obj][key];init=literal(v)
   if kind=='curve':init='{{'+','.join('{'+','.join(f(y) for y in x)+'}' for x in v)+'}}'
   lines.append(f'profile.{field}={init};')
- lines+=['profile.surface.id='+str(profile['surface']['id'])+';','profile.speedLimitTable='+literal(profile['speed_limit_table'])+';','return profile;}','inline ssx::OriginalGroundState browserEventGroundState(){ssx::OriginalGroundState state;']
- fragment=source[source.index('static ssx::OriginalGroundState readOriginalPoseState'):source.index('void initializeNativeReplay')];state=ground['state']
- for field,kind,key in re.findall(r'state\.(\w+)=(vec|value|boolean)\(s,@"([^"]+)"\)',fragment):lines.append(f'state.{field}={literal(state[key])};')
- for field,key in re.findall(r'state\.(\w+)=control\(@"([^"]+)"\)',fragment):lines.append(f'state.{field}={literal(state[key])};')
- for field,key in re.findall(r'state\.(\w+)=(?:signedInteger|unsigned32)\(s\[@"([^"]+)"\]',fragment):lines.append(f'state.{field}={int(state[key])};')
- lines+=['state.quaternion='+literal(state['quaternion'])+';','return state;}']
+ lines+=['profile.surface.id='+str(profile['surface']['id'])+';','profile.speedLimitTable='+literal(profile['speed_limit_table'])+';','return profile;}']
+ lines+=ground_state_lines(ground['state'])
  r=human['race'];c=r['path_cache'];lines+=['inline ssx::OriginalRaceParticipant browserEventParticipant(){ssx::OriginalRaceParticipant p;p.human=true;',f'p.finish={{{f(r["finish_elapsed"])},{r["penalty_ticks"]},{r["finish_ticks"]}}};',f'p.progress.pathIndex={r["path_index"]};p.progress.remaining={f(r["remaining"])};p.progress.bestRemaining={f(r["best_remaining"])};',f'p.progress.cache={{{literal(c["origin"])},{f(c["distance"])},{c["segment"]}}};','return p;}']
  return lines
 def course_tail(code,event,lines,constants):
@@ -203,8 +211,29 @@ def generate_exact(output,native_root=ROOT/'local/assets/native-exact'):
   start.append(f'inline {kind} {name}Exact(){{const std::string_view l=browserEventLocation;')
   start+=[f' if(l=="{code}")return browser_start_exact_{code}::{name}();' for code in codes]
   start.append(' throw std::runtime_error("No exact event start seed for this course");}')
+ start+=character_lines(Path(native_root)/'characters')
  Path(output).write_text('\n'.join(start)+'\n')
  return codes
+def character_lines(root):
+ """Each rider's own exact grid state per course (tools/export_exact_event_starts.py -> <root>/<CODE>/<id>.json, the human's state
+ at that rider's exact countdown), keyed by course and character id: browserEventCharacterGroundStateExact (web/event_start_select.hpp)."""
+ entries=[]
+ for path in sorted(Path(root).glob('*/*.json')):
+  doc=json.loads(path.read_text())
+  if doc['location']!=path.parent.name or doc['character']!=path.stem:raise ValueError(f'{path}: course / character differ from its path')
+  if doc['location'] not in LOCATIONS:raise ValueError(f'{path}: unknown course')
+  entries.append(doc)
+ lines=['// Per character: the human rider\'s grid state at its own exact countdown (local/reference-exact/characters).']
+ for doc in entries:
+  name=f'browser_start_exact_character_{doc["location"]}_{doc["character"].replace("-","_")}'
+  lines+=[f'namespace {name} {{ // {doc["provenance"]["snapshot"]}']+ground_state_lines(doc['state'])+['}']
+ lines.append('#define SSX_EXACT_CHARACTER_SEEDS 1 // browserEventCharacterGroundStateExact (web/event_start_select.hpp)')
+ lines.append('inline bool browserEventCharacterGroundStateExact(std::string_view location,std::string_view character,ssx::OriginalGroundState& out){')
+ for doc in entries:
+  name=f'browser_start_exact_character_{doc["location"]}_{doc["character"].replace("-","_")}'
+  lines.append(f' if(location=="{doc["location"]}"&&character=="{doc["character"]}"){{out={name}::browserEventGroundState();return true;}}')
+ lines.append(' return false;}')
+ return lines
 if __name__=='__main__':
  if '--exact' in sys.argv:print('exact seeds:',generate_exact(ROOT/'web/generated/event_start_seed_exact.hpp'))
  else:generate(ROOT/'web/generated/event_start_seed.hpp')

@@ -367,6 +367,82 @@ The fuzzing agent's minimised pads (local/ps2-capture/runs/fuzz-mode1, docs/fuzz
 - **A script destroys a set-piece entity** (r4-0236, the CRA3 blimp; core51): builtin2 / builtin29 use the same deleting destructor
   (vt+0x8 mode 3) as the section leave 0x34FD90. stage_destroy_entity tears down the spline piece and attached LiveComp
   (set_piece_entity_destroyed) and clears the section entry, so the next enter runs slot 1 again. See set-pieces.md.
+- **Not a port bug: a computer rider fires a trigger in a human-only compare** (r15-0108; 2026-10-07). This is an isolated
+  snow-jam-glide capture. The pair records are off, but the five computer riders still race.
+  - PS2: at pass 422, computer rider 1 (0x18D0C40) fires mdl_ARA1_startfireTrig_1000 (resource 164872, instance 0xF8D550). The call
+    chain is 128AF0 -> 121818 -> 30A060 -> slot-2 program 116 -> 342C08 / 34FB00. That sets the entity 0x56FE80 (0x34FC7C) and runs
+    1032C0, so the flags go 0x200022 -> 0x200122. By 535 the instance is 0x200304 (restored, entity 0x544D20), and 334458 skips it.
+  - Tick by tick from snap_at.py, flags 0x200022 hold through 422, and 0x200122 shows from 423.
+  - The human sits 2860 cm from the trigger the whole time. It is exact through 695.
+  - The browser comparer runs no computer riders, so in the port the trigger stays a static priority surface. At 696 the port's 104E70
+    then sees two packets (the trigger at depth 5.12 and crashbag 292104) and aggregates the normals. The PS2 sees only the crashbag.
+  - Fix (comparer, not the core): the capture would have to log the computer riders' 121818 dispatches (tick, rider,
+    resource). compare-ps2-capture.mjs would then replay each one into the human's core with world_event_apply kind 6
+    (browser_stage_replay, human = 0), as the six-rider gates do. The fuzzer can also tag isolated captures whose computer riders
+    pass a trigger.
+
+## The TAS proof run and the computer riders' time scale (2026-10-07, physics-jank agent)
+
+The first PS2 proof of the Metro City TAS (local/tas/ps2/runs/best-8964, BRA2 Single Event, Mac at max stats, mode 1). On live
+core51 the human left at 1314 (the RNG at 2018). On core60 the human is field-exact through 9172, and the RNG holds to 6697.
+Computer rider 1 stays exact to the end.
+
+- **The prewind pair is approached once on a lost-rail tick** (1137, cause of the 1314 split):
+  - On a rail with Cross held (control 2, motion 4), the rail step's held-jump branch runs 1211F8's prewind approach.
+  - The same tick's rail motion then lost the rail, so animation_tick's railFrame was false and it approached again.
+  - The port got +0x2A4 -0.7741; the PS2 got -0.7515 (one step).
+  - The trick pose drifted, and with it +0x180. The 1314 air-to-rail attach copies +0x180 into the up vector, which gave 1.1 cm.
+  - Fix: railPrewindApproached (web/rail_gameplay.inc) makes the animation tick skip its approach that tick.
+- **115D48 on rails:**
+  - The idle clock and its reactions run only from controls 0 (131620), 1 (12FC80) and 7 (131D30). In the port, the rail Uber's
+    control 12 advanced +0x35C, while the PS2 kept it at 0.05 from 1375.
+  - Control 7 runs 115D48 at 0x131E20, inside its controller, right after 115B58. It reads the heading +0x1B0 from before the rail motion.
+  - The port ran it in animation_tick on the moved heading. In fuzz r5-0207 at 2766, Allegra looked back at peer 5 one tick early, and
+    two controller draws moved. The check now runs in the rail controller (upperReactions).
+- **Control 8's exit 12E690 leaves the prewind triplets** (3353: the rates stay 1/30). The crash's leaveMotion cleared them.
+  - Control 0's entry 131608 clears only +0x360.
+  - Control 5's entry 133128 seeds the air rates from the prewind currents.
+- **The human's section leave destroys a Spline piece for everyone** (5378):
+  - Sections run in the human's context only. The computer riders' contexts kept their copies of BRA2 program 245's two splines, and
+    the owner's builtin52 guard with them, after the human's section leave at 5100.
+  - On the PS2, computer rider 4's contact relaunches both (two 0x359460 draws).
+  - shared_world_spline_released (event 10) is now logged outside streamed worlds too.
+- **+0x300, the computer riders' time scale** (written by the NPC provider 120090; the human's is always 1):
+  - 139A20's trajectory step is mul.s(+0x300, 1/60) (0x139A58). The port stepped 1/60.
+    - At 5944, computer rider 4 at 0.9675 left the ground: 113648's elapsed 0.016125, so 1.24 cm a tick.
+    - translate_air_motion now passes physicsState.timeScale (advance_prediction_scaled).
+  - 312598 (the animation advance) reads +0x300 itself. The port's animation state gs kept a stale copy through the air controls.
+    - At 5956, rider 4's landing probe centre (the posed board root) was 0.24 cm off.
+    - animation_pose now copies it before graph.advance.
+- **Open:**
+  - Computer rider 2 (0x18DE380), pass 6326: an air crash entry (control 5 to 8) at time scale 0.618 leaves q a few ULP off. Sent to the
+    arithmetic agent as a possible operand form.
+  - Then rider 2 stalls on the PS2 at 6340..6341. The human's 6807 idle clock and 9173 split follow the computer riders.
+- **Tools** (scratch, physics-jank): tas-fields.mjs (the human's fields against the record), tas-npcdiff.mjs (a computer rider's
+  ground_state_dump against a snap_at.py state) and compare-ps2-ai.mjs (per-tick draw counts and computer-rider errors), all
+  through tools/tas/race.mjs with CORE_JS.
+
+## core61 / core62 fixes (2026-10-07, physics-jank agent)
+
+- **A reset clears a pending passive departure** (fuzz r11-0118; core61):
+  - 11FEC8(9) replaces the controller. Control 4 is entered at the reset's end, and 12F730 runs on the next tick (the PS2 is in
+    control 5 at 483).
+  - The port kept passiveDeparture = 1 from a get-up before the reset, so animation_tick skipped that tick's passive step.
+  - The reset's enterMotion now clears it. r11-0118 is exact on every field over all 1398 ticks.
+- **1057B8's surface landing writes +0x438 = 0** (0x105C54 / 0x105C78; arithmetic agent's lead, exact-base cam-metro-mix-glide 1089):
+  - The engine set OriginalInstanceResponseRider::surface = 0 on the award path, but nothing read it.
+  - It now zeroes physicsProfile.surface.id (the camera filter's surface input) and the spark mirror sparkSurface438.
+  - cam-metro-mix-glide exact-base: 1040 of 1040 camera words.
+- **The ragdoll after a landing crash takes 13AA48's rebuilt quaternion** (exact-base hl2/uber-rail-6 999):
+  - crash_post_instance_contacts copied +0x110 / +0x1E0 into the crash actor, but not +0x120.
+  - publish_crash_actor then wrote the pre-rebuild quaternion back (q.x 3E46D4E2 -> E1). Mode 1's rebuild of a near-unit quaternion
+    is the identity, which hid it.
+- **Section-built entities step before the record: LiveComps only** (core40's rule, narrowed; web/test-stage-world.mjs failed from core40 on):
+  - The emitters (type 13) and one-way volumes (type 8) the human's scan builds have one update fewer in the PS2 snapshots.
+    - ARA1 setpieces/full: emitters 657928 / 610312 built at 961, snapshot 969.
+    - Boost 40713 at 11758 keeps countdown 3.
+  - The crash billboard LiveComps (hl2/carve-s1-era5) still step.
+  - This rule comes from the snapshots. The part of 0x356198 (its vt+0xA4 / vt+0xB8 gate) that holds a new emitter back is not traced.
 
 ## Exact start seeds (2026-10-05, physics-jank agent)
 

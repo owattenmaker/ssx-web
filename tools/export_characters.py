@@ -425,7 +425,9 @@ def overrides(values, zoe, path):
     return out
 
 
-def settings(cid, states, zoe_states):
+def settings(cid, states, zoe_states, target=None):
+    # target: where the document goes instead of web/public/assets/RIDER_<ID>/settings.json (tools/export_exact_event_starts.py:
+    # the same document from the exact-derived states, local/assets/native-exact/RIDER_<ID>/settings.json)
     folder = native_folder(cid)
     mine, identity = extract_human(states, folder)
     base, zoe_identity = extract_human(zoe_states, NATIVE / 'RIDER_ZOE')
@@ -467,8 +469,9 @@ def settings(cid, states, zoe_states):
                provenance=dict(states=str(states.relative_to(ROOT)), zoe_states=str(zoe_states.relative_to(ROOT)), zoe_identity=zoe_identity,
                                rule='keys whose extraction differs from Zoe on her own derived countdown state; Zoe = initial.json'))
     if cid == 'zoe': return doc   # Zoe is the course initial.json itself (no settings.json: bit-exact capture gates)
-    for target in (WEB / f'RIDER_{cid.upper()}/settings.json',):
-        target.parent.mkdir(parents=True, exist_ok=True); target.write_text(json.dumps(doc, indent=1) + '\n')
+    target = Path(target) if target else WEB / f'RIDER_{cid.upper()}/settings.json'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(doc, indent=1) + '\n')
     return doc
 
 

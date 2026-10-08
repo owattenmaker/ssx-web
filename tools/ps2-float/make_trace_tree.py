@@ -40,6 +40,29 @@ def mirror(source, target, recurse=()):
             link.symlink_to(entry)
 
 
+# Generators web/build-core.sh runs: copied as real files so that their own path (Path(__file__) / import.meta.url) resolves to the
+# tree and their output goes to the tree's generated/ directories, never to the live tree's.
+GENERATORS = ('web/generate-controllers.py', 'web/generate-snapshot-registry.mjs')
+
+
+def isolate_generated(out):
+    """web/generated and engine/generated as real copies, and the generators as real files: a tree build writes only into the tree."""
+    import shutil
+    for rel in ('web/generated', 'engine/generated'):
+        target = out / rel
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+        if (ROOT / rel).exists():
+            shutil.copytree(ROOT / rel, target, symlinks=False)
+    for rel in GENERATORS:
+        target = out / rel
+        if target.is_symlink() or target.exists():
+            target.unlink()
+        shutil.copy2(ROOT / rel, target)
+
+
 def write_copy(path, text):
     """Write a tree file as a real file: never through a symlink into the live tree."""
     if path.is_symlink():
@@ -114,6 +137,7 @@ def main():
     mirror(ROOT / 'web', out / 'web', recurse=('generated',))
     engine = out / 'engine'
     mirror(ROOT / 'engine', engine, recurse=('generated',))
+    isolate_generated(out)
     software = (ROOT / 'engine/software_float.hpp').read_text()
     software = replace_once(software, '#include <cstdint>\n', '#include <cstdint>\n#include "ps2_trace.hpp"\n', 'software_float')
     write_copy(engine / 'software_float.hpp', software)

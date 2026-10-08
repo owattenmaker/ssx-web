@@ -32,7 +32,7 @@ using namespace ssx;
 #include "audio_events.hpp" // audio observers (web/audio_events.inc)
 RIDER_LOCAL extern OriginalAirTrajectory browserTrajectory;RIDER_LOCAL extern bool browserPredictionAvailable;
 void reseed_prediction(OriginalAirState);
-void reset_prediction();void begin_prediction(OriginalAirState);bool advance_prediction(OriginalAirState&);
+void reset_prediction();void begin_prediction(OriginalAirState);bool advance_prediction(OriginalAirState&);bool advance_prediction_scaled(OriginalAirState&,float timeScale);
 void browser_score_takeoff(bool ramp); // 114298 -> 119E38 + 10E098 (web/score_gameplay.inc)
 std::unique_ptr<CollisionWorld> world;
 std::unique_ptr<CollisionWorld> cameraTerrain;
@@ -280,7 +280,8 @@ bool resolve_touchdown(const OriginalWorldSegmentHit& contact,uint32_t tick,int 
  auto impact=originalLandingImpact(touchdown,contact);if(!impact.contact)return false;
  if(browserLandingAirExit)browserLandingAirExit();
  touchdown.rider=physicsState;touchdown.physicalRight=originalOrientationBasis(physicsState.quaternion).right;
- {terrain_original::Rounding rounding;const auto& v=physicsState.velocity;float square=terrain_original::mul(v[0],v[0]);square=terrain_original::add(square,terrain_original::mul(v[1],v[1]));square=terrain_original::add(square,terrain_original::mul(v[2],v[2]));browserLandingSpeed=terrain_original::sqrt(terrain_original::add(square,0.f));}
+ // 0x139D38..0x139D44: the landing speed is the VU0 horizontal dot (1.0 x z^2, 1.0 x w^2)
+ {terrain_original::Rounding rounding;const auto& v=physicsState.velocity;float square=terrain_original::mul(v[0],v[0]);square=terrain_original::add(square,terrain_original::mul(v[1],v[1]));square=terrain_original::add(square,terrain_original::mul(1.f,terrain_original::mul(v[2],v[2])));browserLandingSpeed=terrain_original::sqrt(terrain_original::add(square,terrain_original::mul(1.f,0.f)));}
  const auto& material=landingProfile.materials.at(contact.surface);
  for(unsigned i=0;i<3;i++){landingContactInfo[i]=physicsState.position[i];landingContactInfo[3+i]=contact.position[i];landingContactInfo[6+i]=contact.normal[i];}landingContactInfo[9]=material.depth3;
  if(!originalLandingResolveContact(touchdown,contact,material,impact.relativeNormalSpeed)){collisionRecoveryRequested=true;if(browserResetBegin)browserResetBegin(1);browserLandingRecoveryReset=true;return false;}
@@ -330,7 +331,7 @@ void browser_air_contact_frame(){
  normal={physicsState.normal[0],physicsState.normal[2],-physicsState.normal[1]};
  physicsState.surfaceVelocity={0,0,0};
 }
-static void translate_air_motion(){auto airborne=OriginalAirState{physicsState.position,physicsState.velocity};effectiveSpeedLimit=3333.33349609375f;if(!advance_prediction(airborne))airborne.step(effectiveSpeedLimit);physicsState.position=airborne.position;physicsState.velocity=airborne.velocity;position=airborne.nativePosition();velocity=airborne.nativeVelocity();
+static void translate_air_motion(){auto airborne=OriginalAirState{physicsState.position,physicsState.velocity};effectiveSpeedLimit=3333.33349609375f;if(!advance_prediction_scaled(airborne,physicsState.timeScale))airborne.step(effectiveSpeedLimit);physicsState.position=airborne.position;physicsState.velocity=airborne.velocity;position=airborne.nativePosition();velocity=airborne.nativeVelocity();
  browser_air_contact_frame();
 }
 // 0x114DB8 (in-flight stance switch) belongs to the control-5 update, which the original runs before
@@ -883,6 +884,10 @@ EMSCRIPTEN_KEEPALIVE float* step_rider(float steering,int jump,int brake,int boo
   //13D818 consumes the surface frame retained by the preceding contact.
   // Reprojecting the newly aligned physical forward here changes next-frame forces.
   f={physicsState.forward[0],physicsState.forward[2],-physicsState.forward[1]};
+  // 131620 0x131674..0x1316C4: the brake input (f20) is 0 while +0x1E0 . +0x3A0 < 0 (moving against the surface forward), for every
+  // use below, 113F88's targets included (fuzz r8-0075 2513: Mac out of a soft collision; the port's 113F88 took the brake path and
+  // sent the crouch to 0 at 1/10, the PS2 kept approaching at 1/100).
+  if(terrain_original::dot(physicsState.velocity,physicsState.forward)<0)brakeTarget=0;
   const int controlAtTickStart=physicsState.controlState; //the controller that runs this tick (a held Cross after a touchdown first runs 131620, which requests control 2)
   if(browserHumanRider)physicsState.timeScale=1; /*+0x300: written only by the NPC provider (120090) and reset 11D660*/if(!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame)physicsState.controlState=jump?2:0;
   if(browserAttackCruise&&applyTargets&&!browserCrashExitFrame&&!browserSoftFrame&&!uberFrame&&!browserStartFrame&&!browserBoardPressFrame)browserAttackCruise(steering); //1317FC..13182C
@@ -1041,4 +1046,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE void ps2_exact_seeds(int on){
  ssx::software_float::exactSeeds=on!=0;
  rider_statics_core();
 }
+#if SSX_EXACT_CHARACTER_SEEDS
+// The human rider's id for the per-character exact grid states (web/event_start_select.hpp; "" clears it; init_animation clears it
+// too). Call it after init_world_collision has selected the course: 1 when this course has that rider's exact state, else 0 (the
+// seed stays the mode-1 one).
+extern "C" EMSCRIPTEN_KEEPALIVE int human_event_character(const char* id){
+ browser_human_event_character()=id?id:"";
+ ssx::OriginalGroundState state;
+ return browserEventCharacterGroundStateExact(browserEventLocation,browser_human_event_character(),state)?1:0;
+}
+#endif
 #endif

@@ -14,7 +14,7 @@ void reseed_prediction(OriginalAirState current){if(trajectorySeeded)browserTraj
 // scaled: 0x139A20's step, seconds = mul.s(rider+0x300 time scale 1.0 as fs, 1/60) at 0x139A58.
 // Not scaled: the handplant motion-5 steps pass the constant 1/60 straight in (0x13940C gp-0x71FC, 0x1394F4 gp-0x71F4).
 // The two differ only on the console model, where 1.0 as fs gives 3C888888 (docs/ps2-float.md); mode 1 gives 3C888889 for both.
-static bool advance_prediction_by(OriginalAirState& current,bool scaled){
+static bool advance_prediction_by(OriginalAirState& current,bool scaled,float timeScale=1.f){
  if(predictionFailed)return false;
  if(!trajectorySeeded)begin_prediction(current);
  if(!cameraTerrain||!browserBodies){predictionFailed=true;browserPredictionAvailable=false;return false;}
@@ -23,12 +23,17 @@ static bool advance_prediction_by(OriginalAirState& current,bool scaled){
   //Original113648/113200 prediction, with original mode0/2 world queries.
   //Publish the same integrated state used by original139A20, exactly once.
   auto query=[](auto end,auto start,int mode){return queryOriginalAirTrajectoryWorld(*cameraTerrain,browserBodies.get(),end,start,mode);};
-  auto next=scaled?candidate.stepLogic(1,current,query):candidate.step(std::bit_cast<float>(0x3c888889u),current,query);
+  auto next=scaled?candidate.stepLogic(timeScale,current,query):candidate.step(std::bit_cast<float>(0x3c888889u),current,query);
   browserTrajectory=std::move(candidate);browserPredictionAvailable=true;current=lastIntegrated=next;return true;
  }catch(const OriginalAirTrajectoryUnavailable&){predictionFailed=true;browserPredictionAvailable=false;return false;}
 }
 bool advance_prediction(OriginalAirState& current){
  return advance_prediction_by(current,true);
+}
+// 139A20 with the rider's +0x300 time scale (0x139A58 mul.s(+0x300, 1/60)): a computer rider's NPC provider (120090) writes it below 1
+// (PS2 TAS best-8964 5944: computer rider 4 at 0.9675 leaves the ground; 113648 elapsed 0.016125, the port stepped 1/60).
+bool advance_prediction_scaled(OriginalAirState& current,float timeScale){
+ return advance_prediction_by(current,true,timeScale);
 }
 bool advance_prediction_unscaled(OriginalAirState& current){
  return advance_prediction_by(current,false);

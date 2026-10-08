@@ -20,13 +20,15 @@ const traceRange = args.includes('--trace') ? args[args.indexOf('--trace') + 1].
 if (!capturePath) throw new Error('capture path required');
 const root = new URL('public/assets/', import.meta.url);
 // PS2_ARITH=exact-base: a course's initial.json and start.json come from its exact glide seed when one exists
-// (local/assets/native-exact/<CODE>/, tools/ps2-float/export_exact_glide_seeds.py).
+// (local/assets/native-exact/<CODE>/, tools/ps2-float/export_exact_glide_seeds.py), and a rider's settings.json from its exact
+// Snow Jam countdown (local/assets/native-exact/RIDER_<ID>/, tools/export_exact_event_starts.py).
 const exactAssets = new URL('../local/assets/native-exact/', import.meta.url);
 const exactAssetPath = (p) => {
   if (process.env.PS2_ARITH !== 'exact-base') {
     return null;
   }
-  const match = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start)\.json$/.exec(p) || []).slice(1);
+  const course = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start)\.json$/.exec(p) || []).slice(1);
+  const match = course.length ? course : (/^(RIDER_[A-Z_]+)\/(settings)\.json$/.exec(p) || []).slice(1);
   if (match.length !== 2) {
     return null;
   }
@@ -119,6 +121,18 @@ core._init_terrain(str(course + '/terrain.json'));
 core._init_world_collision(str(course + '/world_collision.json'), hash);
 core._init_body_terrain(str(course + '/terrain.json'));
 core._init_rails(str(course + '/rails.json'), hash);
+}
+// PS2_ARITH=exact / exact-base with --human: an exact core seeds the rider's own exact grid state on this course (web/core.cpp
+// human_event_character, tools/export_exact_event_starts.py: local/reference-exact/characters/<id>, a cheat on another base
+// <skin>-on-<base>). A course without one keeps the mode-1 seed, which the log says.
+if (humanPackage && /^exact/.test(process.env.PS2_ARITH || '') && core._human_event_character) {
+  const roster = json('riders.json');
+  const entry = roster.find((r) => r.package === humanPackage);
+  const baseEntry = basePackage ? roster.find((r) => r.package === basePackage) : null;
+  const id = baseEntry && baseEntry.id !== 'zoe' ? `${entry.id}-on-${baseEntry.id}` : entry.id;
+  if (!core._human_event_character(put(Buffer.from(id + '\0')))) {
+    console.error(`exact seed: no exact grid state for ${id} on ${course}; the mode-1 seed stays`);
+  }
 }
 // STAGE_WORLD_PS2=snapshots.json (tools/export_particle_snapshots.py): single-rider run with the section activation
 // 0x101B60 (after race_end, as main.js without computer riders) and the stage world (web/stage_world.inc) loaded like
@@ -244,6 +258,9 @@ if (courseManifest.live) for (let i = 1; i < records.length; i++) {
 for (let i = 1; i < records.length; i++) if (records[i].tick !== records[i - 1].tick + 1) {
   // STAGE_WORLD_PS2 runs stop at an event restart (e.g. setpieces-bhp1/full restarts at 4697); gated captures have none.
   if (process.env.STAGE_WORLD_PS2) { records.length = i; break; }
+  // PS2_ARITH=exact-base: an exact run can finish its event a few ticks apart from the mode-1 one, and the script's end-of-run presses
+  // then restart the event (the tick drops to 0 / 1: peak1/rnb-event-tuck 10577, peak2/launch-event-tuck 2746). Stop the run there.
+  if (process.env.PS2_ARITH === 'exact-base' && records[i].tick <= 1) { records.length = i; break; }
   if ((args.includes('--ctm-in-world') || ws15Seed) && records[i].tick === 0) continue; // the Continue's 1297C8(C, 1) / WS15's WS1 arg 0 -> WS4: the game tick restarts at 0
   throw new Error(`tick gap at record ${i}`);
 }

@@ -97,8 +97,15 @@ inline BodyTriangleContact originalBodyBoxContact(const BodyCollisionVolume& vol
         float lower=originalScalarAdd(originalScalarSubtract(volume.broadCenterCm[axis],low[axis]),volume.broadRadiusCm);
         float upper=originalScalarAdd(originalScalarSubtract(high[axis],volume.broadCenterCm[axis]),volume.broadRadiusCm);
         if(lower<0||upper<0)continue;
-        if(lower<best){best=lower;result.hit=true;result.pointCm=volume.broadCenterCm;result.pointCm[axis]=low[axis];result.translationCm={};result.translationCm[axis]=-lower;}
-        if(upper<best){best=upper;result.hit=true;result.pointCm=volume.broadCenterCm;result.pointCm[axis]=high[axis];result.translationCm={};result.translationCm[axis]=upper;}
+        // 0x329590 keeps the face direction, the unit axis x -1 / +1 (0x3298A4: the axis 0x4FF160.. as fs); 0x32B2B8 then scales it by
+        // the depth (0x32B3D8 vmulx: the direction as fs, so 1.0 x depth on the console model, and -0 in the other lanes).
+        auto faceTranslation=[&](float sign,float depth){
+            Vector translation;
+            for(unsigned k=0;k<3;++k)translation[k]=mul(mul(k==axis?1.f:0.f,sign),depth);
+            return translation;
+        };
+        if(lower<best){best=lower;result.hit=true;result.pointCm=volume.broadCenterCm;result.pointCm[axis]=low[axis];result.translationCm=faceTranslation(-1.f,lower);}
+        if(upper<best){best=upper;result.hit=true;result.pointCm=volume.broadCenterCm;result.pointCm[axis]=high[axis];result.translationCm=faceTranslation(1.f,upper);}
     }
     return result;
 }

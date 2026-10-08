@@ -224,6 +224,9 @@ callback checks, online and native paths) or needs situations the seeds never re
 - **2026-10-07, core51 (b77960c5):** fixed r1-0204, r6-0121 / r3teeter-0010 / r4-0026 (13AF28 pushes the teeter entity every
   rail tick), r5-0160, r4-0236, r15-0070, r7-0053. r8-0165's human is fixed (the RNG differs at 3967 now). Open: r15-0108,
   r4-0279, r7-0000, r7-0038, r13-0063, r10-0134, r7-0028, r7-0082.
+- **2026-10-07, batch 11 on core51 (29 variants):** 4 new, sent: r11-0118 (air control 5 a tick late after a reset with a grab
+  held), r5-0207 (Allegra skips her two controller draws one tick), r8-0075 (Mac 0.08 cm/s at 2514, ERA5), r1-0278 (a crash ULP in
+  dra4).
 - **Rechecks:** local/fuzz/recheck.py CORE_JS runs every mode-1 capture again (event seeds six-rider, against each seed's own
   six-rider gate limit, diff.py six_limit). Results are in recheck-<core>.json.
 - **Exact-mode queue:** local/fuzz/exact-queue.json. Every entry is captured in exact mode (runs/fuzz-exact); the state entries

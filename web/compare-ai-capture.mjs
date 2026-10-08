@@ -31,7 +31,9 @@ const exactAssetPath = (p) => {
   if (process.env.PS2_ARITH !== 'exact-base') {
     return null;
   }
-  const match = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start|npc-riders)\.json$/.exec(p) || []).slice(1);
+  const course = p === 'ANIMATIONS/initial.json' ? ['ARA1', 'initial'] : (/^([A-Z0-9]+)\/(initial|start|npc-riders)\.json$/.exec(p) || []).slice(1);
+  // a rider's exact settings document (local/assets/native-exact/RIDER_<ID>/settings.json, the rider-parity agent's export)
+  const match = course.length ? course : (/^(RIDER_[A-Z_]+)\/(settings)\.json$/.exec(p) || []).slice(1);
   if (match.length !== 2) {
     return null;
   }
@@ -82,12 +84,34 @@ if (ctmFull && !args.includes('--in-world-ai')) throw new Error('--ctm-full need
 let humanText = ctmFull ? text('PEAK1/initial.json') : resources.initialText;
 if (humanRider && humanRider.id !== 'zoe') {   // the human's own settings (web/character-roster.js)
   const { humanSettings, composeCheat } = await import('./character-roster.js');
-  const settingsOf = (pkg) => { const f = new URL(`public/assets/${pkg}/settings.json`, import.meta.url); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : null; };
+  const settingsOf = (pkg) => { const f = exactAssetPath(`${pkg}/settings.json`) || new URL(`public/assets/${pkg}/settings.json`, import.meta.url); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : null; };
   const base = argValue('--base') && argValue('--base') !== 'zoe' ? settingsOf(`RIDER_${argValue('--base').toUpperCase()}`) : null;
   humanText = JSON.stringify(humanSettings(JSON.parse(resources.initialText), humanRider.kind === 'cheat' ? composeCheat(base, settingsOf(humanRider.package)) : settingsOf(humanRider.package)));
 }
 human._init_animation(str(human, resources.packetsJson), str(human, text(`${humanPackage}/rider.json`)), str(human, humanText), put(human, resources.packetsBin), resources.packetsBin.length);
 human._init_race(str(human, humanText));
+// Checkpoint bonus (112FB0 -> 10E558 -> 1194C0 posts HUD slot 0x23 type 0x29, web/race_bridge.cpp set_race_bonus), as
+// compare-ps2-capture.mjs: the list 0x4D33B8 (6 x {int32 value, float distance}), the game mode byte 0x535C12 and the global flags
+// *0x5308D0 are read from the capture's own baseline savestate (no sidecar to go stale), and so are the event handler GMM+4, the
+// freestyle kind GMM+8 and a timed freestyle event's limit GMM+0x78 (GMM = *(G+0xC0), G = *(gp-0x848)).
+const bonusManifest = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8'));
+if (human._set_race_bonus && bonusManifest.baseline && fs.existsSync(bonusManifest.baseline)) {
+  const { execFileSync } = await import('node:child_process');
+  const script = ['import sys,zipfile,struct,json', 'm=zipfile.ZipFile(sys.argv[1]).read("eeMemory.bin")',
+    'w=lambda a: struct.unpack_from("<i",m,a)[0]',
+    'g=w(w(0x4A30F0-0x848)+0xC0)&0x1ffffff',
+    'print(json.dumps(dict(words=[w(0x4D33B8+4*k) for k in range(12)],mode=m[0x535C12],flags=w(0x5308D0)&0xffffffff,',
+    '  handler=w(g+4) if g else 1,kind=w(g+8) if g else 0,limit=w(g+0x78) if g else 0)))'].join('\n');
+  const base = JSON.parse(execFileSync('python3', ['-c', script, bonusManifest.baseline], { encoding: 'utf8' }));
+  if (base.words.some((w) => w) || base.mode || base.flags) {
+    const ptr = human._malloc(48);
+    new Int32Array(human.HEAPU8.buffer, ptr, 12).set(base.words);
+    human._set_race_bonus(ptr, base.mode, base.handler, base.kind, base.flags >>> 0);
+    human._free(ptr);
+    // A timed freestyle event (handler 0, GMM+8 1: 0x2398E8 adds each accepted bonus x 60 ticks to it) has its time limit GMM+0x78.
+    if (base.handler === 0 && base.kind === 1 && base.limit > 0 && human._race_time_limit) human._race_time_limit(base.limit);
+  }
+}
 if (humanRider && courseCode !== 'ARA1') {   // the human's own grid spot on this course (web/lineup.js, as ai-race.js prepare)
   const { humanGridState } = await import('./lineup.js');
   const data = JSON.parse(text(`${courseCode}/lineups.json`)), roster = JSON.parse(text('riders.json'));

@@ -16,24 +16,33 @@ export const GRABS = [['R1'], ['L1'], ['R2'], ['L2'], ['R1', 'L1'], ['R2', 'L2']
 export const SPINS = ['DPadLeft', 'DPadRight'];
 export const FLIPS = ['DPadUp', 'DPadDown'];
 
-// An air program: a spin (or flip) from the take-off, a grab inside it, and in Tricky (Super time > 0) one or two Ubers (a grab
-// combination with Square, 0x1352A8; several in one air all commit at the landing, docs/tricks-scoring.md).
+// An air program. Outside Tricky: a spin (or flip) from the take-off and a grab inside it, for the points that fill the meter.
+// In Tricky (Super time > 0): Ubers (0x1352A8; several in one air all commit at the landing, docs/tricks-scoring.md).
 export function randomProgram(tricky) {
   const steps = [];
+  // In Tricky, mostly an Uber chain: 1..5 Ubers (a grab combination with Square, held all through or Square from 2 ticks in), small
+  // gaps between them. One long air takes 3 or 4 (local/tas runs: a 195-tick air gave tier 1 -> 4 with a 4-Uber chain).
+  if (tricky && rand() < 0.75) {
+    const n = 1 + Math.floor(rand() * 5);
+    let u = span(1, 8);
+    for (let k = 0; k < n; k++) {
+      const len = span(6, 45);
+      const g = pick(GRABS);
+      if (rand() < 0.5) {
+        steps.push({ from: u, to: u + len - 1, press: [...g, 'Square'] });
+      } else {
+        steps.push({ from: u, to: u + len - 1, press: [...g] });
+        steps.push({ from: u + 2, to: u + len - 1, press: ['Square'] });
+      }
+      u += len + span(0, 8);
+    }
+    return { steps };
+  }
   const r = rand();
   if (r < 0.6) steps.push({ from: 1, to: span(15, 150), press: [pick(SPINS)] });
   else if (r < 0.75) steps.push({ from: 1, to: span(15, 120), press: [pick(FLIPS)] });
   const g0 = span(2, 20);
   steps.push({ from: g0, to: g0 + span(10, 120), press: pick(GRABS) });
-  if (tricky && rand() < 0.7) {
-    let u = span(3, 30);
-    const n = rand() < 0.5 ? 1 : 2;
-    for (let k = 0; k < n; k++) {
-      const len = span(20, 70);
-      steps.push({ from: u, to: u + len, press: [...pick(GRABS), 'Square'] });
-      u += len + span(1, 10);
-    }
-  }
   return { steps };
 }
 

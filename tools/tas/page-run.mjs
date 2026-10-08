@@ -83,9 +83,12 @@ try {
         round:ui.careerUI?.career?.active?.ev?.round??3,career:!!ui.careerUI?.career?.active?.ev?.career,enabled:ai.enabled!==false}:null}})())`);
   fs.writeFileSync(path.join(outDir, 'start.json'), start);
   // the human as loaded (main.js loadedRider / the merged settings): what a replay elsewhere must load again
-  const riderInfo = JSON.parse(await E(`JSON.stringify((()=>{const r=ssxQA.loadedRider()||{};const s=JSON.stringify(ssxQA.humanSettings());let h=0x811c9dc5;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619)>>>0;
+  const riderInfo = JSON.parse(await E(`JSON.stringify((()=>{const r=ssxQA.loadedRider()||{};const s=JSON.stringify(ssxQA.humanSettings());
+      let h=0x811c9dc5;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619)>>>0;
   const pick={};for(const k of ['id','package','root','kind','base','stamp','uber','outfit','career','replayFixed'])pick[k]=r[k]??null;
-  const c=window.ssxEffects.core;return {rider:pick,uberRows:(r.uber_choice||[]).length,outfitSettings:!!r.outfit_settings,settingsHash:h,settingsLength:s.length,stats:Array.from(new Float32Array(c.HEAPF32.buffer,c._rider_attribute_stats(),12))}})())`));
+  const c=window.ssxEffects.core;return {rider:pick,uberRows:(r.uber_choice||[]).length,outfitSettings:!!r.outfit_settings,settingsHash:h,
+      settingsLength:s.length,stats:Array.from(new Float32Array(c.HEAPF32.buffer,c._rider_attribute_stats(),12))}})())`));
+      
   console.log('rider', JSON.stringify(riderInfo));
   const base = await E('window.__simTrace.ticks.length');
   // per tick: the human's rider state (16 floats), the shared game RNG (6 words), each computer rider's rider state (16 floats each),
@@ -93,7 +96,9 @@ try {
   await E(`(()=>{window.__tasDump=[];window.__tasRow=()=>{const c=window.ssxEffects.core,ai=ssxQA.aiRace?.();
     const row=[...new Float32Array(c.HEAPF32.buffer,c._rider_state(),16),...new Uint32Array(c.HEAPU8.buffer,c._animation_rng_words(),6)];
     for(const n of ai?.racers?.npcs??[])row.push(...new Float32Array(n.core.HEAPF32.buffer,n.core._rider_state(),16));
-    row.push(...new Uint32Array(c.HEAPU8.buffer,c._visual_rng_words(),6),...new Float32Array(c.HEAPF32.buffer,c._pose_physical(),12),...new Float32Array(c.HEAPF32.buffer,c._animation_info(),19),...new Float32Array(c.HEAPF32.buffer,c._boost_info(),8));
+    row.push(...new Uint32Array(c.HEAPU8.buffer,c._visual_rng_words(),6),...new Float32Array(c.HEAPF32.buffer,c._pose_physical(),12),
+        ...new Float32Array(c.HEAPF32.buffer,c._animation_info(),19),...new Float32Array(c.HEAPF32.buffer,c._boost_info(),8));
+        
     {const u=new Uint32Array(c.HEAPU8.buffer,c._score_object_dump(),0x1d0/4);let h=0x811c9dc5;for(let i=0;i<u.length;i++)h=Math.imul(h^u[i],16777619)>>>0;row.push(h);}
     window.__tasDump.push(row)};return 1})()`);
   // the run's pad, 400 ticks a call; then neutral until the results

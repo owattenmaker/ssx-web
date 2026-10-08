@@ -1111,7 +1111,11 @@ static uint64_t stage_world_serial(){return stageEntitySerial;}
 static void stage_world_tick_newer(uint64_t serial){
  if(!stageWorldLoaded)return;
  std::vector<uint64_t> order;
- for(auto& e:stageEntities)if(e.alive&&e.serial>serial)order.push_back(e.serial);
+ // Only LiveComps (type 1) are: the emitters (type 13) and one-way volumes (type 8) the scan built have one update fewer in the PS2
+ // snapshots (web/test-stage-world.mjs: ARA1 setpieces/full 961 builds the emitters 657928 / 610312, snapshot 969; the single-rider
+ // Boost 40713 at 11758 keeps countdown 3). Rule from the PS2 snapshots on both sides; which part of 0x356198 (its vt+0xA4 /
+ // vt+0xB8 gate) holds them back is not traced.
+ for(auto& e:stageEntities)if(e.alive&&e.serial>serial&&e.type==stage_world::LiveComp)order.push_back(e.serial);
  for(auto it=order.rbegin();it!=order.rend();++it)stage_world_tick_entity(*it);
 }
 static void stage_world_tick_entities(){

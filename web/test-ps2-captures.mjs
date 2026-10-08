@@ -765,7 +765,7 @@ const aiCases = [
     why: 'DSS2 with Moby to the end (was Moby 1509, RNG 1626)' },
   // 2026-09-28 (later): 1211F8 also approaches +0x22C / +0x238 / +0x25C on the tick 12E9B8's jump release leaves a rail (Moby 5033),
   // so his re-attach at 5034 slides the same 0.21 cm: exact to the end.
-  { name: 'parity-ai/ass1', args: ['--zoe', '--isolate'], humanThrough: 5300, ai: [5300], rngThrough: 5300, ranks: true, records: true, scoreThrough: 3301,
+  { name: 'parity-ai/ass1', args: ['--zoe', '--isolate'], humanThrough: 5300, ai: [5300], rngThrough: 5300, ranks: true, records: true, scoreThrough: 5300,
     why: 'ASS1 with Moby: his sliding crash bounces no longer dispatch 105D98 (was Moby 3673, RNG 3721, human 5103)' },
   { name: 'parity-ai/era5', args: ['--zoe', '--isolate'], humanThrough: 2799, ai: [2799, 2799, 2799, 2799, 2799], rngThrough: 2799, ranks: true, records: true, scoreThrough: 2799,
     why: 'Gravitude six riders to the end: the crash billboards (section LiveComp + slot-5 timer, builtins 28 / 54) break their ice pieces with the shared RNG (was RNG 1283, riders from 1472)' },

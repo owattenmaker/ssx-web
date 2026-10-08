@@ -25,7 +25,10 @@ RIDER_LOCAL static unsigned railQueryBone=22;RIDER_LOCAL static RailVector railQ
 static void setup_rail_context(const json&config){const auto&c=config.at("original_rail_context");railQueryBone=c.at("board_root_bone");if(railQueryBone!=22)throw std::runtime_error("Unverified rail query bone");railQueryOffset=c.at("offset9d0").get<RailVector>();auto triplet=[](const json&v){return GroundControlValue{v.at(0),v.at(1),v.at(2)};};initialRailSteer=triplet(c.at("steer"));initialRailBalance=triplet(c.at("balance"));initialRailTolerance=triplet(c.at("tolerance"));railSteer=initialRailSteer;railBalance=initialRailBalance;railTolerance=initialRailTolerance;}
 static void board_press_rail_begin(float);static void board_press_rail_attach();static void board_press_rail_update();static int32_t board_press_style(); //web/boardpress_gameplay.inc
 RIDER_LOCAL static bool railOwned=false,railPostPending=false,railUpperReactions=false;RIDER_LOCAL static unsigned railAttachments=0,railExits=0,railTicks=0,railObservers=0;
-RIDER_LOCAL static int railSurface=-1;RIDER_LOCAL static bool railHeldJump=false,railPreviousJump=false,railReleaseFrame=false;RIDER_LOCAL static float railFlipInput=0,railRotationInput=0,railBalanceInput=0;RIDER_LOCAL static unsigned railJumps=0,railRotations=0;
+RIDER_LOCAL static int railSurface=-1;RIDER_LOCAL static bool railHeldJump=false,railPreviousJump=false,railReleaseFrame=false;
+// The rail step's held-jump branch ran 1211F8's prewind approach this tick (the animation tick then skips its own).
+RIDER_LOCAL static bool railPrewindApproached=false;
+RIDER_LOCAL static float railFlipInput=0,railRotationInput=0,railBalanceInput=0;RIDER_LOCAL static unsigned railJumps=0,railRotations=0;
 static OriginalRailRider rail_view(){
  OriginalRailRider r;r.position=physicsState.position;r.velocity=physicsState.velocity;r.quaternion=physicsState.quaternion;
  const auto basis=originalOrientationBasis(r.quaternion);r.right=basis.right;r.forward=basis.forward;r.up=basis.up;
@@ -142,8 +145,18 @@ static OriginalRailAccess rail_access(){
  };
  // 0x131E18: 115B58 plays the pending 10E028 reaction here, inside 131D30 and before its rotation 132060 enters a rail spin (fuzz
  // r7-0036 906: the 898 air-to-rail attach's kind-1 request plays 315 on the rail; r13-0175 2411: the air entry 69 (class 5) still
- // holds it, then 54 enters). Its 3128E8 variant draw is controller-phase. 0x115D48 runs in animation_tick (railUpperReactions).
- a.upperReactions=[](){railUpperReactions=true;ControllerDraws controllerDraws;upper_request_play();};a.restoreStance=[](){restore_stance(physicsState.prewindStyle);};a.leaveEffects=[](){++railObservers;};return a;
+ // holds it, then 54 enters). Its 3128E8 variant draw is controller-phase.
+ // 0x131E20: 115D48 follows at once, in the controller phase. It reads the heading +0x1B0 before this tick's rail motion and the
+ // channel-1 class before 132060 (fuzz r5-0207 2766: Allegra's peer 5 at bearing -1.3864 is not yet behind her, so no 316 until
+ // 2767; the port's animation_tick check used the moved heading and looked back a tick early).
+ a.upperReactions=[](){
+  railUpperReactions=true;
+  ControllerDraws controllerDraws;
+  upper_request_play();
+  OriginalUpperReactionContext context{graph.currentClass(1),physicsState.physicalForward,physicsState.reverseStance,animationTick+1,riderMask8C0,riderMask8D0};
+  auto reaction=originalUpperReaction(idleSeconds,peers,context,[](){return rng.next();});
+  if(reaction.semantic>=0)graph.enter(reaction.semantic,-1,reaction.mask);
+ };a.restoreStance=[](){restore_stance(physicsState.prewindStyle);};a.leaveEffects=[](){++railObservers;};return a;
 }
 static void clear_rails(){browserRailActive=railOwned=railPostPending=false;railMotion={};railControl={};railUber={};railShoulderMask=0;railUberEntries=railUberCompletions=railUberUnavailable=0;railSteer=initialRailSteer;railBalance=initialRailBalance;railTolerance=initialRailTolerance;railAttachments=railExits=railTicks=railObservers=0;railExitPasses=railExitHits=railExitIncomplete=railExitReactions=0;railSurface=-1;railHeldJump=railPreviousJump=railReleaseFrame=false;railFlipInput=railRotationInput=railBalanceInput=0;railJumps=railRotations=0;graph.railBalance=0;}
 // Crash motion replaces rail ownership without clearing accumulated rail stats.
@@ -282,6 +295,7 @@ static bool step_rails_tick(float steering,int jump,int brake,int boost){
   const int semantic=originalPrewindAnimation(prewind.spin.current,prewind.flip.current,view.reverseStance,view.style);if(semantic<0||(semantic!=graph.requestedSemantics[2]&&!graph.enter(semantic)))throw std::runtime_error("Missing rail crouch animation");
   }
   originalAirPrewindApproach(prewind);
+  railPrewindApproached=true;
  }else if(view.controlState==1){ //0x12FC80 on the rail (motion 4); 0x106848 does not re-attach while motion 4 owns the rider
   if(!attached){rail_apply(view);board_press_rail_update();view=rail_view();if(!railOwned)return false;} //R3 ollie left the rail: motion 1 runs in the core this tick
  }else if(!attached){
@@ -331,7 +345,7 @@ static std::array<float,3> rail_motion_post(){
  originalRailMotionLeave(railMotion,view,access);if(!crash.active&&!browserResetActive){rail_apply(view);publish_rail_charge(railHeldJump?view.crouch.current:0);} //rail_apply republishes the rider; keep the step's crouch charge
  std::array<float,3> moved;for(unsigned k=0;k<3;k++)moved[k]=railQueryOffset[k]-before[k];return moved;
 }
-static void rail_tick_begin(){railReleaseFrame=false;browserRailJumpRelease=false;browserRailControllerRan=false;}
+static void rail_tick_begin(){railPrewindApproached=false;railReleaseFrame=false;browserRailJumpRelease=false;browserRailControllerRan=false;}
 static void setup_rails(){browserRailStep=step_rails;browserRailReset=clear_rails;browserRailTickBegin=rail_tick_begin;}
 
 extern "C" EMSCRIPTEN_KEEPALIVE float* rail_exit_debug(){return railExitDebug.data();}

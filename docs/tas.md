@@ -4,7 +4,17 @@ A tool-assisted run of the Metro City race (BRA2, Peak 1) as a replay the port p
 in `tools/tas/`, bulky outputs in `local/tas/` (not tracked). SLUS_207.72, gp = 0x4A30F0, recompiled code in `local/output`.
 Nothing here is posted to the online boards or the records server.
 
-Status (2026-10-07): the node harness is exact against the page and the search runs. The best time is in "Results" below.
+Status (2026-10-07, paused):
+
+- **Best times.**
+  - 8507 race ticks (2:21.78) on core51, exact in the page in Chrome and WebKit.
+  - 8883 (2:28.05) on scratch core58.
+  - Both are under the 9000-tick (2:30) gate.
+- **The PS2 proof.**
+  - On core51 the PS2 matches exactly to tick 1313. At 1314 the rail attach splits: the port ran the prewind approach twice at
+    1137, on a rail with Cross held. The physics agent fixed this in core58 / core62.
+  - On core62 the PS2 matches the old pad through tick 9172, so the pads have to be re-optimised there.
+- **Next steps:** section 8.
 
 ## 1. The rules (from the code)
 
@@ -112,6 +122,13 @@ His progress meter, one sample per in-game second (frames from the user's downlo
 | `tools/tas/policy.mjs`, `macros.mjs`, `guide.mjs` | the closed-loop policy the search's macros drive, the macro menu, guide lines |
 | `tools/tas/search.mjs`, `search-worker.mjs` | the segment beam search, worker threads (3 at most) |
 | `tools/tas/eval.mjs` | runs a pad in node and reports progress, speed, boost, crashes, resets, teleports and the finish |
+| `tools/tas/watch-replay.mjs` | Watch Replay of a replay file in the real page (Chrome or WebKit) from a throwaway local records server; `--realtime` (Play at 1x) or `--freeze`; compares every simtrace tick with the live run |
+| `tools/tas/ps2_tas_capture.py` | a TAS pad on the PS2: ps2_capture's build with the pad hook reading an 8-byte-a-tick table (see "Proof") |
+| `tools/tas/compare-ps2.mjs` | a PS2 capture of a TAS pad against the node harness: shared RNG, human and computer-rider positions per record |
+| `tools/tas/reset-scan.mjs` | where a manual reset (Select) places the rider along a run |
+| `tools/tas/draw_map.py` | a top-down PNG of the reset / AI path network, guides and run traces (pure Python + ffmpeg) |
+| `tools/tas/explore-page.mjs` | scratch: runs JS snippets in the page on BRA2 |
+| `tools/tas/compare-page.mjs` | node harness against a page-run dump |
 
 ### Pad format
 
@@ -160,8 +177,81 @@ run at tick 2824 (the shared RNG), so the search always runs all six.
 
 ## 6. Results
 
-(filled in as runs finish; the replay paths are under local/tas/)
+The start state for every run since m1 is the PS2 one. It comes from the rider-parity agent's
+`local/reference-exact/characters/mac/courses-BRA2-mode1/countdown.p2s`, a fresh profile at game tick 18:
+
+- the lineup psymon, allegra, moby, zoe, luther-on-Mac: roster values [8, 2, 0, 4, 13];
+- the shared RNG [3881933805, 1900723395, ...] at tick 18.
+
+The page loads that lineup with `aiRace.fixedNext = {values: [8, 2, 0, 4, 13], round: 3}` (page-run.mjs `--lineup`) and has
+exactly that RNG at its tick 18. The node start state is `local/tas/start-ps2mac.json`.
+
+| Run | Core | Race ticks | Time | Pad / replay | Notes |
+|---|---|---|---|---|---|
+| guide follow (no search) | core51 | 9990 | 2:46.50 | - | Brodi's line, tuck, auto boost, max stats |
+| m1 | core51 | 8964 | 2:29.40 | `local/tas/best-8964.tas`, `local/tas/page/best-8964/replay.ssxr` | weights default; Super Uber at ~5000 |
+| m2 | core51 | **8507** | **2:21.78** | `local/tas/best-8507.tas`, `local/tas/page/best-8507/replay.ssxr` | tier weight 60; Super Uber at ~4000 |
+| m4 | core58 (scratch, `local/tas/cores/core58`) | 8883 | 2:28.05 | `local/tas/best-c58-8883.tas` | Uber-chain air programs; Super Uber at ~4900; not checked in the page (core58 was not deployed) |
+| m5 (stopped) | core58 | - | - | `local/tas/runs/m5-partial-4400.tas` (to tick 4400) | beam 4 x 20: Super Uber at ~2950, 20 s ahead of m2 at tick 3600; stuck at the 90-degree left turn (remaining ~143,000 cm, about (-1680, 117) m) |
+
+All finished runs are under the 9000-tick gate. Neither uses a booth teleport (stage_teleport_info stays 0) or a reset.
+
+A core change moves every pad: best-8507 does not finish on core58. On core62 (web/runtime `1ab1cbc7…`, live at the pause),
+Watch Replay of the 8507 file (recorded on `b77960c5…`) leaves it at tick 5036 and does not finish. Each core needs its own search (CORE_JS for the node side). The
+page always runs web/runtime's core, so a pad is checked in the page only once its core is live.
+
+Where the time goes (m2, progress along the route per second): the Uber phase (ticks 1600..2600, up to 7 Ubers) makes 1-7 m/s
+of progress in places, at 20-30 m/s of speed. Kelecat has Super Uber by about 21 s (tick ~1440); the TAS has it at ~4000.
 
 ## 7. Proof
 
-(page Watch Replay in Chrome and WebKit; ARMSX2 mode 1 from the matching start state)
+| Check | 8964 | 8507 |
+|---|---|---|
+| node harness (race.mjs) | 8964 | 8507 |
+| live page, Chrome (page-run.mjs) | 8964 | 8507 |
+| the page's own replay of the live run (`--check-replay`, every simtrace tick) | exact | exact |
+| Watch Replay, Chrome, real time 1x (watch-replay.mjs `--realtime`) | exact, 8964 | exact, 8507 |
+| Watch Replay, WebKit, real time 1x | exact, 8964 | exact, 8507 |
+| PS2, ARMSX2 mode 1 (ps2_tas_capture.py + compare-ps2.mjs) | exact to tick 1313; diverges at **1314** (air -> rail attach) | not run |
+
+- **Watch Replay** downloads the run from a records server the tool starts itself: web/server/mp-server.mjs on 127.0.0.1 with a
+  temporary MP_RECORDS_DIR, removed afterwards. It plays it through ui.cb.watchOnlineReplay: the uploader's rider, lineup,
+  warm-up and attribute bytes, then the full replay.
+- **Found 2026-10-07: padCarryFeed (web/main.js) fed the viewer's pad into the replaying core's pad history** while a replay
+  played. Every real-time replay (Watch Replay, the results' Replay, the verifier at its 600-tick yields) then decoded button
+  combinations differently: the first trick at 323, or a grab index 14 -> 8 at a batch boundary. The coordinator fixed it the
+  same day: padCarryFeed returns while a replay is active.
+- **The PS2 run.** tools/ps2_capture.py's script table holds ~320 entries, and the TAS changes the stick almost every tick. So
+  ps2_tas_capture.py keeps ps2_capture's build, hooks, records and run, and redirects the pad hook's scan to a decoder of an
+  8-byte-a-tick table (0xE0000, stick table 0xF4000, decoder 0xF6000: the arena a non-ai-state capture leaves zero).
+  - The start is `local/tas/ps2/bra2-mac-max-mode1.p2s`: the countdown state plus the 55-byte poke of the bank 0x53554D..0x535553
+    and the profile 0x4AA71F..0x4AA725. The human reads bank 0: 0x14A0E0 returns setup row +0x10 & 1. The computer riders read
+    bank 2, untouched. Provenance is alongside.
+  - The pad is the TAS with ticks 0..17 neutral, which changes nothing in the port.
+  - compare-ps2.mjs matches record k against the node run: the RNG at the start of tick k and the position after tick k-1.
+  - **Exact from tick 19 to 1313**: the shared RNG on every record, the human within 0.03 cm, through the first kicker's
+    D-pad spins, grabs and landings.
+  - At **1314**, air (motion 1, control 5) -> rail (motion 4, control 7) with Square and a grab held, the port's rail attach is
+    1.1 cm off. The RNG follows at 2018 and the PS2 never finishes.
+  - **The cause** (physics agent): at 1137, on a rail with Cross held, the port ran the prewind approach twice. Fixed in core58;
+    core62 adds a computer-rider fix (rider 4 at ~5945). On core62 the PS2 follows the old pad through tick 9172. The pads need
+    re-optimising on core62 before a full PS2 recapture.
+
+## 8. Next steps
+
+1. **Re-optimise on core62** once it is live. Search with `CORE_JS` pointing at a snapshot of web/runtime, with m5's settings:
+   `--beam 4 --cands 20 --weights '{"tier":60}'`. Then the page proofs: page-run.mjs `--lineup '{"values":[8,2,0,4,13],"round":3}'
+   --check-replay`, and watch-replay.mjs `--realtime` in Chrome and WebKit.
+2. **The PS2 recapture** of the best core62 pad: claim local/ps2-capture/slot4/tas, run ps2_tas_capture.py on
+   local/tas/ps2/bra2-mac-max-mode1.p2s with `--skip 18 --watch 0x536640:24 --watch 0x536730:24`, then compare-ps2.mjs; release
+   the slot.
+3. **The hard left turn** at remaining ~143,000 cm. At Super Uber speed the follower hits the wall there; m2 got through it slowly
+   and m5 got stuck. A dedicated brake / offset / jump experiment (the scratch turn experiment was stopped unfinished) or a
+   guide point inside the turn.
+4. **Super Uber earlier.** Kelecat has it by about 21 s (tick ~1440), m5 at ~2950. A 195-tick air takes a 4-Uber chain (tier
+   +3), so the airs between ticks 1000 and 2500 decide it.
+5. **The reset skip** (Kelecat, 66 % -> 76 % at 1:16). A manual reset puts the rider on the nearest reset route
+   (reset-scan.mjs: no forward placement along the run). Kelecat's skip needs a long fall off the course near 65 %. The
+   nearest lower course section, about 84,000-88,000 cm remaining, lies ~205 m away and ~168 m below the 117,000 cm section.
+6. **A better guide.** The 74 reset / AI paths are in initial.json original_reset.paths (draw_map.py draws them). A route
+   through that network, or the best run's own smoothed line, could replace Brodi's line.

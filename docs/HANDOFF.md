@@ -1,3 +1,211 @@
+> **PS2 arithmetic, round 6 wrap-up (2026-10-07, paused at the user's request).** Nothing of mine is running.
+> - **Exact-base scores** (trace core of today's tree, `score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base`):
+>   - **Snow Jam slice:** 180 of 187 (score-sj-t12 179 + bf-score-uber-R1).
+>   - **Breadth:** 297 of 426 at the last full run (score-all-t13), before the fixes below:
+>     - Metro glide family +8;
+>     - BHP1 halfpipe +12;
+>     - Peak 2 seeds +2;
+>     - event-restart stop +3;
+>     - AI comparer exact settings / npc-riders / bonus +7;
+>     - camera +6.
+>     The next full run should land near 335. It has not been rerun.
+>   - **riders/\*:** 59 of 62. Rider-parity's exact per-character seeds give 56; my type-5 channel form adds psymon-hl, canhuck-hl and elise-hl. Left: zoe-hl and mac-hl (752) and elise-race (673), both order leads at the physics agent.
+> - **Last mode-1-neutral forms** (not in a green batch yet):
+>   - engine/animation_motion.cpp, a type-5 channel ramp with the frame as fs (0x312DE4);
+>   - web/core.cpp, the landing speed dot (0x139D38).
+>   The core-batch22 suite (without the animation_motion form) was stopped mid-run for the pause. Rerun it as core-batch23 on resume.
+> - **Open list:**
+>   - **The physics agent's** (logic, sent with addresses):
+>     - carve / carve-bag 616 and dra4-race-ai 1511 (0x104E70 single-contact normal renormalisation);
+>     - tech-oob-* / ai-idle 2539 (body query before the pose compose);
+>     - hl-sj-1 / zoe-hl / mac-hl 752 (0x134CB0 pose bake before the 0x106558 contact);
+>     - elise-race 673 (rider scope refreshed before the 0x121AA0 alignment);
+>     - fixed in its scratch core62, waiting for its deploy: cam-metro-mix-glide (+0x438 at 0x105C54) and uber-rail-6 / rail-slide-b.
+>   - **Mine:**
+>     - a full breadth rescore;
+>     - parity-ai/era5 (Nate at 2220);
+>     - hl2/rail-bra2-a (bones 1438);
+>     - weather/ess3-lightning (bones 7582) and ess3-weather (score 9707);
+>     - the AI-side late leavers (aibones, peak2/3 race-ai, the-throne-race-idle, ebc3-wind-rail2);
+>     - cam-event-race (shake a tick apart at 967);
+>     - exporting the exact cloth speed for the cam-pipe-air and ebc3-wind-rail2 visual states.
+> - **Resume:**
+>   1. `CORE_OUT=$PWD/local/ps2-float/core-batch23 sh web/build-core.sh`, then `cd web && CORE_JS=../local/ps2-float/core-batch23/core.js node test-ps2-captures.mjs > ../local/ps2-float/suite-batch23.log 2>&1`.
+>   2. A full exact-base rescore: `node tools/ps2-float/score_gates.mjs --runs local/ps2-capture/runs-exactbase --core <exact trace core> --arith exact-base --par 3 --out local/ps2-float/score-all-t14.json`.
+
+> **TAS of the Metro City race paused (2026-10-07, TAS agent): the resume point.** See [tas.md](tas.md). Nothing of mine is
+> running. Slot 4 is released.
+> - **The rule (decomp).** Platinum is a Conquer the Mountain medal only.
+>   - 0x154EE8 returns before platinum in a Single Event (0x5305F9 != 0, at 0x155044).
+>   - It needs any medal (top 3, 0x155328) and race ticks <= 60 x T (0x155090). T comes from 0x1456A0: lh 0x440E80 + 4 x
+>     course + 2, which is **150 s for Metro City**.
+>   - So the user's target is the 9000-tick time gate, in a Single Event.
+>   - The set-up: Mac with maxed bytes (55) and no booth teleports, as Kelecat's 1:51 (6660..6719 race ticks, the GameCube JP
+>     version, a CTM Qualifier).
+> - **Best times.** All are under 9000 and use no booths and no resets.
+>   - **8507 race ticks = 2:21.78 on core51**: local/tas/best-8507.tas, local/tas/page/best-8507/replay.ssxr. It is exact in
+>     node, the live page, the page's own replay, and real-time Watch Replay in Chrome and WebKit.
+>   - 8964 (2:29.40) on core51, the same checks.
+>   - **8883 (2:28.05) on scratch core58** (local/tas/cores/core58): local/tas/best-c58-8883.tas. Not checked in the page.
+>   - A core change moves every pad: 8507 does not finish on core58. On core62 (live, `1ab1cbc7…`), Watch Replay of the 8507
+>     file (recorded on `b77960c5…`) leaves it at tick 5036.
+> - **The start.** The rider-parity agent's PS2 BRA2 Mac countdown at game tick 18.
+>   - Lineup values [8, 2, 0, 4, 13]: page-run `--lineup`, aiRace.fixedNext.
+>   - Node start: local/tas/start-ps2mac.json.
+>   - PS2: local/tas/ps2/bra2-mac-max-mode1.p2s, the poke of 0x53554D / 0x4AA71F x 7 = 55, with provenance.
+> - **The PS2 proof** (tools/tas/ps2_tas_capture.py: the pad hook redirected to an 8-byte-a-tick table; compare-ps2.mjs).
+>   - best-8964 on core51 is exact (RNG every record, human within 0.03 cm) **from tick 19 to 1313**. At 1314 the air -> rail
+>     attach splits.
+>   - The cause is fixed in core58 / core62 (physics agent). On core62 the PS2 follows the old pad through tick 9172, so the
+>     pads need re-optimising on core62.
+> - **Port bugs found:** web/main.js padCarryFeed fed the viewer's pad into a replaying core's pad history, so real-time
+>   replays decoded button combos differently. The coordinator fixed it.
+> - **Resume:**
+>   1. Once core62 is live: search with CORE_JS set to a snapshot of web/runtime, `--beam 4 --cands 20 --weights '{"tier":60}'`
+>      (tools/tas/search.mjs, 3 workers, nice).
+>   2. The page checks: page-run.mjs `--lineup '{"values":[8,2,0,4,13],"round":3}' --check-replay`, and watch-replay.mjs
+>      `--realtime`, Chrome and WebKit.
+>   3. The PS2 recapture on slot 4 (slot4/tas).
+> - **Next gains:**
+>   - the 90-degree left turn at remaining ~143,000 cm, where m5 got stuck at Super Uber speed;
+>   - Super Uber earlier (m5 ~2950, Kelecat ~1440; Uber chains of 3-4 in long airs);
+>   - Kelecat's 66 -> 76 % reset skip (a long fall near 65 %);
+>   - a guide from the 74 reset / AI paths.
+
+> **Physics agent paused (2026-10-07): the resume point.** core62 (`1ab1cbc7…`) is deploying. Nothing of mine is running.
+> - **Shared tree beyond core62** (scratch local/physics-jank/core64; built, suite not run; run `zsh local/physics-jank/suite64.sh`, then hand over):
+>   - web/core.cpp: 131620 0x131674..0x1316C4. The brake input is 0 while +0x1E0 . +0x3A0 < 0. Fuzz r8-0075: Mac and every rider
+>     exact to 3930.
+>   - web/set_piece_gameplay.inc / web/shared_world.inc: shared world event 10 clears the owner's builtin52 guard even in a context
+>     with no copy of the piece, so the next world_triggers sync can't relaunch it with the guard.
+> - **r8-0075 RNG at 3790 (open):**
+>   - On the PS2, Nate (0x16E6010) contacts trigger 521261 (instance 0xFE2BC0, program 111) at pass 3789, and 30A060 launches two
+>     splines (0x359460 draws).
+>   - The port's Nate makes no contact that tick: no stage dispatch, nothing stored for 121818. He is 552 cm from the trigger centre
+>     (radius 782), and the instance is 0x200022 in both.
+>   - Next: compare Nate's 334458 packets (PS2 oracle state local/physics-jank/oracle/r8-0075-3789) with the port's body query for
+>     that tick.
+> - **TAS best-8964 on core62:** the human is field-exact through 9172 and the RNG holds to 6697.
+>   - The first computer-rider split is rider 2 (0x18DE380), pass 6326: an air-crash entry (control 5 to 8) at time scale 0.618
+>     leaves q a few ULP off.
+>   - The arithmetic agent says this is logic (op order / association with +0x300), not a form.
+>   - Its matcher recipe: make_trace_tree.py, _ps2_trace_begin/_end around npcs[1] in tools/tas/race.mjs, then the oracle with
+>     --trace-fpu --actor 0x18DE380 on local/physics-jank/oracle/tas8964-6326, then match.py.
+>   - Scratch tools: tas-fields.mjs, tas-npcdiff.mjs and compare-ps2-ai.mjs in the session scratchpad. Their recipes are in
+>     crash-motion.md "The TAS proof run".
+> - **The 0x104E70 lead (arithmetic agent; exact-base carve-bag 614 / peak2/dra4-race-ai 1511, local/ps2-float/match/peak2/dra4-race-ai-1511-xb.txt):**
+>   - The first drift is the port's priority-normal aggregation (instance_contact.hpp: sum, then scale by 1/sqrt). There the port
+>     multiplies by 3F800001, where the PS2 multiplies by 3F800000 (0x3352A4).
+>   - It's unresolved whether the PS2 aggregates at all in that case. 104E70's gate is `slti t6, s4, 2` (0x104FE8), where s4 is
+>     334458's raw packet count (0x104ED8). The port gates on contacts.size() after its own query.
+>   - Check that the two counts agree before changing anything.
+> - **Ordering leads from the arithmetic agent (exact-base only; mode 1 hides them):**
+>   - hl/hl-sj-1, zoe-hl, mac-hl at 752: 134CB0's bake (134DD0 on +0x110) runs before the 0x106558 contact. The port's contact adds to
+>     the unbaked position (enter_crash's landing_air_exit vs the post-stage contacts; look at the crashInPost path).
+>   - riders/elise-race 673: the PS2 refreshes the rider scope and query bounds in 11E098 after 121AA0's air alignment. The port's
+>     first basis and rider_query_bounds use the q from before the alignment (core.cpp refresh_rider_scope).
+> - **Other open repros:** r4-0279, r7-0000 (Allegra: the port attaches the rail at pass 2085; the PS2 enters control 4 and attaches at
+>   2086), r7-0038, r8-0165 3967, r1-0278, and the RNG cases r13-0063, r10-0134, r7-0028, r7-0082.
+> - **r15-0108** needs comparer work (a log of the computer riders' 121818 dispatches, replayed through world_event_apply kind 6), not a
+>   core fix.
+
+> **Paused 2026-10-07 16:09 (rider-parity agent): the exact riders sweep, resume point.** Nothing of mine is running; no ARMSX2 of mine.
+> - **Stopped:** exact-sweep.sh, riders-batch.sh and exact-states.sh (my PIDs), after the capture in flight (griff-cra3-hl) finished.
+> - **Done:**
+>   - every Snow Jam state and capture (race / hl / Uber, in runs/riders-exact);
+>   - the course states: 83 countdowns across 13 courses (EHP3 has 5 of 6);
+>   - 58 of the 166 course captures. 108 are left: the rest of cra3, then dra4 / dss2 / cba2 / chp2 / era5 / ess3 / eba3 / ehp3.
+>   - Earlier failures: zoe-uber-t1 / t5. jurgen-hl now has its .bin.
+> - **Exact seeds** are already re-exported from the 83 course states: 114 course/character grid states in web/generated/event_start_seed_exact.hpp.
+> - **Resume** (both scripts skip what exists; one ARMSX2 slot, machine ≤ 4):
+>   1. `sh local/rider-parity/exact-sweep.sh &`, then `sh local/rider-parity/exact-states.sh &`. exact-states waits for the sweep, then
+>      derives lineups*, grid-scales*, two-event and fe-screens.
+>   2. Once the course states are complete, rerun the exact seed export:
+>      `python3 tools/export_exact_event_starts.py && python3 tools/generate_event_seed.py --exact`.
+>   3. Then `python3 tools/ps2-float/link_riders_exact.py`, and score on an exact core (`score_gates.mjs --arith exact-base`). The course
+>      gates aren't in test-ps2-captures.mjs as riders/* exact gates yet.
+
+> **Fuzzing paused at a stopping point (2026-10-07, fuzzing agent). Resume point:** nothing of mine is running; slot 4 is free.
+> - **Resume after core62 (1ab1cbc7) is live, from local/fuzz:**
+>   1. `nice python3 -u recheck.py ../physics-jank/core62-snapshot/core.js --jobs 2` (or `../../web/runtime/core.js`). It needs no
+>      emulator; the results go to recheck-<core>.json.
+>   2. `FUZZ_FPU=mode1 nice python3 -u diff.py batch 30 12`. This runs on ARMSX2 slot 4, shared with the physics and TAS agents:
+>      it yields to any local/ps2-capture/slot4/<name> claim between captures.
+> - **Open repros** (with the physics agent, list in [fuzzing.md](fuzzing.md) "Findings"):
+>   - single rider: r15-0108, r11-0118;
+>   - six riders: r4-0279, r7-0000, r7-0038, r13-0063, r10-0134, r7-0028, r7-0082, r8-0165 (the RNG at 3967), r5-0207, r8-0075,
+>     r1-0278.
+
+> **Deployed 2026-10-07 (coordinator): core62.** web/runtime core.wasm `1ab1cbc7…` (core.js `2fe50ccb…`, unchanged) from local/physics-jank/core62-snapshot (534/534; test-stage-world passes again, broken since core40). On top of core51: the TAS 1314 cause (the prewind approach ran twice on a lost-rail tick), computer riders' time scale in the air trajectory, 115D48 on rails, event 10 in events, fuzz r5-0207 / r11-0118, the +0x438 surface write, the ragdoll quaternion, the stage-world LiveComp-only section step, and the arithmetic agent's batch 19-21 forms (mode-1-neutral). The background test loop was restarted the same day (it had not run since 2026-09-29).
+
+> **core62: the TAS proof's 1314 rail attach and its computer riders, four fuzz repros, the stage-world regression (2026-10-07, physics-jank agent):**
+> see [crash-motion.md](crash-motion.md) "The TAS proof run and the computer riders' time scale" and "core61 / core62 fixes".
+> - **Snapshot:** local/physics-jank/core62-snapshot (wasm `1ab1cbc7…`, js `2fe50ccb…`, no export changes). Full ps2-captures: 534 of 534.
+>   It is green, and web/test-stage-world.mjs passes on it. The stage-world test fails on live core51, and on every core since core40.
+> - **TAS best-8964:** the human is field-exact through 9172 (live core51: 1314). The RNG holds to 6697 (core51: 2018).
+>   - Prewind approached twice on a lost-rail tick: the 1314 cause, at 1137.
+>   - 115D48 skipped on rail control 12; control 7 runs it in its controller.
+>   - 12E690 keeps the prewind triplets.
+>   - Shared world event 10 (a section leave destroys a Spline piece) is logged in events too.
+>   - +0x300 time scale in 139A20's trajectory step and in 312598's animation advance (computer riders only; the human's is 1).
+> - **Fuzz repros:**
+>   - r5-0207: six-rider exact. The rail 115D48 reads the pre-motion heading.
+>   - r11-0118: exact on all 1398 ticks. A reset drops a pending passive departure.
+>   - r15-0108: not a port bug. Computer rider 1 fires the start-fire trigger in an isolated human-only capture.
+>   - r8-0075: Mac exact. 131620 zeroes the brake input while +0x1E0 . +0x3A0 < 0. That fix is in core63; the RNG split at 3790 is still open.
+> - **exact-base leads from the arithmetic agent:**
+>   - The 1057B8 surface landing writes +0x438 = 0. cam-metro-mix-glide: 1040/1040 camera words.
+>   - The ragdoll after a landing crash takes 13AA48's rebuilt quaternion (hl2/uber-rail-6).
+> - **Stage world:** core40's step of section-built entities before the record now applies to LiveComps only. The emitters / Boosts
+>   had one update too many (the rule comes from PS2 snapshots; the 0x356198 gate is not traced).
+> - **Next, not in core62 (scratch cores 63/64, not suite-run):**
+>   - The r8-0075 brake gate.
+>   - The event-10 release now clears the owner's guard even where no copy exists. r8-0075's RNG at 3790 is still open: Nate's
+>     trigger 521261 relaunches two splines.
+> - **Open:**
+>   - TAS computer rider 2 at 6326: a few-ULP air-crash entry at time scale 0.618 (logic).
+>   - The arithmetic agent's hl-sj-1 752 (134CB0 bake order) and elise-race 673 (query bounds before alignment).
+>   - 104E70 single-contact renormalisation.
+
+> **Fixed 2026-10-07 (coordinator): stale web/load-files.json.** The load meter's recorded download sums were stale after the rider package copies (test-load-files: rider.RIDER_ZOE 1115554 -> 1115668). Rebuilt with `node load-files.mjs build`. Rerun it after every asset copy into public/assets.
+
+> **Exact event seeds per character and for the backcountry (2026-10-07, rider-parity agent):** riders/* on an exact core: **56/62**
+> (was 2/62). Details in [ps2-float.md](ps2-float.md) "Exact baselines". The physics agent approved the generator / seed-select edits.
+> - **No core to install:** the default build is byte-identical (core.wasm `6b19430d…` with and without the change, built side by side).
+> - **New exports and files:**
+>   - tools/export_exact_event_starts.py:
+>     - per-character grid states to local/assets/native-exact/characters/<CODE>/<id>.json (84 so far);
+>     - the backcountry exact ready states (ABC1 / DBC2 / EBC3) through `export_backcountry.py event-start --snapshot --output`;
+>     - each rider's exact settings document to native-exact/RIDER_<ID>/settings.json (`export_characters.py settings(target=)`).
+>   - tools/generate_event_seed.py --exact: browserEventCharacterGroundStateExact (`SSX_EXACT_CHARACTER_SEEDS`). The default
+>     headers are unchanged (diffed).
+>   - Exact builds only: `_human_event_character(id)` (web/core.cpp) and `browser_human_event_character()` (web/event_start_select.hpp,
+>     a function-local RIDER_LOCAL, cleared by init_animation). They feed human_event_seed_apply and human_grid_seed_apply.
+>   - compare-ps2-capture.mjs:
+>     - under PS2_ARITH=exact*, it calls `_human_event_character` with `--human` and logs a course without a state;
+>     - under exact-base, it reads RIDER_*/settings.json from native-exact. The arithmetic agent did the same in compare-ai-capture.mjs.
+> - **What fixed most of the gates:** the settings carried mode-1 foot contact targets (`contact.legs`). Every non-Zoe rider's feet 18 / 21
+>   went off at tick 20.
+> - **Left (traced by the arithmetic agent; the first two are now with the physics agent):**
+>   - elise-race 0x3B4 at 673: call order. The port refreshes the query bounds from q before the air alignment; the PS2 does it in
+>     0x11E098 after 0x121AA0 has aligned q.
+>   - zoe-hl / mac-hl 752: call order. 0x134CB0 runs the pose bake 134DD0 before the instance contact 0x106558; the port's contact
+>     reads the position from before the bake.
+>   - canhuck-hl / psymon-hl / elise-hl: posed bones 1 ULP off at 1556–1557, not traced yet.
+> - **Mode-1 full suite** (live core, same default build): 225/228. ps2-captures then passed 534/534 when run on its own. The three failures aren't from this change:
+>   - ps2-captures hit the 900 s runner timeout under load.
+>   - stage-world's ARA1 six-rider effects at 969 run through compare-ai-capture.mjs, which I didn't touch.
+>   - load-files.json has been stale since the Oct 5 rider package change.
+>   - The mode-1 riders gates pass on the edited comparer.
+> - **Rerun once the running exact sweep has written the remaining course states:** `python3 tools/export_exact_event_starts.py && python3 tools/generate_event_seed.py --exact`.
+> - **Not covered:** the per-character camera seed. Every rider gets the course's (Zoe's) camera words, and no gate checks them.
+>   Backcountry humans other than the ready state's own aren't covered either.
+
+> **Fuzzing: batch 11 on core51 (2026-10-07, fuzzing agent):** 29 variants, 4 new divergences sent to the physics agent (see
+> [fuzzing.md](fuzzing.md) "Findings"). Nothing of mine is running; slot 4 free. Holding until the physics agent's next core is live (slot 4 is the
+> physics and TAS agents' meanwhile); then recheck (`python3 recheck.py CORE_JS --jobs 2`) and batch 12 (`FUZZ_FPU=mode1 python3 -u
+> diff.py batch 30 12`), both from local/fuzz. diff.py now yields slot 4 to any slot4/<name> claim (physics, tas).
+
 > **Fixed 2026-10-07 (coordinator): real-time replays used the viewer's pad.** web/main.js padCarryFeed (pv padCarry) fed the viewer's neutral pad into core._pad_history_sample every frame while a replay was playing, on the same core the replay simulates, so button combos decoded differently. Real-time Watch Replay, the results' Replay and the auto replay could leave the recorded run (the TAS agent's best-8964 left at 323), and the verifier could fail a combo across a yield. It now returns while replay?.active. Verified: watch-replay.mjs --realtime is exact on all 9144 ticks; test-replay and test-records-verifier pass.
 
 > **Fuzzing: core51 recheck (2026-10-07, fuzzing agent):** all 324 mode-1 captures on core51: 8 more repros exact (the rail class,
@@ -163,7 +371,53 @@
 > - **engine/rail_snap_torque.hpp vdot:** the 1.0 x z / w form (0x107104..0x107110), mode-1-neutral. Exact-base Snow Jam is **178 of 187**: rail-slide, hl-rail-10, rail-fence-b, uber-ara1, score-rail-uber and bf-score-rail-uber now pass.
 >   - Left: rail-slide-b (1171), uber-rail-6 (1159), the tech-oob-* gates and ai-idle (2539), carve / carve-bag (616), handplant-flip (857) and bf-score-uber-R1.
 >   - tech-oob 2539 (sent to the physics agent): the body query reads the sphere centres (C8880887) before this tick's pose compose, while the PS2 composes first (0x31038C -> C8880884, then the body query at 0x329EC0). A stationary rider would hide this in mode 1.
->   - Mode-1 suite: core-batch19 is running.
+>   - **core-batch19** (wasm 6ad53ffb…, built 12:45 from the tree with this form and the physics agent's in-tree edits): full mode-1 suite 534 of 534.
+>   - Rescore on the current tree (with core51's query changes): exact-base Snow Jam is **179 of 187**. Left: carve / carve-bag 616 (the physics agent has the 104E70 packet count), rail-slide-b 1171, uber-rail-6 1159, tech-oob-* 2539 (sent to the physics agent) and bf-score-uber-R1.
+> - **Reset forms** (mode-1-neutral):
+>   - engine/reset_route.cpp square, the 1.0 x z dot (0x112EA0..0x112EAC);
+>   - engine/reset_placement.cpp, the probe offsets z axis x -7000 / x 200 with the axis as fs (0x11D798 / 0x11D7E8).
+>   - Both web/generated copies are synced (new inodes).
+>   - bf-score-uber-R1 now passes in exact-base: **180 of 187**.
+>   - Sent to the physics agent: uber-rail-6 999 / 1000. The PS2 runs the air-alignment product (0x31BB4C..0x31BC88) before 0x121D48 reads q; the port's orientation_motion.cpp:158 reads the pre-alignment q.
+>   - **core-batch20** (local/ps2-float/core-batch20): full mode-1 suite 534 of 534.
+> - **Breadth fixes (2026-10-07 afternoon):**
+>   - **Exact glide seeds re-read the retained reset route** (tools/ps2-float/export_exact_glide_seeds.py, via reference_reset.extract_reset).
+>     - The exact initial.json had kept the browser's mode-1 route: path, segment cache, closest / lookahead points and the +0x4CC heading.
+>     - The route cache origin is a running sum (0x26A638), so its bits differ under the console model.
+>     - Re-exported for all 17 courses. In exact-base the whole BHP1 halfpipe cluster passes (pipe-air, air-pipe(-b), uber-pipe, uber-row9/10, cam-pipe-air, pipe-tricks, crash-pipe(-b), carve-s13-pipe), plus metro-air-tricks.
+>     - My "path cache" note to the physics agent was this seed, not port logic.
+>   - **web/compare-ps2-capture.mjs:** under PS2_ARITH=exact-base a run stops at an event restart (the tick drops to 0 / 1). Exact runs can finish a few ticks apart, and the end-of-run presses then restart the event. peak1/rnb-event-tuck, peak2/launch-event-tuck and peak3/much-2-much-event-tuck now pass.
+>   - **tools/ps2-float/make_trace_tree.py isolate_generated()** (found by the rider-parity agent): a tree's web/generated and engine/generated are now real copies, and the generators (generate-controllers.py, generate-snapshot-registry.mjs) are real files. Before this, every trace-tree build rewrote the live tree's generated files through the symlinks, and concurrent builds raced. Verified: a trace build no longer touches the live web/generated.
+>   - **ps2-float.md mode-1-base list:** added the 4 "Script exceeds arena" builds (allpeak apj/apr/p2r-start, ctm/fr-dra4a-full).
+> - **Open, with where they stand:**
+>   - **uber-rail-6 (1159) / rail-slide-b (1171):** the +0x120 quaternion first differs at 1000. The PS2 call order is 0x139A20 -> 0x121AA0 -> 0x31BB30 (alignUp) -> 0x121EFC -> 0x11E098, and the port recomputes the basis after alignment too (orientation_motion.cpp:158 with BDFE6769), so the order matches.
+>     - The early drifts the matcher lists are mispairings: the port's extra pre-alignment basis calls, and presentationImpl's identity products against 0x1350C8.
+>     - Next step: match from after the air alignment, with the presentation sites excluded.
+>   - **Metro glide (1068..1282):** the first drift is in the instance / world-body query: 0x334E3x inverse, and the 0x329B90 point transform with the scale matrix as fs.
+>   - **DSS2 / DRA4, score HUD slot 35, the AI-side late leavers:** not started.
+> - **Metro glide forms (mode-1-neutral):** engine/body_collision.hpp box face contact. The translation is the face direction (unit axis x -1 / +1, 0x3298A4) x depth with the direction as fs (0x32B3D8), so 1.0 x depth, with -0 in the other lanes.
+>   - metro-mix-glide, metro-glide-neutral, metro-glide-carve, metro-jump-tricks, hl2/rail-bra2-b, carve-groomed / carve-powder-bra2 and uber-rail-8 now pass in exact-base.
+>   - Sent to the physics agent as logic: cam-metro-mix-glide 1090. 0x1057B8's instance-contact response writes rider+0x438 = 0 at 0x105C54 when channel 2's semantic != 0x10C; the port's camera surface (physicsProfile.surface.id) is never zeroed.
+>   - hl2/rail-bra2-a: bones at 1438.
+>   - **core-batch21** (wasm in local/ps2-float/core-batch21): full mode-1 suite 534 of 534.
+>   - tools/ps2-float/match_camera.sh also traces the finish 0x166228 now.
+>   - compare-ai-capture.mjs maps RIDER_*/settings.json to native-exact under exact-base (exactAssetPath and settingsOf).
+> - **ps2-float.md:** the 8 CTM eventInWorld gates are on the mode-1-base list (36 gates on 17 baselines). The 18 no-exact-baseline gates are listed with what each needs.
+> - **Seed coverage, later 2026-10-07:**
+>   - tools/ps2-float/export_exact_glide_seeds.py:
+>     - The glide source can be an exact chain state (local/reference-exact/chains/<path under local/>), found by the mode-1 source's hash. PEAK2 (frd-1800), PEAK3 and the four MOUNTAIN worlds now have exact seeds; PEAK1's source has no exact copy.
+>     - The breath context is re-read for every course, with peak / mountain worlds using their seed region (iso_pipeline_steps PEAK_SEEDS / MOUNTAIN_SEEDS). A state the breath exporter can't read keeps the browser context and prints why.
+>     - Result: peak2/fr-d-glide passes (it had started from the mode-1 PEAK2 lift rate +0x2CC 3FD55556; exact 3FD55554).
+>   - runs-exactbase visual-state seeds re-exported from the exact baselines: weather/frd-regions (export_weather --state, now passes) and weather/dbc2-weather (now leaves at 3180, was 0).
+>     - cam-pipe-air and weather/ebc3-wind-rail2 keep the mode-1 file: export_section_ready_state can't match the flag cloth's speed bits in the exact state.
+>   - Sent to the physics agent (logic): uber-rail-6 / rail-slide-b. After apply_body_contact's 11E098 rebuild the port writes back a pre-rebuild quaternion (the rail_view / rail_apply round trip, its reading).
+>   - Same root as carve-bag, at the physics agent: peak2/dra4-race-ai 1511 (0x104E70 renormalises a single contact's normal).
+> - **Checkpoint bonus in the AI comparer** (web/compare-ai-capture.mjs, at the coordinator's request):
+>   - It now calls set_race_bonus from the capture's own baseline .p2s: the list 0x4D33B8, the mode byte 0x535C12, the flags *0x5308D0, the handler GMM+4 and the freestyle kind GMM+8 (GMM = *(G+0xC0), G = *(gp-0x848)).
+>   - For a timed freestyle event (handler 0, kind 1) it also sets race_time_limit(GMM+0x78).
+>   - Without the limit the port's 0x2398E8 path started from limit 0, so the bonus timed the race out early. That was ass1's 3781 combo divergence.
+>   - parity-ai/ass1 scoreThrough raised from 3301 to 5300 (web/test-ps2-captures.mjs). All 29 mode-1 AI gates pass on core-batch21 before and after.
+>   - In exact-base, parity-ai/ass1, ess3-long and hl-ai-16 now pass.
 > - **core-batch18** (local/ps2-float/core-batch18, default build of the tree at 12:1x: roller qdot form, gated duration, the physics agent's in-tree edits): full mode-1 suite 534 of 534.
 > - **Running (mine):** the bulk exact-baseline recapture at 1 job (scratchpad anchor2.sh, then the bulk) and the core-batch17 suite.
 

@@ -360,6 +360,29 @@ Every gate's baseline was made in mode 1, so even an exact capture starts from m
   - The first anchor (2026-10-05) was PreRace tick 18, in the flythrough. It is kept as `snow-jam/flythrough-tick18.p2s`.
   - Its gates stopped at record 401: the script's Cross skips the flythrough and the game waits on the event brief. Twenty exact-base gates were built on it; they were moved to `runs-exactbase/.flythrough-anchor/` and recaptured on 2026-10-06.
 - Per-rider and per-course countdowns are the rider-parity agent's `make_course_states.py` with PS2_CAPTURE_FPU=exact, into `local/reference-exact/characters/`.
+- **Exact event seeds per character and for the backcountry** (2026-10-07, rider-parity agent):
+  - `tools/export_exact_event_starts.py` also exports every exact rider countdown: `characters/<id>/countdown.p2s` (Snow Jam) and `characters/courses-<CODE>/<id>/countdown.p2s`.
+    - The human's `extract_ground` state is checked first: race phase 4, tick 0, control 6, motion 3. It is the same extraction `export_characters.py` writes as settings `original_event_start`.
+    - Output: `local/assets/native-exact/characters/<CODE>/<id>.json`. A cheat on another base is `<skin>-on-<base>`.
+  - The backcountry anchors (ABC1 / DBC2 / EBC3: the exact ready states, rolling start) go through `tools/export_backcountry.py event-start --snapshot --output` into `native-exact/<CODE>/event-start.json`. These options default to the mode-1 paths.
+  - `tools/generate_event_seed.py --exact` turns those into `browser_start_exact_character_<CODE>_<id>` and the lookup `browserEventCharacterGroundStateExact(location, character, out)` (`SSX_EXACT_CHARACTER_SEEDS`). The key is course + character.
+  - In the core (exact builds only):
+    - `human_event_character(id)` (web/core.cpp) sets the rider context's id (`browser_human_event_character()`, web/event_start_select.hpp). init_animation clears it.
+    - It returns 0 when this course has no state for that rider, so call it after init_world_collision.
+    - On the console model, `human_event_seed_apply` (settings seed) and `human_grid_seed_apply` (lineups.json grid seed) take that recorded state in place of the mode-1 seed. Without one they keep it.
+  - `compare-ps2-capture.mjs` calls it under `PS2_ARITH=exact*` with `--human`, and logs a course that has no state for the rider.
+  - The default build is byte-identical (core.wasm `6b19430d…` with and without the change).
+  - Mode-1 vs exact grid states: 0.001–0.06 cm apart, plus the frame vectors and quaternion in the low bits. Mac's exact state equals Zoe's, as in mode 1.
+  - **Each rider's whole settings document** comes from the exact states too: `export_characters.py settings(..., target=)` on `characters/<id>` against `characters/zoe`, written to `local/assets/native-exact/RIDER_<ID>/settings.json`. Under `PS2_ARITH=exact-base`, compare-ps2-capture.mjs reads it in place of `web/public/assets/RIDER_<ID>/settings.json`, the same way as initial.json / start.json.
+    - Beyond the grid state, the exact extraction differs from mode 1 in:
+      - the foot contact targets `original_animation.contact.legs`, every rider: feet 18 / 21 at tick 19–20 before this;
+      - the secondary-motion local rotations;
+      - the goofy riders' air-entry pivot and `default_root_rotation` (w = −2⁻²³ against 0);
+      - Elise's scale / body scale: 0x3F75C28E against mode-1 0x3F75C28F.
+  - **riders/* on the exact core: 56/62** (it was 2/62). The six that still fail:
+    - zoe-hl and mac-hl at 752: Zoe's own form.
+    - elise-race: 1 ULP at 0x3B4 at tick 673 (control 0), then 0x1E4 at 674.
+    - canhuck-hl, psymon-hl and elise-hl: physics exact to the end, but posed bones 1 ULP off at 1556–1557 (bones 7 / 8 and 12–14).
 - `tools/ps2-float/derive_exact_chain.py STATE...` handles states that do not start from a menu: free ride, CTM, world states. It walks a state's own records back to a root:
   - patches.json sources (a deleted source is named by its recorded EE hash);
   - ps2_navigate records (navigate.json or NAME.navigate.json);
@@ -407,8 +430,21 @@ These gates keep their mode-1 baseline, because the state they start from can't 
 | course-limits/gs-{zig3000, right3000, tuckleft3000, left3000, halfleft3000, halfright3000} | `local/ps2-capture/peak1/green-start-t0.p2s` | its patch source (`…/7fde9fd7…/lodgewall/ps2/navpre/.raw/00001.p2s`) is gone and matches no known root |
 | peak2/fr-c, vp-stations/c-tuck | `local/ps2-capture/peak2/fr-c-arrive.p2s` | its chain re-runs, but in exact mode the menu path stops at Transport > Select Peak (the pad script no longer lines up) |
 | ctm-events/c0a-race, c0a-race-riders | `local/ctm-events/caps/c0a-cd/countdown.p2s` | built from `ctm-parity/states/sj-card-q.p2s` ("from an earlier ride-in"); that state's only records loop back to itself (race-q / race-q-clean) |
+| allpeak/apj-start, allpeak/apr-start, allpeak/p2r-start | `local/reference-exact/chains/ps2-capture/allpeak/nav/out-{apj,apr,p2r}-card/after.p2s` | the exact chain exists, but the rebuild fails: `ps2_capture.py build` stops with "Script exceeds arena" (the scripts outgrow the hook arena from that root) |
+| ctm/fr-dra4a-full | `local/reference-exact/chains/ps2-capture/ctm-parity/mountain/states/frdra4-lodgeD.p2s` | the same build error |
+| ctm-events/c0a-ws13, c0a-ws13-splines, c0a-ws13-semi | `local/reference-exact/chains/…/ctm-events/caps/sj-transport/ara1-screen10.p2s` | the CTM in-world (eventInWorld) gates, pending in the mode-1 suite as well: the exact rebuild fails at `ps2_capture.py build` |
+| ctm-events/c0a-full, c0a-full-ai, c0a-ret2-coast, c0a-ret3, c0b-ass1-arr | the same root (c0b: `…/menus/fr-courses/ass1-screen10.p2s`) | the same pending eventInWorld family: the exact build runs, the capture fails; not investigated (pending in mode 1) |
 
-So far that is 24 gates on 11 baselines. The other 57 gates on the tail's 16 baselines resolve to the CTM session root through `tools/ps2-float/derive_exact_chain.py`.
+So far that is 36 gates on 17 baselines. The other 57 gates on the tail's 16 baselines resolve to the CTM session root through `tools/ps2-float/derive_exact_chain.py`.
+
+**Gates with no exact baseline yet** (`recapture_exact.py --exact-baselines --list`: "no exact baseline"; low priority). Besides the peak1 / course-limits / c0a-race rows above:
+
+| Gates | Mode-1 baseline | What an exact baseline needs |
+|---|---|---|
+| air-release/pro-late-spin, pro-event | `characters/fe-screens/options/snow-jam-countdown-pro.p2s` | the Pro-difficulty Snow Jam countdown: the fe-screens options path (difficulty Pro) from a menu root in exact mode, saved at countdown tick 18 (race phase 4) |
+| careerrival/ara1-semi, ctm-events/c0c-race, c0c-race-riders | `characters/career/ARA1-semi-zoe/countdown.p2s` | the career ARA1 semi countdown: the CTM career path to the semi heat from the exact CTM session root (`local/reference-exact/ctm/session-exact.*`), or a recorded nav of the career state |
+| careerrival/cra3-final, careerrival/dra4-final | `characters/career/{CRA3,DRA4}-final-zoe/ws3.p2s` | the career finals' world-state-3 states: the same CTM career route to each final |
+| booth/teleports, booth/from-crash, from-passive-air, from-rail | `metro-city-countdown-anchor.p2s` (an exact copy exists) | their scripts lived in another session's scratchpad and are gone; re-record the booth injection scripts (tools/ps2_capture.py booth hooks) and capture from the exact Metro anchor |
 
 **At the swap** each of these needs a replacement scenario from an exact root (the exact CTM session replay `local/reference-exact/ctm/session-exact.fNNNNN.p2s`, or a derived exact state), covering the same behaviour. If no such scenario can be made, it is retired with a note:
 

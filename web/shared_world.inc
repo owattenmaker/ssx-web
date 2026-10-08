@@ -16,7 +16,7 @@
 //   7 section MultiSpline release (leave scan of the section activation, web/section_gameplay.inc): authored resource
 //   6 stage trigger contact (121818 -> 355770 guard -> 30A060 slot 2, web/stage_script_gameplay.inc): resource, human (builtin 39: the player object is human)
 //   8 painter reset 0x2C03E8 (a rider's FX reset 0x111890 at its reset placement / teleport: every world painter wrapper, web/weather.inc)
-//  10 Spline piece released (pv peakSplines; logged only by a core with shared_world_nodes on, the streamed world's human): its section
+//  10 Spline piece released (the human's core; in a streamed world only with shared_world_nodes on, pv peakSplines): its section
 //     leave destroyed the entity (web/set_piece_gameplay.inc section_stop_piece): resource, owner key (owner * 8 + slot, as world_triggers)
 //   9 world node state (pv eventInWorldAi, docs/ctm-events-in-world.md stage 4; logged only by a core with shared_world_nodes on, the
 //     streamed world's human): resource, node type (0 none, 6 DeadNode, 16 Hide, 19 RestoreNode), collision-world runtime flags
@@ -39,7 +39,13 @@ static void shared_world_node_words(uint32_t resource,uint32_t* w){ // kind 9's 
  const auto* i=set_piece_instance_at(resource);w[2]=i&&i->eventRuntimeFlags?1u:0u;w[3]=w[2]?*i->eventRuntimeFlags:0u;
  const auto it=stageFlags.find(resource);w[4]=it!=stageFlags.end()?1u:0u;w[5]=w[4]?it->second:0u;
 }
-void shared_world_spline_released(uint32_t resource,uint32_t key){if(sharedWorldNodes&&setPieceStreamed)shared_world_log({10u,resource,key});}
+// The human's section pass (the only one) destroyed a Spline piece's entity: the world is one on the PS2, so every context's copy
+// goes, and with it the owner's builtin52 guard (PS2 TAS best-8964 5378: computer rider 4's contact relaunches BRA2 program 245's two
+// splines, two 0x359460 draws, after the human's section leave destroyed them at 5100). In a streamed world only with pv peakSplines.
+void shared_world_spline_released(uint32_t resource,uint32_t key){
+ if(setPieceStreamed&&!sharedWorldNodes)return;
+ shared_world_log({10u,resource,key});
+}
 void shared_world_node_changed(uint32_t resource){ // web/stage_world.inc stage_set_flags (every node and flag change ends there)
  if(!sharedWorldNodes||sharedWorldLog.size()>65536)return;
  uint32_t w[6];shared_world_node_words(resource,w);sharedWorldLog.insert(sharedWorldLog.end(),{9u,6u,w[0],w[1],w[2],w[3],w[4],w[5]});
@@ -86,7 +92,7 @@ EMSCRIPTEN_KEEPALIVE void world_event_apply(const uint32_t* e){
    case 7:browser_release_section_lift(e[2]);break;
    case 8:weather_painters_reset();break;
    case 9:shared_world_node_apply(e+2);break;
-   case 10:browser_spline_piece_released(e[2]);break;
+   case 10:browser_spline_piece_released(e[2],e[3]);break;
    default:throw std::runtime_error("Unknown shared world event");
   }
  }catch(...){sharedWorldReplay=false;rng=savedRandom;throw;}
