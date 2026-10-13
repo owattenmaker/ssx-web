@@ -11,7 +11,7 @@ struct Round {int old=std::fegetround();Round(){if(std::fesetround(FE_TOWARDZERO
 constexpr float reciprocal255=std::bit_cast<float>(0x3b808081u);
 // WebAssembly ignores fesetround, so the same MUL.S uses an explicit toward-zero product.
 float towardZeroMul(float a,float b){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
     return software_float::mul(a,b);
 #else
     return a*b;

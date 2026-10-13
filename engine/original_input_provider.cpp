@@ -13,7 +13,7 @@ namespace {
 // The oracle runs the recompiled EE code under FE_TOWARDZERO. WebAssembly
 // ignores fesetround, so SUB.S/MUL.S use explicit toward-zero helpers there;
 // SSX_ORIGINAL_INPUT_SOFTWARE_FLOAT exercises that path in native oracles.
-#if defined(__EMSCRIPTEN__) || defined(SSX_ORIGINAL_INPUT_SOFTWARE_FLOAT)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE)) || defined(SSX_ORIGINAL_INPUT_SOFTWARE_FLOAT)
 struct Round {int old=std::fegetround();Round(){if(std::fesetround(FE_TONEAREST))throw std::runtime_error("Provider rounding");}~Round(){std::fesetround(old);}};
 float rzSub(float a,float b){return software_float::sub(a,b);}
 float rzMul(float a,float b){return software_float::mul(a,b);}

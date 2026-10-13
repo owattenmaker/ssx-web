@@ -48,7 +48,10 @@ The JS that decides simulation results, beyond presentation:
 | M3 | The rider manager into C++ (stages, RNG cursor, pair host, world sync, FX phases) | coreRiderManager | core5, verified |
 | M4a | The race's relationship records in the core's rider manager (the last mid-tick page callback) | coreRelationships | core6, verified (page tests pending a tree fix) |
 | M4b | The computer riders' event start and the race world's reset; the plane-drop seeds | coreEventStart | core8, verified |
-| M5 | Career progression state (results, awards, unlocks, gear, attributes; the presentation-RNG draw order kept) | | planned |
+| M5a/b | The rules module (rules without a course core) and the session's presentation generator | rulesModule | in the tree, verified |
+| M5c | The career's result kernel (race / freestyle rounds, medal, records entry, peak runs) | coreCareerResults | in progress |
+| M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | | approved, next |
+| M5e | The lodge (gear, uber tricks, songs, attributes) | | planned |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
 
@@ -58,14 +61,10 @@ phase, place, standings, finish / results / rescue / placement flags, trick name
 career, relationship notices, mission UI and world requests); the existing read-outs (skin palettes, FX vertices, HUD slots,
 stage-world entities, set-piece logs) and snapshot_*.
 
-## Open design item: rider contexts without the TLS swap (native)
+## Rider contexts without the TLS swap (native)
 
-RIDER_LOCAL (web/rider_local.hpp) is thread-local storage, and a rider context is switched by setting wasm's `__tls_base`
-(web/rider_tls.S, web/rider_context.cpp). A native build has ordinary TLS, and macOS arm64 does not let user code swap the TLS
-register, so the six riders of one race cannot share a thread that way. A native core needs the per-rider state reached
-through a context pointer (one struct per rider, or the RIDER_LOCAL variables turned into members reached from a current-context
-pointer the rider manager sets), keeping the wasm path's layout and the snapshot registry. Not part of the rule migration; to be
-designed before the first native multi-rider race.
+Resolved: see "Native core" below (emulated TLS: every RIDER_LOCAL access goes through the current context block, a switch is one
+pointer store; no source changes).
 
 ## M1: the pure rules (pv coreRules, core1)
 
@@ -261,3 +260,100 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   given a held grid start with the human's rank at 1400: 2000 ticks identical); test-plane-drop-seed.mjs (the page's calls and the
   core's, 600 ticks identical); full ps2-captures 534 / 534 on core7 with SSX_PV=coreRelationships,coreEventStart and with the
   defaults; the CTM plane drop on the page (a new career's Happiness start, clock frozen, 600 ticks): identical off / on.
+
+## M5a / M5b: the rules module and the presentation generator (pv rulesModule, off)
+
+- The rules module: web/runtime/rules.{js,wasm} (8 KB glue + 36 KB wasm, 1 MiB linear memory), built by `sh web/build-rules.sh`
+  (RULES_OUT=<dir> for a scratch build) from web/rules_bridge.cpp (the same engine/game_rules.hpp and rules_eval the course core
+  compiles: one source of truth) and web/rules_module.cpp (engine/presentation_rules.hpp, the session's presentation generator:
+  presentation_boot / booted / draw / note / roster_seed / state). web/rules-module.js loads it (a literal import, so the bundler
+  hashes it like the course core; node: RULES_JS=<rules.js>). Rebuild it whenever game_rules.hpp or presentation_rules.hpp changes.
+- M5a, the rules without a course core: web/core-rules.js runs the rules in the course core while one is there (main.js
+  setRulesCore), else in the rules module (coreRules and rulesModule on, the module loaded), else the JS versions. Each core has
+  its own io buffer.
+- M5b, the presentation generator: web/lineup.js keeps the session's generator (0x4FF018: the boot draw, the career's reward picks
+  and messages 0x3177F0, the per-event draws noted from lineups.json presentation_model, each roster seed = draw 129 after them)
+  in the rules module when it has loaded by the generator's first use (bootPresentation; per-frame draws noted before go with it).
+  Otherwise the page keeps it for the whole session; the two never mix within a session.
+- Boot: main.js starts loadRulesModule() at boot with the switch on and waits for nothing. Measured (local/core-migration/qa/
+  boot-cost.mjs, dev server, alternating loads): Chrome headless title at 811-813 ms off and on (6 + 6 loads; rules.wasm fetched at
+  62-82 ms); WebKit title median 416 ms off / 420 ms on (8 + 8 loads, spread 278-434 ms both ways; fetched at 200-300 ms). A failed
+  load leaves rulesModule() null: the JS versions run.
+- Bundle: a scratch online build (the hosting config with its output in local/) gives assets/rules-*.wasm (35.7 KB) and the glue in
+  the main chunk; deploy-staged.sh needs nothing new.
+- Proof: web/test-rules-module.mjs (20,000 presentation calls against the JS version); the career-session differential
+  local/core-migration/qa/career-session.mjs (three scripts x 1500 events: race / freestyle / rival rounds, awards, rewards, inbox
+  messages, cash, collectibles, roster seeds, noteRaced / settleRaced and a malformed model): the presentation words and roster
+  seeds taken, the results, the generator's next words and the save blob (savedAt aside) identical off / module at boot / module
+  after the first quarter; every rider's inbox full (25) and 8-11 awards each. Page (live core, Metro City single event and CTM,
+  8687 ticks): ?simtrace, dumps and start identical off / on, the module loaded and holding the generator (its first word the
+  roster seed 3044084137).
+
+## Native core
+
+A native build of the course core (native/build-core-native.sh -> local/native-core: clang, the host's architecture, the sources of
+web/build-core.sh except the wasm TLS swap) with a headless race driver (native/core/race_driver.cpp: Snow Jam, Zoe alone or with
+the five computer riders, scripted pad, a Give Up; one ?simtrace hash per tick) and a replayer of logged wasm call streams
+(native/core/replay_calls.cpp, its export table generated by native/gen_dispatch.py; the stream logged by
+local/core-migration/qa/native-gate/spy-core.js around web/compare-ps2-capture.mjs on a ps2-captures gate).
+
+- The wasm-only parts and their native stand-ins: emscripten.h (native/core/shim: EMSCRIPTEN_KEEPALIVE, EM_JS as extern "C"
+  declarations), the host hooks (native/core/host_hooks.cpp: the page defaults with the core's rider manager), `__tls_base`
+  (native/core/shim/native_shim.h maps `__builtin_wasm_tls_base()` to the current context block).
+- Rider contexts, the context pointer: the core's units are compiled with `-femulated-tls`, so every RIDER_LOCAL access is a call
+  of `__emutls_get_address(control)`, which native/core/rider_context_native.cpp defines: each variable gets an offset in a
+  context block at its first access (the same offset in every context; its initial bytes go into the pristine image and every
+  existing block), and the access is the current block + offset. Switching contexts is one pointer store (rider_tls_set, as wasm's
+  global.set of `__tls_base`); a new context is the pristine image with the units' static-initialisation work run in it, as
+  web/rider_context.cpp does. No source changes: web/rider_manager.cpp's wasm inContext (rider_tls_set + runOpaque) runs as is.
+  Needs clang on every platform (Apple clang, clang / clang-cl on Windows, clang on Linux); MSVC has no emulated TLS.
+- The first prototype ran each rider context on a thread of its own and handed work between them (condition variables): bit-exact,
+  but 354 hand-offs per six-rider tick at about 9 us each. Copying the 185 KB TLS image in and out at each switch would cost about
+  130 MB of copies per tick; spinning hand-offs halved the time but kept four cores busy. Both dropped.
+- Results (macOS arm64): the six-rider race (4909 ticks) 3.9 s native vs 6.0 s for the wasm core in node (16.6 s with the thread
+  contexts); solo 3409 ticks 0.8 s. Every tick's hash equal to the wasm core's (local/core-migration/qa/ref-trace.mjs on core9 /
+  core10 and the live core), six riders and solo. The gate replay (event-race: 53,101 calls, 2418 probes of state, world state,
+  pose and both RNGs) identical; a perturbed stream is caught at the first probe after the change.
+- Open for a shipping native host: the in-world snapshot (web/rider_context.cpp SSX_SNAPSHOT_REGISTRY) copies the TLS block by
+  size; with emulated TLS a function-local static first reached after snapshot_init lies past the saved size, so the native
+  snapshot needs every variable assigned before its first save (the registry's static constructors assign the file-scope ones).
+  Threads besides the simulation's (audio, render) must not touch RIDER_LOCAL state (they see the current context).
+
+### Build and tests
+
+The native-port agent owns native/ and the root CMakeLists.txt; the build steps and tests are in [native.md](native.md), the
+maintained page. The first prototype was native/build-core-native.sh (local/native-core/race_driver and replay_calls, the gate
+stream logged with native/tools/spy-core.js around web/compare-ps2-capture.mjs, the wasm reference from native/tools/ref-trace.mjs).
+
+## Core API
+
+The course core's exports are the API a front end builds on (the page through web/runtime/core.js, a native host by linking the
+same sources). docs/core-api.md lists every export with its signature and comment (generated: `node tools/core-api.mjs >
+docs/core-api.md`; `--check` says whether it is current). Exports are add-only: a changed signature or meaning gets a new
+name, and the old one stays until no caller is left (the page, web/compare-*.mjs, native/). (The rule, confirmed 2026-10-13.)
+
+A race as the page makes it (web/main.js, web/game-tick.js with pv coreTick, web/ai-racers.js with pv coreRiderManager; the order
+native/core/race_driver.cpp follows):
+
+1. Load, in the human's context: `set_fx_deferred(1)`, `init_animation(packets json, rig json, settings json, packets, size)`,
+   `init_race(settings)`, `animation_use_physics(1)`, `init_world(triangles, count)`, `init_terrain(terrain)`,
+   `init_world_collision(world, hash)`, `init_body_terrain(terrain)`, `init_rails(rails, hash)`.
+2. Computer riders: per rider `rider_context_create()`, then in its context the same init_* calls with its rig and merged settings,
+   `npc_configure(record, context)` and its stat bytes (`set_rider_attributes`) when they are not all 5; `rider_host(3 | 8)`,
+   `rider_parse_cache_clear()`, in each rider context `rider_host(2 | 4 | 8)`; `manager_configure(blocks, slots, riders, count,
+   flags)`.
+3. Start: `reset_pad_history()`, `start_event()`, `manager_event_start(rider texts, context, world, grid, hold, isolate, ranks)`
+   (startRun's full order, with the free-ride, multiplayer and in-world variants: "M4b" above).
+4. Each tick: `manager_begin_tick(anchor, scores)` (with computer riders), `tick_begin(pad[24], rescues, placement, posed, bones,
+   teleportKnown, teleports, tweak)` -> the record (state, pose, race info, flags), `manager_end_tick()` or `tick_mid()`,
+   `tick_end(...)` -> camera and end flags, `tick_finish(...)` when the end flags say finished, `tick_results(io)` (results,
+   rescue and quit flags). Read-outs: `rider_state()`, `pose_physical()`, `rider_world_state()`, `race_result_info()`,
+   `score_object_dump()`, `trick_name()`, the FX / HUD / skin read-outs.
+5. Pause actions: `race_give_up()`, restart (startRun again), `race_timed_out()`.
+
+The rules (`rules_eval(fn, io, n)`, web/rules_bridge.cpp, RULE ids in web/core-rules.js) and the presentation generator
+(`presentation_*`) are in both the course core and the rules module; a native host links them once.
+
+Still on the page, to move (docs/core-migration.md plan): the career's result kernel, award cascade and lodge (M5c-e), free ride
+and the peak world, Big Challenges, stage collectibles, the cutscene section feed; multiplayer rules (M7). Until they move, a native
+host has to port them from the page's JS (same order, same draws) or run without them.

@@ -1616,6 +1616,24 @@ export class CareerScreens {
   restartToCard(fromResults) {
     const ui = this.ui;
     if (fromResults) this.career.restartRound(this.result.outcome.round);
+    // pv onlineTimeAttack (port-only, the user's rule 2026-10-13): a session's restart is quick. No WS13 ride, gate idle or card: the
+    // PS2 restart's audio keep (2302A8's quit) and straight into the card's Continue path (play -> startRun -> start_event), so every
+    // attempt starts as the first one does: the gate, 3-2-1, GO (a backcountry rival event: its rolling start), no course reload.
+    const ta = ui.timeAttack;
+    if (ta?.active) {
+      if (!ta.windowOpen) {
+        // time is up: attemptStart shows the note and refuses; back where the restart came from
+        ta.attemptStart();
+        ui.set(fromResults ? 'ctm-results' : 'ctm-pause');
+        ui.index = fromResults ? this.resultsFocus(1) : 1;
+        ui.sync();
+        return;
+      }
+      ui.gameAudio?.restartRun?.({ fromResults });
+      ui.cb.quit?.();
+      this.play();
+      return;
+    }
     if (!ui.cb.cutscene) {
       this.play();
       return;
@@ -1778,7 +1796,11 @@ export class CareerScreens {
       // results 'Transport' (WS14 arg 2): endevent_trans_arr where the course has one, then the map
       return;
     }
-    // 0x20CF9C: overlay 0x17 'Are you sure?' first
+    // 0x20CF9C: overlay 0x17 'Are you sure?' first (pv onlineTimeAttack: not in a session, where the run is over and a restart is quick)
+    if (i === 1 && this.ui.timeAttack?.active) {
+      this.restartToCard(true);
+      return;
+    }
     if (i === 1) {
       this.restartFrom = 'results';
       this.go('ctm-restart', 1);
@@ -2077,6 +2099,8 @@ export class CareerScreens {
       ui.trickHudRenderer.render(ctx, list);
       // 0x1F16C0 at descriptor 0x1A, the +0x3D0 red override 0x4C8688 (docs/visual-parity.md)
     } else ui.text(ctx, hudRaceTime(clockTicks), 320, 20, 21, red ? '#ff0000' : '#eef5ee', 'HUDFONT', 'center');
+    // pv onlineTimeAttack: in a session the session's standings take this place (web/ta-ui.js hud, the same 3-row standings)
+    if (this.ui.timeAttack?.active) return;
     // OPPONENT line only with a computer rider (1EA930: 2+ riders -> place, no standings): Single Event slope style and Rival Points (event
     // kind 6). Career slope style rides alone (0x238E20 GMM+0x14 = 5): standings rows as in the pipe (PS2 menus/rnbctm/zoe-b: '1ST 254500 /
     // 2ND 121260 / 3RD 48620').

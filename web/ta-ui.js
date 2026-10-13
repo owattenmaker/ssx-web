@@ -29,6 +29,7 @@ import { MEDAL } from './career.js';
 import { PATHS, PATH_RED } from './fe-event-select.js';
 import { drawPlaceLabel } from './race-place-hud.js';
 import { toScene } from './cutscenes.js';
+import { HUD_FONTS } from './trick-hud.js';
 import { outfitPreviewEntry } from './wardrobe.js';
 
 const SY = 448 / 480;
@@ -197,7 +198,6 @@ export class TaScreens {
     if (s.phase === 'load') return `${name}: loading`;
     if (s.phase === 'window') return `${name}: ${left} left`;
     if (s.phase === 'overtime') return `${name}: time is up, last runs finishing`;
-    if (s.phase === 'verify') return `${name}: checking the best runs`;
     if (s.phase === 'podium') return `${name}: results`;
     if (s.phase === 'vote') return `Vote for the next event: ${Math.ceil(this.ta.timeLeft() / 1000)} s`;
     return `Next: ${this.eventName(s.voteResult?.event)}`;
@@ -393,9 +393,9 @@ export class TaScreens {
       return;
     }
     // time is up while the page waits on the card: the room
-    if ((s.phase === 'overtime' || s.phase === 'verify') && screen === 'ctm-objectives') this.go('ta-room', 0);
-    // the event left (Pause > Quit): the session goes on in the room
-    if (['main', 'title'].includes(screen)) this.go('ta-room', 0);
+    if (s.phase === 'overtime' && screen === 'ctm-objectives') this.go('ta-room', 0);
+    // the event left (Pause > Quit, the results' Continue to Select Event): the session goes on in the room
+    if (['main', 'title', 'fe-peak', 'fe-mode', 'fe-event'].includes(screen)) this.go('ta-room', 0);
   }
   // The CTM podium cutscene (web/cutscenes.js, WS12 0x27AC60) with the top three in their own characters and outfits where the course
   // has its steps (the winner's win_ps scene: bindings 1 / 2 / 3 on anchors 20 / 21 / 22), each labelled with its place and name;
@@ -564,7 +564,7 @@ export class TaScreens {
       }
       if (e.name === ROOM.detail.name) return { text: focused?.name ?? '' };
       if (e.name === ROOM.detail.rank) return { text: row ? `Rank: ${row.rank + 1}` : 'Rank: -' };
-      if (e.name === ROOM.detail.best) return { text: row ? `Best: ${this.value(key, row.value)}${row.status === 'verified' ? '' : ' *'}` : 'Best: -' };
+      if (e.name === ROOM.detail.best) return { text: row ? `Best: ${this.value(key, row.value)}` : 'Best: -' };
       if (e.name === ROOM.detail.rider) return { text: `Rider: ${focused?.rider ? focused.rider[0].toUpperCase() + focused.rider.slice(1) : '-'}` };
       if (e.name === ROOM.detail.state) return { text: focused?.loaded ? 'Ready' : 'Loading' };
       if (e.name === ROOM.chat) return { text: this.phaseLine() };
@@ -598,7 +598,7 @@ export class TaScreens {
         const mine = r && r.id === youId;
         const props = mine ? { 14: 255, 15: 255, 16: 255 } : undefined;
         if (STATS.ranks[k] === e.name) return { text: r ? String(page * 10 + k + 1) : '', props };
-        if (STATS.values[k] === e.name) return { text: r ? `${this.value(key, r.value)}${r.status === 'verified' ? '' : ' *'}` : '', props };
+        if (STATS.values[k] === e.name) return { text: r ? this.value(key, r.value) : '', props };
         return { text: r?.name ?? '', props };
       }
       if (e.name === STATS.slider && pages > 1) return { props: { 1: 18 + (page / (pages - 1)) * 180 } };
@@ -621,7 +621,7 @@ export class TaScreens {
         title: this.eventName(key),
         sub: 'Session Results',
         heads: ['Rank', 'Riders', timed ? 'Time' : 'Points'],
-        rows: rows.map((x, i) => ({ rank: i + 1, name: x.name, value: `${this.value(key, x.value)}${x.status === 'verified' ? '' : ' *'}`, human: x.id === st.you?.id })),
+        rows: rows.map((x, i) => ({ rank: i + 1, name: x.name, value: this.value(key, x.value), human: x.id === st.you?.id })),
         medals,
         message: vote ? this.phaseLine() : st.session?.phase === 'podium' ? 'The vote for the next event follows.' : this.phaseLine(),
         items: vote ? [] : ['Continue'],
@@ -769,8 +769,14 @@ export class TaScreens {
       return null;
     });
   }
-  // The in-race line under the race clock (port-only arrangement, the HUD font): the session's time left (red blink in its last
-  // 10 s, as the freestyle clock 0x4C8688) and this player's best and rank.
+  // The in-race HUD of a session (port-only arrangement of the race HUD's own elements):
+  //   * the session's standings in the 3-row standings of descriptor 0x17 (web/trick-hud.js standings, 0x1ED104..0x1ED4AC: the rank
+  //     digit with its 'ST' / 'ND' / 'RD' at half scale, the value column right-aligned at x + 66.997 x scale, rows 21 apart, the
+  //     HUD font's shadow; this player's row as the human row: the name cut to three characters over the red box), the values the
+  //     session's times or scores; in the place of a freestyle event's posted standings (web/career-ui.js hud skips those in a session);
+  //     this player in the third row when not in the top three;
+  //   * the time left centred under the race clock (descriptor 0x1A) in the HUD font, red-blinking in its last 10 s as the freestyle
+  //     clock (0x4C8688), TIME'S UP after the deadline.
   hud(c) {
     const s = this.st.session;
     if (!s || this.ui.screen !== 'game' || !this.st.attemptOpen) return;
@@ -778,8 +784,46 @@ export class TaScreens {
     const red = s.phase !== 'window' || (left < 10000 && Math.floor(left / 500) % 2 === 0);
     const text = s.phase === 'window' ? minutes(left) : "TIME'S UP";
     this.ui.text(c, text, 320, 44, 15, red ? '#ff0000' : '#eef5ee', 'HUDFONT', 'center');
+    const hud = this.ui.trickHud;
+    const renderer = this.ui.trickHudRenderer;
+    if (!hud || !renderer) return;
+    const key = s.window?.event;
+    const top = (this.st.standings ?? []).slice(0, 3);
     const you = this.st.you;
-    if (you) this.ui.text(c, `BEST ${this.value(s.window?.event, you.value)}  ${you.rank + 1}/${this.st.total ?? this.st.standings?.length ?? 1}`, 320, 62, 11, '#eef5ee', 'HUDFONT', 'center');
+    const rows = top.map((r) => ({ rank: r.rank, text: this.value(key, r.value), human: r.id === you?.id, name: r.name }));
+    if (you && !rows.some((r) => r.human)) rows.splice(Math.min(2, rows.length), 1, { rank: you.rank, text: this.value(key, you.value), human: true, name: you.name });
+    if (!rows.length) return;
+    const list = [];
+    this.standingsList(hud, list, rows);
+    renderer.render(c, list);
+  }
+  // trick-hud.js standings() with text values and the session's own ranks
+  standingsList(hud, out, rows) {
+    const f = Math.fround;
+    const d = hud.desc(0x17);
+    const [sx, sy] = d.scale;
+    const argb = d.argb.slice();
+    const shadow = hud.font.HUDFONT.shadow.slice();
+    const pitch = f(f(HUD_FONTS.HUDFONT.height * 1) * sy);
+    const col = f(d.x + f(sx * f(66.99718475341797)));
+    const half = [f(sx * 0.5), f(sy * 0.5)];
+    const put = (text, x, y, scale) => out.push({ kind: 'text', font: 'HUDFONT', text, x, y, scale, argb: argb.slice(), shadow: shadow.slice(),
+      shadowArgb: [argb[0], 0, 0, 0], order: d.order });
+    const widths = rows.map((r) => hud.measure('HUDFONT', r.text, sx, sy).w);
+    const widest = Math.max(0, ...widths);
+    rows.forEach((r, i) => {
+      const y = f(d.y + f(pitch * i));
+      put(r.text, f(col + f(widest - widths[i])), y, [sx, sy]);
+      if (!r.human) {
+        const digit = String(r.rank + 1);
+        put(digit, d.x, y, [sx, sy]);
+        const suffix = r.rank === 0 ? 'ST' : r.rank === 1 ? 'ND' : r.rank === 2 ? 'RD' : 'TH';
+        put(suffix, f(f(d.x + 1) + hud.measure('HUDFONT', digit, sx, sy).w), f(y + f(1.5995806455612183)), half.slice());
+      } else {
+        put(String(r.name ?? '').slice(0, 3).toUpperCase(), d.x, y, [sx, sy]);
+        out.push({ kind: 'rect', x: d.x, y, w: f(f(col - d.x) + widest), h: pitch, scale: [1, 1], argb: [1, 1, 0, 0], order: d.order - 1 });
+      }
+    });
   }
   dispose() {
     clearInterval(this.watch);

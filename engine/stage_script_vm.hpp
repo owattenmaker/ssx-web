@@ -128,7 +128,7 @@ inline float mulS(float a,float b){
 #if SSX_PS2_EXACT_FPU
     if(software_float::exactArithmetic)return ps2fpu::mul(a,b);
 #endif
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
     if(originalRoundingMode==FE_TOWARDZERO)return software_float::mul(a,b);
 #endif
     volatile float left=a,right=b;float r=left*right;return r;

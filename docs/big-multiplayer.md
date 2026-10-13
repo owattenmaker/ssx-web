@@ -2,6 +2,13 @@
 
 Status (2026-10-13, big-multiplayer agent): design reviewed; **building TA-1..TA-6**, each behind a default-off switch.
 
+**No live verification (the user's decision 2026-10-13, after the first live stress test; it replaces section 2.3's deadline rule
+and the VERIFY phase):** a small community project, so the session podium and standings rank the **uploaded bests** straight away;
+the server's tier-0 upload checks stay (cheap, they catch nonsense). OVERTIME goes straight to PODIUM. Each finished window goes to an
+archive (its runs, their replays and its stored results, 6 h, also after the session empties), and the verifier's session lane checks
+those runs after the fact, in the background: a result marks the archived standings ("verified"; a run not reproduced leaves them).
+The records verifier for the public boards is unchanged. The native verifier (docs/native.md N2) is a separate track for the boards.
+
 **The user's decisions (2026-10-13, on section 9):**
 - Time limit: **6:00 by default**, set by whoever creates the session; a run in progress at the deadline may finish.
 - Rotation: **every event with a board** (records.mjs eventTable: 20 events): the five races and the three Rival Time runs ranked by
@@ -132,7 +139,7 @@ Trackmania tracks are 30-60 s; SSX races are three to four times longer. This dr
 Phases of a session room, all driven by the server's clock (every client shows the same times through mp-client's clock offset):
 
 ```
-LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> VERIFY (podium candidates) -> PODIUM -> VOTE -> LOAD ...
+LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> PODIUM -> VOTE -> LOAD ...
 ```
 
 | Phase | Length (default) | What happens |
@@ -140,7 +147,6 @@ LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> VE
 | LOAD | until 90 % loaded, at most 45 s | everyone loads the course behind the original loading screen (as today's race start) |
 | WINDOW | the time limit (Q1) | attempts; restarts at will; best complete run per player counts |
 | OVERTIME | until every attempt that started before the deadline ends, at most 4:30 | no new attempts; runs in progress may finish (port-only) |
-| VERIFY | at most 15 s | the verifier finishes the podium candidates (section 2.3) |
 | PODIUM | about 20 s (skippable per client) | the CTM podium cutscene with the top three, then the final standings |
 | VOTE | 15 s | the next course (section 2.4) |
 
@@ -185,7 +191,7 @@ LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> VE
     player replaces its queued older one.
   - Budget: with W = 2 and ~3 s per run, ~40 runs a minute. 100 players x 2 improvements each = 200 runs per window: all
     verified within the window when it is 10 minutes, the top 10 always.
-- **Deadline rule:** the podium shows verified runs only. VERIFY waits at most 15 s for unverified runs that would make the top 3;
+- **Deadline rule (superseded 2026-10-13: no live verification, see the top):** the podium shows verified runs only. VERIFY waits at most 15 s for unverified runs that would make the top 3;
   one still unverified then is skipped for the podium (the next verified run moves up), shown as "unverified" in the final
   standings, and verified afterwards for the session history. A pulled run drops out of the standings at once.
 - **Later (TA-7, optional): a node verifier.** tools/tas/race.mjs already reproduces page runs exactly in node (docs/tas.md) at
@@ -518,3 +524,75 @@ each screen is built.
   reach the node player.
 - **Not done:** the liveness check (section 2.3) needs the attempt tick in the pose packet (to compare with the replay's
   re-simulated path); kept for after TA-6.
+
+### TA-5: the screens, the podium, the vote, the HUD (2026-10-13), pv onlineTimeAttack (off)
+
+- **web/ta-ui.js** (new; loaded by web/mp-ui.js with a dynamic import only when the switch is on, so the default page's modules are
+  unchanged): the screens listed in its header, on the PS2's online screens (UI/online-screens.json, UI/online-overlays.json):
+  ta-lobby (231lobby_menu), ta-create (232CreateRoomPopup: Event / Room Name with the game keyboard / Time limit 1..30 min), ta-room
+  (235chat_room), ta-standings (249Stats, ten rows a page), ta-circuit (109MultiplayerStandings, from the standings' Help), ta-results
+  and ta-vote (the PS2 Single Event results with medals, the vote's thumbnail boxes). Each screen is its LUI file at its intro state
+  plus the focused item's labelled frame (the focus states: 231 rows 35..50 / Create Room 55, 232 rows 35 / 45 / 55 / 65, 109 items
+  45 / 50 / 55), with the session's texts; the online-service items (channels' locks, Help, EA Messenger, message counts, passwords) are
+  hidden. The Online Lobbies list gets a first row, Time Attack.
+- **Phases on the page** (ta-ui follow(), every 250 ms): the podium phase plays the podium cutscene (the rules above) and then ta-results,
+  also for a rider still on course (after the overtime the run cannot count: its attempt ends 'time'); the vote phase opens ta-vote; time
+  up on the objectives card, Pause > Quit and the results' way back to the menus land in ta-room (the session goes on); the room's Ride
+  returns to the event's card (loading it when the page is elsewhere).
+- **HUD** (ta-ui hud, from ui.js after the career HUD, guarded by the switch): the session's top three (this player's row as the human
+  row when it is not among them) in the PS2's 3-row standings element (descriptor 0x17), with times or scores; in a freestyle event they
+  replace the posted standings (career-ui.js hud returns before them in a session). The time left under the race clock, red-blinking in
+  its last 10 s, TIME'S UP after the deadline.
+- **Labels over the podium:** ui.js calls mpUI.cutsceneOverlay after the cutscene's own overlay (guarded): each step's anchor (locators
+  `podium_steps`) 2.35 m up, projected with the page's camera; race-place-hud.js drawPlaceLabel (new export: the place sprites at any
+  spot and scale) and the name in FEFONT with the world captions' shadow.
+- **Solo lineup across course switches:** a course switch builds a new computer-rider race (main.js loadCourse) and the pending round's
+  event load prepares its lineup inside the switch; mp-game.js aiAllowed(), which main.js asks right before every lineup prepare, arms
+  the solo lineup on the current race in a session (ta-game.js armLineup). Before this, the next window's event raced computer riders.
+- **Shared-file changes (all inert with the switch off):** ui.js (three hooks behind pv('onlineTimeAttack')), mp-ui.js (the dynamic import
+  and the delegation, the Time Attack row only once the screens loaded), results-lui.js (results() `medals`, optional), race-place-hud.js
+  (drawPlaceLabel), career-ui.js (hud: the posted standings skipped in a session), net/mp-game.js (aiAllowed arms the solo lineup in a
+  session). Server: sessions.mjs (the vote: two events + RANDOM; player names on create / join; the session list's names; the results'
+  history).
+- **Checked** (scratch web/.ta-screens-check.mjs: a local server with sessions, four bots, three verified runs; Chrome and WebKit): the
+  session list, create, room, standings, HUD, podium with labels, results with medals, vote with thumbnails and counts, circuit, the next
+  window's card; a backcountry (Happiness) session's results in place of the podium. test-mp-session covers the vote rules.
+
+### TA-6: load (2026-10-13)
+
+Stream bots (scratchpad ta-load.mjs: N players in one session, each sending a recorded 27-bone pose stream at 20 Hz along its own part of
+the course) against a local mp-server, 15 s per step:
+
+| Players | Ghost bytes out per recipient | Out in total (with ~60 B framing per bundle) | Server CPU | Dropped |
+|---|---|---|---|---|
+| 20 | 14.0 KB/s | 2.4 Mbit/s | 1.1 % | 0 |
+| 50 | 15.3 KB/s | 6.5 Mbit/s | 2.3 % | 0 |
+| 100 | 16.3 KB/s | 13.8 Mbit/s | 5.4 % | 0 |
+
+About 25 % above section 3.3's estimate (the mid tier's pose every 2 s on top of its lite entries). Bundles are 1.4-1.7 KB. The relay's
+CPU stays small; the host's upload is the limit (~14 Mbit/s for 100 players, ~6.5 for 50). Not measured yet: through the Cloudflare
+tunnel, and the control traffic of 100 players joining at once.
+
+### TA-6: the live stress test and no live verification (2026-10-13)
+
+**Tools** (local/big-multiplayer/, git-ignored): stress.mjs (N bots "TEST BOT 01".. through the page's own WebSocket URL, real-pose
+ghosts at 20 Hz, two genuine pre-recorded session runs uploaded, the podium, the vote, the next load; per-bot latency, ping, bundles and
+entries by tier, drops; /mp/status every 5 s), record-runs.mjs (the genuine runs, ridden in the page), dry-run.mjs (the same against a
+local server and verifier only).
+
+**Live run 1** (20 bots, 3:00 Snow Jam window, through Cloudflare): connect p50 265 ms (max 1.2 s), join p50 58 ms, ping p50 58 ms /
+p95 167 ms; 9.9 bundles/s per bot, 54-59 poses/s (66.5 nominal; the bots' restart gaps) and 37 lite/s (36.8 nominal: the 250 ms lite
+on 100 ms bundles is every 300 ms, less the 2 s poses); 11.7-12.7 KB/s per bot; server ghost out 239 KB/s mean, 280 peak, in 71 KB/s;
+no dropped sockets, no dropped ghost frames. The verify phase ended before the verifier finished (74 s, cold page), and its result got
+404: everyone had left, and leave() of the last member dropped the session's runs.
+
+**Changed (sessions.mjs; the user's decision above):** no VERIFY phase; the podium is the standings' top three (uploaded bests); the
+archive of finished windows (`archiveMs` 6 h, `archiveMax` 200 windows; their replays stay with them, also after the session empties);
+the verifier queue lists only archived rows (each player's best not yet checked, newest window first, then the podium, the top 10, the
+rest) and answers `active: 0`, so records-verifier.mjs keeps no page open for sessions; a result redoes the archived results'
+standings and podium and the round history, and goes to the members while that window's results are still shown. Bugs fixed with it:
+a result after the session emptied (its runs are kept), and an old window's result touching the current window's lists (a result only
+changes the archive). Page (ta-ui.js): no unverified mark (*) on the standings, no VERIFY phase line. Tests: test-mp-session (the
+podium at once, the archive queue, pulled / verified / stale marks, a late result while the next window loads and after the session
+is gone, the archive's expiry), test-session-verifier (the checks on the archived window), test-ta-page (no live queue).
+

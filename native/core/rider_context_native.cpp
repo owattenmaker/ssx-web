@@ -1,16 +1,18 @@
-// Rider contexts in a native build (docs/core-migration.md "Native core"): the wasm core switches the six riders' state by setting
-// __tls_base (web/rider_context.cpp, web/rider_tls.S); a native process cannot swap its TLS register (macOS arm64 does not let user
-// code), so here each rider context is a thread of its own, its RIDER_LOCAL state that thread's thread_local storage. Only one runs
-// at a time: running work "in a context" posts it to that context's thread and waits, serving its own queue meanwhile (a context's
-// work may call back into the waiting one: the rider pairs reach every rider from inside one rider's 121750). The human's context is
-// the main thread. Deterministic: the threads hand one task back and forth, never two at once.
-#include <condition_variable>
-#include <deque>
-#include <exception>
+// Rider contexts in a native build through emulated TLS (docs/core-migration.md "Native core: the context pointer"): the core's
+// units are compiled with -femulated-tls, so every RIDER_LOCAL access is a call of __emutls_get_address(control); this file defines
+// it. Each variable gets an offset in a context block (assigned at its first access, the same for every context) and the access is
+// the current block + that offset: switching the rider context is one pointer store, as the wasm build's __tls_base. A new context
+// is a copy of the pristine image (every variable's initial value) with the units' static-initialisation work run in it, as
+// web/rider_context.cpp does. One thread; contexts are switched, not run concurrently.
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
-#include <mutex>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 #include <stdexcept>
-#include <thread>
 
 void rider_statics_core();
 void rider_statics_rails();
@@ -19,108 +21,123 @@ void rider_statics_animation();
 void rider_statics_environment();
 
 namespace {
-struct Context;
-struct Task {
-    std::function<void()> fn;
-    Context* from = nullptr;
-    std::exception_ptr error;
-    bool done = false;
+// compiler-rt's / libgcc's control block of one emulated thread_local variable
+struct EmutlsControl {
+    size_t size;
+    size_t align;
+    uintptr_t index;  // its offset + 1 (0: not assigned yet)
+    const void* value;  // its initial bytes (null: zero)
 };
-struct Context {
-    std::mutex m;
-    std::condition_variable cv;
-    std::deque<Task*> queue;
-    bool stop = false;
-    std::thread thread;
-};
-Context humanContext;
-thread_local Context* current = nullptr;
-Context* self() {
-    return current ? current : &humanContext;
-}
-// Serves this context's queue until done() holds (checked under its lock).
-template <class Done>
-void serve(Context* c, Done done) {
-    for (;;) {
-        Task* t = nullptr;
-        {
-            std::unique_lock<std::mutex> lock(c->m);
-            c->cv.wait(lock, [&] { return done() || !c->queue.empty(); });
-            if (done()) {
-                return;
-            }
-            t = c->queue.front();
-            c->queue.pop_front();
-        }
-        try {
-            t->fn();
-        } catch (...) {
-            t->error = std::current_exception();
-        }
-        {
-            std::lock_guard<std::mutex> lock(t->from->m);
-            t->done = true;
-        }
-        t->from->cv.notify_all();
+constexpr size_t kBlockBytes = size_t(4) << 20;
+constexpr int kMaxContexts = 64;
+// plain zero-initialised storage: other units' static initialisers reach __emutls_get_address before this unit's run
+uint8_t* pristine = nullptr;
+uint8_t* blocks[kMaxContexts];
+int blockCount = 0;
+uint8_t* current = nullptr;
+size_t used = 0;
+uint8_t* newBlock() {
+#if defined(_WIN32)
+    // the Windows CRT has no aligned_alloc; the blocks are never freed, so no _aligned_free is needed
+    void* p = _aligned_malloc(kBlockBytes, 4096);
+#else
+    void* p = std::aligned_alloc(4096, kBlockBytes);
+#endif
+    if (!p) {
+        std::abort();
     }
+    std::memset(p, 0, kBlockBytes);
+    return static_cast<uint8_t*>(p);
+}
+void boot() {
+    pristine = newBlock();
+    current = newBlock();
+    blocks[blockCount++] = current;
+}
+// A variable's first access in any context: its offset, its initial bytes in the pristine image and in every context made so far.
+__attribute__((noinline)) uintptr_t assign(EmutlsControl* c) {
+    const size_t align = c->align ? c->align : 1;
+    const size_t at = (used + align - 1) / align * align;
+    if (at + c->size > kBlockBytes) {
+        std::abort();
+    }
+    used = at + c->size;
+    if (c->value) {
+        std::memcpy(pristine + at, c->value, c->size);
+        for (int k = 0; k < blockCount; ++k) {
+            std::memcpy(blocks[k] + at, c->value, c->size);
+        }
+    }
+    c->index = at + 1;
+    return c->index;
 }
 }  // namespace
 
-// Runs fn in a rider context (the calling thread waits and serves its own queue).
-void native_run_in_context(void* block, const std::function<void()>& fn) {
-    Context* target = static_cast<Context*>(block);
-    Context* me = self();
-    if (target == me) {
-        fn();
-        return;
-    }
-    Task t;
-    t.fn = fn;
-    t.from = me;
-    {
-        std::lock_guard<std::mutex> lock(target->m);
-        target->queue.push_back(&t);
-    }
-    target->cv.notify_all();
-    serve(me, [&] { return t.done; });
-    if (t.error) {
-        std::rethrow_exception(t.error);
-    }
-}
-
 extern "C" {
-void* native_tls_base(void) {
-    return self();
+void* __emutls_get_address(EmutlsControl* c) {
+    uintptr_t index = c->index;
+    if (__builtin_expect(index == 0, 0)) {
+        if (!current) {
+            boot();
+        }
+        index = assign(c);
+    }
+    return current + index - 1;
 }
-// A new rider context: a thread whose RIDER_LOCAL state starts as a fresh core's (thread_local initialisation, then the units'
-// static-initialisation work, as web/rider_context.cpp runs it in a new block).
+void* native_tls_base(void) {
+    if (!current) {
+        boot();
+    }
+    return current;
+}
+void rider_tls_set(void* block) {
+    current = static_cast<uint8_t*>(block);
+}
 void* rider_context_create() {
-    Context* c = new Context;
-    c->thread = std::thread([c] {
-        current = c;
-        serve(c, [c] { return c->stop; });
-    });
-    native_run_in_context(c, [] {
+    if (!current) {
+        boot();
+    }
+    if (blockCount == kMaxContexts) {
+        throw std::runtime_error("Rider context allocation");
+    }
+    uint8_t* block = newBlock();
+    std::memcpy(block, pristine, used);
+    blocks[blockCount++] = block;
+    uint8_t* previous = current;
+    current = block;
+    try {
         rider_statics_core();
         rider_statics_rails();
         rider_statics_world();
         rider_statics_animation();
         rider_statics_environment();
-    });
-    return c;
+    } catch (...) {
+        current = previous;
+        throw;
+    }
+    current = previous;
+    return block;
 }
 void* rider_context_current() {
-    return self();
+    return native_tls_base();
 }
-// The wasm build's direct switches (the page's rider views, web/ai-racers.js) do not exist here: the native host runs work in a
-// context through native_run_in_context.
-void rider_context_enter(void*) {
-    throw std::runtime_error("rider_context_enter: native contexts run work through native_run_in_context");
-}
-void rider_tls_set(void*) {
-    throw std::runtime_error("rider_tls_set: native contexts run work through native_run_in_context");
+void rider_context_enter(void* block) {
+    rider_tls_set(block);
 }
 unsigned rider_context_bytes() {
-    return 0;
+    return unsigned(used);
 }
+}
+
+// The native host's helper (native/core/race_driver.cpp): fn in a context, the previous one back after it (also on a throw).
+void native_run_in_context(void* block, const std::function<void()>& fn) {
+    uint8_t* previous = current;
+    current = static_cast<uint8_t*>(block);
+    try {
+        fn();
+    } catch (...) {
+        current = previous;
+        throw;
+    }
+    current = previous;
 }

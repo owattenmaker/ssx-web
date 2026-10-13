@@ -1,8 +1,9 @@
 // Time attack on the page (pv onlineTimeAttack: web/net/ta-game.js, the career-ui play / finish hooks; docs/big-multiplayer.md
 // TA-3) against a local mp-server with sessions on: the page creates a Snow Jam session, a node player joins it; the page loads the
 // event (its objectives card: 'ta-loaded'), an attempt before the window opens is refused, then a solo run (no computer riders, the
-// maxed attribute bytes) is ridden to the finish and uploaded as the page player's best; the verifier verifies it; a second attempt
-// started and given up ends without an upload; after the deadline Continue is refused; the podium shows the page player; the vote
+// maxed attribute bytes) is ridden to the finish and uploaded as the page player's best (no live verification: the live window's runs
+// are not queued); a second attempt started and given up ends without an upload; after the deadline Continue is refused; the podium
+// shows the page player's uploaded best; the vote
 // picks Metro City and the page loads it for the next window. With pv ghostRiders: the node player streams ghost poses, the page draws
 // its ghost from the server's bundles, and the page's own poses reach the node player. Skipped without Chrome / WebGPU / the game data.
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findChrome, startBrowser, startServer, sleep } from './headless-chrome.mjs';
+import { startBrowser, startServer, sleep } from './headless-chrome.mjs';
 import { encodePose, decodeBundle, freeBones, POSE, FLAG_RIDING } from './server/ghost-packet.mjs';
 
 const web = path.dirname(fileURLToPath(import.meta.url));
@@ -31,7 +32,7 @@ fs.writeFileSync(path.join(tmp, 'token'), token + '\n');
 const port = 24000 + Math.floor(Math.random() * 2000);
 const API = `http://127.0.0.1:${port}`;
 // the page rides as fast as it goes (wallSlackMs off); short podium and vote
-const options = { wallSlackMs: 1e9, goDelayMs: 500, minLimitMs: 1000, podiumMs: 3000, voteMs: 4000, voteResultMs: 500, verifyMaxMs: 60000, overtimeMaxMs: 5000 };
+const options = { wallSlackMs: 1e9, goDelayMs: 500, minLimitMs: 1000, podiumMs: 3000, voteMs: 4000, voteResultMs: 500, overtimeMaxMs: 5000 };
 const mp = spawn(process.execPath, ['server/mp-server.mjs', '--port', String(port), '--host', '127.0.0.1'], { cwd: web,
   env: { ...process.env, MP_SESSIONS: '1', MP_SESSION_OPTIONS: JSON.stringify(options), MP_RECORDS_ASSETS: assets, MP_RECORDS_VERIFIER_TOKEN_FILE: path.join(tmp, 'token') },
   stdio: ['ignore', 'pipe', 'pipe'] });
@@ -142,8 +143,7 @@ try {
   assert.equal(up.status, 'kept', JSON.stringify(up));
   // the run's replay as uploaded: no computer riders, the maxed attribute bytes
   const queue = await (await fetch(`${API}/mp/session/verifier/queue`, { headers: { 'x-ssx-verifier': token } })).json();
-  assert.equal(queue.items.length, 1);
-  assert.equal(queue.items[0].claim, up.value);
+  assert.equal(queue.items.length, 0, 'a live window is not checked');
   const replay = await E(`(async()=>{const f=await ssxQA.ui().cb.onlineReplayFile({event:'0:ARA1',mode:0,course:'ARA1',name:'X',claim:{ticks:1}});
     return {lineup:f.meta.lineup,attributes:f.meta.rider.attributes}})()`);
   assert.equal(replay.lineup.enabled, false);
@@ -157,21 +157,12 @@ try {
   for (let k = 0; k < 80 && !/results/.test(await E('ssxQA.ui().screen')); k++) await E('(()=>{ssxQA.advance(10,new Array(24).fill(0));return 1})()');
   assert.equal(await E(`${TA}.state.attemptOpen`), false, 'the given-up attempt ended');
   assert.equal(await E(`${TA}.state.upload.attempt`), 1, 'no upload for it');
-  // the verifier verifies the page's run
-  const v = spawn(process.execPath, ['server/records-verifier.mjs', '--once', '--page', server.origin, '--api', API, '--token-file', path.join(tmp, 'token'),
-    '--profile', path.join(tmp, 'profile'), '--max-load', '1000', '--session-max-load', '1000', '--chrome', findChrome()], { cwd: web, stdio: ['ignore', 'pipe', 'pipe'] });
-  let out = '';
-  v.stdout.on('data', (d) => { out += d; });
-  v.stderr.on('data', (d) => { out += d; });
-  assert.equal(await new Promise((r) => v.on('exit', r)), 0, out.slice(-600));
-  const results = JSON.parse(out.split('VERIFIER_RESULTS ')[1] || '[]');
-  assert.equal(results[0]?.ok, true, JSON.stringify(results));
-  await browser.waitFor(`${TA}.state.you && ${TA}.state.you.status === 'verified'`, 10000);
+  await browser.waitFor(`${TA}.state.you?.value === ${up.value}`, 10000);
   // the deadline: shorten nothing, the host sets no limit change; wait for the window's end, then Continue is refused
   const endAt = await E(`${TA}.state.session.window.endAt`);
   await sleep(Math.max(0, endAt - Date.now()) + 1500);
   assert.equal(await E(`(()=>{const ok=${TA}.attemptStart();return ok})()`), false, 'no attempt after the deadline');
-  // the podium: the page's player (verified); the bot never finished
+  // the podium: the page's player (its uploaded best); the bot never finished
   await browser.waitFor(`!!${TA}.state.results`, 120000);
   const podium = await E(`${TA}.state.results.podium.map(r=>r.name)`);
   assert.equal(podium.length, 1, JSON.stringify(podium));
@@ -190,7 +181,7 @@ try {
   // leaving: the solo lineup and the attribute override go
   await E(`(()=>{${TA}.leave();return 1})()`);
   await browser.waitFor(`!${TA}.active`, 10000);
-  console.log(`attempt 1: ${up.value} race ticks kept and verified (${JSON.stringify(results[0].stats)}); podium ${podium}`);
+  console.log(`attempt 1: ${up.value} race ticks kept; podium ${podium}`);
 } catch (e) {
   failures.push(String(e?.stack || e));
 } finally {

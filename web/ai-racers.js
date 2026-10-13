@@ -38,6 +38,30 @@ export const singleCoreSupported = (core) => !!(core && core._rider_context_crea
 // __tls_base (the core's rider_context_create restores it before returning), so the mirror always equals it and a call reads the
 // mirror instead of the WebAssembly.Global getter.
 export const riderTlsCurrent = (module) => (module.__riderTls ??= { current: module.___tls_base.value }).current;
+// A page hook the core calls (EM_JS: Module.finishHost, Module.riderManagerHost): the core's own rider manager (pv coreRiderManager,
+// web/rider_manager.cpp inContext) switches __tls_base without these views, so inside such a call the mirror can name the wrong
+// block, and a view call would put the wrong one back (the bug of a Single Event slope style's live run: the opponent's finish
+// ran the rest of its race_end in the human's context). The mirror is set to the real block for the hook and back after it (the
+// core switches back itself).
+export function coreHook(module, fn) {
+  return function (a, b, c, d, e, f) {
+    const mirror = module.__riderTls;
+    const tls = module.___tls_base;
+    if (!mirror || !tls) return fn.call(this, a, b, c, d, e, f);
+    const saved = mirror.current;
+    mirror.current = tls.value;
+    try {
+      return fn.call(this, a, b, c, d, e, f);
+    } finally {
+      mirror.current = saved;
+    }
+  };
+}
+// Every method of a host object the core calls (Module.riderHost, pairHost, riderManagerHost, finishHost) through coreHook.
+export function coreHost(module, host) {
+  for (const [name, fn] of Object.entries(host)) if (typeof fn === 'function') host[name] = coreHook(module, fn);
+  return host;
+}
 export function riderContextCore(module, block) {
   const tls = module.___tls_base, view = { riderContext: block, module, getExceptionMessage: module.getExceptionMessage };
   const mirror = module.__riderTls ??= { current: tls.value };
@@ -541,7 +565,7 @@ export async function createAiRacers({
     pairDispatching = false;
   const pairViewBytes = Array.from({ length: SLOTS }, () => new Uint8Array(560)),
     pairViewSeen = new Array(SLOTS).fill(-1);
-  humanModule.pairHost = {
+  humanModule.pairHost = coreHost(humanModule, {
     view(slot, out) {
       if (pairDispatching && pairViewSeen[slot] === pairViewGeneration) {
         human.HEAPU8.set(pairViewBytes[slot], out);
@@ -587,7 +611,7 @@ export async function createAiRacers({
     random() {
       return rngNext(rngView(activeCore));
     }
-  };
+  });
   const dispatchPairs = (slot) => {
     if (!pairsEnabled || stage !== 2) return;
     pairViewGeneration++;
@@ -715,7 +739,7 @@ export async function createAiRacers({
   // the human's tick); rider pairs go to the slot of the running context.
   humanModule._rider_parse_cache_clear?.();
   const slotOf = new Map([[humanBlock, 0], ...npcs.map((n) => [n.core.riderContext, n.slot])]);
-  const riderHost = (humanModule.riderHost = {
+  const riderHost = (humanModule.riderHost = coreHost(humanModule, {
     afterPose: () => {
       if (riderTlsCurrent(humanModule) === humanBlock) stage1();
     },
@@ -723,7 +747,7 @@ export async function createAiRacers({
       if (riderTlsCurrent(humanModule) === humanBlock) stage2();
     },
     pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule)))
-  });
+  }));
   // | 4: no renderer poses (a computer rider is drawn from its skin palette, not animation_post's bone poses; web/animation_bridge.cpp)
   for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4 | nativeBit);
   // (pv coreRiderManager) the riders' contexts and slots, and the page's hooks the manager calls back (in the human's context)
@@ -739,7 +763,7 @@ export async function createAiRacers({
       human._free(blocks);
       human._free(slots);
     }
-    humanModule.riderManagerHost = {
+    humanModule.riderManagerHost = coreHost(humanModule, {
       // 107E70's handlers: speech 2A0A30 first, then the relationship 155BF0 (as pairHost.react)
       react(slot, other, kind, attack) {
         api.onPairAudio?.(slot, other, kind, attack);
@@ -749,7 +773,7 @@ export async function createAiRacers({
         onDraws?.(slot, Array.from(new Uint32Array(humanModule.HEAPU8.buffer, beforePtr, 6)), controller, motion);
       },
       afterRider: (slot) => afterRider?.(slot) ?? 0
-    };
+    });
   }
   // (pv coreRiderManager) the manager's state the page reads after a tick: the tick, the counts, each computer rider's command
   const nativeAfterTick = () => {

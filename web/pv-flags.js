@@ -205,6 +205,14 @@
 // coreEventStart (core-migration agent, docs/core-migration.md M4b; needs coreRiderManager): the computer riders' event start
 // (web/ai-racers.js start: each provider set up again, its stat bytes, its start or grid placement, the race world's reset from the
 // document) runs in the core (rider_manager.cpp manager_event_start). Off: ai-racers.js makes those calls.
+// coreCareerResults (core-migration agent, docs/core-migration.md M5c): the career's round results in the core's result kernel
+// (engine/career_rules.hpp through rules_eval: web/career.js raceResult / freestyleResult / completeEvent's medal / addRecord's entry,
+// web/peak-run.js peakResult); the page applies the outputs to its records. Needs coreRules and a core (the course core, or the
+// rules module with rulesModule) that has the kernel; off, or without it: the JS versions.
+// rulesModule (core-migration agent, docs/core-migration.md M5): the rules module (web/runtime/rules.{js,wasm}, web/build-rules.sh) loads
+// at boot; the pure rules (web/core-rules.js) run in it while no course core is there, and the session's presentation generator
+// (web/lineup.js: the career's reward picks and messages, the roster seeds) lives in it when it has loaded by the generator's first
+// use. Needs coreRules for the rules. Off, or before it loads, or when it fails: the JS versions.
 // coreRules (core-migration agent, docs/core-migration.md slice M1): the pure event / career rules (web/lineup.js roster, rounds,
 // relationships, difficulty, anchor RNG words; web/event-anchor-rng.js; the finish estimates and rankings of web/ai-race.js,
 // web/career.js and web/rival-mode.js) run in the core (engine/game_rules.hpp through web/rules_bridge.cpp, web/core-rules.js) once
@@ -270,6 +278,8 @@ export const PV_DEFAULTS = Object.freeze({
   coreRiderManager: true,
   coreRelationships: true,
   coreEventStart: false,
+  rulesModule: false,
+  coreCareerResults: false,
   coreRules: true,
   coreTick: true,
   onlineTimeAttack: false,

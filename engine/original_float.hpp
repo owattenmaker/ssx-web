@@ -24,7 +24,7 @@ inline float originalScalarAddSub(float a,float b,bool subtract){
     else if(difference<=-25)x&=0x80000000u;
     else if(difference>0)y&=0xffffffffu<<(difference-1);
     else if(difference<0)x&=0xffffffffu<<(-difference-1);
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
     // Toward zero (the rider contexts' policy): no volatile operands, which cost a stack frame per call.
     if(originalRoundingMode==FE_TOWARDZERO)return subtract?software_float::sub(std::bit_cast<float>(x),std::bit_cast<float>(y)):software_float::add(std::bit_cast<float>(x),std::bit_cast<float>(y));
     return originalScalarAddSubNearest(x,y,subtract);
@@ -37,7 +37,7 @@ inline float originalScalarAdd(float a,float b){return originalScalarAddSub(a,b,
 inline float originalScalarSubtract(float a,float b){return originalScalarAddSub(a,b,true);}
 // PCSX2's EE scalar DIV.S/SQRT.S use nearest rounding independently of the
 // surrounding EE/VU chop mode. This is not a policy for VU DIV/RSQRT.
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 // WebAssembly only has nearest rounding (the rider-context rounding policy is the software originalRoundingMode), so
 // the native fesetround round trip is a no-op there.
 inline float originalScalarDivide(float a,float b){

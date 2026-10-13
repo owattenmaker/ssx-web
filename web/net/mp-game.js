@@ -510,6 +510,9 @@ export function createMpGame({
       return pairNet?.counts ?? null;
     },
     aiAllowed() {
+      // pv onlineTimeAttack: main.js asks this right before an event's computer-rider lineup is prepared, on whichever course's race
+      // is current (a course switch builds a new one): in a session the solo lineup is armed there (web/net/ta-game.js)
+      if (timeAttack?.active) timeAttack.armLineup();
       return !racing;
     },
     // startRun, before core._start_event(): the grid slot and the online race world.

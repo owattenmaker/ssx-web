@@ -13,7 +13,7 @@ using Coefficients=std::array<Vector,16>;
 // Source coordinates are Z-up centimeters. Each helper preserves the separate
 // multiply/add instructions in PS2 0x32E9A0 instead of contracting them to FMA.
 inline float add(float a,float b){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #if SSX_PS2_EXACT_FPU
  if(software_float::exactArithmetic)return software_float::add(a,b);
 #endif
@@ -27,7 +27,7 @@ inline float add(float a,float b){
 #endif
 }
 inline float sub(float a,float b){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #if SSX_PS2_EXACT_FPU
  if(software_float::exactArithmetic)return software_float::sub(a,b);
 #endif
@@ -41,7 +41,7 @@ inline float sub(float a,float b){
 #endif
 }
 inline float mul(float a,float b){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #if SSX_PS2_EXACT_FPU
  if(software_float::exactArithmetic)return software_float::mul(a,b);
 #endif
@@ -55,7 +55,7 @@ inline float mul(float a,float b){
 #endif
 }
 inline float div(float a,float b){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #if SSX_PS2_EXACT_FPU
  if(software_float::exactArithmetic)return software_float::div(a,b);
 #endif
@@ -70,7 +70,7 @@ inline float div(float a,float b){
 }
 inline float sum3(float a,float b,float c){return add(add(a,b),c);}
 inline float sqrt(float a){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #if SSX_PS2_EXACT_FPU
  if(software_float::exactArithmetic)return software_float::sqrt(a);
 #endif

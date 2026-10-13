@@ -1,5 +1,5 @@
 // Time-attack sessions (web/server/sessions.mjs, docs/big-multiplayer.md TA-1): the phase machine on a fake clock (load quorum,
-// window, attempts, overtime, verify, podium, vote, the next load), uploads and their tier-0 checks, time and score ranking, the
+// window, attempts, overtime, podium, vote, the next load), uploads and their tier-0 checks, time and score ranking, the
 // verifier queue's priorities and results, players leaving / coming back, and the mount in mp-server.mjs end to end (off without
 // MP_SESSIONS=1). Synthetic disc tables only (no game data needed).
 import assert from 'node:assert/strict';
@@ -57,7 +57,7 @@ const client = (id, name = id) => {
   clients.set(id, c);
   return c;
 };
-const timing = { goDelayMs: 1000, loadMaxMs: 30000, overtimeMaxMs: 60000, uploadGraceMs: 10000, verifyMaxMs: 15000, podiumMs: 20000, voteMs: 15000, voteResultMs: 2000 };
+const timing = { goDelayMs: 1000, loadMaxMs: 30000, overtimeMaxMs: 60000, uploadGraceMs: 10000, podiumMs: 20000, voteMs: 15000, voteResultMs: 2000 };
 const S = createSessions({ events, now: () => clock, send: (id, m) => { if (!inbox.has(id)) inbox.set(id, []); inbox.get(id).push(m); }, clients,
   random: () => rand, log: { log() {}, warn() {} }, options: timing });
 const tick = (ms) => {
@@ -136,20 +136,15 @@ let standings = last('b', 'ta-standings');
 assert.deepEqual(standings.rows.map((x) => [x.name, x.value, x.status]), [['CAL', 2900, 'pending'], ['ANNA', 3000, 'pending'], ['BEN', 3100, 'pending']]);
 assert.equal(standings.you.rank, 2);
 assert.equal(standings.timed, true);
-// the verifier queue: the podium candidates first (all three here), the best ranked first
+// no live verification (the user's decision 2026-10-13): a live window's runs are not queued for the verifier
 let q = S.queue('abcdef0123456789');
-assert.deepEqual(q.map((x) => [x.id, x.priority]), [[runC, 0], [runA, 0], [runB, 0]]);
-assert.equal(S.verify(runA, { ok: true, core: 'abcdef0123456789' }).status, 'verified');
-assert.equal(S.verify(runC, { ok: false, reason: 'time 3100, claimed 2900', core: 'abcdef0123456789' }).status, 'pulled');
+assert.deepEqual(q, [], 'only archived windows are checked');
 assert.equal(S.verify('nope', { ok: true }), null);
-tick(500);
-standings = last('a', 'ta-standings');
-assert.deepEqual(standings.rows.map((x) => [x.name, x.status]), [['ANNA', 'verified'], ['BEN', 'pending']], 'a pulled run leaves the standings');
 // leave and come back in the same window: the runs stay
 S.message(b, { t: 'ta-leave' });
 assert.equal(last('b', 'ta-left').t, 'ta-left');
 tick(500);
-assert.equal(last('a', 'ta-standings').rows.length, 2, 'a player who left still counts');
+assert.equal(last('a', 'ta-standings').rows.length, 3, 'a player who left still counts');
 S.message(b, { t: 'ta-join', session: sid });
 assert.equal(S.sessions.get(sid).players.get('b').pending.length, 1, 'runs back on rejoin');
 // the host's time limit applies from the next window
@@ -170,27 +165,30 @@ assert.equal(S.sessions.get(sid).phase, 'overtime', 'c is still riding');
 S.message(c, { t: 'ta-end', window: win().id, n: 2, reason: 'finish', uploading: true });
 tick(1000);
 assert.equal(S.sessions.get(sid).phase, 'overtime', 'its upload is on its way');
-r = submit(c, 2, runFile({ ticks: 2950 }));
+r = submit(c, 2, runFile({ ticks: 2850 }));
 assert.equal(r.status, 200, JSON.stringify(r.body));
 const runC2 = r.body.run;
-tick(500);
-st = S.sessions.get(sid);
-assert.equal(st.phase, 'verify');
-// verify: c's 2950 (pending) is above the verified 3000: the podium waits for it
-tick(5000);
-assert.equal(st.phase, 'verify');
-q = S.queue(null);
-assert.equal(q[0].id, runC2);
-assert.equal(q[0].priority, 0);
-S.verify(runC2, { ok: true, core: 'abcdef0123456789' });
+assert.equal(r.body.kept, true);
+// the last upload is in: the podium at once, from the uploaded bests (no verify phase)
 tick(250);
-assert.equal(st.phase, 'verify', "BEN's pending 3100 could still take third");
-tick(10000);
-assert.equal(st.phase, 'podium', 'at most 15 s of verify');
+st = S.sessions.get(sid);
+assert.equal(st.phase, 'podium');
 let res = last('a', 'ta-results');
-assert.deepEqual(res.podium.map((x) => [x.name, x.value]), [['CAL', 2950], ['ANNA', 3000]], 'only verified runs: BEN is still pending');
-assert.deepEqual(res.standings.map((x) => [x.name, x.status]), [['CAL', 'verified'], ['ANNA', 'verified'], ['BEN', 'pending']]);
+assert.deepEqual(res.podium.map((x) => [x.name, x.value]), [['CAL', 2850], ['ANNA', 3000], ['BEN', 3100]], 'the uploaded bests');
+assert.deepEqual(res.standings.map((x) => [x.name, x.status]), [['CAL', 'pending'], ['ANNA', 'pending'], ['BEN', 'pending']]);
 assert.equal(res.timed, true);
+// the checks after the fact: the archived window's rows, the podium first
+q = S.queue('abcdef0123456789');
+assert.deepEqual(q.map((x) => [x.id, x.priority, x.window]), [[runC2, 0, 1], [runA, 0, 1], [runB, 0, 1]]);
+// a run not reproduced leaves the archived standings: the player's next run takes its row (and is asked for next)
+assert.equal(S.verify(runC2, { ok: false, reason: 'time 3100, claimed 2850', core: 'abcdef0123456789' }).status, 'pulled');
+assert.deepEqual(res.standings.map((x) => [x.name, x.value, x.status]), [['CAL', 2900, 'pending'], ['ANNA', 3000, 'pending'], ['BEN', 3100, 'pending']]);
+assert.deepEqual(res.podium.map((x) => x.value), [2900, 3000, 3100]);
+assert.equal(st.history[0].winner.value, 2900, "the session's round history follows");
+assert.equal(S.queue(null)[0].id, runC);
+assert.equal(S.verify(runA, { ok: true, core: 'abcdef0123456789' }).status, 'verified');
+assert.deepEqual(res.standings.map((x) => x.status), ['pending', 'verified', 'pending'], 'the verified mark');
+assert.deepEqual(S.queue(null).map((x) => x.id), [runC, runB]);
 // vote: two events (not the one just ridden) and RANDOM
 tick(20000);
 assert.equal(st.phase, 'vote');
@@ -213,6 +211,10 @@ assert.equal(st.event, next);
 assert.equal(st.window.id, 2);
 assert.equal(st.limitMs, 90000, "the host's new limit");
 assert.equal(st.players.get('a').best, null, 'a new window starts empty');
+// a late result for the last window, while the next one loads: only its archive changes, never the players' new lists
+assert.equal(S.verify(runB, { ok: true, core: 'abcdef0123456789' }).status, 'verified');
+assert.equal(st.players.get('b').best, null, 'an old window\'s result does not touch the current one');
+assert.equal(res.standings[2].status, 'verified');
 assert.equal(st.players.get('a').name, 'ANNA', 'the player name');
 // RANDOM wins: an event of the rotation but the two shown
 {
@@ -230,7 +232,7 @@ assert.equal(st.players.get('a').name, 'ANNA', 'the player name');
 }
 assert.ok([...S.runs.values()].some((x) => x.window === 1), "the last window's replays stay");
 
-// ---- a score event: the highest wins; a session's podium wait ends after verifyMaxMs ----
+// ---- a score event: the highest wins; the podium does not wait; a late result after the session is gone ----
 {
   const [d, e] = [client('d', 'DAN'), client('e', 'EVE')];
   S.message(d, { t: 'ta-create', limitMs: 60000, event: '1:TSS1' });
@@ -248,21 +250,27 @@ assert.ok([...S.runs.values()].some((x) => x.window === 1), "the last window's r
   const rd = up(d, 40000).body;
   const re = up(e, 52000).body;
   assert.equal(re.rank, 0, 'the higher score ranks first');
-  S.verify(rd.run, { ok: true, core: 'abcdef0123456789' });
   clock = s2.window.endAt;
   tick(500);
-  assert.equal(s2.phase, 'verify');
-  tick(14000);
-  assert.equal(s2.phase, 'verify');
-  tick(1500);
-  assert.equal(s2.phase, 'podium', 'at most 15 s of verify');
+  assert.equal(s2.phase, 'podium');
   res = last('d', 'ta-results');
-  assert.deepEqual(res.podium.map((x) => [x.name, x.value]), [['DAN', 40000]], "EVE's unverified run is skipped for the podium");
+  assert.deepEqual(res.podium.map((x) => [x.name, x.value]), [['EVE', 52000], ['DAN', 40000]]);
   assert.equal(res.timed, false);
-  // a run that does not reproduce on another core is stale, not pulled
   S.message(d, { t: 'ta-leave' });
   S.message(e, { t: 'ta-leave' });
   assert.ok(!S.sessions.has(id), 'an empty session closes');
+  // its archived window stays for the checks after the fact (the live run 2026-10-13: the result came after everyone left)
+  assert.deepEqual(S.queue(null).filter((x) => x.session === id).map((x) => x.id), [re.run, rd.run]);
+  assert.ok(S.runs.has(re.run), 'the replay is kept');
+  // a run that does not reproduce on another core is stale, not pulled
+  assert.equal(S.verify(rd.run, { ok: false, reason: 'score 1', core: '0000000000000000' }).status, 'stale');
+  assert.equal(S.verify(re.run, { ok: true, core: 'abcdef0123456789' }).status, 'verified');
+  assert.deepEqual(res.standings.map((x) => [x.name, x.status]), [['EVE', 'verified'], ['DAN', 'stale']]);
+  // the archive goes after ARCHIVE_MS, its replays with it
+  clock += 6 * 3600000 + 1000;
+  tick(250);
+  assert.ok(!S.runs.has(re.run));
+  assert.deepEqual(S.queue(null).filter((x) => x.session === id), []);
 }
 
 // ---- resume ----
@@ -388,7 +396,7 @@ function wsClient(port, name) {
 {
   const tokenFile = path.join(tmp, 'verifier-token');
   fs.writeFileSync(tokenFile, 'v'.repeat(32));
-  const opts = { goDelayMs: 200, overtimeMaxMs: 2000, verifyMaxMs: 3000, podiumMs: 500, voteMs: 500, voteResultMs: 200, minLimitMs: 100 };
+  const opts = { goDelayMs: 200, overtimeMaxMs: 2000, podiumMs: 500, voteMs: 500, voteResultMs: 200, minLimitMs: 100 };
   const on = await startServer({ MP_SESSIONS: '1', MP_RECORDS_VERIFIER_TOKEN_FILE: tokenFile, MP_SESSION_OPTIONS: JSON.stringify(opts) });
   const base = `http://127.0.0.1:${on.port}`;
   const [h, g] = [await wsClient(on.port, 'HOST'), await wsClient(on.port, 'GUEST')];
@@ -422,16 +430,18 @@ function wsClient(port, name) {
   // the verifier endpoints: the token on loopback only
   assert.equal((await fetch(`${base}/mp/session/verifier/queue`)).status, 404);
   const vh = { 'x-ssx-verifier': 'v'.repeat(32) };
-  const queue = await (await fetch(`${base}/mp/session/verifier/queue?core=abcdef0123456789`, { headers: vh })).json();
-  assert.equal(queue.items[0].id, body2.run);
-  const result = await fetch(`${base}/mp/session/verifier/result`, { method: 'POST', headers: vh,
-    body: JSON.stringify({ id: body2.run, ok: true, reason: 'reproduced', core: 'abcdef0123456789' }) });
-  assert.equal((await result.json()).status, 'verified');
   const status = await (await fetch(`${base}/mp/status`)).json();
   assert.equal(status.sessions[0].id, id);
   assert.equal(status.lobbies.length, 0, 'the old lobby closed when its only member left');
   const results = await h.wait('ta-results');
   assert.deepEqual(results.podium.map((x) => x.name), ['HOST']);
+  // the checks after the fact: the finished window's run is queued, and its result marks it
+  const queue = await (await fetch(`${base}/mp/session/verifier/queue?core=abcdef0123456789`, { headers: vh })).json();
+  assert.equal(queue.items[0].id, body2.run);
+  assert.equal(queue.active, 0, 'no live session waits for the verifier');
+  const result = await fetch(`${base}/mp/session/verifier/result`, { method: 'POST', headers: vh,
+    body: JSON.stringify({ id: body2.run, ok: true, reason: 'reproduced', core: 'abcdef0123456789' }) });
+  assert.equal((await result.json()).status, 'verified');
   const vote = await g.wait('ta-state', (m) => m.session.phase === 'vote');
   g.send({ t: 'ta-vote', choice: 0 });
   const nextLoad = await g.wait('ta-state', (m) => m.session.phase === 'load' && m.session.window.id === 2);

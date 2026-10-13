@@ -53,7 +53,7 @@ inline float mulExact(float a,float b) {
 // environment (wasm has only nearest), so the compiler may keep a caller's originalRoundingMode load across the call: a
 // function that opens OriginalRounding and does inline arithmetic tests the mode it just stored once, not once per operation.
 // Native builds leave them plain: there the host rounding mode is state they depend on.
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
 #define SSX_SOFTWARE_FLOAT_CONST [[gnu::const]]
 #else
 #define SSX_SOFTWARE_FLOAT_CONST

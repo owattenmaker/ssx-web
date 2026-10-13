@@ -1,0 +1,40 @@
+# wgpu-native (gfx-rs/wgpu-native, Apache-2.0 / MIT): the WebGPU implementation behind the standard webgpu.h the front end uses
+# (docs/native.md "N3"). Its official prebuilt release is fetched at configure time, pinned by version and SHA-256; nothing is
+# vendored. Defines the imported target wgpu::native (the static library and the webgpu.h / wgpu.h headers).
+include(FetchContent)
+set(SSX_WGPU_VERSION "v29.0.1.1")
+if(WIN32 AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    set(SSX_WGPU_ASSET "wgpu-windows-x86_64-msvc-release.zip")
+    set(SSX_WGPU_SHA256 "7e67d7445c42aeb85e30f88930fd8d7d83ee769e3390aeb1ada75ebf3cf78132")
+elseif(WIN32)
+    set(SSX_WGPU_ASSET "wgpu-windows-x86_64-gnu-release.zip")
+    set(SSX_WGPU_SHA256 "d471e3614733c1d4ddd61bfd19868356477d0d37bf531bf8c6cb64a7f579bd2a")
+elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    set(SSX_WGPU_ASSET "wgpu-macos-aarch64-release.zip")
+    set(SSX_WGPU_SHA256 "a5797a37b1adf720bcd5dcffb291edbbd5b7b14be0a3874c28e6393a655a7a3e")
+elseif(UNIX AND NOT APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(SSX_WGPU_ASSET "wgpu-linux-x86_64-release.zip")
+    set(SSX_WGPU_SHA256 "95a4d90c071005a98d03eab348beaa6b07e16eb00d1dcdb9f8348f75eb97ec5a")
+else()
+    message(FATAL_ERROR "No wgpu-native ${SSX_WGPU_VERSION} release for this platform (${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR})")
+endif()
+FetchContent_Declare(wgpu_native
+    URL "https://github.com/gfx-rs/wgpu-native/releases/download/${SSX_WGPU_VERSION}/${SSX_WGPU_ASSET}"
+    URL_HASH "SHA256=${SSX_WGPU_SHA256}"
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(wgpu_native)
+set(SSX_WGPU_DIR "${wgpu_native_SOURCE_DIR}")
+find_library(SSX_WGPU_LIBRARY NAMES libwgpu_native.a libwgpu_native.dll.a wgpu_native.lib wgpu_native PATHS "${SSX_WGPU_DIR}/lib" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+if(NOT SSX_WGPU_LIBRARY)
+    message(FATAL_ERROR "wgpu-native: no library in ${SSX_WGPU_DIR}/lib")
+endif()
+add_library(wgpu::native STATIC IMPORTED GLOBAL)
+set_target_properties(wgpu::native PROPERTIES IMPORTED_LOCATION "${SSX_WGPU_LIBRARY}" INTERFACE_INCLUDE_DIRECTORIES "${SSX_WGPU_DIR}/include")
+if(APPLE)
+    set_property(TARGET wgpu::native APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+        "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework IOSurface" "-framework IOKit")
+elseif(WIN32)
+    set_property(TARGET wgpu::native APPEND PROPERTY INTERFACE_LINK_LIBRARIES d3dcompiler ws2_32 userenv bcrypt ntdll opengl32 propsys runtimeobject)
+else()
+    set_property(TARGET wgpu::native APPEND PROPERTY INTERFACE_LINK_LIBRARIES dl pthread m)
+endif()

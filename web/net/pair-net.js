@@ -25,7 +25,7 @@
 //   * lag compensation: the ghost's half of a contact (its separation share and impulse, which the ghost's own
 //     client applies) is predicted here too and added to the ghost until that client's packets carry it, so this
 //     rider is not pushed again by an overlap the other rider has already resolved (remote-riders.js correct()).
-import { rngNext } from '../ai-racers.js';
+import { rngNext, coreHost } from '../ai-racers.js';
 import { placeGlowStep } from '../race-place-hud.js';
 import { DELAY_TICKS } from './remote-riders.js';
 
@@ -78,7 +78,7 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
     core._race_world_pair_disable(0);
   }
   const previous = { riderHost: core.riderHost, pairHost: core.pairHost };
-  core.pairHost = {
+  core.pairHost = coreHost(core, {
     view(s, out) {
       viewed = s;
       if (s === slot) { new Uint32Array(core.HEAPU8.buffer, out, 140).set(new Uint32Array(core.HEAPU8.buffer, core._pair_view(), 140)); return; }
@@ -109,8 +109,8 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
       if (attacker !== slot || victim === slot) return;
       counts.sentAttacks++; sendAttack({ victim, attacker, tick, direction: [x, y, z], amount });
     },
-  };
-  core.riderHost = {
+  });
+  core.riderHost = coreHost(core, {
     // 0x107888 inside the local rider's 121750: first the attacks other clients found on this rider, then its own pass.
     pairs() {
       for (const e of pending.splice(0)) {
@@ -124,7 +124,7 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
       const out = f32(core, core._race_world_pairs(tick, slot), 5);
       counts.checks += out[0]; counts.separations += out[1]; counts.impulses += out[2]; counts.attacks += out[3]; counts.reactions += out[4];
     },
-  };
+  });
   core._rider_host(2);
   const api = {
     counts,

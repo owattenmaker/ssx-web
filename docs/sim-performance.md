@@ -657,7 +657,8 @@ ticks, flips released mid-rotation, 25 trick names): identical.
   and a stride-16 sweep: ~2.7e10 results, 0 mismatches. `tools/test_exact_float.sh 20000000 4 2000000 16`: native 3.25e10 and wasm
   1.89e10 fast/reference results, 3e8 against the arm64 FPU in toward-zero + flush-to-zero mode: 0 mismatches.
 - **D, rider glue (web/ai-racers.js):** the current rider context is mirrored in JS (`module.__riderTls`; only the views write
-  `__tls_base`, and rider_context_create restores it before returning), so a view call reads the mirror instead of the
+  `__tls_base` from JS, and rider_context_create restores it before returning; the core's rider manager switches it in C++, so every
+  host hook the core calls goes through ai-racers.js coreHook, which syncs the mirror for the hook), so a view call reads the mirror instead of the
   WebAssembly.Global getter; stage1's `current` Map of copied rider states became an in-place read of the earlier riders' class word,
   and endTick's per-rider `live()` copies became in-place views: the same pure exports read at the same points (stage1 no longer calls
   race_progress_info, whose value it never used); the npc_world_buffer view is cached. Proof: sim-diff.mjs --aiA old --aiB new on one

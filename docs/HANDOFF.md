@@ -1,3 +1,72 @@
+> **Deployed 2026-10-13 (coordinator): hotfix for the M3 rider-context regression, plus time attack without live verification.** Core unchanged (core8 90fa3ae5). ai-racers.js / pair-net.js / main.js coreHook wrappers: core-called hooks keep the JS context mirror in step, so a computer opponent's race_end no longer runs on the human's context (it zeroed the human's boost meter at the opponent's finish in freestyle Single Events with an opponent). Time attack: podium from uploaded bests, offline verification of archived windows (inert without MP_SESSIONS / the pv switches). Gate: core-hook, records-server, records-verifier, replay, rival-page, online-records, ai-racers, mp-session, slopestyle-bigair pass on this tree.
+
+> **Time-attack sessions: no live verification; the first live stress test (2026-10-13, big-multiplayer agent).** See [big-multiplayer.md](big-multiplayer.md) top and "TA-6: the live stress test".
+> - **Live test:** 20 bots ("TEST BOT 01".., local/big-multiplayer/stress.mjs) through Cloudflare: join p50 58 ms, ping p50 58 / p95 167 ms, 9.9 bundles/s and ~12 KB/s per bot, server ghost out 239 KB/s mean, no drops. The verifier missed the podium (74 s cold page), and its result got 404 (the emptied session had dropped its runs).
+> - **User decision:** the session podium and standings use the uploaded bests at once (tier-0 upload checks stay); OVERTIME goes straight to PODIUM.
+> - **Archive:** finished windows are archived with their runs and replays (6 h, also after the session empties). The verifier's session lane checks only archived rows, in the background, and marks the stored results "verified" (a run that doesn't reproduce leaves them). The queue answers `active: 0`. records-verifier.mjs is unchanged, and so is the records lane.
+> - **Bugs fixed:** a result after the session emptied; an old window's result touching the current window's lists.
+> - **Changed:** web/server/sessions.mjs; web/ta-ui.js (no unverified "*", no VERIFY line); tests test-mp-session, test-session-verifier, test-ta-page.
+
+> **Hotfix (JS only, live core8): a freestyle event's computer opponent finishing zeroed the human's boost meter (2026-10-13, core-migration agent; found by the native-port agent's replay verifier on R&B slope style).** An M3 regression.
+> - **Cause:** web/ai-racers.js mirrors the current rider context in JS (`__riderTls`, docs/sim-performance.md "rider glue") and assumed only the page's views switch `__tls_base`. The core's rider manager (pv coreRiderManager, web/rider_manager.cpp inContext) switches it in C++. On the opponent's finish its race_end (in its context) asks js_finish_place; with the career UI that called a view (ui.cb.opponent), the view's stale mirror put the human's block back, and the rest of the opponent's race_end ran in the human's context (finish_standing zeroed the human's meter, the score object changed). The replay path (no career UI) never did.
+> - **PS2:** 125108 calls 238358 at every finish, but 0x239230 runs 12A250 at 0x23940C and skips the decision (and the meter, 0x239854) until every human has finished: the human's meter stays, as the replay has it.
+> - **Fix:** ai-racers.js `coreHook` / `coreHost` set the mirror to the real `__tls_base` around every host call the core makes (riderHost, pairHost, riderManagerHost there; net/pair-net.js's pairHost / riderHost; main.js finishHost); main.js finishHost answers only in the human's context (a computer rider's finish is not ranked as the player's run).
+> - **Proof:** the live run (local/native-port/oracle/sj-steer.tas, Zoe, ASS1, attributes 5) is identical to ssx3_verify_replay's dump on all 10871 ticks but the human's finish tick, where the page sets the meter by place as the PS2 does (the verifier answers -1 there; told the native-port agent). New web/test-core-hook.mjs (the stale-mirror case, unwrapped and wrapped). Not traced: a computer rider finishing after the human (the handler reads the rider from the player table by the finisher's index); the page ranks only the human's run.
+
+> **Core migration M5a / M5b: the rules module and the presentation generator (pv rulesModule, off); native core with emulated-TLS rider contexts (2026-10-13, core-migration agent).** See [core-migration.md](core-migration.md) "M5a / M5b" and "Native core". No course core change.
+> - **New:** web/runtime/rules.{js,wasm} (`sh web/build-rules.sh`; 36 KB wasm, from engine/game_rules.hpp + engine/presentation_rules.hpp; rebuild when they change), web/rules-module.js, web/rules_module.cpp, web/test-rules-module.mjs.
+> - **Changed:** web/pv-flags.js (rulesModule), web/lineup.js (the generator in the module when loaded by its first use; params() reads SSX_QUERY in node), web/core-rules.js (no course core: the rules module), web/main.js (loadRulesModule() at boot with the switch, async).
+> - **Proof:** career-session differential (local/core-migration/qa/career-session.mjs, 3 x 1500 events): presentation words, roster seeds, results, save blob identical off / on / late load; page Metro City single event + CTM (8687 ticks) identical off / on with the module holding the generator; boot: Chrome title 811-813 ms both ways, WebKit median 416 / 420 ms (noise 278-434); test-replay, test-records-verifier, test-online-records, test-rival-page pass with PAGE_PV=rulesModule.
+> - **Native:** native/build-core-native.sh compiles the core with -femulated-tls; native/core/rider_context_native.cpp defines __emutls_get_address (per-context blocks, a context switch is one pointer store). web/rider_manager.cpp's SSX_NATIVE_CONTEXTS #ifdef is gone again (the wasm inContext runs natively). Six riders 4909 ticks: 3.9 s native, 6.0 s wasm in node, every tick's hash equal; the event-race gate replay identical (53,101 calls, 2418 probes).
+> - **Core API:** docs/core-migration.md "Core API" (the call order of a race; exports are add-only). docs/core-api.md is generated by `node tools/core-api.mjs > docs/core-api.md` (476 exports); `--check` runs in test:all, so **an agent that adds or changes an export regenerates the doc**.
+> - **Native handed over:** the native-port agent owns native/ (docs/native.md). The QA tools are in native/tools (ref-trace.mjs, spy-core.js).
+> - **Next:** M5c (pv coreCareerResults, the result kernel; core11), then M5d (award cascade + messages, approved), M5e (lodge).
+
+> **Native N2: a native replay verifier, identical to the browser verifier on 15 fixtures (2026-10-13, native-port agent).** See [native.md](native.md) section 6.
+> - **Tool:** `build/native-core/native/ssx3_verify_replay web/public/assets RUN.ssxr [--trace OUT.json]` re-simulates a replay file the way online-replay.js ?verify does and prints `{ok, reason, value, finishTick, ms}`. Code: native/verify/.
+> - **Proof:** each fixture has the same verdict, value and per-tick ?simtrace hash as the page's own verifier (native/tools/browser-verify.mjs, headless Chrome with ?simtrace=1). The fixtures cover:
+>   - Snow Jam with 5 AI (Zoe and Mac), solo, and with camera events;
+>   - Crow's Nest big air (score claim);
+>   - two forgeries;
+>   - Metro City with 5 AI (no finish), and the three local/tas/page replays;
+>   - a cheat rider (Brodi), Happiness Rival Time, and R&B slope style with its opponent.
+>   - They are the ctest core_verify_replays; the fixtures live in local/native-port/fixtures, never tracked.
+> - **Speed:** six riders over 14,234 ticks take 10.6 s and 210 MB natively, against 9.7 s of simulation and 22 s wall for Chrome; a solo or big-air run takes 0.5-3.5 s. fesetround is about 30 % of the native time, which the pending wasm-fenv change removes. With -O3 it is 8.4 s.
+> - **Not handled** (reported as ok:null): wardrobe outfits, in-world replays.
+> - **Page finding:** a Single Event slope style's live run and its replay part at the computer opponent's finish (R&B tick 8922): live, the human's boost_info[0] goes to 0 and the score object differs. The verifier's replay path and native agree with each other.
+> - **LTO breaks native exactness** (-O3 alone does not); native builds stay without LTO.
+> - The host and web/server/ are unchanged.
+
+> **Native N1: a CMake build of the course core with parity ctests, macOS arm64 (2026-10-13, native-port agent).** See [native.md](native.md).
+> - **Build:** `cmake -S . -B build/native-core -G Ninja && cmake --build build/native-core && ctest --test-dir build/native-core`.
+>   - Root CMakeLists.txt: `SSX_BUILD_CORE` ON; the engine/ Metal prototype now behind `SSX_BUILD_METAL_PROTOTYPE` (OFF); the PS2-reference path unchanged.
+>   - native/CMakeLists.txt reads the units and -D defines from web/build-core.sh's em++ line at configure time (native/cmake/core_sources.cmake): no second source list.
+>   - The same arithmetic flags as wasm plus -fsigned-char; no NDEBUG whatever the build type; clang only (emulated TLS), clang-cl on Windows.
+> - **Tests:** native/tests/parity.mjs, each test against web/runtime core8 (`-DSSX_WASM_CORE=` for a CORE_OUT core; it must be built from the same sources).
+>   - core_race_solo: 3000 ticks identical.
+>   - core_race_ai: six riders, 3000 ticks identical.
+>   - core_race_give_up: Give Up at 900 through the results, 1309 ticks identical.
+>   - core_gate_event_race: 55,500 calls, 2418 probes identical.
+>   - Each test exits 77 (skip) without the game data or the captures.
+> - **Speed:** native 1.0 s solo, 2.4 s six riders (wasm 6.0 s), the gate replay 1.5 s.
+> - **UBSan:** `-DSSX_NATIVE_UBSAN=ON` finds no float-to-int conversion out of range in the four tests. Those would differ on x86-64.
+> - **Open:**
+>   - The native wasm-fenv path (9 engine/ files, waiting for the coordinator).
+>   - Windows / Linux toolchains (the coordinator's call).
+>   - The snapshot registry is not native yet (SSX_SNAPSHOT_REGISTRY dropped).
+>   - The wasm results cache lives in the build folder (game-derived, never tracked).
+
+> **Deployed 2026-10-13 (coordinator): tree update on core8.** Time attack TA-1..TA-6 complete (inert: pv onlineTimeAttack / ghostRiders off, server sessions off), M5a/b rules module wiring (pv rulesModule off), mp-game aiAllowed solo lineup in sessions. Gate on this tree: records-server, records-verifier, replay, rival-page, online-records, ai-racers, mp-session pass.
+
+> **Time attack TA-1..TA-6 built; ready for a first real test with MP_SESSIONS=1 (2026-10-13, big-multiplayer agent).** See [big-multiplayer.md](big-multiplayer.md) (the user's decisions at the top, sections 11 "Built" TA-1..TA-6). pv onlineTimeAttack and ghostRiders stay off; with them off the page and server are as before (test-replay, test-online-records, ctm-left, career pass).
+> - **Server:** web/server/sessions.mjs (phases, uploads with tier-0 + session checks, ranking, podium from verified runs, vote of two events + Random, ghost tiers and bundles), web/server/ghost-packet.mjs; mp-server.mjs mounts them only with MP_SESSIONS=1. records-verifier.mjs has the session lane (the records lane unchanged).
+> - **Page:** web/net/ta-game.js, ta-ghosts.js, web/ghost-riders.js, ghost-package.js, web/ta-ui.js (dynamically imported with the switch on). Guarded hooks in ui.js, mp-ui.js, career-ui.js, results-lui.js (optional medals), race-place-hud.js (drawPlaceLabel), net/mp-game.js (aiAllowed arms the solo lineup in a session: the next window's event on another course raced computer riders before).
+> - **Screens:** the PS2's online LUI screens (231lobby_menu, 232CreateRoomPopup, 235chat_room, 249Stats, 109MultiplayerStandings; UI/online-screens.json and online-overlays.json are live), the CTM podium cutscene with each rider's place and name over its step, the Single Event results with gold / silver / bronze, the vote's three boxes with the Select Event map art and live counts, the HUD's session standings in the 3-row standings element and the time left. Chrome and WebKit (scratch web/.ta-screens-check.mjs).
+> - **Measured:** ghost bytes out 14.0 / 15.3 / 16.3 KB/s per recipient at 20 / 50 / 100 players (2.4 / 6.5 / 13.8 Mbit/s), server CPU 1-5 %; ghosts in Safari at 20 / 50 (32 drawn) leave the frame on vsync (+0.1-0.2 ms CPU); a solo session run verifies in 3-8 s.
+> - **Tests:** test-mp-session, test-session-verifier, test-ta-page (in test:all).
+> - **Host for a first test:** MP_SESSIONS=1 in the server plist (MP_TA_LIMIT_MS / MP_SESSION_MAX optional; default 6:00 and 50); the verifier agent already runs the session lane; then ?pv=onlineTimeAttack,ghostRiders on the page.
+> - **Open:** the liveness check (replay path against the live ghost stream); other players' outfits on the podium show their character's default outfit (only the local player's outfit has front-end preview models); tunnel measurements.
+
 > **Deployed 2026-10-13 (coordinator): core-migration core8 (M3 + M4a), coreRiderManager and coreRelationships ON.** web/runtime core.wasm `90fa3ae5…`, core.js `941f0c73…` (supersedes core5 / core6). 534/534 both ways (migration agent); gate on this tree: test-core-rules, records-server, records-verifier, replay, rival-page, online-records and ai-racers pass. coreEventStart, padTweak, replayPadState, onlineTimeAttack and ghostRiders stay off. Ships the online-screens UI assets and TA-1..TA-4 (inert).
 
 > **Core migration M4a / M4b: the relationships and the computer riders' event start in the core (pv coreRelationships, pv coreEventStart, both off; need coreRiderManager); core to install: local/core-migration/core8 (2026-10-13, core-migration agent).** See [core-migration.md](core-migration.md) "M4a", "M4b".

@@ -1,15 +1,14 @@
 // Time-attack sessions (docs/big-multiplayer.md): big online rooms where everyone rides the same event for a time window,
-// restarting at will; each player's best complete run counts, ranked by its verified replay; then a podium, a vote for the next
+// restarting at will; each player's best uploaded run counts (no live verification, the user's decision 2026-10-13); then a podium, a vote for the next
 // event, and the next window. Mounted by mp-server.mjs only with MP_SESSIONS=1. Dependency-free; imports only node: and
 // web/server/ (the host runs this folder on its own).
 //
 // Phases (server clock; every client shows them through its clock offset):
-//   load -> window -> overtime -> verify -> podium -> vote -> load ...
+//   load -> window -> overtime -> podium -> vote -> load ...
 //   load      the event loads; the window opens once LOAD_QUORUM of the online members reported loaded, or after LOAD_MAX_MS
 //   window    attempts (a Single Event run of the event, no computer riders); a finished best is uploaded as its replay file
 //   overtime  no new attempts; attempts started before the deadline may finish and upload (at most OVERTIME_MAX_MS)
-//   verify    the verifier finishes the runs that could make the podium (at most VERIFY_MAX_MS)
-//   podium    the top three verified runs and the final standings (PODIUM_MS)
+//   podium    the top three uploaded bests and the final standings (PODIUM_MS); the window goes to the archive
 //   vote      two events from the rotation + RANDOM (VOTE_MS), the result shown for VOTE_RESULT_MS
 //
 // Protocol (JSON text frames, client -> server; mp-server.mjs routes every 'ta-*' message here):
@@ -29,11 +28,14 @@
 //        -> {ok, kept, run, status, rank, value} | {error}
 //   GET  /mp/session/replay?id=ID                   the stored replay (the verifier page downloads it)
 //   the verifier (web/server/records-verifier.mjs; loopback + the records verifier's token, never through the tunnel):
-//   GET  /mp/session/verifier/queue?core=C&limit=N  -> {items: [{id, event, claim, core, session, priority}]}
+//   GET  /mp/session/verifier/queue?core=C&limit=N  -> {items: [{id, event, claim, core, session, window, priority}], active: 0}
 //   POST /mp/session/verifier/result                -> body {id, ok: true | false | null, reason, core, value}
+// Checking after the fact: a finished window's runs and standings stay in the archive (ARCHIVE_MS, also after the session empties);
+// the verifier's session lane checks its runs in the background (only archived windows are queued, never a live one) and a result
+// marks the archived standings (status 'verified'; a run not reproduced leaves them). The live podium never waits for it.
 //
 // Ranking: the event's rule (records.mjs better): race ticks ascending (the races, Rival Time), score descending (slope style,
-// big air, super pipe, Rival Points), then the earlier submission. The podium takes verified runs only.
+// big air, super pipe, Rival Points), then the earlier submission. The podium takes the uploaded bests.
 // Upload checks (no simulation): records.mjs checkRunFile (the claim, the pad stream, the core), the session's event, the maxed
 // attribute bytes (55 x 7, the user's decision 2026-10-13), no computer riders outside the backcountry rival events, the attempt
 // was announced in this window before its deadline, and the run's own length fits the wall time since the attempt started.
@@ -54,7 +56,9 @@ export const DEFAULTS = {
   goDelayMs: 2500,
   overtimeMaxMs: 270000,
   uploadGraceMs: 20000,
-  verifyMaxMs: 15000,
+  // the archive of finished windows (runs, replays, standings) for the checks after the fact: how long, how many windows
+  archiveMs: 6 * 3600000,
+  archiveMax: 200,
   podiumMs: 20000,
   voteMs: 15000,
   voteResultMs: 2000,
@@ -105,6 +109,9 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
   const sessions = new Map();
   const runs = new Map();
   const subscribers = new Set();
+  // finished windows: `${session}:${window}` -> {session, window, event, at, entries: Map player -> {id, name, rider, ..., runs}, results}
+  const archive = new Map();
+  const archiveKey = (r) => `${r.session}:${r.window}`;
   const rotationAll = [...events.keys()];
   const timed = (key) => !!events.get(key)?.timed;
   let seq = 0;
@@ -197,30 +204,12 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       send(p.id, { t: 'ta-standings', window: s.window?.id ?? 0, event: s.window?.event, timed: timed(s.window?.event), total: rows.length, rows: top, you });
     }
   }
-  // The podium: the first three verified runs in rank order (a player's best verified run; stale / unverifiable runs never count).
-  // Undecided: a pending run ranked above the third verified one (the verify phase waits for it). final: the wait is over, so a
-  // pending run is skipped and the player's own verified run, or the next player, takes the step.
-  function podium(s, final = false) {
-    const out = [];
-    let undecided = false;
-    const order = [];
-    for (const p of allPlayers(s)) for (const run of [p.best, ...p.pending]) if (run) order.push({ p, run });
-    order.sort((x, y) => better(s.window.event, x.run, y.run));
-    const placed = new Set();
-    for (const { p, run } of order) {
-      if (out.length >= 3) break;
-      if (placed.has(p.id)) continue;
-      if (run.status === 'pending') {
-        undecided = true;
-        if (!final) break;
-        continue;
-      }
-      if (run.status !== 'verified') continue;
-      placed.add(p.id);
-      out.push({ id: p.id, name: p.name, rider: p.rider, pkg: p.pkg, base: p.base ?? null, outfit: p.outfit ?? null, value: run.value, run: run.id,
-        status: run.status, rank: out.length });
-    }
-    return { rows: out, undecided };
+  // The podium: the first three of the standings (each player's uploaded best), with what the cutscene needs.
+  function podium(s) {
+    return standings(s).slice(0, 3).map((r) => {
+      const p = playerOf(s, r.id);
+      return { id: r.id, name: r.name, rider: r.rider, pkg: p?.pkg, base: p?.base ?? null, outfit: p?.outfit ?? null, value: r.value, run: r.run, status: r.status, rank: r.rank };
+    });
   }
 
   // ---- phases -----------------------------------------------------------------------------------------------------------------
@@ -239,8 +228,9 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     s.voteResult = null;
     s.votes = new Map();
     s.departed = new Map();
-    // the replays of the window before the last one go (the last window's stay for its podium and standings)
-    for (const r of [...runs.values()]) if (r.session === s.id && r.window < s.window.id - 1) runs.delete(r.id);
+    // the replays of the window before the last one go (the last window's stay for its podium and standings), but for the archived
+    // ones (kept for the checks after the fact; sweep() drops them with their archive)
+    for (const r of [...runs.values()]) if (r.session === s.id && r.window < s.window.id - 1 && !archive.has(archiveKey(r))) runs.delete(r.id);
     for (const p of s.players.values()) {
       p.best = null;
       p.pending = [];
@@ -306,14 +296,13 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     } else if (s.phase === 'window') {
       if (t >= s.window.endAt) setPhase(s, 'overtime', s.window.endAt + O.overtimeMaxMs);
     } else if (s.phase === 'overtime') {
-      if (!openAttempts(s) || t >= s.phaseEndsAt) setPhase(s, 'verify', t + O.verifyMaxMs);
-    } else if (s.phase === 'verify') {
-      if (!podium(s).undecided || t >= s.phaseEndsAt) {
+      if (!openAttempts(s) || t >= s.phaseEndsAt) {
         const final = standings(s);
-        s.results = { t: 'ta-results', window: s.window.id, event: s.window.event, timed: timed(s.window.event), podium: podium(s, true).rows,
+        s.results = { t: 'ta-results', window: s.window.id, event: s.window.event, timed: timed(s.window.event), podium: podium(s),
           podiumCourse: PODIUM_COURSES.has(events.get(s.window.event)?.code), standings: final };
         s.history.push({ at: t, window: s.window.id, event: s.window.event, timed: s.results.timed, winner: s.results.podium[0] ?? null });
         s.history = s.history.slice(-10);
+        archiveWindow(s, t);
         // the session's rounds so far (web/ta-ui.js: the circuit standings 109MultiplayerStandings)
         s.results.history = s.history.map((h) => ({ window: h.window, event: h.event, timed: h.timed, winner: h.winner?.name ?? null, value: h.winner?.value ?? null }));
         setPhase(s, 'podium', t + O.podiumMs);
@@ -432,7 +421,8 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     s.standingsDirty = true;
     if (!s.players.size) {
       sessions.delete(s.id);
-      for (const r of runs.values()) if (r.session === s.id) runs.delete(r.id);
+      // the archived windows' runs stay for the checks after the fact
+      for (const r of runs.values()) if (r.session === s.id && !archive.has(archiveKey(r))) runs.delete(r.id);
     }
     pushList();
   }
@@ -560,31 +550,28 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     const rank = standings(s).findIndex((r) => r.id === p.id);
     return { status: 200, body: { ok: true, kept: true, run: run.id, status: run.status, rank, value: run.value } };
   }
-  // Verifier priority: 0 = the run could make the podium, 1 = the top 10, 2 = any other; then the higher rank, then the earlier submission.
+  // The checks after the fact (the verifier's session lane): each archived window's standings rows not checked yet (a player's best;
+  // a run not reproduced leaves them, and the player's next run takes its row), newest window first; within a window the podium
+  // (priority 0), then the top 10 (1), then the rest (2).
   function queue(core, limit = 20) {
     const items = [];
-    for (const s of sessions.values()) {
-      if (!s.window || !['window', 'overtime', 'verify'].includes(s.phase)) continue;
-      const rows = standings(s);
-      for (const p of allPlayers(s)) {
-        for (const r of p.pending) {
-          if (r.status !== 'pending') continue;
-          if (core && (r.triedCores ?? []).includes(core)) continue;
-          const ahead = rows.filter((x) => x.id !== p.id && better(s.window.event, x, r) < 0).length;
-          const priority = ahead < 3 ? 0 : ahead < 10 ? 1 : 2;
-          items.push({ id: r.id, event: r.event, claim: r.value, core: r.core, session: s.id, priority, ahead, seq: r.seq });
-        }
+    for (const a of [...archive.values()].reverse()) {
+      for (const row of archiveStandings(a)) {
+        const r = runs.get(row.run);
+        if (!r || r.status !== 'pending') continue;
+        if (core && (r.triedCores ?? []).includes(core)) continue;
+        const priority = row.rank < 3 ? 0 : row.rank < 10 ? 1 : 2;
+        items.push({ id: r.id, event: r.event, claim: r.value, core: r.core, session: a.session, window: a.window, priority, at: a.at, rank: row.rank });
       }
     }
-    // within a priority, the run that would rank highest first
-    items.sort((a, b) => a.priority - b.priority || a.ahead - b.ahead || a.seq - b.seq);
-    return items.slice(0, limit).map(({ seq: _, ahead: __, ...x }) => x);
+    items.sort((x, y) => y.at - x.at || x.priority - y.priority || x.rank - y.rank);
+    return items.slice(0, limit).map(({ at: _, rank: __, ...x }) => x);
   }
+  // A verifier result. It marks the run, and the archived window's stored standings, podium and the session's round history are
+  // redone (a run not reproduced leaves them). Only the archive is touched: a player's lists of the window now riding never are.
   function verify(id, { ok, reason = '', core = null } = {}) {
     const r = runs.get(id);
     if (!r) return null;
-    const s = sessions.get(r.session);
-    const p = s && playerOf(s, r.player);
     r.note = String(reason).slice(0, 200);
     if (ok === null) {
       r.tries++;
@@ -594,21 +581,68 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       }
     } else if (ok) {
       r.status = 'verified';
-      if (p) {
-        p.best = r;
-        p.pending = p.pending.filter((x) => x !== r && better(r.event, x, r) < 0);
-      }
     } else if (core && core !== r.core) {
-      // recorded on another core (a deploy during the session): kept as unverified, never on the podium
+      // recorded on another core (a deploy since): kept, not checked
       r.status = 'stale';
     } else {
       r.status = 'pulled';
-      if (p) p.pending = p.pending.filter((x) => x !== r);
       runs.delete(r.id);
     }
-    if (s) s.standingsDirty = true;
-    if (r.status !== 'pending') log.log?.(`session ${r.session} run ${r.id} ${r.event} ${r.value}: ${r.status} (${r.note})`);
+    const a = archive.get(archiveKey(r));
+    if (a && r.status !== 'pending') archived(a, r);
+    if (r.status !== 'pending') log.log?.(`session ${r.session} window ${r.window} run ${r.id} ${r.event} ${r.value}: ${r.status} (${r.note})`);
     return { found: true, status: r.status };
+  }
+
+  // ---- the archive ----------------------------------------------------------------------------------------------------------------
+  // At the podium: every player's runs of the window (the run objects themselves) and its results.
+  function archiveWindow(s, t) {
+    const entries = new Map();
+    for (const p of allPlayers(s)) {
+      const list = [p.best, ...p.pending].filter(Boolean);
+      if (list.length) entries.set(p.id, { id: p.id, name: p.name, rider: p.rider, pkg: p.pkg, base: p.base ?? null, outfit: p.outfit ?? null, runs: list });
+    }
+    archive.set(`${s.id}:${s.window.id}`, { session: s.id, window: s.window.id, event: s.window.event, at: t, entries, results: s.results });
+    while (archive.size > O.archiveMax) dropArchive(archive.keys().next().value);
+  }
+  // the archived window's standings as standings() ranks them
+  function archiveStandings(a) {
+    const rows = [];
+    for (const e of a.entries.values()) {
+      const r = e.runs.slice().sort(runOrder(a.event))[0];
+      if (r) rows.push({ id: e.id, name: e.name, rider: e.rider, value: r.value, seq: r.seq, status: r.status, run: r.id, online: false });
+    }
+    rows.sort(runOrder(a.event));
+    return rows.map((r, rank) => ({ ...r, rank }));
+  }
+  function archived(a, r) {
+    if (r.status === 'pulled') for (const e of a.entries.values()) e.runs = e.runs.filter((x) => x !== r);
+    const res = a.results;
+    if (!res) return;
+    res.standings = archiveStandings(a);
+    res.podium = res.standings.slice(0, 3).map((row) => {
+      const e = a.entries.get(row.id);
+      return { id: row.id, name: row.name, rider: row.rider, pkg: e.pkg, base: e.base, outfit: e.outfit, value: row.value, run: row.run, status: row.status, rank: row.rank };
+    });
+    const s = sessions.get(a.session);
+    const h = s?.history.find((x) => x.window === a.window);
+    if (!h) return;
+    h.winner = res.podium[0] ?? null;
+    res.history = s.history.map((x) => ({ window: x.window, event: x.event, timed: x.timed, winner: x.winner?.name ?? null, value: x.winner?.value ?? null }));
+    // the members still on this window's results or vote get them again (web/net/ta-game.js keeps the newest)
+    if (s.results === res) toSession(s, res);
+  }
+  function dropArchive(k) {
+    const a = archive.get(k);
+    archive.delete(k);
+    if (!a) return;
+    const s = sessions.get(a.session);
+    // the replays go too, but for the last window's while its session still shows it (startLoad drops those)
+    for (const r of [...runs.values()]) if (r.session === a.session && r.window === a.window && !(s && s.window?.id <= r.window + 1)) runs.delete(r.id);
+  }
+  function sweep() {
+    const t = now();
+    for (const [k, a] of [...archive]) if (t - a.at > O.archiveMs) dropArchive(k);
   }
 
   // ---- HTTP -------------------------------------------------------------------------------------------------------------------
@@ -667,8 +701,8 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       }
       if (req.method === 'GET' && p === '/mp/session/verifier/queue') {
         // active: sessions whose runs can still change the standings (the verifier keeps its page open and polls often meanwhile)
-        const active = [...sessions.values()].filter((s) => ['load', 'window', 'overtime', 'verify'].includes(s.phase)).length;
-        json(200, { items: queue(url.searchParams.get('core') || null, Math.min(50, +url.searchParams.get('limit') || 20)), active });
+        // active: 0, as no live session waits for the verifier (records-verifier.mjs keeps no page open for it)
+        json(200, { items: queue(url.searchParams.get('core') || null, Math.min(50, +url.searchParams.get('limit') || 20)), active: 0 });
         return true;
       }
       if (req.method === 'POST' && p === '/mp/session/verifier/result') {
@@ -813,6 +847,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       }
     },
     tick() {
+      sweep();
       for (const s of [...sessions.values()]) {
         try {
           step(s);
@@ -822,7 +857,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       }
     },
     status() {
-      return [...sessions.values()].map((s) => ({ ...summary(s), window: s.window, queued: queue(null, 50).filter((x) => x.session === s.id).length }));
+      return [...sessions.values()].map((s) => ({ ...summary(s), window: s.window }));
     }
   };
   return api;

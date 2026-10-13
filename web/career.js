@@ -527,7 +527,11 @@ export class Career {
   raceResult(standings, { raceTicks, origin }) {
     const { id, ev } = this.active,
       rules = this.rules;
-    const times = standings.map((s) =>
+    const r = this.rider(id),
+      human = standings.findIndex((s) => s.human);
+    // pv coreCareerResults (docs/core-migration.md M5c): the round in the core's result kernel (undefined: the JS below)
+    const k = coreRules.coreRaceRound(ev.round, ev.career, r.level.race, standings, human, rules.race, raceTicks, origin);
+    const times = k ? k.times : standings.map((s) =>
       s.dnf
         ? rules.race.dnf_ticks
         : s.finishTicks != null
@@ -537,14 +541,18 @@ export class Career {
               rules.race.estimate_min_speed
             )
     );
-    const rank = rankEntries(times, true),
-      human = standings.findIndex((s) => s.human),
-      place = rank[human];
+    const rank = k ? k.rank : rankEntries(times, true),
+      place = k ? k.place : rank[human];
     const round = ev.round,
       out = { round, times, rank, place, rows: standings.map((s, i) => ({ ...s, time: times[i], rank: rank[i] })) };
-    const r = this.rider(id);
     let lvl = r.level.race;
-    if (place < 3) {
+    if (k) {
+      out.advance = k.advance;
+      // (a level the kernel left as it was stays the same object, as the JS keeps it)
+      if (k.level.level !== lvl.level || k.level.counter !== lvl.counter) lvl = k.level;
+      out.message = k.message;
+      ev.round = k.round;
+    } else if (place < 3) {
       out.advance = round < 3;
       // 0x23AA24: a win moves the level up only by the margin between result slots 1 and 0 (human = slot 0).
       if (ev.career && place === 0 && times.length > 1 && times[1] - times[0] >= rules.race.level_up_margin[round - 1])
@@ -568,14 +576,24 @@ export class Career {
     const { id, ev } = this.active,
       round = ev.round,
       r = this.rider(id);
-    ev.player[round - 1] = score;
-    if (ev.opponent && opponent) {
-      if (opponent.finished) ev.opponent.scores[round - 1] = opponent.score | 0;
-      else if (round === 3) ev.opponent.scores[2] = opponent.estimate | 0;
+    // pv coreCareerResults (docs/core-migration.md M5c): the round in the core's result kernel (undefined: the JS below)
+    const k = coreRules.coreFreestyleRound(ev, r.level.freestyle, score, opponent);
+    if (k) {
+      for (let j = 0; j < 3; j++) ev.player[j] = k.player[j];
+      if (ev.opponent) for (let j = 0; j < 3; j++) ev.opponent.scores[j] = k.opponent[j];
+    } else {
+      ev.player[round - 1] = score;
+      if (ev.opponent && opponent) {
+        if (opponent.finished) ev.opponent.scores[round - 1] = opponent.score | 0;
+        else if (round === 3) ev.opponent.scores[2] = opponent.estimate | 0;
+      }
     }
     const field = ev.opponent ? [ev.opponent, ...ev.ai] : ev.ai;
     let totals, shown;
-    if (round === 1) {
+    if (k) {
+      totals = k.totals;
+      shown = k.shown;
+    } else if (round === 1) {
       totals = [score + 0, ...field.map((a) => a.scores[0] + a.scores[1])];
       shown = [score, ...field.map((a) => a.scores[0])];
     } else if (round === 2) {
@@ -585,8 +603,8 @@ export class Career {
       totals = [score, ...field.map((a) => a.scores[2])];
       shown = totals;
     }
-    const rank = rankEntries(totals, false),
-      place = rank[0];
+    const rank = k ? k.rank : rankEntries(totals, false),
+      place = k ? k.place : rank[0];
     const out = {
       round,
       totals,
@@ -600,7 +618,17 @@ export class Career {
       ].map((row, i) => ({ ...row, score: shown[i], total: totals[i], rank: rank[i] }))
     };
     // OVAMER 0x0812F644 "Congratulations!  You've made it to the final round."
-    if (round === 1) {
+    if (k) {
+      if (round < 3) {
+        out.advance = k.advance;
+        out.message = k.message;
+      }
+      ev.round = k.round;
+      // (a level the kernel left as it was stays the same object, as the JS keeps it)
+      const lvl = r.level.freestyle;
+      if (k.level.level !== lvl.level || k.level.counter !== lvl.counter) r.level.freestyle = k.level;
+      if (k.complete) Object.assign(out, this.completeEvent(place, { score }));
+    } else if (round === 1) {
       out.advance = true;
       ev.round = place < 3 ? 3 : 2;
       out.message = place < 3 ? 0x0812f644 : null;
@@ -655,10 +683,12 @@ export class Career {
   completeEvent(place, { ticks, score }) {
     const { ev } = this.active,
       rules = this.rules;
-    let medal = placementMedal(ev.mode, place);
-    if (medal !== MEDAL.NONE && ev.career) {
-      const t = platinumThreshold(rules, ev.mode, ev.course);
-      if (t && (t.ticks != null ? ticks <= t.ticks : score >= t.score)) medal = MEDAL.PLATINUM;
+    // pv coreCareerResults (docs/core-migration.md M5c): the medal in the core's result kernel (undefined: the JS below)
+    const t = ev.career && placementMedal(ev.mode, place) !== MEDAL.NONE ? platinumThreshold(rules, ev.mode, ev.course) : null;
+    let medal = coreRules.coreEventMedal(ev.mode, place, ev.career, t, ticks, score);
+    if (medal === undefined) {
+      medal = placementMedal(ev.mode, place);
+      if (medal !== MEDAL.NONE && ev.career && t && (t.ticks != null ? ticks <= t.ticks : score >= t.score)) medal = MEDAL.PLATINUM;
     }
     const out = { medal, cash: 0, opened: [] };
     if (ev.mode >= MODE.RIVAL_TIME) out.record = this.heatRecord(isTimed(ev.mode) ? ticks : score); // rival / peak runs: their one round
@@ -717,10 +747,12 @@ export class Career {
     // 0x154CD8..0x154D0C: a time is entered in whole seconds, cvt.w.s(f32(ticks) x f32 1/60 (gp-0x6DEC = 0x3C888889)); 0x154D58: the run
     // goes in at the first entry it is not strictly worse than (time: skip while entry < run; score: skip while run < entry), so a tie
     // ranks the new run above the old one (docs/online-records.md). Before 2026-09-30 the port compared ticks with a strict test.
-    const secs = timed ? Math.trunc(f32(f32(value) * f32(0.016666668))) : value;
-    const list = this.records(slot, timed),
-      entry = { value: secs, ticks: timed ? value : undefined, character, name: this.playerName || PLAYER_NAME, player: true };
-    const at = list.findIndex((r) => (timed ? !(r.value < secs) : !(value < r.value)));
+    const list = this.records(slot, timed);
+    // pv coreCareerResults (docs/core-migration.md M5c): the entry in the core's result kernel (undefined: the JS below)
+    const k = coreRules.coreRecordInsert(timed, value, list.map((r) => r.value));
+    const secs = k ? k.secs : timed ? Math.trunc(f32(f32(value) * f32(0.016666668))) : value;
+    const entry = { value: secs, ticks: timed ? value : undefined, character, name: this.playerName || PLAYER_NAME, player: true };
+    const at = k ? k.at : list.findIndex((r) => (timed ? !(r.value < secs) : !(value < r.value)));
     if (at < 0) return -1;
     list.splice(at, 0, entry);
     list.length = 5;

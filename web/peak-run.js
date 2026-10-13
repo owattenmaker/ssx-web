@@ -3,6 +3,8 @@
 // 7 (points challenge, modes 9..11: init 23C0D0, split 23C560, results 23C2D8) over table 0x440D18 (career.json
 // rules.peak_challenges: 18 rows {mode, tier 1..3, target, limit s, split[5], cash/100}).
 import { MEDAL } from './career.js';
+// pv coreCareerResults (docs/core-migration.md M5c): peakResult in the core's result kernel
+import { corePeakResult } from './core-rules.js';
 
 export const isPeakRun = (mode) => mode >= 6 && mode <= 11;
 export const isTimeChallenge = (mode) => mode >= 6 && mode <= 8;
@@ -57,6 +59,10 @@ export function peakSplit(setup, counter, { raceTicks = 0, score = 0 }) {
 // rows. Returns {place (3 = no medal), fail, value}.
 export function peakResult(rules, setup, { ticks = 0, score = 0, dnf = false }) {
   const { mode } = setup;
+  // (the tier rows read without throwing: a missing one leaves the JS below to decide)
+  const limit = (tier) => rules?.peak_challenges?.[(mode - 6) * 3 + tier]?.[2];
+  const k = corePeakResult(isTimeChallenge(mode), setup.target, limit(2), limit(1), ticks, score, dnf);
+  if (k) return k;
   if (isTimeChallenge(mode)) {
     const value = dnf ? 360000 : ticks;
     if (dnf || ticks > setup.target) return { place: 3, fail: true, value };

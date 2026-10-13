@@ -4,6 +4,7 @@
 // the JS caller then runs its own version. Both versions give the same results (web/test-core-rules.mjs).
 // main.js hands the page's core in (setRulesCore) after the course's core is made and takes it out at the course unload.
 import { pv } from './pv-flags.js';
+import { rulesModule } from './rules-module.js';
 
 // Function ids of web/rules_bridge.cpp.
 export const RULE = Object.freeze({
@@ -33,22 +34,48 @@ export const RULE = Object.freeze({
   mountainPercent: 24,
   platinumThreshold: 25,
   recordSlot: 26,
-  rivalCharacter: 27
+  rivalCharacter: 27,
+  raceRound: 28,
+  freestyleRound: 29,
+  eventMedal: 30,
+  recordInsert: 31,
+  peakResult: 32
 });
 const IO_DOUBLES = 64;
-let rulesModule = null;
-let io = 0;
+// The course core (main.js setRulesCore) and its io buffer.
+let courseCore = null;
+let courseIo = 0;
+// The rules module (pv rulesModule, web/rules-module.js) and its io buffer: the rules run there while no course core is there.
+let moduleCore = null;
+let moduleIo = 0;
 // The core the rules run in (null: none, the JS versions run).
 export function setRulesCore(core) {
-  if (core === rulesModule) return;
-  rulesModule = core && typeof core._rules_eval === 'function' ? core : null;
-  io = rulesModule ? rulesModule._malloc(IO_DOUBLES * 8) : 0;
+  if (core === courseCore) return;
+  courseCore = core && typeof core._rules_eval === 'function' ? core : null;
+  courseIo = courseCore ? courseCore._malloc(IO_DOUBLES * 8) : 0;
 }
-const active = () => (rulesModule && pv('coreRules') ? rulesModule : null);
+// The rules module when it has loaded and the switch is on; its io buffer is made at its first use.
+function moduleTarget() {
+  if (!pv('rulesModule')) return null;
+  const m = rulesModule();
+  if (!m || typeof m._rules_eval !== 'function') return null;
+  if (m !== moduleCore) {
+    moduleCore = m;
+    moduleIo = m._malloc(IO_DOUBLES * 8);
+  }
+  return moduleCore;
+}
+// The core for this call: the course core, else the rules module, or null (the switch off, neither there).
+function active() {
+  if (!pv('coreRules')) return null;
+  if (courseCore) return courseCore;
+  return moduleTarget();
+}
 // One call: inputs in, outputs out (an array of numbers), or undefined.
 function call(fn, inputs) {
   const core = active();
   if (!core || inputs.length > IO_DOUBLES) return undefined;
+  const io = core === courseCore ? courseIo : moduleIo;
   const view = new Float64Array(core.HEAPU8.buffer, io, IO_DOUBLES);
   for (let k = 0; k < inputs.length; k++) view[k] = inputs[k];
   const n = core._rules_eval(fn, io, inputs.length);
@@ -213,4 +240,104 @@ export function coreRecordSlot(recordSlots, mode, course) {
 export function coreRivalCharacter(peak, human) {
   if (!isInt(peak) || !isInt(human)) return undefined;
   return call(RULE.rivalCharacter, [peak, human])?.[0];
+}
+
+// ---- M5c: the career's result kernel (pv coreCareerResults; engine/career_rules.hpp) ------------------------------------------------
+// Each returns the kernel's outputs, or undefined (the switch off, no core, or inputs the kernel does not take): the caller keeps its
+// JS version. The inputs are the JS values as the JS versions read them (null / absent fields as their ?? defaults).
+const careerResults = () => pv('coreCareerResults');
+// (finite numbers only: the JS sorts compare by subtraction, and infinities or NaN there are left to the JS)
+const isNum = (v) => Number.isFinite(v);
+// web/career.js raceResult's times / ranks / round / level / message for standings [{dnf, finishTicks, remaining, place, origin}].
+export function coreRaceRound(round, career, level, standings, human, rules, raceTicks, origin) {
+  if (!careerResults() || !active()) return undefined;
+  if (!isInt(round) || round < 1 || round > 3 || !level || !isInt(level.level) || !isInt(level.counter)) return undefined;
+  if (!Array.isArray(standings) || standings.length > 8 || !isInt(human) || human < 0 || human >= standings.length) return undefined;
+  const margin = rules?.level_up_margin;
+  if (!isNum(rules?.dnf_ticks) || !isNum(rules?.estimate_min_speed) || !Array.isArray(margin) || !isNum(raceTicks)) return undefined;
+  const inputs = [round, career ? 1 : 0, level.level, level.counter, rules.dnf_ticks, rules.estimate_min_speed];
+  for (let k = 0; k < 3; k++) inputs.push(isNum(margin[k]) ? margin[k] : NaN);
+  inputs.push(raceTicks, human, standings.length);
+  for (const s of standings) {
+    const finished = s.finishTicks != null;
+    const place = s.place ?? 0;
+    const from = s.origin ?? origin;
+    if (finished && !isNum(s.finishTicks)) return undefined;
+    if (!s.dnf && !finished && (!isNum(s.remaining) || !isNum(place) || !isNum(from))) return undefined;
+    inputs.push(s.dnf ? 1 : 0, finished ? 1 : 0, finished ? s.finishTicks : 0, isNum(s.remaining) ? s.remaining : 0, isNum(place) ? place : 0, isNum(from) ? from : 0);
+  }
+  const out = call(RULE.raceRound, inputs);
+  if (!out) return undefined;
+  const n = out[7];
+  return {
+    place: out[0],
+    advance: out[1] === 1,
+    round: out[2],
+    level: { level: out[3], counter: out[4] },
+    message: [null, 'kT_OVRCongratGoToSemi', 'kT_OVRRaceObjectives7', 'kT_OVRCMNSorryGetThirdSemi', 'kT_OVRCMNSorryGetThird'][out[5]],
+    complete: out[6] === 1,
+    times: out.slice(8, 8 + n),
+    rank: out.slice(8 + n, 8 + 2 * n)
+  };
+}
+const score3 = (s) => Array.isArray(s) && s.length === 3 && s.every(isNum);
+// web/career.js freestyleResult's totals / shown / ranks / round / level / message; ev = {round, career, player, opponent, ai}.
+export function coreFreestyleRound(ev, level, score, opponent) {
+  if (!careerResults() || !active()) return undefined;
+  const round = ev?.round;
+  if (!isInt(round) || round < 1 || round > 3 || !level || !isInt(level.level) || !isInt(level.counter) || !isNum(score)) return undefined;
+  if (!score3(ev.player) || !Array.isArray(ev.ai) || ev.ai.length > 14 || !ev.ai.every((a) => score3(a?.scores))) return undefined;
+  const has = !!ev.opponent;
+  if (has && !score3(ev.opponent.scores)) return undefined;
+  const update = has && !!opponent;
+  if (update && opponent.finished && !isNum(opponent.score)) return undefined;
+  if (update && !opponent.finished && round === 3 && !isNum(opponent.estimate)) return undefined;
+  const inputs = [round, ev.career ? 1 : 0, level.level, level.counter, score, ...ev.player, has ? 1 : 0, ...(has ? ev.opponent.scores : [0, 0, 0])];
+  inputs.push(update ? 1 : 0, update && opponent.finished ? 1 : 0, update && isNum(opponent.score) ? opponent.score : 0);
+  inputs.push(update && isNum(opponent.estimate) ? opponent.estimate : 0, ev.ai.length);
+  for (const a of ev.ai) inputs.push(...a.scores);
+  const out = call(RULE.freestyleRound, inputs);
+  if (!out) return undefined;
+  const n = out[13];
+  return {
+    place: out[0],
+    advance: out[1] === 1,
+    round: out[2],
+    level: { level: out[3], counter: out[4] },
+    message: [null, 0x0812f644, 'kT_OVRCMNSorryGetThird'][out[5]],
+    complete: out[6] === 1,
+    player: out.slice(7, 10),
+    opponent: out.slice(10, 13),
+    totals: out.slice(14, 14 + n),
+    shown: out.slice(14 + n, 14 + 2 * n),
+    rank: out.slice(14 + 2 * n, 14 + 3 * n)
+  };
+}
+// web/career.js completeEvent's medal; threshold: platinumThreshold's {ticks} / {score} / null.
+export function coreEventMedal(mode, place, career, threshold, ticks, score) {
+  if (!careerResults() || !active() || !isInt(mode) || !isInt(place)) return undefined;
+  let kind = 0;
+  let amount = 0;
+  if (threshold) {
+    kind = threshold.ticks != null ? 1 : 2;
+    amount = kind === 1 ? threshold.ticks : threshold.score;
+    if (!isNum(amount)) return undefined;
+  }
+  // (the comparison reads the run's value: an absent one is NaN, null 0)
+  const value = (v) => (v === undefined ? NaN : v === null ? 0 : v);
+  if (!isNum(value(ticks)) || !isNum(value(score))) return undefined;
+  const out = call(RULE.eventMedal, [mode, place, career ? 1 : 0, kind, amount, value(ticks), value(score)]);
+  return out ? out[0] : undefined;
+}
+// web/career.js addRecord's entry: {at, secs} for a run against the slot's five values.
+export function coreRecordInsert(timed, value, values) {
+  if (!careerResults() || !active() || !isNum(value) || !Array.isArray(values) || values.length > 16 || !values.every(isNum)) return undefined;
+  const out = call(RULE.recordInsert, [timed ? 1 : 0, value, values.length, ...values]);
+  return out ? { at: out[0], secs: out[1] } : undefined;
+}
+// web/peak-run.js peakResult with the setup's target and the tier-3 / tier-2 rows' limits.
+export function corePeakResult(timeChallenge, target, tier3, tier2, ticks, score, dnf) {
+  if (!careerResults() || !active() || ![target, tier3, tier2, ticks, score].every(isNum)) return undefined;
+  const out = call(RULE.peakResult, [timeChallenge ? 1 : 0, target, tier3, tier2, ticks, score, dnf ? 1 : 0]);
+  return out ? { place: out[0], fail: out[1] === 1, value: out[2] } : undefined;
 }

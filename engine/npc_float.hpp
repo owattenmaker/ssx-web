@@ -14,7 +14,7 @@ inline float npcMul(float a,float b){return terrain_original::mul(a,b);}
 inline float npcDiv(float a,float b){return terrain_original::div(a,b);}
 inline float npcSqrt(float a){return terrain_original::sqrt(a);}
 inline float npcIntToFloat(int32_t value){
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
  if(originalRoundingMode==FE_TOWARDZERO){const double exact=value;float nearest=float(exact);if(std::abs(double(nearest))>std::abs(exact))nearest=std::nextafter(nearest,0.f);return nearest;}
 #endif
  volatile int32_t input=value;return float(input);

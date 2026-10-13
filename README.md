@@ -12,6 +12,8 @@ and a three.js WebGPU renderer (`web/*.js`), with online multiplayer (`web/serve
 
 - `web/`: the game (Vite app), the WASM core sources, the multiplayer/hosting server and the tests (`npm test`).
 - `engine/`: shared recovered engine headers used by the core build (`web/build-core.sh`).
+- `native/`: the native build of the same core (macOS, Windows), its parity tests and the native front end
+  ([docs/native.md](docs/native.md)).
 - `tools/`: asset extraction and capture tooling (reads your own SSX 3 disc image).
 - `docs/`: design notes; start with [docs/HANDOFF.md](docs/HANDOFF.md). Hosting: [docs/hosting.md](docs/hosting.md).
 - `deploy/`: hosting scripts; the host-specific values live in a git-ignored `deploy/.env.local` (see `deploy/.env.example`).
@@ -39,6 +41,18 @@ npm run dev            # local development (after the assets are prepared)
 npm run online:build   # hosting bundle -> web/dist-online (served with public/ by server/mp-server.mjs)
 ```
 
+## Native build
+
+The same simulation core also builds natively with CMake and clang, and is checked against the WebAssembly build tick by
+tick. It needs the same prepared data as the browser build (bring your own disc, above). Steps, options, tests and the
+Windows cross build are in [docs/native.md](docs/native.md).
+
+```sh
+cmake -S . -B build/native-core -G Ninja
+cmake --build build/native-core
+ctest --test-dir build/native-core --output-on-failure
+```
+
 ## License
 
 The whole port is licensed under the **GNU General Public License, version 3** (GPL-3.0-only): see [LICENSE](LICENSE).
@@ -58,6 +72,10 @@ The whole port is licensed under the **GNU General Public License, version 3** (
   nodtool (Apache-2.0) at setup time; none of them are included.
 - npm dependencies (three.js, Vite: MIT) are installed by `npm install`, not vendored.
 - **nlohmann/json** 3.10.4 (MIT, `web/third_party/nlohmann/`, with its licence) is vendored for the core build.
+- The native front end uses **SDL3** (zlib licence, a system install) and **wgpu-native** (Apache-2.0 / MIT, its official
+  prebuilt release fetched by CMake at build time); neither is vendored. The Windows cross build uses the **llvm-mingw**
+  toolchain (Apache-2.0 with LLVM exception; mingw-w64 headers and runtime under their permissive licences), downloaded by
+  the user, not included.
 
 ## Contributing
 

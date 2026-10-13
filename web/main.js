@@ -107,7 +107,7 @@ function padRateFrame(dt) {
 const tickLock = createTickLock();
 import createCore from './runtime/core.js';
 import { createAiRace } from './ai-race.js';
-import { syncWorldNodes } from './ai-racers.js';
+import { syncWorldNodes, coreHost } from './ai-racers.js';
 import { settleRaced, humanCharacter, seededWords, nextWord } from './lineup.js';
 import { EVENT_ANCHOR_DRAWS, eventAnchorWords } from './event-anchor-rng.js';
 import { createMpGame } from './net/mp-game.js';
@@ -115,6 +115,10 @@ import { createOpponentFx } from './opponent-fx.js';
 import { pv } from './pv-flags.js';
 // pv coreRules: the event / career rules in the course's core (docs/core-migration.md slice M1)
 import { setRulesCore } from './core-rules.js';
+// pv rulesModule: the rules module (docs/core-migration.md M5) starts loading at boot, without waiting for it: the rules and the
+// presentation generator use it once it is there (before: the JS versions)
+import { loadRulesModule } from './rules-module.js';
+if (pv('rulesModule')) loadRulesModule();
 import { installYieldShim, yieldBudget } from './yield-shim.js';
 import { startGcWatchdog, isJavaScriptCore } from './gc-watchdog.js';
 import { collectBefore, collectNow, coreTracker } from './switch-gc.js';
@@ -5501,7 +5505,12 @@ async function loadCourse(next) {
   core = await newCore();
   courseMilestone('core');
   // race_end asks it at a freestyle finish (0x239230 / 0x23A05C, fsCelebrate)
-  core.finishHost = { place: (score) => gameHost.freestylePlace(score) ?? -1 };
+  // race_end asks in every rider context on its finish tick; the place is the human's run's (0x239230 decides once every human has
+  // finished, 12A250 at 0x23940C: a computer rider's finish before that leaves the human's meter alone), so only the human's context
+  // gets one. coreHost: the hook runs inside a context the core's rider manager switched to (web/ai-racers.js).
+  const humanTls = core.___tls_base?.value;
+  const humanContext = () => !core.___tls_base || core.___tls_base.value === humanTls;
+  core.finishHost = coreHost(core, { place: (score) => (humanContext() ? gameHost.freestylePlace(score) ?? -1 : -1) });
   // pv coreRules (web/core-rules.js)
   setRulesCore(core);
   coreRefs.push(new WeakRef(core));

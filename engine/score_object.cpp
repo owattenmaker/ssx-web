@@ -21,7 +21,7 @@ float D(float a,float b){return originalScalarDivide(a,b);}
 int32_t W(float x){ // cvt.w.s (chop, saturating like PCSX2)
  if(!(x==x))return 0;if(x>=2147483648.f)return INT32_MAX;if(x<=-2147483648.f)return INT32_MIN;return int32_t(std::trunc(x));}
 float I2F(int32_t v){ // cvt.s.w in the chop rounding mode
-#if defined(__EMSCRIPTEN__)
+#if (defined(__EMSCRIPTEN__) || defined(SSX_NATIVE_CORE))
  const int64_t a=v<0?-int64_t(v):int64_t(v);if(a<=(1<<24))return float(v);
  float r=float(a);if(int64_t(r)>a)r=std::nextafter(r,0.f);return v<0?-r:r;
 #else

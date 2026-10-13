@@ -21,6 +21,8 @@
 import { pv } from './pv-flags.js';
 // pv coreRules (docs/core-migration.md slice M1): the rules below run in the core when it is there (undefined: the JS version runs)
 import * as coreRules from './core-rules.js';
+// pv rulesModule (docs/core-migration.md M5): the presentation generator in the rules module (web/rules-module.js)
+import { rulesModule } from './rules-module.js';
 
 export const SEED_ADD = [0xF22D0E56, 0x96041893, 0x3DF3B646, 0x40DDE76D, 0x97327AE1, 0xD1A9FBE7];
 export const REFERENCE_PRESENTATION_SEED = 0x182200;   // the reference ARMSX2 sessions' boot seed
@@ -120,7 +122,8 @@ export function freestyleSlots(entries, { rival, single, slope }) {
 export function slotRiders(values, humanBase) { return values.map((v) => (v < 10 ? { base: v, cheat: 0 } : { base: humanBase, cheat: v })); }
 
 // ---- browser policy ------------------------------------------------------------------------------------------
-const params = () => (typeof location !== 'undefined' ? new URL(location.href).searchParams : new URLSearchParams());
+// (node harnesses: SSX_QUERY=presentationSeed=0x182200 stands for the page's query)
+const params = () => (typeof location !== 'undefined' ? new URL(location.href).searchParams : new URLSearchParams(globalThis.process?.env?.SSX_QUERY ?? ''));
 const parseSeed = (text) => { if (text == null || text === '') return null; const v = Number(text.startsWith?.('0x') ? parseInt(text, 16) : text); return Number.isFinite(v) ? v >>> 0 : null; };
 // Presentation draws: the boot seeds 0x4FF018 and draws once before the menus; the menus (title, main menu, select, setup,
 // peak, mode, event, rules, the pause menu and the quit dialog) draw nothing; each event load makes 128 draws, then the
@@ -128,10 +131,33 @@ const parseSeed = (text) => { if (text == null || text === '') return null; cons
 // is not reproducible (the consumers -- snow, sprays, crowd, flags, UI, audio of all six riders -- are not all ported):
 // noteEventDraws(ticks) adds the measured average (lineups.json presentation_model) for the race ticks played.
 let presentation = null, pendingDraws = 0;
-const bootPresentation = () => { if (!presentation) { const boot = parseSeed(params().get('presentationSeed')) ?? clockSeed(); presentation = seededWords(boot); nextWord(presentation); } };
+// pv rulesModule: the session's generator lives in the rules module when it has loaded by the first use (the draws before it are
+// none: the boot draw is the first); otherwise the page keeps it for the whole session. Either way the same words.
+let presentationModule = null;
+const bootPresentation = () => {
+  if (presentation || presentationModule) return;
+  const boot = parseSeed(params().get('presentationSeed')) ?? clockSeed();
+  const m = pv('rulesModule') ? rulesModule() : null;
+  if (m?._presentation_boot && m._presentation_note && m._presentation_roster_seed) {
+    m._presentation_boot(boot);
+    // the per-frame draws noted before the boot go with it
+    if (pendingDraws !== 0) m._presentation_note(pendingDraws, 0, 0, 0);
+    pendingDraws = 0;
+    presentationModule = m;
+    return;
+  }
+  presentation = seededWords(boot);
+  nextWord(presentation);
+};
 export function noteEventDraws(model, ticks) {
-  if (model && !parseSeed(params().get('lineupSeed')))
-    pendingDraws += Math.max(0, Math.round(model.after_seed + model.per_tick * Math.max(0, ticks - model.anchor_tick)));
+  if (!model || parseSeed(params().get('lineupSeed'))) return;
+  if (presentationModule) {
+    // (the model's fields as the sum below reads them: absent NaN, null 0)
+    const n = (v) => (v === undefined ? NaN : v === null ? 0 : Number(v));
+    presentationModule._presentation_note(n(model.after_seed), n(model.per_tick), n(model.anchor_tick), n(ticks));
+    return;
+  }
+  pendingDraws += Math.max(0, Math.round(model.after_seed + model.per_tick * Math.max(0, ticks - model.anchor_tick)));
 }
 // The event just raced on this page (web/ai-race.js start): source() = {model, ticks}, noted at the next roster seed
 // (a race's own prepare, or web/career.js startEvent for a freestyle event, whichever loads next).
@@ -142,13 +168,18 @@ export function noteRaced(source) { pendingRace = source; }
 export function settleRaced() { if (pendingRace) { const r = pendingRace(); pendingRace = null; if (r) noteEventDraws(r.model, r.ticks); } }
 // One draw of the session's presentation generator (0x3177F0), for the other presentation consumers the browser runs
 // (career messages 0x1E2A08 / 0x1E2FE0 / 0x1E3100).
-export function presentationDraw() { bootPresentation(); return nextWord(presentation); }
+export function presentationDraw() {
+  bootPresentation();
+  if (presentationModule) return presentationModule._presentation_draw() >>> 0;
+  return nextWord(presentation);
+}
 // The next event's roster seed.
 export function nextRosterSeed() {
   const fixed = parseSeed(params().get('lineupSeed'));
   if (fixed != null) return fixed;
   bootPresentation();
   if (pendingRace) { const r = pendingRace(); pendingRace = null; if (r) noteEventDraws(r.model, r.ticks); }
+  if (presentationModule) return presentationModule._presentation_roster_seed() >>> 0;
   for (; pendingDraws > 0; pendingDraws--) nextWord(presentation);   // the previous event's per-frame draws (estimate)
   let seed = 0;
   for (let n = 1; n < SEED_DRAW; n++) seed = nextWord(presentation);   // the load's 128 draws, then the roster seed
