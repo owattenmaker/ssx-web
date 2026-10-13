@@ -29,6 +29,8 @@ import { loadCharacter, humanSettings } from '../character-roster.js';
 import { outfitKey, remoteOutfitRider } from '../wardrobe.js';
 import { humanCharacter } from '../lineup.js';
 import { onlineGridState } from './grid-seed.js';
+import { createTimeAttack } from './ta-game.js';
+import { pv } from '../pv-flags.js';
 
 const SEND_EVERY = 3;            // ticks: 20 Hz
 const BACKGROUND_MS = 50;        // hidden-tab sim cadence
@@ -63,6 +65,9 @@ export function createMpGame({
     base: rider().kind === 'cheat' ? rider().base || 'zoe' : null,
     token: sessionToken()
   });
+  // pv onlineTimeAttack: time-attack sessions on the same connection (web/net/ta-game.js; web/career-ui.js play / finish ask it)
+  const timeAttack = pv('onlineTimeAttack') ? createTimeAttack({ ui, client }) : null;
+  if (timeAttack) ui.timeAttack = timeAttack;
   const stats = {
     frames: 0,
     sentStates: 0,
@@ -135,6 +140,7 @@ export function createMpGame({
 
   const session = {
     client,
+    timeAttack,
     async connect() {
       if (client.state.status === 'online') return;
       await refreshProfile();

@@ -89,6 +89,8 @@ export function createGameTick(host, { trace = null } = {}) {
     // HUD pre-pass state (0x1EA930: orb/coil palette + flash phase, Uber-hint gating) is one tick behind the slot draws (PS2
     // uber-chain frame 1557: total 5850 with the tier-4 gold coil).
     const rec = { core, ticksLeft, clock: s.clock, prepassBoost: f32(core, core._boost_hud_info(), 13).slice(), prepassSlots: s.wantPrepassSlots ? readTrickHudSlots(core)?.slots ?? null : undefined };
+    // the pad history fed between ticks since the last one (a pause), for the replay (main.js padStateNote, pv replayPadState)
+    s.padStateNote?.();
     s.replay?.record(input);   // the run's pad for its replay (web/replay.js; ignored while a replay plays)
     core.HEAPF32.set(input, s.padPtr >> 2);
     s.worldAiBefore?.(); // (pv eventReturnInWorld: WS15's riders leave at the WS4 restart, before this tick's passes; main.js)
@@ -101,7 +103,9 @@ export function createGameTick(host, { trace = null } = {}) {
     s.state = f32(core, core._step_rider(cmd[0], cmd[6], cmd[2] ? 1 : 0, cmd[7]), 16).slice();
     if (s.state[13] !== s.lastRescues) { s.lastRescues = s.state[13]; rec.rescue = true; s.pending = 0; if (s.animationReady) core._reset_animation(); }
     if (s.animationReady) {
-      const ptr = core._animation_tick(s.state[7], cmd[10], cmd[11], s.state[9], +s.state[8], cmd[6], cmd[8], cmd[7], cmd[7], 0, s.state[15], cmd[13]);
+      // the tweak argument: the command's tweak word with pv padTweak, else the boost word (docs/core-migration.md "tweak")
+      const tweak = pv('padTweak') ? cmd[12] : cmd[7];
+      const ptr = core._animation_tick(s.state[7], cmd[10], cmd[11], s.state[9], +s.state[8], cmd[6], cmd[8], tweak, cmd[7], 0, s.state[15], cmd[13]);
       s.animPose = f32(core, ptr, s.boneCount * 7).slice(); s.animInfo = f32(core, core._animation_info(), 19).slice();
       s.posePhysicalFrame = f32(core, core._pose_physical(), 12).slice(); s.state = f32(core, core._rider_state(), 16).slice();
       const resetState = f32(core, core._reset_info(), 8);
@@ -191,7 +195,10 @@ s.worldAiTick?.();
   const resultsBuffers = new WeakMap(); // core -> its tick_results buffer (10 floats, made once)
   function simulateInCore(s, core, rec, input) {
     const known = teleports.has(core);
-    const b = f32(core, core._tick_begin(s.padPtr, s.lastRescues, s.lastResetPlacement, s.animationReady ? 1 : 0, s.boneCount, known ? 1 : 0, known ? teleports.get(core) : 0), 96);
+    const ready = s.animationReady ? 1 : 0;
+    const count = known ? teleports.get(core) : 0;
+    const begin = core._tick_begin(s.padPtr, s.lastRescues, s.lastResetPlacement, ready, s.boneCount, known ? 1 : 0, count, pv('padTweak') ? 1 : 0);
+    const b = f32(core, begin, 96);
     const words = new Uint32Array(b.buffer, b.byteOffset, 96);
     const flags = words[79];
     const cmd = b.slice(0, 24);
@@ -239,7 +246,9 @@ s.worldAiTick?.();
     const p = s.posePhysicalFrame;
     const replayCamera = !!(s.replay?.active && core._replay_camera_step);
     const m = replayCamera ? (s.replay.manual ?? NO_STICKS) : NO_STICKS;
-    const e = f32(core, core._tick_end(s.animPose ? 1 : 0, p?.[7] ?? 0, p?.[9] ?? 0, p?.[10] ?? 0, p?.[11] ?? 0, replayCamera ? 1 : 0, m[0], m[1], m[2], s.animationReady ? 1 : 0, s.raceInfo[2] ? 1 : 0), 32);
+    const head = [p?.[9] ?? 0, p?.[10] ?? 0, p?.[11] ?? 0];
+    const end = core._tick_end(s.animPose ? 1 : 0, p?.[7] ?? 0, head[0], head[1], head[2], replayCamera ? 1 : 0, m[0], m[1], m[2], ready, s.raceInfo[2] ? 1 : 0);
+    const e = f32(core, end, 32);
     const ew = new Uint32Array(e.buffer, e.byteOffset, 32);
     if (e[0] === 1) throw Error('Missing posed physical frame');
     const endFlags = ew[20];
@@ -265,7 +274,8 @@ s.worldAiTick?.();
     const timedOut = !!core._race_timed_out();
     const liveStop = s.finished ? (s.liveStopAt?.(timedOut) ?? null) : null;
     const r = coreResults;
-    r.set([s.raceInfo[3], s.resultsPending ? 1 : 0, s.finished ? 1 : 0, s.postFinishTicks ?? 0, cross.held, cross.age, input[10] > 0 ? 1 : 0, pv('finishSkip') ? 1 : 0, timedOut ? 1 : 0, liveStop ?? -1]);
+    r.set([s.raceInfo[3], s.resultsPending ? 1 : 0, s.finished ? 1 : 0, s.postFinishTicks ?? 0, cross.held, cross.age]);
+    r.set([input[10] > 0 ? 1 : 0, pv('finishSkip') ? 1 : 0, timedOut ? 1 : 0, liveStop ?? -1], 6);
     let q = resultsBuffers.get(core);
     if (!q) {
       q = core._malloc(40);

@@ -12,6 +12,7 @@
 //       beginTick(): 10F560 on the tick-start state -- call before the human's pad_tick/step;
 //       endTick():   the computer riders' 121818 -- call after the human's race_end.
 // Documented approximations are in docs/ai-racers.md.
+import { pv } from './pv-flags.js';
 export const SLOTS = 6;
 // The shared generator 0x317810 (engine/original_random.hpp) on six words.
 export function rngNext(w) {
@@ -703,7 +704,12 @@ export async function createAiRacers({
   }
   // (hostAtStart, pv eventInWorldAi: the human rides on in the streamed world while its riders are made, so its hooks and rider pairs
   // join at start())
-  if (!hostAtStart) human._rider_host(pairsEnabled ? 3 : 1);
+  // pv coreRiderManager (docs/core-migration.md M3): the core's rider manager (web/rider_manager.cpp) makes this file's per-tick
+  // choreography (beginTick, the stages, the pairs, endTick) with the same calls in the same order; rider_host bit 8 routes the
+  // riders' hooks to it. Decided once per race. Off: the choreography below.
+  const native = pv('coreRiderManager') && !!humanModule._manager_configure;
+  const nativeBit = native ? 8 : 0;
+  if (!hostAtStart) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
   // One module: its hooks run in whichever rider context is current. The phase hooks belong to the human's context (a
   // computer rider's race_end reaches js_rider_before_progress too; the hooks run the other riders' stages from inside
   // the human's tick); rider pairs go to the slot of the running context.
@@ -719,7 +725,49 @@ export async function createAiRacers({
     pairs: () => dispatchPairs(slotOf.get(riderTlsCurrent(humanModule)))
   });
   // | 4: no renderer poses (a computer rider is drawn from its skin palette, not animation_post's bone poses; web/animation_bridge.cpp)
-  for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4);
+  for (const n of npcs) n.core._rider_host((pairsEnabled ? 2 : 0) | 4 | nativeBit);
+  // (pv coreRiderManager) the riders' contexts and slots, and the page's hooks the manager calls back (in the human's context)
+  if (native) {
+    const blocks = human._malloc(SLOTS * 4),
+      slots = human._malloc(SLOTS * 4);
+    new Uint32Array(human.HEAPU8.buffer, blocks, SLOTS).set([humanBlock, ...npcs.map((n) => n.core.riderContext)]);
+    new Int32Array(human.HEAPU8.buffer, slots, SLOTS).set([0, ...npcs.map((n) => n.slot)]);
+    const flags = (pairsEnabled ? 1 : 0) | (sharedVisual ? 2 : 0) | (onDraws ? 4 : 0) | (afterRider ? 8 : 0);
+    try {
+      human._manager_configure(blocks, slots, npcs.length + 1, count, flags);
+    } finally {
+      human._free(blocks);
+      human._free(slots);
+    }
+    humanModule.riderManagerHost = {
+      // 107E70's handlers: speech 2A0A30 first, then the relationship 155BF0 (as pairHost.react)
+      react(slot, other, kind, attack) {
+        api.onPairAudio?.(slot, other, kind, attack);
+        api.onReact?.(slot, other, kind, attack);
+      },
+      draws(slot, beforePtr, controller, motion) {
+        onDraws?.(slot, Array.from(new Uint32Array(humanModule.HEAPU8.buffer, beforePtr, 6)), controller, motion);
+      },
+      afterRider: (slot) => afterRider?.(slot) ?? 0
+    };
+  }
+  // (pv coreRiderManager) the manager's state the page reads after a tick: the tick, the counts, each computer rider's command
+  const nativeAfterTick = () => {
+    const c = f32(human, human._manager_counts(), 25);
+    tick = c[0];
+    stage = c[1];
+    returnTick = c[2];
+    worldEvents = c[3];
+    for (let k = 0; k < 5; k++) pairCounts[k] = c[4 + k];
+    for (const key of Object.keys(worldEventKinds)) delete worldEventKinds[key];
+    for (let k = 0; k < 16; k++) if (c[9 + k]) worldEventKinds[k] = c[9 + k];
+    npcs.forEach((n, k) => {
+      const r = f32(human, human._manager_rider(k + 1), 34);
+      n.command = r.slice(0, 24);
+      n.info = r.slice(24, 33);
+      if (r[33]) n.finished = true;
+    });
+  };
   let detached = false;
   const api = {
     npcs,
@@ -729,6 +777,7 @@ export async function createAiRacers({
       if (detached) throw new Error('Computer riders already detached');
       detached = true;
       human._rider_host(0);
+      if (native) human._manager_release();
       if (humanModule.riderHost === riderHost) humanModule.riderHost = null;
       human._free(riderBuffer);
       return npcs.map((n) => n.core.riderContext);
@@ -750,7 +799,7 @@ export async function createAiRacers({
     // hold (pv eventReturnInWorld, WS13's 1289F0): the riders' event clocks stay in PreRace (core event_clock_hold) until the next start.
     // ranks (pv eventReturnInWorld, WS13's 1289F0): the +0xEC each rider keeps into the grid wait (the round's fresh riders 0, the human its own)
     start({ gridStart = false, hold = false, ranks = null } = {}) {
-      if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
+      if (hostAtStart && !detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
       for (const n of npcs) {
         configureNpc(n.core, n.record);
         n.core._reset_pad_history();
@@ -766,6 +815,7 @@ export async function createAiRacers({
       }
       tick = 0;
       stage = 0;
+      if (native) human._manager_start();
       world.reset(ranks);
       lastControllerDraws.fill(0);
       knownTriggers.clear();
@@ -841,7 +891,7 @@ export async function createAiRacers({
       pairViewSeen.fill(-1);
     },
     resume({ place }) {
-      if (hostAtStart && !detached) human._rider_host(pairsEnabled ? 3 : 1);
+      if (hostAtStart && !detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
       for (const n of npcs) explain(n.core, `${n.character} return placement`, () => place(n.core));
       // 230180's C vt+0xCC+0x28(3) = 129768 -> 1297C8(C, 1) -> 10F398: the pair records made again (core race_world_pair_restart),
       // and the game tick restarts at 0 (WS15), so 107888's first check (+0x14 < tick) is the second tick (PS2 c0a-ret: no pushes
@@ -849,6 +899,7 @@ export async function createAiRacers({
       human._race_world_pair_restart();
       for (const c of [human, ...npcs.map((n) => n.core)]) c._rider_peers_restart(npcs.length + 1);
       anchorRng = null;
+      if (native) human._manager_resume();
       // 1297C8 also zeroes the rider manager's tick C+8 (0x1297F0), which every rider's route pass reads: 112338's re-pick (tick % 60)
       // runs on the return's first tick (PS2 c0a-ret3: the riders leave the start rows' lane paths for free ride's in that tick)
       for (const c of cores()) c._game_tick_restart(0);
@@ -895,6 +946,12 @@ export async function createAiRacers({
     // core's own (the capture gates set theirs with setSharedRng).
     setAnchorRng(words) {
       anchorRng = words ? Uint32Array.from(words) : null;
+      if (native) {
+        const p = anchorRng ? human._malloc(24) : 0;
+        if (p) new Uint32Array(human.HEAPU8.buffer, p, 6).set(anchorRng);
+        human._manager_set_anchor(p);
+        if (p) human._free(p);
+      }
     },
     // relationship(own, peer) levels (6x6): the human core's 10F560 world and each computer rider's own row.
     setRelationships(scores) {
@@ -940,6 +997,13 @@ export async function createAiRacers({
     // Before the human's tick: manager refresh 10F560 on the tick-start state (0x128AF0 runs it
     // before any rider pass), the human's 115D48 peers, and the human's RNG cursors.
     beginTick() {
+      if (native) {
+        const anchorTick = Number.isInteger(doc.anchor_tick) ? doc.anchor_tick : -1;
+        const scores = doc.world.rank_mode === 2 && human._race_world_score ? 1 : 0;
+        this.worldState = toArray(f32(human, human._manager_begin_tick(anchorTick, scores), 396));
+        stage = 1;
+        return;
+      }
       if (returnTick === 3) human._race_world_rank_mode(0); // WS1 phase 1's 128A48(C, 0) (0x234570): rank mode 0, every rank 0
       if (anchorRng && tick === doc.anchor_tick) rngView(human).set(anchorRng); // the game RNG the original has at the anchor
       snapshot();
@@ -972,6 +1036,11 @@ export async function createAiRacers({
     // After the human's tick (race_end): stage 3 -- each computer rider's 121818 in slot order (it
     // sees every rider's 121750 and the earlier riders' 121818), then the world pass draws.
     endTick() {
+      if (native) {
+        human._manager_end_tick();
+        nativeAfterTick();
+        return;
+      }
       if (stage === 1) stage1(); // a human tick that ran without its hooks
       if (stage === 2) stage2();
       let words = rngView(human).slice();

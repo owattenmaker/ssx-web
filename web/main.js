@@ -1608,6 +1608,31 @@ function setKeyboardMode(mode) {
 // pv padCarry: a frame the game does not tick still consumes the pad: cSSXApp_preUpdate's 0x321298 updates the one history the ride reads
 // (core pad_history_sample), 60 a second, at most 4 a frame as the menus' own pad model
 let padCarryAcc = 0;
+// The pad path's carried state as words (core pad_state_save; pv replayPadState, docs/core-migration.md "F2"), or null.
+function padStateSave(c) {
+  if (!c?._pad_state_save) return null;
+  const n = c._pad_state_words(),
+    p = c._malloc(n * 4);
+  try {
+    c._pad_state_save(p);
+    return Array.from(new Uint32Array(c.HEAPU8.buffer, p, n));
+  } finally {
+    c._free(p);
+  }
+}
+// true when the core took the words (same layout)
+function padStateRestore(c, words) {
+  if (!c?._pad_state_restore || !Array.isArray(words)) return false;
+  const p = c._malloc(Math.max(1, words.length) * 4);
+  try {
+    new Uint32Array(c.HEAPU8.buffer, p, words.length).set(words);
+    return !!c._pad_state_restore(p, words.length);
+  } finally {
+    c._free(p);
+  }
+}
+// samples fed between ticks since the last tick: the next live tick notes the history for the replay (gameHost.padStateNote)
+let padStateTouched = false;
 function padCarryFeed(input, dt) {
   if (!pv('padCarry') || !core?._pad_history_sample || !padPtr) return;
   // A playing replay simulates on this core from its own recorded pad: the viewer's pad must not enter its button history (the
@@ -1621,6 +1646,7 @@ function padCarryFeed(input, dt) {
     padCarryAcc -= 1 / 60;
     core.HEAPF32.set(input, padPtr >> 2);
     core._pad_history_sample(padPtr);
+    padStateTouched = true;
   }
 }
 function inputs() {
@@ -2477,7 +2503,10 @@ function startRun(R = null) {
   }
   if (!R && !pv('padCarry')) clearInput();
   // pv padCarry: the start from a card keeps the held pad and its history (the PS2's one history; a replay starts settled)
-  if (R || !pv('padCarry') || !core._pad_history_sample) core._reset_pad_history();
+  // pv replayPadState: a replay takes the history its live run started with (the snapshot's words), else a settled one
+  if (R && pv('replayPadState') && padStateRestore(core, R.padState)) {
+    // restored (the words of this core's layout)
+  } else if (R || !pv('padCarry') || !core._pad_history_sample) core._reset_pad_history();
   runInputMap = R ? R.inputMap : (ui.feScreens?.inputMap?.() ?? 0);
   core._set_input_map?.(runInputMap);
   // FE Controller Settings Default/Pro: INPUT.MAP / INPUT2.MAP
@@ -2968,6 +2997,16 @@ const gameHost = {
   bailTick(c, st, input, ticksLeft) {
     bailWatch.tick(c, st, input, ticksLeft);
   },
+  // pv replayPadState: before a live tick, the pad history samples fed since the last tick gave it
+  padStateNote() {
+    if (!padStateTouched) return;
+    padStateTouched = false;
+    // only with the switch: off, the replay records nothing new
+    if (!pv('replayPadState')) return;
+    // (a core without pad_state_save has nothing to note)
+    const words = padStateSave(core);
+    if (words && replay && !replay.active) replay.note('padState', words);
+  },
   soloTickStart(c) {
     if (course.freeRide || mpGame?.simulating?.()) return;
     const e = EVENT_ANCHOR_DRAWS[course.code];
@@ -3033,7 +3072,9 @@ function createRaceReplay() {
       ai: aiActive ? aiRace.replaySnapshot() : null,
       rng: Array.from(new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6)),
       visual: Array.from(new Uint32Array(core.HEAPU8.buffer, core._visual_rng_words(), 6)),
-      lcg: core._visual_lcg_word ? new Uint32Array(core.HEAPU8.buffer, core._visual_lcg_word(), 1)[0] : null
+      lcg: core._visual_lcg_word ? new Uint32Array(core.HEAPU8.buffer, core._visual_lcg_word(), 1)[0] : null,
+      // pv replayPadState: the pad history the run starts with (off, or a core without pad_state_save: no field); no pause note pending
+      ...((padStateTouched = false), pv('replayPadState') && core._pad_state_save ? { padState: padStateSave(core) } : {})
     }),
     restart: (R) => {
       try {
@@ -3050,6 +3091,7 @@ function createRaceReplay() {
     event: (e) => {
       if (e.kind === 'giveUp') core._race_give_up?.();
       else if (e.kind === 'camera') core._set_camera_view?.(e.value);
+      else if (e.kind === 'padState' && pv('replayPadState')) padStateRestore(core, e.value);
     },
     ended: () => {
       aiRace?.replayEnd?.();
@@ -6390,6 +6432,12 @@ async function init() {
         startRun();
         // the simulation only: cutscenes and the NIS play on (the tools' cutscene probes)
         overlay.open('game', { owner: 'QA start (the paused ride, stepped by advance; cb.resume releases it)', ends: null, ctx: CTX.HOLD });
+      },
+      // n pad samples consumed between ticks, as frames that do not tick feed them (padCarryFeed: a card, a pause; pv padCarry)
+      padCarry(pad, n = 1) {
+        const input = pad ? Float32Array.from(pad) : new Float32Array(24);
+        for (let i = 0; i < n; i++) padCarryFeed(input, 1 / 60);
+        return padStateTouched;
       },
       advance(ticks, pad) {
         const input = pad ? Float32Array.from(pad) : new Float32Array(24);

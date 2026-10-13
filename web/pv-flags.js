@@ -185,10 +185,26 @@
 // world node states (DeadNode / Hide / RestoreNode, instance flags) and its later changes as kind 9 events (web/ai-racers.js syncWorldNodes),
 // as the in-world event does. The PS2 has one world: a RestoreNode a computer rider's trigger program made is restored by the section scan
 // in that world (fuzz r7-0082 3001: Psymon's trigger 193069 fires again the next tick); the computer riders' contexts run no sections.
+// onlineTimeAttack (big-multiplayer agent, docs/big-multiplayer.md): time-attack sessions online (web/net/ta-game.js, web/server/
+// sessions.mjs): the session list, solo attempts of the session's event with the maxed attribute bytes, best runs uploaded as
+// replays for the verifier, the window, the standings, the podium and the vote. Needs a server with MP_SESSIONS=1.
+// ghostRiders (big-multiplayer agent, docs/big-multiplayer.md section 4): the other session players drawn as translucent ghosts
+// (instanced, shared per package) from the 152-byte ghost packets.
+// replayPadState (core-migration agent, docs/core-migration.md "F2"): a replay starts from the pad history its live run started
+// with (pv padCarry keeps the menus' and the card's samples: core pad_state_save in the replay snapshot) and takes the history
+// again after each pause (the live run notes a 'padState' event before the first tick after samples fed between ticks), so a
+// button held into the start or pressed in a pause decodes the same in the replay and the verifier. Off: a replay starts settled and
+// ignores the events, and the live run records neither.
+// coreRiderManager (core-migration agent, docs/core-migration.md slice M3): a race's computer riders run on the core's rider manager
+// (web/rider_manager.cpp: 0x128AF0's stages, the shared RNG cursor, the rider pairs, the shared world, the FX passes) instead of
+// web/ai-racers.js's choreography; the event set-up stays in ai-racers.js. Needs a core with manager_configure. Off: ai-racers.js.
 // coreRules (core-migration agent, docs/core-migration.md slice M1): the pure event / career rules (web/lineup.js roster, rounds,
 // relationships, difficulty, anchor RNG words; web/event-anchor-rng.js; the finish estimates and rankings of web/ai-race.js,
 // web/career.js and web/rival-mode.js) run in the core (engine/game_rules.hpp through web/rules_bridge.cpp, web/core-rules.js) once
 // main.js has a core. Byte-identical with the JS versions (web/test-core-rules.mjs). Off: the JS versions.
+// padTweak (core-migration agent, docs/core-migration.md "tweak"): animation_tick's tweak argument is the command's tweak word
+// (pad_tick [12], as the computer riders' and the comparers' old human tick pass it) instead of the boost word ([7]). The two agree
+// in controller 5, the only one whose grab lifecycle reads it. Off: the boost word, as before.
 // coreTick (core-migration agent, docs/core-migration.md slice M2): the game tick's core sequence (web/game-tick.js simulate) runs in
 // the core as tick_begin / tick_end (web/game_tick.inc). Off: game-tick.js makes each core call itself.
 export const PV_DEFAULTS = Object.freeze({
@@ -242,8 +258,13 @@ export const PV_DEFAULTS = Object.freeze({
   setBlendClass: true,
   loadMeter: true,
   npcWorldNodes: true,
-  coreRules: false,
-  coreTick: false
+  padTweak: false,
+  replayPadState: false,
+  coreRiderManager: false,
+  coreRules: true,
+  coreTick: true,
+  onlineTimeAttack: false,
+  ghostRiders: false
 });
 const overrides = new Map();
 function fromQuery() {

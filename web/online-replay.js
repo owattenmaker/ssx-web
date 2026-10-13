@@ -18,7 +18,19 @@ export function installOnlineReplay(ctx) {
   if (!replay) return null;
   let lastAttributes = null;
   const setAttributes = ui.cb.attributes;
-  if (setAttributes) ui.cb.attributes = (bytes) => { lastAttributes = Array.from(bytes); return setAttributes(bytes); };   // the run's attribute bytes (main.js startRun)
+  // a time-attack session's attribute bytes (docs/big-multiplayer.md: 55 x 7 for everyone) replace the profile's while set
+  let attributeOverride = null;
+  ui.cb.attributeOverride = (bytes) => {
+    attributeOverride = Array.isArray(bytes) && bytes.length === 7 ? bytes.slice() : null;
+  };
+  // the run's attribute bytes (main.js startRun, career-ui play)
+  if (setAttributes) {
+    ui.cb.attributes = (bytes) => {
+      const used = attributeOverride && !watch ? attributeOverride : bytes;
+      lastAttributes = Array.from(used);
+      return setAttributes(used);
+    };
+  }
 
   ui.cb.onlineRun = () => {
     const rider = ctx.rider(), rec = replay.recording;
@@ -78,8 +90,32 @@ export function installOnlineReplay(ctx) {
     onlineRecords().replay(id).then((file) => begin(file, { verify: resolve }).then((started) => { if (!started) resolve({ ok: null, reason: 'rider or course unknown' }); }),
       (e) => resolve({ ok: null, reason: `download: ${e?.message ?? e}` }));
   });
+  // A time-attack attempt (docs/big-multiplayer.md 2.2): the next event load prepares no computer riders, the lineup a solo replay
+  // records ({values: [], enabled: false}: ai-race.js prepareFixed -> prepareFreestyle without an opponent; a backcountry rival event
+  // keeps its rival, prepareFixed's rival branch). The verifier sets the same lineup from the replay (load()).
+  // on = false disarms it (leaving a session), unless another lineup was set since.
+  const SOLO = Object.freeze({ values: Object.freeze([]), enabled: false, round: 3, career: false });
+  ui.cb.soloLineupNext = (on = true) => {
+    const ai = ctx.aiRace();
+    if (!ai) return false;
+    if (on) ai.fixedNext = SOLO;
+    else if (ai.fixedNext === SOLO) ai.fixedNext = null;
+    return true;
+  };
+  // The verifier's session lane (docs/big-multiplayer.md TA-2): the same re-simulation of a time-attack session's run.
+  ui.cb.verifySessionRun = (id) => new Promise((resolve) => {
+    if (watch) {
+      resolve({ ok: null, reason: 'busy' });
+      return;
+    }
+    const started = (ok) => {
+      if (!ok) resolve({ ok: null, reason: 'rider or course unknown' });
+    };
+    onlineRecords().sessionReplay(id).then((file) => begin(file, { verify: resolve }).then(started), (e) => resolve({ ok: null, reason: `download: ${e?.message ?? e}` }));
+  });
   if (new URLSearchParams(globalThis.location?.search ?? '').has('verify')) {
     globalThis.ssxVerify = ui.cb.verifyOnlineRun;
+    globalThis.ssxVerifySession = ui.cb.verifySessionRun;
     globalThis.ssxVerifyCore = () => onlineRecords().coreHash(ctx.coreUrl);   // the build's core id the queue is asked for
   }
   // the downloaded run's rider and course, then load() (now or after the course switch)

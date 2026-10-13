@@ -177,6 +177,51 @@ try {
     if (!same) failures.push(`BHP1-PS2: the Web-cam's cuts differ from the PS2's: ${JSON.stringify(cuts)}`);
     rows.push(`BHP1-PS2 (neutral pad): finish ${finish}; the Web-cam's ${cuts.length} cuts / trigger cameras on the PS2's ticks: ${same}`);
   }
+  // The pad history between ticks (pv replayPadState, docs/core-migration.md "F2"): Cross held on the card into the start and through
+  // the countdown (pv padCarry keeps those samples), then Cross pressed in a pause mid-run and still held when the ride resumes (samples
+  // fed between two ticks: no new press edge on the resumed tick, PS2 c0a-ret2), then Give Up. With the switch the replay starts from
+  // the run's history and takes it again after the pause: exact. Without it the replay starts settled and sees a press edge there.
+  if (!only || only.has('PADSTATE')) {
+    const padRun = async (on) => {
+      await browser.goto(`${server.origin}/manifest.webmanifest`);
+      await browser.evaluate('(()=>{localStorage.clear();sessionStorage.clear();return 1})()');
+      await browser.goto(`${server.origin}/?qa=1&course=ARA1&rider=zoe&cutscenes=0&quality=low&simtrace=1&mute=1&pv=replay,${on ? '' : '-'}replayPadState`);
+      await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
+      await browser.evaluate(`(()=>{const ui=ssxQA.ui(),e=ui.courses.find(x=>x.code==='ARA1'&&!x.rivalMode);ui.startSingleEvent(e);return 1})()`);
+      await browser.waitFor(`document.getElementById('stage')?.dataset.screen === 'ctm-objectives' || !!document.body.dataset.loadError`, 300000);
+      await browser.waitFor('!!window.ssxEffects?.core', 60000);
+      if (!(await browser.evaluate('!!window.ssxEffects.core._pad_state_save'))) return null;
+      await browser.evaluate(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));
+        const B=Math.fround(255*new Float32Array(new Uint32Array([0x3b808081]).buffer)[0]),cross=new Array(24).fill(0),none=new Array(24).fill(0);cross[10]=B;
+        ssxQA.padCarry(cross,30);ssxQA.ui().careerUI.play();return 1})()`);
+      await sleep(300);
+      const base = await browser.evaluate('window.__simTrace.ticks.length');
+      await browser.evaluate(`(()=>{const B=Math.fround(255*new Float32Array(new Uint32Array([0x3b808081]).buffer)[0]),cross=new Array(24).fill(0),none=new Array(24).fill(0);cross[10]=B;
+        for(let t=0;t<900;t++){if(t===600)ssxQA.padCarry(cross,6);ssxQA.advance(1,t<260||(t>=600&&t<640)?cross:none);}
+        ssxQA.ui().careerUI.giveUp();return 1})()`);
+      let screen = '';
+      for (let k = 0; k < 40 && !/results|award|records/.test(screen); k++) {
+        await browser.evaluate('(()=>{for(let i=0;i<20;i++)ssxQA.advance(1,new Array(24).fill(0));return 1})()');
+        screen = await browser.evaluate('ssxQA.ui().screen');
+      }
+      const F = await browser.evaluate('ssxQA.replay().finishTick');
+      const events = await browser.evaluate(`JSON.stringify(ssxQA.replay().recording.events.map((e)=>e.kind+'@'+e.tick))`);
+      await sleep(400);
+      const repStart = await browser.evaluate('window.__simTrace.ticks.length');
+      for (let i = 0; i <= F; i += 400) await browser.evaluate(`(()=>{const r=ssxQA.replay();for(let k=0;k<400&&r.tick<=${F};k++)r.frame(1/60);return r.tick})()`);
+      const live = await browser.evaluate(`window.__simTrace.ticks.slice(${base},${base + F + 1})`);
+      const rep = await browser.evaluate(`window.__simTrace.ticks.slice(${repStart},${repStart + F + 1})`);
+      let first = rep.length === F + 1 ? -1 : -2;
+      for (let i = 0; i <= F && first === -1; i++) if (live[i] !== rep[i]) first = i;
+      return { F, first, events };
+    };
+    const on = await padRun(true);
+    if (on) {
+      const off = await padRun(false);
+      if (on.first !== -1) failures.push(`PADSTATE: with replayPadState the replay leaves the live run at tick ${on.first} of ${on.F + 1} (events ${on.events})`);
+      rows.push(`PADSTATE (Cross held into the start, a press in a pause): replayPadState on exact ${on.first === -1} (${on.F + 1} ticks, events ${on.events}); off leaves at ${off.first}`);
+    } else rows.push('PADSTATE: this core has no pad_state_save (skipped)');
+  }
   // A Conquer the Mountain free ride (a streamed world: no replay there on the PS2, no camera-triggers.json) asks for no triggers
   if (!only || only.has('MOUNTAIN')) {
     await browser.goto(`${server.origin}/manifest.webmanifest`);

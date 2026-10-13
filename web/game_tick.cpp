@@ -1,7 +1,8 @@
 // The game tick's core sequence (docs/core-migration.md slice M2, pv coreTick): the core calls web/game-tick.js simulate
 // made, in its order, as a few exports the page calls with its own state (the host state stays in JS for now):
 //   tick_begin   pad_tick, race_begin, step_rider, a rescue's reset_animation, animation_tick and its reads, race_end, the
-//                stage-teleport re-read (one PS2 game update up to the rider pass 121818)
+//                stage-teleport re-read (one PS2 game update up to the rider pass 121818); also as its four parts, tick_input,
+//                race_begin, tick_rider and tick_progress
 //   tick_mid     a solo run's rider FX passes and section activation 0x101B60 after 121818 (with computer riders the rider
 //                manager runs them: web/ai-racers.js endTick)
 //   tick_end     the camera (DEFAULT_3 after every rider pass, 0x230D7C), a replay's camera, the trick name, the finish reads
@@ -66,16 +67,42 @@ float bitsOf(uint32_t v) {
 //   [40..58] animation_info        [59..70] pose_physical (animated, or re-read after a teleport)   [71..78] race_end
 //   [79] flags: 1 rescue, 2 placement, 4 animated, 8 pose re-read after a teleport, 16 teleport count known
 //   [80] lastRescues out  [81] lastResetPlacement out  [82] the teleport count  [83] the pose copy (pointer bits, boneCount x 7)
-extern "C" EMSCRIPTEN_KEEPALIVE float* tick_begin(const float* pad, float lastRescues, float lastResetPlacement, int animationReady, int boneCount,
-                                                  int teleportKnown, float teleportCount) {
+// tick_begin is tick_input, race_begin, tick_rider and tick_progress in a row; a comparer with its own reads between them calls
+// the four itself (the same code).
+namespace {
+float* tickRecord() {
     RIDER_LOCAL static float out[96];
+    return out;
+}
+std::vector<float>& tickPose() {
     RIDER_LOCAL_LAZY static std::vector<float> pose;
-    std::memset(out, 0, sizeof out);
-    uint32_t flags = 0;
+    return pose;
+}
+uint32_t recordFlags() {
+    return std::bit_cast<uint32_t>(tickRecord()[79]);
+}
+void setRecordFlags(uint32_t flags) {
+    tickRecord()[79] = bitsOf(flags);
+}
+}  // namespace
+
+// One consumed pad sample: the provider 0x127998 and the controller's command words (pad_tick). Starts a new record.
+extern "C" EMSCRIPTEN_KEEPALIVE float* tick_input(const float* pad) {
+    float* out = tickRecord();
+    std::memset(out, 0, 96 * sizeof(float));
+    std::memcpy(out, pad_tick(pad), 24 * sizeof(float));
+    return out;
+}
+
+// The rider's motion and pose (121068..121728 for this rider): step_rider, a rescue's reset_animation, animation_tick and the reads
+// after it. command: pad_tick's 24 floats (tick_begin: the record's own). tweakWord: 1 the command's tweak word as animation_tick's
+// tweak (pv padTweak), 0 the boost word (the page before it).
+extern "C" EMSCRIPTEN_KEEPALIVE float* tick_rider(const float* command, float lastRescues, float lastResetPlacement, int animationReady, int boneCount,
+                                                  int tweakWord) {
+    float* out = tickRecord();
     float cmd[24];
-    std::memcpy(cmd, pad_tick(pad), sizeof cmd);
-    std::memcpy(out, cmd, sizeof cmd);
-    race_begin();
+    std::memcpy(cmd, command, sizeof cmd);
+    uint32_t flags = recordFlags();
     float state[16];
     std::memcpy(state, step_rider(cmd[0], jsInt(cmd[6]), truthy(cmd[2]) ? 1 : 0, jsInt(cmd[7])), sizeof state);
     // a rescue (the forced reset's count, state [13]): the page's animation restarts (web/game-tick.js)
@@ -86,15 +113,13 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* tick_begin(const float* pad, float lastRe
             reset_animation();
         }
     }
-    float* info = out + 40;
-    float* posed = out + 59;
     if (animationReady) {
-        // the page passes the boost word as the tweak argument too (docs/core-migration.md F1a)
-        const float* p = animation_tick(state[7], cmd[10], cmd[11], state[9], jsInt(state[8]), jsInt(cmd[6]), jsInt(cmd[8]), jsInt(cmd[7]), jsInt(cmd[7]), 0,
+        const int tweak = tweakWord ? jsInt(cmd[12]) : jsInt(cmd[7]);
+        const float* p = animation_tick(state[7], cmd[10], cmd[11], state[9], jsInt(state[8]), jsInt(cmd[6]), jsInt(cmd[8]), tweak, jsInt(cmd[7]), 0,
                                         state[15], cmd[13]);
-        pose.assign(p, p + size_t(boneCount > 0 ? boneCount : 0) * 7);
-        std::memcpy(info, animation_info(), 19 * sizeof(float));
-        std::memcpy(posed, pose_physical(), 12 * sizeof(float));
+        tickPose().assign(p, p + size_t(boneCount > 0 ? boneCount : 0) * 7);
+        std::memcpy(out + 40, animation_info(), 19 * sizeof(float));
+        std::memcpy(out + 59, pose_physical(), 12 * sizeof(float));
         std::memcpy(state, rider_state(), sizeof state);
         const float placements = reset_info()[2];
         if (!(placements == lastResetPlacement)) {
@@ -103,28 +128,42 @@ extern "C" EMSCRIPTEN_KEEPALIVE float* tick_begin(const float* pad, float lastRe
         }
         flags |= 4;
     }
-    // course events (rider finish 0x125108 -> camera 0x162258) precede the camera update
+    std::memcpy(out + 24, state, sizeof state);
+    out[80] = lastRescues;
+    out[81] = lastResetPlacement;
+    out[83] = bitsOf(tickPose().data());
+    setRecordFlags(flags);
+    return out;
+}
+
+// The rider's course progress 121818 (race_end: the course events, the finish 0x125108, the stage triggers), then the
+// stage-teleport re-read: builtin 34 (a Metro-City phone booth / water tower) placed the rider inside race_end.
+extern "C" EMSCRIPTEN_KEEPALIVE float* tick_progress(int teleportKnown, float teleportCount) {
+    float* out = tickRecord();
+    uint32_t flags = recordFlags();
     std::memcpy(out + 71, race_end(), 8 * sizeof(float));
-    // Stage builtin 34 (a Metro-City phone booth / water tower) placed the rider inside race_end: the placed state and pose
     const float n = stage_teleport_info()[0];
     if (!teleportKnown || !(n == teleportCount)) {
         if (teleportKnown && n > 0) {
-            flags |= 2;
-            lastResetPlacement = reset_info()[2];
-            std::memcpy(state, rider_state(), sizeof state);
-            std::memcpy(posed, pose_physical(), 12 * sizeof(float));
-            flags |= 8;
+            flags |= 2 | 8;
+            out[81] = reset_info()[2];
+            std::memcpy(out + 24, rider_state(), 16 * sizeof(float));
+            std::memcpy(out + 59, pose_physical(), 12 * sizeof(float));
         }
         teleportCount = n;
     }
     flags |= 16;
-    std::memcpy(out + 24, state, sizeof state);
-    out[79] = bitsOf(flags);
-    out[80] = lastRescues;
-    out[81] = lastResetPlacement;
     out[82] = teleportCount;
-    out[83] = bitsOf(pose.data());
+    setRecordFlags(flags);
     return out;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE float* tick_begin(const float* pad, float lastRescues, float lastResetPlacement, int animationReady, int boneCount,
+                                                  int teleportKnown, float teleportCount, int tweakWord) {
+    tick_input(pad);
+    race_begin();
+    tick_rider(tickRecord(), lastRescues, lastResetPlacement, animationReady, boneCount, tweakWord);
+    return tick_progress(teleportKnown, teleportCount);
 }
 
 // A solo run's passes after 121818 (web/game-tick.js: no computer riders): the rider FX pass, then section activation.

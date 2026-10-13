@@ -185,7 +185,10 @@ static bool rider_pairs_hosted(){return (riderHostFlags&2)!=0;}
 // rider's 121750 reaches it, its motion owner is still ground (0) -- crash entries (10EB30 from 13F488)
 // start sliding, and rider pairs see a grounded actor. core.cpp's step_rider has already left the ground.
 RIDER_LOCAL static bool groundDeparturePending=false;
-static void rider_pair_point(){if(riderHostFlags&2)js_rider_pairs();} // 0x107888 inside this rider's 121750
+// pv coreRiderManager (riderHostFlags 8): the core's rider manager (web/rider_manager.cpp) runs the stages and the pairs.
+extern "C" void rider_manager_pairs();extern "C" void rider_manager_after_pose();
+extern "C" int rider_host_flags(){return riderHostFlags;}
+static void rider_pair_point(){if(riderHostFlags&2){if(riderHostFlags&8)rider_manager_pairs();else js_rider_pairs();}} // 0x107888 inside this rider's 121750
 static void record_snow_crash(std::array<float,3>,std::array<float,3>,float,int);
 #include "rail_scoring.inc"
 static void release_air_control(){
@@ -1356,7 +1359,7 @@ for(int i=0;i<4;i++)info[6+i]=animationPost.presentationQuaternion[i];info[10]=a
 }
 EMSCRIPTEN_KEEPALIVE float* animation_tick(float speed,float turn,float braking,float charge,int grounded,int jumpHeld,int mask,int tweak,int boost,float predictedLanding,float impact,float flip){
  animation_pose(speed,turn,braking,charge,grounded,jumpHeld,mask,tweak,boost,predictedLanding,impact,flip);
- if(riderHostFlags&1)js_rider_after_pose(); // the other riders' passes up to their poses (web/ai-racers.js)
+ if(riderHostFlags&1){if(riderHostFlags&8)rider_manager_after_pose();else js_rider_after_pose();} // the other riders' passes up to their poses (web/ai-racers.js; web/rider_manager.cpp)
  return animation_post_phase();
 }
 EMSCRIPTEN_KEEPALIVE float* animation_post(){return animation_post_phase();}

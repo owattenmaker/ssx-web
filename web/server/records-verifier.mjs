@@ -10,6 +10,11 @@
 //   MP_RECORDS_VERIFIER_TOKEN_FILE); --profile: Chrome's own profile (default ./verifier-profile); --once: work the queue, then exit;
 //   --interval: seconds between queue checks (60); --max-load: skip while the 1-minute load average per core is above this (0.6);
 //   --per-cycle: runs per check (10); --timeout: seconds per run (900); --reload: a fresh page every N runs (5).
+// The session lane (docs/big-multiplayer.md TA-2, web/server/sessions.mjs): each cycle first runs at most --session-batch (4) runs of
+// the time-attack sessions' queue (GET /mp/session/verifier/queue; a server without sessions answers 404 and nothing changes). It
+// runs while online races and sessions are on (their podiums wait for it), under its own load bound --session-max-load (0.9), with
+// --session-timeout (180 s) per run; while a session is active the page stays open and the queue is checked every
+// --session-interval seconds (3). The records lane after it is as before, so a busy session never starves it of its turn.
 // Gentle on the host: Chrome runs under `nice -n 19`, one run at a time, only while no online race is on (/mp/status) and the load is
 // low, and it is closed whenever the queue is empty. Every run logs its wall time, the page's simulation time, Chrome's CPU time and
 // its peak resident memory (the process tree's RSS). Dependency-free: imports only node:.
@@ -26,6 +31,11 @@ const INTERVAL = +opt('interval', 60) * 1000, MAX_LOAD = +opt('max-load', 0.6), 
 // a fresh page every 5 runs: several runs on one page are exact since the page's verify keeps its replay active (2026-10-01:
 // before, main.js replayFrame stopped it and the rest of the run used this browser's stored relationship tables)
 const RELOAD = +opt('reload', 5);
+const SESSION_BATCH = +opt('session-batch', 4), SESSION_MAX_LOAD = +opt('session-max-load', 0.9);
+const SESSION_TIMEOUT = +opt('session-timeout', 180) * 1000, SESSION_INTERVAL = +opt('session-interval', 3) * 1000;
+// the two lanes: the page's verify call, where the result goes, the run's time limit, the log tag
+const RECORDS_LANE = { fn: 'ssxVerify', result: '/mp/records/verifier/result', timeout: TIMEOUT, tag: '' };
+const SESSION_LANE = { fn: 'ssxVerifySession', result: '/mp/session/verifier/result', timeout: SESSION_TIMEOUT, tag: 'session ' };
 const CHROME = opt('chrome', process.env.CHROME) || ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium',
   '/usr/bin/google-chrome', '/usr/bin/chromium'].find((p) => fs.existsSync(p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,7 +57,19 @@ async function busy() {
 
 // ---- Chrome over the DevTools protocol ----
 let chrome = null;
+// A Chrome started right after the last one was killed on the same profile can hand off to its exiting processes and never open
+// its DevTools port (seen once in the session lane's first start, 2026-10-13): one more try after a pause.
 async function startChrome() {
+  try {
+    return await startChromeOnce();
+  } catch (e) {
+    if (e.message !== 'Chrome did not start') throw e;
+    log('chrome did not start; trying again');
+    await sleep(2000);
+    return startChromeOnce();
+  }
+}
+async function startChromeOnce() {
   fs.mkdirSync(PROFILE, { recursive: true });
   const port = 29500 + Math.floor(Math.random() * 400);
   const proc = spawn('/usr/bin/nice', ['-n', '19', CHROME, `--remote-debugging-port=${port}`, `--user-data-dir=${PROFILE}`, '--headless=new', '--mute-audio',
@@ -95,25 +117,25 @@ function treeStats() {
   return { cpu: mine.reduce((s, p) => s + secs(p.time), 0), rss: mine.reduce((s, p) => s + p.rss, 0) / 1024 };
 }
 
-async function verifyOne(item, core) {
+async function verifyOne(item, core, lane = RECORDS_LANE) {
   if (chrome.runs >= RELOAD) await openPage();
   const before = treeStats(), t0 = Date.now(); let peak = before.rss;
   const sampler = setInterval(() => { peak = Math.max(peak, treeStats().rss); }, 2000);
   let res;
-  try { res = await chrome.evaluate(`window.ssxVerify(${JSON.stringify(item.id)})`, TIMEOUT); }
+  try { res = await chrome.evaluate(`window.${lane.fn}(${JSON.stringify(item.id)})`, lane.timeout); }
   // a run that keeps the page past the timeout is not reproduced (a forged replay must not stay listed by stalling the verifier);
   // any other page failure is 'could not run' (tried again, at most three times per core)
-  catch (e) { res = e.message === 'timeout' ? { ok: false, reason: `no result in ${TIMEOUT / 1000} s` } : { ok: null, reason: `page: ${e.message}` }; }
+  catch (e) { res = e.message === 'timeout' ? { ok: false, reason: `no result in ${lane.timeout / 1000} s` } : { ok: null, reason: `page: ${e.message}` }; }
   finally { clearInterval(sampler); }
   chrome.runs++;
   const after = treeStats(); peak = Math.max(peak, after.rss);
   const stats = { wallS: +((Date.now() - t0) / 1000).toFixed(1), simMs: res?.ms ?? null, chromeCpuS: +(after.cpu - before.cpu).toFixed(1), peakMB: Math.round(peak) };
   const body = { id: item.id, ok: res?.ok ?? null, reason: res?.reason ?? 'no result', core: res?.core ?? core, value: res?.value ?? null };
-  const out = await api('/mp/records/verifier/result', { method: 'POST', body: JSON.stringify(body) }).catch((e) => ({ error: e.message }));
-  log(`run ${item.id} ${item.event} claim ${item.claim}${item.flagged ? ' (flagged)' : ''}: ${body.ok === null ? 'not run' : body.ok ? 'reproduced' : 'NOT reproduced'} (${body.reason})`,
-    `-> ${out.action ?? out.error}`, JSON.stringify(stats));
+  const out = await api(lane.result, { method: 'POST', body: JSON.stringify(body) }).catch((e) => ({ error: e.message }));
+  log(`${lane.tag}run ${item.id} ${item.event} claim ${item.claim}${item.flagged ? ' (flagged)' : ''}: ${body.ok === null ? 'not run' : body.ok ? 'reproduced' : 'NOT reproduced'} (${body.reason})`,
+    `-> ${out.action ?? out.status ?? out.error}`, JSON.stringify(stats));
   if (res?.ok === null || /no result in/.test(res?.reason ?? '')) await openPage().catch(() => {});   // start fresh for the next
-  return { ...body, stats, action: out.action };
+  return { ...body, stats, action: out.action ?? out.status, lane: lane.tag.trim() || 'records' };
 }
 
 // The build the page serves (/build.json, web/vite-build-id.js), and the core id its page reported for it: the queue is per core
@@ -141,25 +163,57 @@ async function startCheck() {
   stopChrome();
 }
 
+// The session lane: at most SESSION_BATCH runs, best podium candidates first (the server orders the queue). -> {done, active, results}
+async function sessionLane() {
+  let queue;
+  try {
+    queue = await api(`/mp/session/verifier/queue?core=${encodeURIComponent(known.core ?? '')}&limit=${SESSION_BATCH}`);
+  } catch {
+    // no sessions on this server (404) or it is not reachable: the records lane as before
+    return { done: 0, active: 0, results: [] };
+  }
+  const items = queue.items ?? [], active = queue.active ?? 0, results = [];
+  if ((!items.length && !active) || gpuOk === false) return { done: 0, active, results };
+  if (os.loadavg()[0] / os.cpus().length > SESSION_MAX_LOAD) { log(`cycle ${cycles}: session lane skipped (load)`); return { done: 0, active, results }; }
+  try {
+    const build = await pageBuild();
+    if (known.core == null || build !== known.build) {
+      await readCore(build);
+      // the queue skips runs already tried on a core: ask again with the core id now known
+      queue = await api(`/mp/session/verifier/queue?core=${encodeURIComponent(known.core ?? '')}&limit=${SESSION_BATCH}`);
+    }
+    // an active session keeps a page ready, so a podium candidate does not wait for Chrome and the page load
+    if (!chrome) { await startChrome(); await openPage(); }
+    for (const item of queue.items ?? []) results.push(await verifyOne(item, known.core, SESSION_LANE));
+  } catch (e) { log(`cycle ${cycles} session lane failed:`, e.message); stopChrome(); known.core = null; }
+  return { done: results.length, active, results };
+}
+
 async function cycle() {
   cycles++;
-  const why = await busy(); if (why) { log(`cycle ${cycles}: skipped (${why})`); return { done: 0, skipped: why }; }
+  const session = await sessionLane();
+  const keep = session.done > 0 || session.active > 0;
+  const why = await busy();
+  if (why) {
+    log(`cycle ${cycles}: skipped (${why})`);
+    return { done: session.done, skipped: why, active: session.active, results: session.results };
+  }
   if (gpuOk === false) { log(`cycle ${cycles}: !!! WEBGPU UNAVAILABLE: nothing can be verified`); return { done: 0 }; }
-  let done = 0; const results = [];
+  let done = 0; const results = [...session.results];
   try {
     const build = await pageBuild();
     if (known.core == null || build !== known.build) await readCore(build);   // a deploy: the new build's core id
     const { items = [] } = await api(`/mp/records/verifier/queue?core=${encodeURIComponent(known.core ?? '')}&limit=${PER_CYCLE}`);
     log(`cycle ${cycles}: ${items.length} queued (core ${known.core})`);
-    if (!items.length) { stopChrome(); return { done: 0, results }; }
+    if (!items.length) { if (!keep || ONCE) stopChrome(); return { done: session.done, results, active: session.active }; }
     if (!chrome) { await startChrome(); await openPage(); }
     for (const item of items) {
       const b = await busy(); if (b) { log(`cycle ${cycles}: paused (${b})`); break; }
       results.push(await verifyOne(item, known.core)); done++;
     }
   } catch (e) { log(`cycle ${cycles} failed:`, e.message); stopChrome(); known.core = null; }
-  if (ONCE || !done) stopChrome();
-  return { done, results };
+  if (ONCE || (!done && !keep)) stopChrome();
+  return { done: done + session.done, results, active: session.active };
 }
 
 process.on('SIGTERM', () => { stopChrome(); process.exit(0); });
@@ -172,4 +226,4 @@ if (ONCE) {
   console.log('VERIFIER_RESULTS ' + JSON.stringify(total));
   process.exit(0);
 }
-for (;;) { const r = await cycle(); await sleep(r.done ? 1000 : INTERVAL); }
+for (;;) { const r = await cycle(); await sleep(r.done ? 1000 : r.active ? SESSION_INTERVAL : INTERVAL); }

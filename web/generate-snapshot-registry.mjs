@@ -11,7 +11,7 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const OUT = path.join(ROOT, 'web/generated/snapshot');
 // The units with RIDER_LOCAL state (web/build-core.sh compiles them; each ends with its registry include).
 export const UNITS = ['core', 'animation_bridge', 'environment_bridge', 'world_bridge', 'race_bridge', 'rail_bridge', 'prediction_bridge',
-  'rider_lighting_bridge', 'race_world', 'attribute_bridge'];
+  'rider_lighting_bridge', 'race_world', 'attribute_bridge', 'rider_manager'];
 // Kept as they are at a restore (not in the PS2's 0x26D818 list, or the snapshot's own state): name -> reason. A restore leaves
 // their current value. Items the PS2 re-derives after its restore are reset by the restore's own calls (web/world_snapshot.hpp).
 import { SNAPSHOT_KEEP, SNAPSHOT_OWN, SNAPSHOT_CURRENT, SNAPSHOT_REDERIVED } from './snapshot-policy.mjs';

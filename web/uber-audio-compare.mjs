@@ -35,6 +35,15 @@ export function create({ core, captureManifest, capturePath }) {
   const clipEvent = (clip, bit) => { const e = clips?.clips?.[String(clip >> 8)]; return e ? e[bit] ?? null : null; }; // game-audio.js
   // The race phase / countdown (race_end's info, as main.js passes it to game-audio): countdown beeps 0x4E and GO 0x5E / 0x62.
   let raceInfoPtr = 0; const raceEnd = core._race_end; core._race_end = (...a) => (raceInfoPtr = raceEnd(...a));
+  // (a comparer on the core's tick parts: tick_progress runs race_end and keeps its info at record [71..78], web/game_tick.cpp)
+  if (core._tick_progress) {
+    const tickProgress = core._tick_progress;
+    core._tick_progress = (...a) => {
+      const record = tickProgress(...a);
+      raceInfoPtr = record + 71 * 4;
+      return record;
+    };
+  }
   const game = createSfxGame({ engine: { busGain: () => 1 }, sfx, speech, crowd, world: null, music, random: () => 0, animationEvents: clipEvent });
   const courseIndex = { ARA1: 0, BRA2: 1, BHP1: 11 }[captureManifest.location] ?? 0;
   game.start({ courseIndex, halfPipe: captureManifest.location === 'BHP1' });

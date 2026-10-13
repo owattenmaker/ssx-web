@@ -5,6 +5,7 @@
 // state exactly like engine/original_command.cpp) and its post-step state is compared with
 // record N+1.
 import fs from 'node:fs';
+import { pv } from './pv-flags.js'; // SSX_PV=padTweak (node): the page's ?pv= switches
 // CORE_JS=path/core.js: compare with a private core (CORE_OUT=dir sh web/build-core.sh) instead of web/runtime.
 const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
 import { loadStageWorld, compareStageWorld, loadSnapshots } from './stage-world-compare.mjs';
@@ -38,12 +39,21 @@ const exactAssetPath = (p) => {
 const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const json = (p) => JSON.parse(read(p));
 const core = await createCore();
-// PAGE_SEQUENCE=1 (docs/core-migration.md M2b): the pad path's tick as the page makes it (web/game-tick.js simulate): the rider FX
-// passes deferred to after race_end (main.js set_fx_deferred), the boost word as animation_tick's tweak, a rescue's reset_animation,
-// then fx_pass(-1) and section_pass after every race_end. Off: this comparer's own sequence.
-const pageSequence = process.env.PAGE_SEQUENCE === '1';
+// The pad path's tick in the PS2's order, as the page makes it (web/game-tick.js simulate; docs/core-migration.md M2b): the rider FX
+// passes deferred to after race_end (0x128F20..0x1290F0 run after every rider's 121818; main.js set_fx_deferred), then section
+// activation 0x101B60 (section_pass) on every tick, a rescue's reset_animation, and animation_tick's tweak as the page passes it
+// (pv padTweak: the command's tweak word, else the boost word). The default since 2026-10-13 (534 / 534 gave the same reports either
+// way). PAGE_SEQUENCE=0: the old order (the FX inside animation_tick, before 121818; section_pass only with a stage world or a peak
+// world; the tweak word), kept for one release for tooling that needs it.
+const pageSequence = process.env.PAGE_SEQUENCE !== '0';
 if (pageSequence) core._set_fx_deferred(1);
 let pageRescues = null; // (PAGE_SEQUENCE) the page's lastRescues: rider_state[13] at the start, then after each rescue
+// With a core that has them, the page sequence runs the core's own tick parts (web/game_tick.cpp tick_rider, tick_progress, as
+// web/game-tick.js with pv coreTick) and takes the finish celebration from the page's rule (tick_finish) instead of mirroring the
+// record's rider +0x100, except at a freestyle course without --finish-place: there the page's place comes from its career
+// standings (web/career.js finishPlace with the posted scores), which a capture does not have, so the record's flag stays.
+const coreTick = pageSequence && !!core._tick_rider;
+const commandPtr = coreTick ? core._malloc(96) : 0;
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
 // console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact' && core._ps2_arith_exact) {
@@ -70,6 +80,9 @@ const str = (path) => put(Buffer.concat([read(path), Buffer.from([0])]));
 // Course: --course CODE, else the capture manifest's location (tools/ps2_capture.py), else Snow Jam.
 const courseManifest = JSON.parse(fs.readFileSync(capturePath.replace(/\.bin$/, '.capture.json'), 'utf8'));
 const course = args.includes('--course') ? args[args.indexOf('--course') + 1] : (courseManifest.location || 'ARA1');
+// (coreTick) the page's celebration rule, or the record's flag at a freestyle course without the host's place (above)
+const freestyleCourse = ['ABA1', 'CBA2', 'EBA3', 'BHP1', 'CHP2', 'EHP3', 'ASS1', 'DSS2', 'ESS3'].includes(course);
+const celebrationRule = coreTick && (finishPlace != null || !freestyleCourse);
 const initialPath = course === 'ARA1' ? 'ANIMATIONS/initial.json' : course + '/initial.json';
 // --human RIDER_X: another selectable rider as the human, with its package's settings.json over the course initial.json as the page
 // applies them (web/character-roster.js humanSettings; a cheat skin rides on Zoe: composeCheat). Use it with --event on a capture from
@@ -375,17 +388,39 @@ function padFrame(c) {
     if (process.env.VISUAL_CHECK) console.error('visual seed: browser words before the copy are', drawsBetween(rec, Array.from(w)), 'draws ahead of the record (-1: not on the path)', drawsBetween(Array.from(w), rec), 'behind');
     w.set(rec); if (process.env.VISUAL_CHECK) globalThis.__visAfterBegin = Array.from(w); }
   if (pageSequence && pageRescues === null) pageRescues = f32(core._rider_state(), 16)[13];
-  const stepped = f32(core._step_rider(c.turn, c.jump, c.brake ? 1 : 0, c.boost), 16); phases?.push(vw());
-  const state = pageSequence ? stepped.slice() : stepped;
-  if (pageSequence && state[13] !== pageRescues) {
-    pageRescues = state[13];
-    core._reset_animation();
+  let state;
+  if (coreTick) {
+    // the command's fields at their pad_tick places (web/input_bridge.inc padOut)
+    const command = new Float32Array(24);
+    command[0] = c.turn;
+    command[2] = c.brake;
+    command[6] = c.jump;
+    command[7] = c.boost;
+    command[8] = c.grab;
+    command[10] = c.animTurn;
+    command[11] = c.animBrake;
+    command[12] = c.tweak;
+    command[13] = c.animFlip;
+    core.HEAPF32.set(command, commandPtr >> 2);
+    const record = f32(core._tick_rider(commandPtr, pageRescues, 0, 1, 0, pv('padTweak') ? 1 : 0), 96);
+    pageRescues = record[80];
+    state = record.slice(24, 40);
+    phases?.push(vw());
+    phases?.push(vw());
+  } else {
+    const stepped = f32(core._step_rider(c.turn, c.jump, c.brake ? 1 : 0, c.boost), 16); phases?.push(vw());
+    state = pageSequence ? stepped.slice() : stepped;
+    if (pageSequence && state[13] !== pageRescues) {
+      pageRescues = state[13];
+      core._reset_animation();
+    }
+    const tweak = pageSequence && !pv('padTweak') ? c.boost : c.tweak;
+    core._animation_tick(state[7], c.animTurn, c.animBrake, state[9], state[8], c.jump, c.grab, tweak, c.boost, 0, state[15], c.animFlip); phases?.push(vw());
   }
-  const tweak = pageSequence ? c.boost : c.tweak;
-  core._animation_tick(state[7], c.animTurn, c.animBrake, state[9], state[8], c.jump, c.grab, tweak, c.boost, 0, state[15], c.animFlip); phases?.push(vw());
   const pose = f32(core._pose_physical(), 12);
   boothInject(); // PS2 booth-contact injection captures (docs/stage-teleport.md): this tick's 121818 runs the booth program
-  core._race_end(); // course events (finish -> camera 0x162258) precede the camera update, as in main.js
+  // course events (finish -> camera 0x162258) precede the camera update, as in main.js
+  const finishedNow = coreTick ? f32(core._tick_progress(0, 0), 96)[73] : (core._race_end(), 0);
   if (globalThis.__beforeSectionPass) { const f = globalThis.__beforeSectionPass; globalThis.__beforeSectionPass = null; f(); } // --station-hold with STATION_HOLD_EARLY
   if (pageSequence) core._fx_pass(-1);
   if (stageSnaps || peakWorld || pageSequence) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)
@@ -396,6 +431,8 @@ function padFrame(c) {
   const vis = () => core._visual_rng_words ? Array.from(new Uint32Array(core.HEAPU8.buffer, core._visual_rng_words(), 6)) : null;
   const visBeforeCamera = process.env.VISUAL_TRACE ? vis() : null;
   const cam = Array.from(f32(core._step_camera_head(pose[9], pose[10], pose[11]), 9));
+  // the page's finish celebration rule (web/game_tick.cpp tick_finish): a freestyle place given by race_end's host, else nothing alone
+  if (celebrationRule && finishedNow) core._tick_finish(finishPlace != null ? 1 : 0, 0, 0, 0);
   if (visBeforeCamera) globalThis.__visTrace = [visBeforeCamera, vis()];
   const algo = Array.from(f32(core._camera_algorithm_info(), 6));
   const camWords = core._camera_state_words ? Uint32Array.from(new Uint32Array(core.HEAPU8.buffer, core._camera_state_words(), CAMERA_WORDS)) : null;
@@ -693,7 +730,7 @@ for (let i = 0; i + 1 < records.length; i++) {
     console.error('rumble', ps2.tick, ps2.control, +dv.getFloat32(o + 0x1c, true).toFixed(3), +dv.getFloat32(o + 0x20, true).toFixed(3), JSON.stringify(ev), +Math.hypot(...records[i].velocity).toFixed(2), +Math.hypot(...ps2.velocity).toFixed(2), +f32(core._collision_reaction_info(), 10)[8].toFixed(3), +f32(core._crash_info(), 12)[11].toFixed(3), f32(core._crash_info(), 12)[1], ...(captureManifest.layout?.watches?.length >= 1 && captureManifest.layout.watches[0].length >= 8 ? [0, 4].map((k) => +dv.getFloat32((i + 1) * RECORD + captureManifest.layout.watch_offset + k, true).toFixed(3)) : [])); } // + the first --watch window's two floats (rumble captures: owner +0xDFC, +0xE00)
   // Rider +0x100 (finish celebration) is cleared by the event's results handler at the finish (125108 -> 238358 ->
   // 0x239230/0x23A760 place rules): the host decides it, so mirror the recorded value into finish_celebrate.
-  if (core._finish_celebrate) { const flag = dv.getInt32((i + 1) * RECORD + 32 + 0x100 - 0x100, true); if (flag !== globalThis.__celebrate) { globalThis.__celebrate = flag; core._finish_celebrate(flag ? 1 : 0); } }
+  if (core._finish_celebrate && !celebrationRule) { const flag = dv.getInt32((i + 1) * RECORD + 32 + 0x100 - 0x100, true); if (flag !== globalThis.__celebrate) { globalThis.__celebrate = flag; core._finish_celebrate(flag ? 1 : 0); } }
   if (process.env.MAGNET_TRACE && core._stage_world_magnets) { const q = core._stage_world_magnets() >> 2, F = new Float32Array(core.HEAPU8.buffer), n = F[q]; const want = +process.env.MAGNET_TRACE;
     for (let k = 0; k < n; k++) { const m = Array.from(F.subarray(q + 1 + 10 * k, q + 8 + 10 * k)); if (m[0] === want && ps2.tick >= +(process.env.MAGNET_FROM || 0) && ps2.tick <= +(process.env.MAGNET_TO || 1e9)) console.error('magnet', ps2.tick, JSON.stringify(m.map((x) => +x.toFixed(2))), 'rider', JSON.stringify(Array.from(f32(core._rider_state(), 3)).map((x) => +(x * 100).toFixed(1)))); } }
   if (process.env.POSE_DUMP && process.env.POSE_DUMP.split(',').map(Number).includes(ps2.tick)) console.error('pose', ps2.tick, JSON.stringify(Array.from(f32(core._pose_physical(), 12))), JSON.stringify(Array.from(f32(core._world_pose_bones(), 1 + 7 * 22)).filter((_, k) => [0, 5, 10, 15, 18, 21].some((b) => k >= 1 + 7 * b && k < 4 + 7 * b))));

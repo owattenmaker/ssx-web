@@ -1,5 +1,12 @@
 # PS2 float arithmetic: hardware-exact EE FPU / VU0
 
+> **Comparer tick order (2026-10-13, core-migration agent):** compare-ps2-capture.mjs and compare-ai-capture.mjs now run the page's
+> (and the PS2's) tick order by default: the rider FX passes after race_end, section_pass every tick, a rescue's reset_animation, the
+> shared visual stream, and on a core with tick_rider the core's own tick parts and the page's finish-celebration rule. 534 / 534 gave
+> the same reports as the old order. `PAGE_SEQUENCE=0` restores the old order for one release. See
+> [core-migration.md](core-migration.md) "M2b".
+
+
 Status 2026-10-05 (PS2 arithmetic agent). The target is the PS2 hardware, not the emulator. Contents:
 
 1. What the hardware does, op by op, and the evidence for it.

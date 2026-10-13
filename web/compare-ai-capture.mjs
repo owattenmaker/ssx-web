@@ -43,10 +43,17 @@ const exactAssetPath = (p) => {
 const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const text = (p) => read(p).toString('utf8');
 const human = await createCore();
-// PAGE_SEQUENCE=1 (docs/core-migration.md M2b): the human's tick as the page makes it (web/game-tick.js simulate): the boost word as
-// animation_tick's tweak and a rescue's reset_animation. Off: this comparer's own sequence.
-const pageSequence = process.env.PAGE_SEQUENCE === '1';
+// The human's tick as the page makes it (web/game-tick.js simulate; docs/core-migration.md M2b): a rescue's reset_animation, the
+// one visual stream (as web/ai-race.js), and animation_tick's tweak as the page passes it (pv padTweak: the command's tweak word,
+// else the boost word). The default since 2026-10-13 (534 / 534 gave the same reports either way). PAGE_SEQUENCE=0: the old human
+// tick (the tweak word, no rescue reset, --shared-visual only when asked), kept for one release for tooling that needs it.
+const pageSequence = process.env.PAGE_SEQUENCE !== '0';
 let pageRescues = null; // (PAGE_SEQUENCE) the page's lastRescues
+// With a core that has them, the human's tick runs the core's own tick parts (web/game_tick.cpp tick_input, tick_rider,
+// tick_progress, as web/game-tick.js with pv coreTick), and its finish celebration is the page's rule (tick_finish after every
+// rider's passes and the camera).
+const coreTick = pageSequence && !!human._tick_rider;
+let humanFinishedNow = 0; // (coreTick) race_end [2] of the human's last tick
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
 // console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact' && human._ps2_arith_exact) {
@@ -250,21 +257,30 @@ const f32 = (core, ptr, n) => new Float32Array(core.HEAPF32.buffer, ptr, n);
 function humanTick(pad) {
   globalThis.__compareStage = 'human';
   human.HEAPF32.set(pad, padPtr >> 2);
-  const o = Array.from(f32(human, human._pad_tick(padPtr), 24));
+  const inputRecord = coreTick ? human._tick_input(padPtr) : 0;
+  const o = Array.from(f32(human, coreTick ? inputRecord : human._pad_tick(padPtr), 24));
   if (process.env.PAD_TICKS) { const [a, b] = process.env.PAD_TICKS.split(':').map(Number), t = globalThis.__compareTick; if (t >= a && t <= b) console.error('padtick', t, BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // (diagnostic: a tick range's pads and commands)
   if (process.env.PAD_TRACE && globalThis.__padTrace > 0) { globalThis.__padTrace--; console.error('pad', BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // PAD_TRACE (diagnostic): the return's first ticks
   globalThis.__compareStage = 'race_begin'; human._race_begin();
   if (pageSequence && pageRescues === null) pageRescues = f32(human, human._rider_state(), 16)[13];
-  globalThis.__compareStage = 'step_rider'; const stepped = f32(human, human._step_rider(o[0], o[6], o[2] ? 1 : 0, o[7]), 16);
-  const state = pageSequence ? stepped.slice() : stepped;
-  if (pageSequence && state[13] !== pageRescues) {
-    pageRescues = state[13];
-    human._reset_animation();
+  if (coreTick) {
+    globalThis.__compareStage = 'tick_rider';
+    const record = f32(human, human._tick_rider(inputRecord, pageRescues, 0, 1, 0, pv('padTweak') ? 1 : 0), 96);
+    pageRescues = record[80];
+  } else {
+    globalThis.__compareStage = 'step_rider'; const stepped = f32(human, human._step_rider(o[0], o[6], o[2] ? 1 : 0, o[7]), 16);
+    const state = pageSequence ? stepped.slice() : stepped;
+    if (pageSequence && state[13] !== pageRescues) {
+      pageRescues = state[13];
+      human._reset_animation();
+    }
+    const tweak = pageSequence && !pv('padTweak') ? o[7] : o[12];
+    globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], tweak, o[7], 0, state[15], o[13]);
   }
-  const tweak = pageSequence ? o[7] : o[12];
-  globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], tweak, o[7], 0, state[15], o[13]);
   const pose = f32(human, human._pose_physical(), 12);
-  globalThis.__compareStage = 'race_end'; human._race_end();
+  globalThis.__compareStage = 'race_end';
+  if (coreTick) humanFinishedNow = f32(human, human._tick_progress(0, 0), 96)[73];
+  else human._race_end();
   if (sharedVisual) globalThis.__pendingCameraHead = [pose[9], pose[10], pose[11]]; else human._step_camera_head(pose[9], pose[10], pose[11]);
 }
 // REPLAY_PROBE: a core's per-subsystem snapshot hashes (core snapshot_hashes: [n, then file index, lo, hi]) by file name.
@@ -279,7 +295,15 @@ function tick(pad, record = null) { if (globalThis.__rep?.recording) globalThis.
   globalThis.__compareStage = 'begin'; racers.beginTick(); humanTick(pad); globalThis.__compareStage = 'end'; racers.endTick();
   if (globalThis.__rep) { const rep = globalThis.__rep, st = [human, ...racers.npcs.map((n) => n.core)].flatMap((c) => Array.from(f32(c, c._reference_motion(), 6))).concat(Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)).map((w) => w | 0));
     if (rep.recording) rep.live.push(st); else if (rep.replaying) { const k = rep.at++, l = rep.live[k]; if (!rep.first && l && st.some((v, j) => Math.fround(v) !== Math.fround(l[j]))) { const j = st.findIndex((v, jj) => Math.fround(v) !== Math.fround(l[jj])); const prev = k > 0 ? rep.live[k - 1].slice(36).map((w) => w >>> 0) : rep.rng, u = (a) => a.slice(36).map((w) => w >>> 0); rep.first = { tick: k, field: j < 36 ? `rider ${Math.floor(j / 6)} ${['x', 'y', 'z', 'vx', 'vy', 'vz'][j % 6]}` : `rng ${j - 36}`, live: l[j], rerun: st[j], liveDraws: drawsBetween(prev, u(l)), rerunDraws: drawsBetween(prev, u(st)) }; } } }
-  if (sharedVisual && globalThis.__pendingCameraHead) { human._step_camera_head(...globalThis.__pendingCameraHead); globalThis.__pendingCameraHead = null; } } // cameras after every rider pass (0x230D7C)
+  if (sharedVisual && globalThis.__pendingCameraHead) { human._step_camera_head(...globalThis.__pendingCameraHead); globalThis.__pendingCameraHead = null; } // cameras after every rider pass (0x230D7C)
+  // the page's finish celebration rule (web/game_tick.cpp tick_finish): a freestyle run's place came from race_end's host; a race
+  // celebrates in the top three (+0xEC of this tick's 10F560 refresh), a backcountry rival challenge only when won
+  if (coreTick && humanFinishedNow) {
+    const backcountry = ['ABC1', 'DBC2', 'EBC3'].includes(courseCode);
+    const freestyle = !backcountry && racers.document?.world?.rank_mode === 2;
+    human._tick_finish(freestyle ? 1 : 0, 1, racers.worldState ? racers.worldState[360] : 0, backcountry ? 1 : 0);
+  }
+}
 
 // ---- event start and pre-anchor grid ticks ----
 // --in-world-ai: a Conquer the Mountain race (0x535C11 = 0, web/stage-collect.js collectStart), so 30C4A8

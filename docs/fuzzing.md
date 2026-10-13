@@ -1,5 +1,12 @@
 # Coverage-guided pad fuzzing (fuzzing agent, 2026-10-05)
 
+> **Comparer tick order (2026-10-13, core-migration agent):** compare-ps2-capture.mjs and compare-ai-capture.mjs now run the page's
+> (and the PS2's) tick order by default: the rider FX passes after race_end, section_pass every tick, a rescue's reset_animation, the
+> shared visual stream, and on a core with tick_rider the core's own tick parts and the page's finish-celebration rule. 534 / 534 gave
+> the same reports as the old order. `PAGE_SEQUENCE=0` restores the old order for one release. See
+> [core-migration.md](core-migration.md) "M2b".
+
+
 The goal is to find the physics and animation divergences between the port's core and the PS2 that hand-made pad scripts miss.
 The method:
 1. Mutate the gated captures' pads.

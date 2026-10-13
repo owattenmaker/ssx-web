@@ -118,6 +118,14 @@ EM_JS(void,js_pair_translate,(int slot,float x,float y,float z),{Module.pairHost
 EM_JS(void,js_pair_velocity,(int slot,float x,float y,float z,int reseed),{Module.pairHost.velocity(slot,x,y,z,reseed);});
 EM_JS(void,js_pair_react,(int slot,int kind,int animation,int attack,const float* event,int other),{Module.pairHost.react(slot,kind,animation,attack,event,other);}); // other: 0x155BF0 relationship event (web/lineup.js)
 EM_JS(uint32_t,js_pair_random,(),{return Module.pairHost.random()>>>0;});
+// pv coreRiderManager: the core's rider manager (web/rider_manager.cpp) answers the callbacks; else the page's pairHost.
+bool rider_manager_native();void rider_manager_pair_view(int,uint32_t*);void rider_manager_pair_translate(int,float,float,float);
+void rider_manager_pair_velocity(int,float,float,float,int);void rider_manager_pair_react(int,int,int,int,const float*,int);uint32_t rider_manager_pair_random();
+static void pair_host_view(int s,uint32_t* out){if(rider_manager_native())rider_manager_pair_view(s,out);else js_pair_view(s,out);}
+static void pair_host_translate(int s,float x,float y,float z){if(rider_manager_native())rider_manager_pair_translate(s,x,y,z);else js_pair_translate(s,x,y,z);}
+static void pair_host_velocity(int s,float x,float y,float z,int reseed){if(rider_manager_native())rider_manager_pair_velocity(s,x,y,z,reseed);else js_pair_velocity(s,x,y,z,reseed);}
+static void pair_host_react(int s,int kind,int animation,int attack,const float* e,int other){if(rider_manager_native())rider_manager_pair_react(s,kind,animation,attack,e,other);else js_pair_react(s,kind,animation,attack,e,other);}
+static uint32_t pair_host_random(){return rider_manager_native()?rider_manager_pair_random():js_pair_random();}
 // Online races (web/net/pair-net.js): an attack hit on a remote rider is reported to its own client.
 EM_JS(void,js_pair_attack,(int victim,int attacker,float x,float y,float z,float amount),{if(Module.pairHost.attack)Module.pairHost.attack(victim,attacker,x,y,z,amount);});
 // Online races: slots whose remote rider has no live state (not yet received, disconnected) take no part in pairs.
@@ -138,7 +146,7 @@ static OriginalPairCallbacks pair_callbacks(){
   auto& raw=pairRaw;auto& bodies=pairBodies;
   auto f=[&](unsigned s,unsigned i){return std::bit_cast<float>(raw[s][i]);};
   auto v3=[&](unsigned s,unsigned i){return terrain_original::Vector{f(s,i),f(s,i+1),f(s,i+2)};};
-  js_pair_view(int(s),raw[s].data());OriginalPairActorView v;v.slot=s;v.kind880=7;v.disabled=world.finished[s]||((pairDisabledMask>>s)&1);
+  pair_host_view(int(s),raw[s].data());OriginalPairActorView v;v.slot=s;v.kind880=7;v.disabled=world.finished[s]||((pairDisabledMask>>s)&1);
   auto& b=bodies[s];b=BodyCollisionVolume{};if(raw[s][0]){b.count=raw[s][1];b.activeMask=raw[s][2];b.broadCenterCm=v3(s,3);b.broadRadiusCm=f(s,6);
    for(unsigned i=0;i<b.count&&i<20;++i){b.spheres[i].centerCm=v3(s,7+4*i);b.spheres[i].radiusCm=f(s,10+4*i);}
    if(raw[s][110])b.reactionFrame=OriginalCollisionFrame{v3(s,111),v3(s,114),v3(s,117),v3(s,120)};v.body=&b;}
@@ -149,14 +157,14 @@ static OriginalPairCallbacks pair_callbacks(){
   v.attack.positionCm=v3(s,99);v.attack.animationClass1=int(raw[s][102]);v.attack.marker0=raw[s][103]!=0;v.attack.marker1=raw[s][104]!=0;
   v.attack.facing340=v3(s,105);v.attack.strength350=f(s,108);v.attack.resolvedAttackStat=pairAttackStat[s];
   v.weightAttribute=pairWeight[s];v.resolvedCollisionStat=pairStat[s];v.boost=f(s,109);return v;};
- cb.translate=[](unsigned s,terrain_original::Vector d){js_pair_translate(int(s),d[0],d[1],d[2]);};
- cb.setVelocity=[](unsigned s,terrain_original::Vector v,bool reseed){js_pair_velocity(int(s),v[0],v[1],v[2],reseed);};
+ cb.translate=[](unsigned s,terrain_original::Vector d){pair_host_translate(int(s),d[0],d[1],d[2]);};
+ cb.setVelocity=[](unsigned s,terrain_original::Vector v,bool reseed){pair_host_velocity(int(s),v[0],v[1],v[2],reseed);};
  cb.react=[](unsigned target,unsigned other,const OriginalPairReactionRequest& r,const CollisionRandom&){
   if(r.kind==OriginalPairReactionRequest::Kind::None)return;
   audio_event(AE_PAIR,float((r.kind==OriginalPairReactionRequest::Kind::Soft?0:1)+(r.attack?2:0)),0,float(target),float(other)); /*107E70 -> 10E228 / 10E2E8 / 10E3A8 / 10E468 on the target*/
  float e[10];for(unsigned k=0;k<3;++k){e[k]=r.event.pointCm[k];e[3+k]=r.event.normal[k];e[6+k]=r.event.incomingDirection[k];}e[9]=r.event.closingSpeedCmps;
-  js_pair_react(int(target),r.kind==OriginalPairReactionRequest::Kind::Soft?1:2,r.animation,r.attack,e,int(other));};
- cb.randomWord=[](){return js_pair_random();};
+  pair_host_react(int(target),r.kind==OriginalPairReactionRequest::Kind::Soft?1:2,r.animation,r.attack,e,int(other));};
+ cb.randomWord=[](){return pair_host_random();};
  cb.attackHit=[](unsigned victim,unsigned attacker,terrain_original::Vector d,float amount){js_pair_attack(int(victim),int(attacker),d[0],d[1],d[2],amount);};
  return cb;
 }

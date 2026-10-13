@@ -1,5 +1,12 @@
 # Native hard-crash motion and recovery
 
+> **Comparer tick order (2026-10-13, core-migration agent):** compare-ps2-capture.mjs and compare-ai-capture.mjs now run the page's
+> (and the PS2's) tick order by default: the rider FX passes after race_end, section_pass every tick, a rescue's reset_animation, the
+> shared visual stream, and on a core with tick_rider the core's own tick parts and the page's finish-celebration rule. 534 / 534 gave
+> the same reports as the old order. `PAGE_SEQUENCE=0` restores the old order for one release. See
+> [core-migration.md](core-migration.md) "M2b".
+
+
 Hard impacts call `10EB30`, enter control 8, and then enter motion 2. Motion 2 has sliding and airborne submodes; control 8 has five animation/recovery phases. The native helpers preserve these separate state machines. They remain standalone until the game binds their real animation, scoring, boost, query, and control-entry callbacks.
 
 ## Entry and retained state

@@ -82,6 +82,12 @@ export class OnlineRecords {
     if (!r.ok) throw new Error(`replay ${r.status}`);
     return decodeReplayFile(await inflate(new Uint8Array(await r.arrayBuffer())));
   }
+  // A time-attack session's run (web/server/sessions.mjs, docs/big-multiplayer.md): the verifier's session lane re-simulates it.
+  async sessionReplay(id) {
+    const r = await timed(this.fetch, `${this.base}/mp/session/replay?id=${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(`replay ${r.status}`);
+    return decodeReplayFile(await inflate(new Uint8Array(await r.arrayBuffer())));
+  }
   // The core's identity for a replay (sha-256 of core.wasm, 16 hex): the build's own file, a cache hit after the page loaded it.
   async coreHash(url) {
     if (this.coreHashValue) return this.coreHashValue;

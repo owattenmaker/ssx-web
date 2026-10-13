@@ -44,8 +44,8 @@ The JS that decides simulation results, beyond presentation:
 | Slice | What | Switch | State |
 | --- | --- | --- | --- |
 | M1 | Pure event / career rules (lineup, anchor RNG, estimates, rankings, medals, records, difficulty) | coreRules | core1, verified |
-| M2 | The game tick's core sequence (tick_begin / tick_mid / tick_end), the results timing; M2b the gates on the page's sequence | coreTick | in progress |
-| M3 | The rider manager into C++ (stages, RNG cursor, pair host, world sync, FX phases) | coreRiderManager | planned |
+| M2 | The game tick's core sequence (tick_begin = tick_input + race_begin + tick_rider + tick_progress, tick_mid, tick_end, tick_finish, tick_results); M2b the gates on the page's sequence | coreTick | core3, verified |
+| M3 | The rider manager into C++ (stages, RNG cursor, pair host, world sync, FX phases) | coreRiderManager | core5, in proof |
 | M4 | Event start (startRun's sequence, lineup install, anchor RNG, relationships push, plane-drop seeds, the toggles) | | planned |
 | M5 | Career progression state (results, awards, unlocks, gear, attributes; the presentation-RNG draw order kept) | | planned |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
@@ -107,3 +107,104 @@ designed before the first native multi-rider race.
   new record), and its platinum check reads only a score threshold (a timed mode never shows platinum there).
 - **The next heat's lineup**: web/event-heat.js heatEnter (compare-ai-capture --ws13) and main.js ui.cb.heatLineup (the page) are
   two builds of 0x536708 / 144D98 / 147338; not compared yet.
+
+## M2: the game tick in the core (pv coreTick, core3)
+
+- web/game_tick.cpp: the core calls of web/game-tick.js simulate, in its order, as exports the page calls with its own host state
+  (passed in, handed back; the state itself stays in JS for now):
+  - `tick_begin(pad, lastRescues, lastResetPlacement, animationReady, boneCount, teleportKnown, teleportCount, tweakWord)`: pad_tick,
+    race_begin, step_rider, a rescue's reset_animation, animation_tick (the pose copied at once), its reads, race_end, the stage
+    teleport re-read. Also as its parts `tick_input(pad)`, race_begin, `tick_rider(command, ...)`, `tick_progress(known, count)`,
+    which the comparers call with their own reads between them.
+  - `tick_mid()`: a solo run's fx_pass(-1) and section_pass (with computer riders web/ai-racers.js endTick runs them).
+  - `tick_end(...)`: the camera, a replay's camera, the pending / trick reads, the finish reads (score, ticks, timed out, dump).
+  - `tick_finish(freestyle, aiActive, aiPlace, backcountry)`: the celebration rule (rider +0x100).
+  - `tick_results(io)`: the results timing (408 / 288 / 409, finishSkip's Cross edge, the live stop).
+- web/game-tick.js `simulateInCore`: simulate from pad_tick on through those exports, every JS hook (free ride, Big Challenges, the
+  FAQ, the in-world riders, the computer riders, online races, the progress meter, the replay) at its old place.
+- Proof: web/test-core-tick.mjs (two identical cores, the switch off and on: every tick's ?simtrace hash and tick record equal on
+  Snow Jam alone and with five computer riders, Select resets and a pause Give Up through the results and the live stop; padTweak off
+  and on); full ps2-captures 534 / 534 on core3 with every report line the same as core1's; page traces below.
+- Not exercised: the rescue branch (rider_state [13] only rises on the non-finite-position failsafe, core.cpp 1027) and the booth
+  teleport branch in a node run (covered by construction: the same calls).
+- F9: the TMPDEBUG state (tmpDebug, tmpDebug2, tmpBegin, tmpPreContact) and its exports tmp_debug / tmp_begin / tmp_pre_contact are
+  gone from web/animation_bridge.cpp: written every tick, read by nothing (no JS, tool or local script used the exports).
+
+### M2b: the page's sequence and the gates'
+
+The comparers (compare-ps2-capture.mjs, compare-ai-capture.mjs) each kept their own copy of the tick. Run in the page's order
+(PAGE_SEQUENCE=1) all 534 gates gave the same reports as their own order, so no capture tells them apart. The PS2's order is the
+page's: 0x2306B8, the NIS tick 0x230BE4, then the rider manager 0x128AF0 rider by rider (11B3F8 frame begin = race_begin, 121068
+provider and controllers = pad_tick, 1210B0 / 1211F8 / 1216E0 motion = step_rider, 121700 / 121728 pose = animation_tick's pose,
+121750 second motion = animation_post with the pairs 0x107888, 1217F8 / 121818 progress = race_end), the FX passes 0x128F20..0x1290F0
+after every rider's 121818, section activation 0x101B60, the cameras 0x230D7C. The comparers ran the FX inside animation_tick,
+before 121818.
+
+Since 2026-10-13 the comparers run the page's order by default (`PAGE_SEQUENCE=0`: the old order, kept for one release):
+- FX deferred to after race_end, then section_pass every tick (compare-ps2); the shared visual stream always (compare-ai);
+- a rescue's reset_animation; animation_tick's tweak as the page passes it (pv padTweak);
+- on a core with tick_rider: the core's own tick parts (tick_input / tick_rider / tick_progress), and the finish celebration from the
+  page's rule (tick_finish) instead of the recorded rider +0x100, except at a freestyle course without --finish-place, where the
+  page's place comes from its career standings (posted scores) that a capture does not have, so the record's flag stays.
+  web/uber-audio-compare.mjs follows tick_progress for race_end's info.
+- Result on core3: 534 / 534, every report line the same as core1's own-order run. The page's celebration rule gives the PS2's
+  flag in every AI gate that finishes.
+
+### tweak (pv padTweak, off)
+
+The page passed the boost word (pad_tick [7]) as animation_tick's tweak; the computer riders and the comparers' old human tick pass
+the tweak word ([12]). apply_command_words (web/input_bridge.inc) sets boost = tweak = the word's tweak in controller 5 and tweak 0
+elsewhere, and only controller 5's grab lifecycle (originalGrabLifecycle) reads it, so they agree wherever it matters. [12] is the
+command's own field. pv padTweak passes it (game-tick.js both paths, the core tick's tweakWord, the comparers). Proof: 534 / 534 with
+SSX_PV=padTweak on core3, every report line the same; a page trace below.
+
+## F2: the replay's pad history (pv replayPadState, core4)
+
+The divergence: with pv padCarry (on) a live start keeps the pad history 0x321298 the menus and the card fed (main.js startRun skips
+reset_pad_history, and padCarryFeed samples it on frames that do not tick: pauses, cards, the results), but a replay restarts with
+a settled history and never sees the samples taken between ticks. A button held into the start, or pressed and released in the pause
+menu, decodes differently in the replay and the verifier (an edge the live run did not have, or the reverse).
+
+The fix (one mechanism for the start and the pauses; done 2026-10-13):
+1. Core: `pad_state_save(out)` / `pad_state_restore(in)` for everything the pad path carries between samples: padHistory (24 x the
+   0x321298 channel record), padCommand and cruiseLastControl (web/input_bridge.inc; reset_pad_history resets exactly these).
+   Plain words, no pointers.
+2. Start: the replay snapshot (main.js createRaceReplay snapshot) keeps `padState` taken at the end of the live startRun; startRun(R)
+   restores it where it now calls reset_pad_history (a replay file without it resets as today).
+3. Pauses: padCarryFeed marks the history touched; the next live tick, before its pad is recorded (game-tick.js simulate, next to
+   replay.record), notes a replay event `padState` with the saved words. Replay: web/replay.js step applies events before the tick
+   (eventsAt), so the event handler restores the words there. One event per pause (about 100 bytes), not one per sample.
+4. The replay file: `events` already travel in the meta (web/server/replay-file.mjs, version unchanged: an unknown event kind is
+   ignored by an old page, which then diverges as today). web/server/records.mjs checkRunFile checks pad-state words only when they
+   are an array (at most 512 words; at most 4096 events); a null or absent value (an older client, a core without pad_state_save)
+   is ignored. With the switch off the live run records nothing new (no snapshot field, no event).
+5. Proof: test-replay's PADSTATE case (Cross held on the card into the start, Cross pressed in a pause and held into the resume,
+   then Give Up; ssxQA.padCarry feeds the between-tick samples): with the switch the replay is exact on all 901 ticks (events
+   padState@600, giveUp@900); without it the replay leaves the run at tick 600. The upload round trip (test-records-verifier,
+   test-online-records, test-replay) passes on the live core and on core4, with the switch off and on. The verifier plays the same
+   startRun(R) / event path as the page's replay.
+6. A lesson from the first deploy: the page noted a null padState on a core without the export and the server rejected it, so
+   genuine uploads failed until the rollback. Anything that changes the replay format or the server's acceptance runs the upload
+   round trip on the live core before it sits in the shared tree.
+
+## M3: the rider manager in the core (pv coreRiderManager, core5)
+
+- web/rider_manager.cpp: web/ai-racers.js's per-tick choreography (beginTick, stage 1 from the human's pose, stage 2 from the
+  start of the human's race_end, the rider pairs from each rider's 121750, endTick's stage 3, the FX passes, section activation),
+  the shared-RNG cursor with its predicted counts, the computer riders' world buffers, the pair host (view, translate, velocity,
+  react, random), the shared-world replication and the visual-stream borrowing, with the same calls in the same order.
+- The core switches the rider contexts itself (rider_tls_set). LLVM takes a function's thread-local addresses as fixed for the
+  whole function, so everything run in another context goes through a non-inlined function (runOpaque); inlined, it reached the
+  previous context's variables (the first run's "Invalid computer-rider roster").
+- rider_host bit 8 routes the riders' hooks (web/animation_bridge.cpp after-pose and pairs, web/race_bridge.cpp race_end's
+  before-progress, web/race_world.cpp's pair callbacks) to the manager; without it the EM_JS paths run (also the online pair-net).
+  The page is called back in the human's context only: the pair reactions' speech and relationship (ai-race.js onPairAudio /
+  onReact), and the QA hooks (draw counts, world-draw injection).
+- The event set-up stays in ai-racers.js (configure, start, lineups, relationships, holdTick, the in-world return); it tells the
+  manager (manager_configure / start / resume / set_anchor) and reads its state after each tick (the tick, the counts, every
+  computer rider's provider words and finish, the ranking world).
+- The manager's state is RIDER_LOCAL in the human's context (registered in the rider-context snapshot), so the in-world
+  snapshot saves and restores it with the context.
+- Proof: web/test-core-rider-manager.mjs (two identical cores, the switch off and on: every tick's ?simtrace hash, tick record,
+  manager state and hook calls equal; Snow Jam with five computer riders through a Give Up and its results, 4909 ticks; with the
+  QA hooks, 1500 ticks and 19,509 hook calls).

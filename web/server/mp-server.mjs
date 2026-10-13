@@ -191,9 +191,40 @@ const member = (c, l) => ({
 });
 const detail = (l) => ({ ...summary(l), hostId: l.host, members: l.members.map((m) => member(clients.get(m), l)),
   race: l.race ? { id: l.race.id, goAt: l.race.goAt, finished: [...l.race.finish.entries()].map(([id, f]) => ({ id, ...f })) } : null });
-const broadcastLobbies = () => { const list = [...lobbies.values()].map(summary); for (const c of clients.values()) if (!c.lobby) send(c, { t: 'lobbies', lobbies: list }); };
+const broadcastLobbies = () => { const list = [...lobbies.values()].map(summary); for (const c of clients.values()) if (!c.lobby && !c.session) send(c, { t: 'lobbies', lobbies: list }); };
 const broadcastLobby = (l) => { const d = detail(l); for (const m of l.members) send(clients.get(m), { t: 'lobby', lobby: d }); broadcastLobbies(); };
 const toLobby = (l, m) => { for (const id of l.members) send(clients.get(id), m); };
+
+// Time-attack sessions (web/server/sessions.mjs, docs/big-multiplayer.md): only with MP_SESSIONS=1, and never fatal (a failure leaves
+// them off and the rest running). The events and floors come from the records' disc tables (records.mjs eventTable / floorTable).
+let SESSIONS = null;
+if (process.env.MP_SESSIONS === '1') {
+  try {
+    const { createSessions } = await import('./sessions.mjs');
+    const { eventTable, floorTable } = await import('./records.mjs');
+    const careerFile = RECORDS_ASSETS ? path.join(RECORDS_ASSETS, 'CAREER', 'career.json') : null;
+    const career = careerFile && fs.existsSync(careerFile) ? JSON.parse(fs.readFileSync(careerFile, 'utf8')) : null;
+    const events = eventTable(career);
+    const tokenFile = process.env.MP_RECORDS_VERIFIER_TOKEN_FILE;
+    let verifierToken = null;
+    try {
+      verifierToken = tokenFile ? fs.readFileSync(tokenFile, 'utf8').trim() : null;
+    } catch {}
+    const options = {};
+    if (process.env.MP_TA_LIMIT_MS) options.limitMs = +process.env.MP_TA_LIMIT_MS;
+    if (process.env.MP_SESSION_MAX) options.maxPlayers = +process.env.MP_SESSION_MAX;
+    // tests: the phase timings (sessions.mjs DEFAULTS) as JSON
+    if (process.env.MP_SESSION_OPTIONS) Object.assign(options, JSON.parse(process.env.MP_SESSION_OPTIONS));
+    SESSIONS = createSessions({ events, floors: floorTable(events, RECORDS_ASSETS), send: (id, m) => send(clients.get(id), m), clients, verifierToken, options });
+    if (!SESSIONS.enabled) {
+      console.warn('sessions: off (no CAREER/career.json under the assets root)');
+      SESSIONS = null;
+    } else setInterval(() => SESSIONS.tick(), 250).unref();
+  } catch (e) {
+    console.warn('sessions: off (failed to start)', e?.message);
+    SESSIONS = null;
+  }
+}
 
 function leave(c, reason = 'left') {
   const l = lobbies.get(c.lobby); c.lobby = null; c.ready = false;
@@ -207,6 +238,8 @@ function leave(c, reason = 'left') {
   broadcastLobby(l);
 }
 function join(c, l) {
+  // a time-attack session member joining a lobby leaves the session (one room at a time)
+  if (c.session) SESSIONS?.leave(c);
   if (c.lobby === l.id) { send(c, { t: 'lobby', lobby: detail(l) }); return; }
   if (c.lobby) leave(c);
   if (l.members.length >= l.maxPlayers) return send(c, { t: 'error', message: 'Lobby is full' });
@@ -283,6 +316,13 @@ function tick() {
 function onMessage(c, m) {
   let l = lobbies.get(c.lobby);
   if (m.t !== 'hello' && m.t !== 'ping' && !c.hello) return;
+  // time-attack sessions (web/server/sessions.mjs); joining or creating one leaves the lobby first
+  if (typeof m.t === 'string' && m.t.startsWith('ta-')) {
+    if (!SESSIONS) return send(c, { t: 'error', code: 'sessions', message: 'Time attack is not available on this server' });
+    if (l && (m.t === 'ta-create' || m.t === 'ta-join')) leave(c);
+    SESSIONS.message(c, m);
+    return;
+  }
   switch (m.t) {
     case 'hello': {
       if (m.version !== PROTOCOL) {
@@ -312,6 +352,7 @@ function onMessage(c, m) {
             ? { id: l2.race.id, course: l2.course, slot: l2.race.slots.get(c.id), goAt: l2.race.goAt, finished: l2.race.finish.has(c.id) }
             : null;
       send(c, { t: 'welcome', id: c.id, serverTime: now(), version: PROTOCOL, resumed: !!previous, race });
+      if (c.session) SESSIONS?.resumed(c);
       if (l2) { if (previous && race) toLobby(l2, { t: 'presence', id: c.id, slot: race.slot, online: true }); broadcastLobby(l2); }
       else send(c, { t: 'lobbies', lobbies: [...lobbies.values()].map(summary) });
       break;
@@ -526,6 +567,14 @@ const server = http.createServer((req, res) => {
       return;
     }
   }
+  // time-attack sessions (gated)
+  if (req.url.startsWith('/mp/session/')) {
+    if (SESSIONS?.handle(req, res)) return;
+    req.resume();
+    res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end('{"error":"off"}');
+    return;
+  }
   if (req.url === '/mp/status') {
     res.writeHead(200, { 'content-type': 'application/json', ...(GATE ? {} : { 'access-control-allow-origin': '*' }), 'cache-control': 'no-store' });
     res.end(
@@ -533,6 +582,7 @@ const server = http.createServer((req, res) => {
         ok: true,
         protocol: PROTOCOL,
         binary: binaryStats,
+        sessions: SESSIONS ? SESSIONS.status() : null,
         clients: clients.size,
         lobbies: [...lobbies.values()].map((l) => ({
           ...summary(l),
@@ -579,10 +629,17 @@ server.on('upgrade', (req, socket) => {
   // A dropped player keeps its lobby / race seat for RESUME_GRACE_MS (page reload / network blip), then leaves.
   ws.onClose = () => {
     const c = ws.player; if (!c || c.ws !== ws) return;
-    if (!c.token || !c.hello) { leave(c); clients.delete(c.id); return; }
+    if (!c.token || !c.hello) { leave(c); SESSIONS?.leave(c); SESSIONS?.forget(c); clients.delete(c.id); return; }
+    if (c.session) SESSIONS?.dropped(c);
     const l = lobbies.get(c.lobby);
     if (l) { if (l.race?.slots.has(c.id)) toLobby(l, { t: 'presence', id: c.id, slot: l.race.slots.get(c.id), online: false }); broadcastLobby(l); }
-    c.dropTimer = setTimeout(() => { if (c.ws.open) return; leave(c, 'disconnected'); clients.delete(c.id); }, RESUME_GRACE_MS);
+    c.dropTimer = setTimeout(() => {
+      if (c.ws.open) return;
+      leave(c, 'disconnected');
+      SESSIONS?.leave(c, 'disconnected');
+      SESSIONS?.forget(c);
+      clients.delete(c.id);
+    }, RESUME_GRACE_MS);
   };
 });
 server.listen(PORT, HOST, () => {

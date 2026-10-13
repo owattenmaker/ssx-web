@@ -45,6 +45,35 @@ const BLOCK = ['fuck', 'shit', 'cunt', 'nigg', 'fag', 'rape', 'nazi', 'hitler', 
 const TIMED_MODES = new Set([0, 4]);     // race, Rival Time (career.js isTimed for modes < 6)
 const FLOORS_FILE = new URL('./record-floors.json', import.meta.url);
 
+// Tier-0 checks of a decoded replay file against its event (no simulation; also web/server/sessions.mjs): the claim, no forced
+// finish, the pad stream walks and ends by the finish tick, the race clock against the recorded ticks, the character and the core.
+// -> {value} (race ticks or the score) or {error}
+export const MAX_EVENTS = 4096;          // out-of-band calls of a run (Give Up, the camera option, pad states after pauses)
+const MAX_PAD_STATE_WORDS = 512;
+const padStateWords = (w) => Array.isArray(w) && w.length <= MAX_PAD_STATE_WORDS && w.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffffffff);
+export function checkRunFile(file, ev) {
+  const m = file.meta;
+  const value = ev.timed ? m.claim?.ticks : m.claim?.score;
+  if (!Number.isInteger(value) || value <= 0 || value > (ev.timed ? 60 * 60 * 30 : 1e8)) return { error: 'claim' };
+  // forced finishes are not submitted (docs/online-records.md)
+  if (m.giveUp || m.dnf) return { error: 'claim' };
+  const pad = padStreamInfo(file.pad);
+  const padBad = !pad || !Number.isInteger(m.finishTick) || m.finishTick < 0 || m.ticks !== m.finishTick + 1 || pad.lastTick > m.finishTick;
+  if (padBad || file.pad.length > MAX_BYTES_PER_TICK * m.ticks + 64) return { error: 'replay' };
+  // race clock vs recorded ticks (countdown 179 / 180, 0 rolling)
+  if (ev.timed && (value > m.ticks || value < m.ticks - 400)) return { error: 'claim' };
+  if (!Number.isInteger(m.character) || m.character < 0 || m.character > 9) return { error: 'rider' };
+  if (typeof m.core !== 'string' || !/^[0-9a-f]{8,64}$/.test(m.core)) return { error: 'core' };
+  // the pad state words a replay restores (web/main.js padStateSave, pv replayPadState): the snapshot's and one per pause. Only an
+  // array is checked; a null or absent value (an older client, a core without pad_state_save) is ignored, as the page ignores it.
+  if (Array.isArray(m.snapshot?.padState) && !padStateWords(m.snapshot.padState)) return { error: 'replay' };
+  if (Array.isArray(m.events)) {
+    if (m.events.length > MAX_EVENTS) return { error: 'replay' };
+    for (const e of m.events) if (e?.kind === 'padState' && Array.isArray(e.value) && !padStateWords(e.value)) return { error: 'replay' };
+  }
+  return { value };
+}
+
 export function cleanName(name) {
   if (typeof name !== 'string') return null;
   const n = name.replace(/\s+/g, ' ').trim();
@@ -239,16 +268,9 @@ export function createRecords({ dir, assets, now = () => Date.now(), clientAddre
       const m = file.meta, key = m.event, ev = events.get(key);
       if (!ev || m.mode !== ev.mode || m.course !== ev.code) return { status: 400, body: { error: 'event' } };
       const name = cleanName(m.name); if (!name) return { status: 400, body: { error: 'name' } };
-      const value = ev.timed ? m.claim?.ticks : m.claim?.score;
-      if (!Number.isInteger(value) || value <= 0 || value > (ev.timed ? 60 * 60 * 30 : 1e8)) return { status: 400, body: { error: 'claim' } };
-      if (m.giveUp || m.dnf) return { status: 400, body: { error: 'claim' } };   // forced finishes are not submitted (docs/online-records.md)
-      const pad = padStreamInfo(file.pad);
-      if (!pad || !Number.isInteger(m.finishTick) || m.finishTick < 0 || m.ticks !== m.finishTick + 1 || pad.lastTick > m.finishTick
-        || file.pad.length > MAX_BYTES_PER_TICK * m.ticks + 64) return { status: 400, body: { error: 'replay' } };
-      // race clock vs recorded ticks (countdown 179 / 180, 0 rolling)
-      if (ev.timed && (value > m.ticks || value < m.ticks - 400)) return { status: 400, body: { error: 'claim' } };
-      if (!Number.isInteger(m.character) || m.character < 0 || m.character > 9) return { status: 400, body: { error: 'rider' } };
-      if (typeof m.core !== 'string' || !/^[0-9a-f]{8,64}$/.test(m.core)) return { status: 400, body: { error: 'core' } };
+      const checked = checkRunFile(file, ev);
+      if (checked.error) return { status: 400, body: { error: checked.error } };
+      const value = checked.value;
       const lower = name.toLowerCase(), mine = (board.events[key] ?? []).find((r) => r.name.toLowerCase() === lower && r.verified !== false);
       const entry = { id: crypto.randomBytes(8).toString('hex'), name, character: m.character, rider: typeof m.rider?.id === 'string' ? m.rider.id.slice(0, 24) : null,
         value, replay: true, verified: null, core: m.core, build: typeof m.build === 'string' ? m.build.slice(0, 40) : null, at: day(now()), seq: ++board.seq };

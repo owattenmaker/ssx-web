@@ -742,6 +742,8 @@ export class CareerScreens {
   }
   // Every round starts with the rider's bought attributes in the physics (0x1494C0.. getters read profile bytes).
   play() {
+    // pv onlineTimeAttack (web/net/ta-game.js): in a time-attack session the window decides when an attempt may start
+    if (this.ui.timeAttack?.active && !this.ui.timeAttack.attemptStart()) return;
     this.gaveUp = false;
     this.ui.cb.attributes?.(originalAttributeBytes(this.me.attributes));
     this.ui.cb.timeLimit?.(this.career.timeLimit(this.career.active.ev));
@@ -1948,7 +1950,9 @@ export class CareerScreens {
     // (Cash / Gold medal earned / Accessory ...), then "Final Results".
     this.rewardTop = 0;
     {
-      const o = this.online.finish(result, ev);
+      // pv onlineTimeAttack: a time-attack attempt's best goes to its session (web/net/ta-game.js), never to the records boards
+      const ta = !!this.ui.timeAttack?.active && this.ui.timeAttack.finish(result, ev);
+      const o = ta ? false : this.online.finish(result, ev);
       this.topTime = o == null ? outcome.record >= 0 : o;
     }
     // pv onlineRecords: the online top 5 decides for the events with a board (docs/online-records.md); the local table is entered as on the

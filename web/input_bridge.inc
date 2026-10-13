@@ -3,6 +3,8 @@
 // controller that is about to run -> per-controller command fields. One call per 60 Hz tick,
 // before step_rider/animation_tick. It replaces host-side keyboard/gamepad mapping.
 #include "../engine/original_input_provider.hpp"
+#include <cstring>
+#include <type_traits>
 extern "C" void ride_command(float,float,float,float,float,float,int,int,int,int);
 extern "C" void request_rider_reset(int);RIDER_LOCAL extern bool browserResetFromController; // web/core.cpp
 
@@ -37,6 +39,35 @@ static int browser_control_state(){
 // QA: the controller about to run (motion owner +0xDE4) and the +0x360 jump latch
 extern "C" EMSCRIPTEN_KEEPALIVE float* rider_control_info(){RIDER_LOCAL static float v[3];v[0]=float(browser_control_state());v[1]=prewind.jumpGate;v[2]=float(cruiseLastControl);return v;}
 extern "C" EMSCRIPTEN_KEEPALIVE void reset_pad_history(){padHistory=settled_pad();padCommand={};cruiseLastControl=-1;}
+// The pad path's carried state for a replay (docs/core-migration.md "F2", pv replayPadState): what reset_pad_history resets
+// (the 0x321298 history, the last command, the last controller) as words: [0] 'PAD1', [1] the layout (sizeof history << 16 |
+// sizeof command), the history's bytes, cruiseLastControl, the command's bytes. A replay restores the words its live run had at the
+// start and after each pause (whose samples web/main.js padCarryFeed gave the history between ticks).
+static_assert(std::is_trivially_copyable_v<ssx::OriginalPadState>&&std::is_trivially_copyable_v<BrowserPadCommand>);
+namespace {
+constexpr uint32_t kPadStateMagic=0x31444150u;
+constexpr uint32_t kPadStateLayout=uint32_t(sizeof(ssx::OriginalPadState))<<16|uint32_t(sizeof(BrowserPadCommand));
+constexpr uint32_t kPadHistoryWords=uint32_t((sizeof(ssx::OriginalPadState)+3)/4);
+constexpr uint32_t kPadCommandWords=uint32_t((sizeof(BrowserPadCommand)+3)/4);
+constexpr uint32_t kPadStateWords=2+kPadHistoryWords+1+kPadCommandWords;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE uint32_t pad_state_words(){return kPadStateWords;}
+extern "C" EMSCRIPTEN_KEEPALIVE void pad_state_save(uint32_t* out){
+ std::memset(out,0,kPadStateWords*4);
+ out[0]=kPadStateMagic;
+ out[1]=kPadStateLayout;
+ std::memcpy(out+2,&padHistory,sizeof padHistory);
+ out[2+kPadHistoryWords]=uint32_t(cruiseLastControl);
+ std::memcpy(out+3+kPadHistoryWords,&padCommand,sizeof padCommand);
+}
+// 1 restored; 0 words of another layout or length (nothing changed: the caller resets as before).
+extern "C" EMSCRIPTEN_KEEPALIVE int pad_state_restore(const uint32_t* in,uint32_t count){
+ if(count!=kPadStateWords||in[0]!=kPadStateMagic||in[1]!=kPadStateLayout)return 0;
+ std::memcpy(&padHistory,in+2,sizeof padHistory);
+ cruiseLastControl=int32_t(in[2+kPadHistoryWords]);
+ std::memcpy(&padCommand,in+3+kPadHistoryWords,sizeof padCommand);
+ return 1;
+}
 // One pad sample consumed outside the game tick (pv padCarry): cSSXApp_preUpdate (0x227F20) runs 0x321298 on the port's history once per
 // app update with a pending sample, whatever runs (the front end, a card, the pause menu, the results), and the game's provider reads the
 // same history. So a button pressed in a menu and still held when the ride resumes is held there without a new press edge (PS2 c0a-ret2:

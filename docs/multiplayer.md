@@ -4,6 +4,8 @@ Online races of up to six human racers, each on their own machine, with the orig
 gates, rider-vs-rider contacts, knockdowns and punches, the original place display, board tracks / spray / boost of
 every rider, a shared world (pickups, crashbags, sections), and the original Single Event Results with every racer.
 
+Big sessions (20-100 players, a Trackmania-style time attack with ghosts): design in [big-multiplayer.md](big-multiplayer.md), not built.
+
 ## Run it
 
 Development / LAN:

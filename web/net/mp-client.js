@@ -141,6 +141,9 @@ export function createMpClient({
         state.chat = state.chat.slice(-20);
         emit('chat', m);
         break;
+      default:
+        // time-attack sessions (web/server/sessions.mjs, web/net/ta-game.js): every 'ta-*' message as its own event
+        if (typeof m.t === 'string' && m.t.startsWith('ta-')) emit(m.t, m);
     }
   }
   function open() {
@@ -277,6 +280,14 @@ export function createMpClient({
     },
     chat(text) {
       send({ t: 'chat', text });
+    },
+    // a time-attack session message ({t: 'ta-...'}, web/net/ta-game.js)
+    session(m) {
+      send(m);
+    },
+    // the reconnect token: also the session run upload's credential (POST /mp/session/run, header x-ssx-session)
+    get token() {
+      return token;
     },
     // Binary rider packet (web/net/rider-packet.js); relayed to the other racers with the sender's slot prefixed.
     // A congested socket drops state frames (the next one supersedes them), never attacks.

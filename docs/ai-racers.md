@@ -1,5 +1,12 @@
 # Computer riders (AI racers)
 
+> **Comparer tick order (2026-10-13, core-migration agent):** compare-ps2-capture.mjs and compare-ai-capture.mjs now run the page's
+> (and the PS2's) tick order by default: the rider FX passes after race_end, section_pass every tick, a rescue's reset_animation, the
+> shared visual stream, and on a core with tick_rider the core's own tick parts and the page's finish-celebration rule. 534 / 534 gave
+> the same reports as the old order. `PAGE_SEQUENCE=0` restores the old order for one release. See
+> [core-migration.md](core-migration.md) "M2b".
+
+
 Race events now run the five original computer riders. A full Snow Jam race can be finished
 against them in the browser, with the in-race place display, the Single Event Results and the
 career results. The same data path loads Metro-City (BRA2). Other courses run without computer
