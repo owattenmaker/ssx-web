@@ -10,12 +10,12 @@
 //   overtime  no new attempts; attempts started before the deadline may finish and upload (at most OVERTIME_MAX_MS)
 //   verify    the verifier finishes the runs that could make the podium (at most VERIFY_MAX_MS)
 //   podium    the top three verified runs and the final standings (PODIUM_MS)
-//   vote      three events from the rotation + the same event again (VOTE_MS), the result shown for VOTE_RESULT_MS
+//   vote      two events from the rotation + RANDOM (VOTE_MS), the result shown for VOTE_RESULT_MS
 //
 // Protocol (JSON text frames, client -> server; mp-server.mjs routes every 'ta-*' message here):
 //   {t:'ta-list'}                                  -> {t:'ta-sessions', sessions} (also pushed on changes until the client joins)
-//   {t:'ta-create', name, limitMs, maxPlayers, event?} -> the creator joins as host: {t:'ta-joined', ...}
-//   {t:'ta-join', session}                         -> {t:'ta-joined', session, roster, standings, you}
+//   {t:'ta-create', name, limitMs, maxPlayers, event?, playerName?} -> the creator joins as host: {t:'ta-joined', ...}
+//   {t:'ta-join', session, playerName?}            -> {t:'ta-joined', session, roster, standings, you} (playerName: the name shown)
 //   {t:'ta-leave'}                                 -> {t:'ta-left'}
 //   {t:'ta-config', limitMs}                       (host) the time limit, from the next window (also this one while it loads)
 //   {t:'ta-loaded', window}                        the event is loaded on this page
@@ -41,6 +41,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { checkRunFile, better } from './records.mjs';
 import { decodeReplayFile } from './replay-file.mjs';
+import { POSE, LITE, DOT, POSE_HEADER, MAX_BONES, MAX_FREE, liteFromPose, dotFromPose, encodeBundle } from './ghost-packet.mjs';
 
 export const DEFAULTS = {
   limitMs: 6 * 60000,
@@ -58,9 +59,20 @@ export const DEFAULTS = {
   voteMs: 15000,
   voteResultMs: 2000,
   standingsMs: 500,
-  wallSlackMs: 3000
+  wallSlackMs: 3000,
+  // ghosts (docs/big-multiplayer.md 3.2): the nearest `nearCount` get the pose every bundle (bundleMs), the next `midCount` the lite entry
+  // every liteMs and the pose every midPoseMs, everyone else the dot every dotMs; a ghost silent for staleMs is not sent
+  bundleMs: 100,
+  nearCount: 6,
+  midCount: 18,
+  liteMs: 250,
+  midPoseMs: 2000,
+  dotMs: 1000,
+  staleMs: 3000
 };
 export const MAX_ATTRIBUTE = 55;
+// the vote's third option: an event of the rotation at random
+export const RANDOM = 'random';
 export const MAX_UPLOAD = 512 * 1024;
 export const MAX_INFLATED = 4 * 1048576;
 // Courses whose world has the podium steps (CUTSCENES/locators.json locations[code].locators['0'].podium_steps, 0x4D3770);
@@ -86,7 +98,8 @@ function take(b, t) {
 
 // events: records.mjs eventTable (key -> {mode, code, timed, ...}); floors: records.mjs floorTable (key -> {ticks});
 // send(clientId, message); clients: Map id -> client (mp-server's); random: () => [0, 1) (tests).
-export function createSessions({ events, floors = new Map(), now = () => Date.now(), send, clients, verifierToken = null,
+// sendBinary(clientId, bytes): the ghost bundles.
+export function createSessions({ events, floors = new Map(), now = () => Date.now(), send, sendBinary = () => {}, clients, verifierToken = null,
   log = console, random = Math.random, options = {} } = {}) {
   const O = { ...DEFAULTS, ...options };
   const sessions = new Map();
@@ -101,6 +114,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
 
   const member = (p) => ({
     id: p.id,
+    index: p.index,
     name: p.name,
     rider: p.rider,
     pkg: p.pkg,
@@ -135,7 +149,9 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     limitMs: s.limitMs,
     players: s.players.size,
     maxPlayers: s.maxPlayers,
-    host: s.players.get(s.host)?.name ?? ''
+    host: s.players.get(s.host)?.name ?? '',
+    // the first ten players' names (the session list's room panel, web/ta-ui.js)
+    names: [...s.players.values()].slice(0, 10).map((p) => p.name)
   });
   const toSession = (s, m) => {
     for (const id of s.players.keys()) send(id, m);
@@ -251,26 +267,32 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     }
     return open;
   };
+  // The vote's options (the user's rules, 2026-10-13): two events of the rotation (not the event just ridden, nor the two before it,
+  // while the rotation has enough others), then RANDOM.
   function drawCandidates(s) {
     const recent = new Set([s.event, ...s.recent.slice(-2)]);
     let pool = s.rotation.filter((k) => !recent.has(k));
-    if (pool.length < 3) pool = s.rotation.filter((k) => k !== s.event);
+    if (pool.length < 2) pool = s.rotation.filter((k) => k !== s.event);
+    if (pool.length < 2) pool = s.rotation.slice();
     const picks = [];
-    while (picks.length < 3 && pool.length) picks.push(pool.splice(Math.floor(random() * pool.length), 1)[0]);
-    return [...picks, s.event];
+    while (picks.length < 2 && pool.length) picks.push(pool.splice(Math.floor(random() * pool.length), 1)[0]);
+    return [...picks, RANDOM];
   }
+  // Most votes wins; a tie (or no vote at all) is drawn among the tied options. RANDOM is any event of the rotation but the two shown,
+  // drawn uniformly.
   function finishVote(s) {
     const counts = s.candidates.map(() => 0);
     for (const choice of s.votes.values()) counts[choice]++;
     const top = Math.max(...counts);
-    let winners = counts.map((n, i) => (n === top ? i : -1)).filter((i) => i >= 0);
-    // no votes: one of the new events at random (the same event again only when the rotation has nothing else)
-    if (!top) {
-      const fresh = s.candidates.map((_, i) => i).filter((i) => s.candidates[i] !== s.event);
-      winners = fresh.length ? fresh : [s.candidates.length - 1];
-    }
+    const winners = counts.map((n, i) => (n === top ? i : -1)).filter((i) => i >= 0);
     const pick = winners[Math.floor(random() * winners.length)];
-    s.voteResult = { choice: pick, event: s.candidates[pick], counts };
+    let event = s.candidates[pick];
+    if (event === RANDOM) {
+      const shown = new Set(s.candidates);
+      const pool = s.rotation.filter((k) => !shown.has(k));
+      event = (pool.length ? pool : s.rotation)[Math.floor(random() * (pool.length || s.rotation.length))];
+    }
+    s.voteResult = { choice: pick, event, random: s.candidates[pick] === RANDOM, counts };
     s.recent.push(s.event);
     s.recent = s.recent.slice(-4);
     setPhase(s, 'vote-result', now() + O.voteResultMs);
@@ -290,8 +312,10 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
         const final = standings(s);
         s.results = { t: 'ta-results', window: s.window.id, event: s.window.event, timed: timed(s.window.event), podium: podium(s, true).rows,
           podiumCourse: PODIUM_COURSES.has(events.get(s.window.event)?.code), standings: final };
-        s.history.push({ at: t, ...s.results });
+        s.history.push({ at: t, window: s.window.id, event: s.window.event, timed: s.results.timed, winner: s.results.podium[0] ?? null });
         s.history = s.history.slice(-10);
+        // the session's rounds so far (web/ta-ui.js: the circuit standings 109MultiplayerStandings)
+        s.results.history = s.history.map((h) => ({ window: h.window, event: h.event, timed: h.timed, winner: h.winner?.name ?? null, value: h.winner?.value ?? null }));
         setPhase(s, 'podium', t + O.podiumMs);
         toSession(s, s.results);
       }
@@ -345,7 +369,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     };
     sessions.set(s.id, s);
     const first = events.has(m.event) ? m.event : rotationAll[Math.floor(random() * rotationAll.length)];
-    join(c, s, { quiet: true });
+    join(c, s, { quiet: true, name: m.playerName });
     startLoad(s, first);
     sendJoined(s, s.players.get(c.id));
   }
@@ -354,7 +378,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     send(p.id, { t: 'ta-joined', you: p.id, session: phaseState(s), roster: [...s.players.values()].map(member), standings: rows,
       results: s.phase === 'podium' ? s.results : null, votes: s.phase === 'vote' ? [...s.votes.entries()] : null });
   }
-  function join(c, s, { quiet = false } = {}) {
+  function join(c, s, { quiet = false, name = null } = {}) {
     if (c.session === s.id) {
       sendJoined(s, s.players.get(c.id));
       return;
@@ -367,12 +391,16 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     const p = {
       id: c.id,
       session: s,
-      name: c.name,
+      // the player's own name (the page's Player Name, web/net/ta-game.js), else the connection's
+      name: clean(name, 16) || c.name,
       rider: c.rider,
       pkg: c.pkg,
       base: c.base ?? null,
       outfit: c.outfit ?? null,
       online: true,
+      index: (s.nextIndex = (s.nextIndex ?? 0) + 1),
+      ghost: null,
+      sent: new Map(),
       loadedWindow: 0,
       best: before?.best ?? null,
       pending: before?.pending ?? [],
@@ -424,7 +452,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
       case 'ta-join': {
         const target = sessions.get(clean(m.session, 8).toUpperCase());
         if (!target) send(c.id, { t: 'error', code: 'missing', message: 'Session not found' });
-        else join(c, target);
+        else join(c, target, { name: m.playerName });
         return true;
       }
       case 'ta-leave':
@@ -668,6 +696,78 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     return true;
   }
 
+  // ---- ghosts -------------------------------------------------------------------------------------------------------------------
+  // A pose packet (ghost-packet.mjs kind 5) of a session member: kept as its newest; its sanity is the sizes only (display only).
+  const ghostStats = { in: 0, inBytes: 0, out: 0, outBytes: 0, bundles: 0, dropped: 0 };
+  function binary(c, data) {
+    const s = sessions.get(c.session);
+    const p = s?.players.get(c.id);
+    if (!p || data.length < POSE_HEADER || data[0] !== POSE) {
+      ghostStats.dropped++;
+      return false;
+    }
+    const bones = data[32];
+    const free = data[33];
+    if (!bones || bones > MAX_BONES || free > MAX_FREE || data.length !== POSE_HEADER + 7 * free + 4 * bones) {
+      ghostStats.dropped++;
+      return false;
+    }
+    const v = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const position = [v.getFloat32(8, true), v.getFloat32(12, true), v.getFloat32(16, true)];
+    if (!position.every(Number.isFinite)) {
+      ghostStats.dropped++;
+      return false;
+    }
+    const bytes = Uint8Array.from(data);
+    p.ghost = { bytes, seq: (p.ghost?.seq ?? 0) + 1, at: now(), position, riding: !!(data[1] & 1), lite: null, dot: null };
+    ghostStats.in++;
+    ghostStats.inBytes += data.length;
+    return true;
+  }
+  const dist2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
+  // Per recipient: the other riding players by distance from the recipient's own last position; every tier's entry when it is due and
+  // newer than the last one sent of that kind.
+  function ghostBundles(s) {
+    const t = now();
+    const riders = [...s.players.values()].filter((p) => p.ghost && p.ghost.riding && t - p.ghost.at < O.staleMs);
+    if (!riders.length) return;
+    for (const r of s.players.values()) {
+      if (!r.online) continue;
+      const here = r.ghost?.position ?? riders[0].ghost.position;
+      const others = riders.filter((p) => p !== r).sort((a, b) => dist2(a.ghost.position, here) - dist2(b.ghost.position, here));
+      const entries = [];
+      others.forEach((p, rank) => {
+        const g = p.ghost;
+        const last = r.sent.get(p.id) ?? { pose: 0, poseAt: 0, lite: 0, liteAt: 0, dot: 0, dotAt: 0 };
+        const tier = rank < O.nearCount ? 'near' : rank < O.nearCount + O.midCount ? 'mid' : 'far';
+        if ((tier === 'near' || (tier === 'mid' && t - last.poseAt >= O.midPoseMs)) && last.pose !== g.seq) {
+          entries.push({ player: p.index, kind: POSE, bytes: g.bytes });
+          // a pose supersedes the lite and the dot of the same moment
+          last.pose = last.lite = last.dot = g.seq;
+          last.poseAt = last.liteAt = last.dotAt = t;
+        } else if (tier === 'mid' && t - last.liteAt >= O.liteMs && last.lite !== g.seq) {
+          g.lite ??= liteFromPose(g.bytes);
+          entries.push({ player: p.index, kind: LITE, bytes: g.lite });
+          last.lite = g.seq;
+          last.liteAt = t;
+        } else if (tier === 'far' && t - last.dotAt >= O.dotMs && last.dot !== g.seq) {
+          g.dot ??= dotFromPose(g.bytes);
+          entries.push({ player: p.index, kind: DOT, bytes: g.dot });
+          last.dot = g.seq;
+          last.dotAt = t;
+        }
+        r.sent.set(p.id, last);
+      });
+      for (let at = 0; at < entries.length; at += 255) {
+        const bundle = encodeBundle(t, entries.slice(at, at + 255));
+        sendBinary(r.id, bundle);
+        ghostStats.bundles++;
+        ghostStats.out += Math.min(255, entries.length - at);
+        ghostStats.outBytes += bundle.length;
+      }
+    }
+  }
+
   // ---- mp-server hooks --------------------------------------------------------------------------------------------------------
   const api = {
     enabled: events.size > 0,
@@ -699,6 +799,18 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     leave,
     forget(c) {
       subscribers.delete(c.id);
+    },
+    binary,
+    ghostStats,
+    // every bundleMs (mp-server's timer): the ghost bundles of every session
+    ghostTick() {
+      for (const s of sessions.values()) {
+        try {
+          ghostBundles(s);
+        } catch (e) {
+          log.warn?.('session ghosts failed', s.id, e);
+        }
+      }
     },
     tick() {
       for (const s of [...sessions.values()]) {

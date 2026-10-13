@@ -192,15 +192,18 @@ if (doc.game_mode) for (const c of [human, ...racers.npcs.map((n) => n.core)]) c
 // flag +0x1C (relationship >= 2) follows (PS2 bc-race-tuck2 599: Mac's soft attacks raise his record of Zoe to level 2, and
 // the human's 115D48 then picks the peer reaction 319). --no-relations keeps the document's levels fixed.
 if (!args.includes('--no-relations') && doc.relationships?.characters) {
-  const { ageRelationships, applyRelationshipEvent, relationshipScores } = await import('./lineup.js');
+  const { ageRelationships, applyRelationshipEvent, relationshipScores, relationshipRecord } = await import('./lineup.js');
   const sessions = new URL('ARA1/lineup-sessions.json', root);
   if (fs.existsSync(sessions)) {
     const R = doc.relationships, riders = racers.npcs.length + 1, characters = R.characters, banks = R.target_banks;
     const tables = ageRelationships(JSON.parse(fs.readFileSync(sessions, 'utf8')).fresh, characters.slice(0, riders), banks);
     const levels = () => relationshipScores(tables, characters, banks, R.rival_character);
-    if (JSON.stringify(levels()) === JSON.stringify(R.scores)) racers.onReact = (target, other, kind, attack) => {
+    // pv coreRelationships: the core's rider manager applies them itself (the same rule; the levels pushed when they change)
+    const inCore = () => racers.relationshipsInCore({ enabled: true, characters, banks, rival: R.rival_character, scores: levels(), kinds: null,
+      tables: tables.map((bank) => bank.map((row) => row.map((h) => relationshipRecord(h)))) });
+    if (JSON.stringify(levels()) !== JSON.stringify(R.scores)) console.error('relationships: the aged fresh table does not give the document levels; in-race changes off');
+    else if (!inCore()) racers.onReact = (target, other, kind, attack) => {
       applyRelationshipEvent(tables, characters, banks, target, other, (kind === 2 ? 1 : 0) + (attack ? 2 : 0)); racers.setRelationships(levels()); };
-    else console.error('relationships: the aged fresh table does not give the document levels; in-race changes off');
   }
 }   // backcountry rival events: 0x535C10 5 / 6 (docs/backcountry.md)
 // --world-draws: shared-RNG consumers outside the rider code that the browser does not run yet

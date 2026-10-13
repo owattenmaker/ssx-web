@@ -192,6 +192,9 @@ const CHARACTER_OF = { moby: 0, kaori: 1, allegra: 2, mac: 3, zoe: 4, griff: 5, 
 // ---- relationships (0x4A6CA8 + bank*0x9B50 + char*0xF88 + other*3 + 0xBC1: kind, level, score) ------------------------
 const rec = (hex) => [0, 2, 4].map((i) => { const b = parseInt(hex.slice(i, i + 2), 16); return b > 127 ? b - 256 : b; });
 const hex = (r) => r.map((v) => (v & 255).toString(16).padStart(2, '0')).join('');
+// a record as [kind, level, score] and back (web/ai-race.js pv coreRelationships: the core's records)
+export const relationshipRecord = rec;
+export const relationshipHex = hex;
 function rules(kind, level, score, ageing) {
   if (kind === 1) { if (level >= 4) return [3, 2, 10]; }
   else if (kind === 0) { if (level >= 3) return [0, 2, 10]; }

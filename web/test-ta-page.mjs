@@ -3,7 +3,8 @@
 // event (its objectives card: 'ta-loaded'), an attempt before the window opens is refused, then a solo run (no computer riders, the
 // maxed attribute bytes) is ridden to the finish and uploaded as the page player's best; the verifier verifies it; a second attempt
 // started and given up ends without an upload; after the deadline Continue is refused; the podium shows the page player; the vote
-// picks Metro City and the page loads it for the next window. Skipped without Chrome / WebGPU / the game data.
+// picks Metro City and the page loads it for the next window. With pv ghostRiders: the node player streams ghost poses, the page draws
+// its ghost from the server's bundles, and the page's own poses reach the node player. Skipped without Chrome / WebGPU / the game data.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findChrome, startBrowser, startServer, sleep } from './headless-chrome.mjs';
+import { encodePose, decodeBundle, freeBones, POSE, FLAG_RIDING } from './server/ghost-packet.mjs';
 
 const web = path.dirname(fileURLToPath(import.meta.url));
 const assets = path.join(web, 'public', 'assets');
@@ -55,6 +57,7 @@ function player(name) {
     });
     box.send = (m) => ws.send(JSON.stringify(m));
     ws.onmessage = (e) => {
+      if (typeof e.data !== 'string') return;
       const m = JSON.parse(e.data);
       box.messages.push(m);
       for (const w of [...box.waiters]) if (w.t === m.t && w.pred(m)) {
@@ -63,7 +66,7 @@ function player(name) {
       }
     };
     ws.onopen = () => {
-      box.send({ t: 'hello', name, rider: 'psymon', version: 2, token: box.token });
+      box.send({ t: 'hello', name, rider: 'psymon', pkg: 'RIDER_PSYMON', version: 2, token: box.token });
       box.pinger = setInterval(() => box.send({ t: 'ping', c: Date.now() }), 2000);
       ws.addEventListener('close', () => clearInterval(box.pinger));
       resolve(box);
@@ -83,7 +86,7 @@ try {
     console.log('time attack page check SKIPPED: no WebGPU');
     process.exit(0);
   }
-  await browser.goto(`${server.origin}/?qa=1&course=ARA1&rider=zoe&cutscenes=0&quality=low&mute=1&pv=onlineTimeAttack`);
+  await browser.goto(`${server.origin}/?qa=1&course=ARA1&rider=zoe&cutscenes=0&quality=low&mute=1&pv=onlineTimeAttack,ghostRiders`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   assert.ok(await E(`!!${TA}`), 'pv onlineTimeAttack installs ui.timeAttack');
   await E(`(async()=>{await ssxQA.ui().mpUI.session.connect();return 1})()`);
@@ -108,8 +111,31 @@ try {
     window.__run=(from,n,pad)=>{for(let t=from;t<from+n;t++){ssxQA.advance(1,window.__pads.tuck(t));if(/results|records|award/.test(ssxQA.ui().screen))return t+1;}return -1};
     ssxQA.ui().careerUI.play();return 1})()`);
   assert.equal(await E(`${TA}.state.attempt`), 1, 'Continue started attempt 1');
+  // the node player rides too: its ghost poses (Psymon's rig, standing still) at 20 Hz
+  const rig = JSON.parse(fs.readFileSync(path.join(assets, 'RIDER_PSYMON', 'rider.json'), 'utf8'));
+  const ghostPose = new Float32Array(rig.bones.length * 7);
+  for (let b = 0; b < rig.bones.length; b++) ghostPose[b * 7 + 6] = 1;
+  const bin = [];
+  bot.ws.binaryType = 'arraybuffer';
+  bot.ws.addEventListener('message', (e) => { if (typeof e.data !== 'string') bin.push(new Uint8Array(e.data)); });
+  const ghostTimer = setInterval(() => bot.ws.send(encodePose({ flags: FLAG_RIDING, serial: 256, time: Date.now(), pose: ghostPose, scale: [1, 1, 1], free: freeBones(rig.bones) })), 50);
   await sleep(300);
+  // the page draws the node player's ghost, and its own poses reach the node player
+  await browser.waitFor(`${TA}.ghosts.stats.bundles > 0 && ${TA}.ghosts.stats.drawn > 0 && ${TA}.ghosts.stats.sent > 5`, 30000).catch(() => {});
+  const ghostStats = await E(`${TA}.ghosts.stats`);
+  if (!(ghostStats.drawn >= 1)) {
+    console.log('ghost layer', JSON.stringify(await E(`${TA}.ghosts.inspect()`)));
+    console.log(browser.logs.filter((l) => /ta:|ghost/i.test(l)).slice(-5).join('\n'));
+  }
+  assert.ok(ghostStats.drawn >= 1, `the page draws the ghost ${JSON.stringify(ghostStats)}`);
+  // the page's own poses (sent while it rides: the run below ticks it)
   assert.ok((await run(0, 22000)) > 0, 'the attempt finishes');
+  assert.ok((await E(`${TA}.ghosts.stats.sent`)) > 0, 'the page sends its ghost');
+  const pageIndex = await E(`${TA}.state.roster.get(ssxQA.ui().mpUI.session.client.state.id)?.index`);
+  const fromPage = bin.map(decodeBundle).filter(Boolean).flatMap((x) => x.entries).filter((x) => x.player === pageIndex && x.kind === POSE);
+  assert.ok(fromPage.length > 0, `the node player received the page's poses (${bin.length} bundles)`);
+  assert.equal(fromPage[0].value.bones, 27, "Zoe's 27 bones");
+  clearInterval(ghostTimer);
   assert.equal(await E('ssxQA.ui().screen'), 'ctm-results', 'the results, no records screen in a session');
   await browser.waitFor(`${TA}.state.upload && ${TA}.state.upload.status !== 'sending'`, 30000);
   const up = await E(`${TA}.state.upload`);
@@ -118,7 +144,8 @@ try {
   const queue = await (await fetch(`${API}/mp/session/verifier/queue`, { headers: { 'x-ssx-verifier': token } })).json();
   assert.equal(queue.items.length, 1);
   assert.equal(queue.items[0].claim, up.value);
-  const replay = await E(`(async()=>{const f=await ssxQA.ui().cb.onlineReplayFile({event:'0:ARA1',mode:0,course:'ARA1',name:'X',claim:{ticks:1}});return {lineup:f.meta.lineup,attributes:f.meta.rider.attributes}})()`);
+  const replay = await E(`(async()=>{const f=await ssxQA.ui().cb.onlineReplayFile({event:'0:ARA1',mode:0,course:'ARA1',name:'X',claim:{ticks:1}});
+    return {lineup:f.meta.lineup,attributes:f.meta.rider.attributes}})()`);
   assert.equal(replay.lineup.enabled, false);
   assert.deepEqual(replay.lineup.values, []);
   assert.deepEqual(replay.attributes, [55, 55, 55, 55, 55, 55, 55]);

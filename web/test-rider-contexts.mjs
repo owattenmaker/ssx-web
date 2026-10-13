@@ -5,7 +5,8 @@
 // progress, game RNG, visual RNG and camera words must be equal.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
-import createCore from './runtime/core.js';
+// CORE_JS=<scratch core.js>: that core instead of web/runtime's (as the comparers)
+const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
 import { riderContextCore } from './ai-racers.js';
 import { scriptedPad } from './net/test-core.mjs';
 

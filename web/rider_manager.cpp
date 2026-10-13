@@ -18,8 +18,10 @@
 // presentation and relationship notices (js_manager_react) and for the QA hooks (draw counts, injected world draws).
 #include "../engine/game_rules.hpp"
 #include "../engine/original_random.hpp"
+#include "json.hpp"
 #include "rider_local.hpp"
 #include <emscripten/emscripten.h>
+#include <cmath>
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -65,6 +67,16 @@ void pair_translate(float x, float y, float z);
 void pair_set_velocity(float x, float y, float z, int reseed);
 void pair_react(int kind, int animation, int attack, const float* e);
 void pair_knockout();
+void race_world_set_relationships(const float* m);
+void npc_configure(const char* riderText, const char* documentText);
+void set_rider_attributes(const int32_t* raw, int32_t override);
+void reset_pad_history();
+void event_clock_hold(int on);
+void npc_grid_start();
+void npc_start_event();
+void race_world_reset(const float* init);
+void race_world_pair_setup(const float* p);
+void npc_set_relationships(const float* row);
 }
 
 // The page's hooks (web/ai-racers.js Module.riderManagerHost), called in the human's context only.
@@ -105,8 +117,35 @@ struct Rider {
     bool finished = false;
 };
 
+// pv coreRelationships (docs/core-migration.md M4a): the race's relationship records (0x4A6CA8 + bank * 0x9B50 + char * 0xF88 +
+// other * 3 + 0xBC1: kind, level, score; web/lineup.js), changed by the pair reactions 0x155BF0 in the tick, and the 6x6 levels /
+// kinds 0x155B50 / 0x155AB0 they give. The page loads them at each start and reads them back after each tick (its storage).
+struct RelationshipEvent {
+    int slot = 0;
+    int other = 0;
+    int kind = 0;
+    int attack = 0;
+    int audio = -1;   // the hit speech's relation 2A1820 of (other, target) before the change (web/sfx-game.js relationOf), -1 none
+    int notice = 0;   // 0x155BF0 -> 0x1E2A08: the human's own record about the target rose a level
+    int score = 0;    // the changed record's score
+};
+constexpr unsigned kRelationshipEvents = 64;
+struct Relationships {
+    bool loaded = false;
+    bool enabled = false;  // the page has tables (else only the speech's values are kept)
+    int characters[6] = {};
+    int banks[6] = {};
+    int rival = -1;
+    int8_t table[3][10][10][3] = {};
+    float scores[6][6] = {};
+    int kinds[6][6] = {};
+    unsigned events = 0;
+    RelationshipEvent event[kRelationshipEvents] = {};
+};
+
 struct RiderManager {
     bool active = false;
+    Relationships rel{};
     void* humanBlock = nullptr;
     unsigned riders = 0;  // the human and the computer riders
     int count = 0;        // the race's rider count (the world buffer's [1])
@@ -485,6 +524,82 @@ void stage2(RiderManager& M) {
 }
 }  // namespace
 
+namespace {
+// web/sfx-game.js relationOf(m, a, b): 2 when either level is 2 or more, else the kind 0 / 1, else 2; -1 when a kind is unknown.
+int audioRelation(const Relationships& R, int a, int b) {
+    for (int x = 0; x < 6; ++x) {
+        for (int y = 0; y < 6; ++y) {
+            if (x != y && R.kinds[x][y] < 0) {
+                return -1;
+            }
+        }
+    }
+    if (R.scores[a][b] >= 2 || R.scores[b][a] >= 2) {
+        return 2;
+    }
+    const int k = R.kinds[a][b];
+    return k == 0 ? 0 : k == 1 ? 1 : 2;
+}
+// The levels to the race world 10F560 and to each computer rider's own row (ai-racers.js setRelationships).
+void pushRelationships(RiderManager& M) {
+    float flat[36];
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            flat[a * 6 + b] = M.rel.scores[a][b];
+        }
+    }
+    inContext(M.humanBlock, [&] { race_world_set_relationships(flat); });
+    for (unsigned k = 1; k < M.riders; ++k) {
+        const float* row = flat + M.rider[k].slot * 6;
+        inContext(M.rider[k].block, [&] { npc_set_relationships(row); });
+    }
+}
+// 107E70's handlers: the speech's relation first (2A0A30), then the relationship event 155BF0 (web/ai-race.js onReact): `other`'s
+// record about `target`; event 0 soft, 1 crash, 2 soft attack, 3 crash attack; the levels and kinds again, pushed when changed.
+void relationshipReaction(RiderManager& M, int slot, int other, int kind, int attack) {
+    Relationships& R = M.rel;
+    if (R.events >= kRelationshipEvents) {
+        throw std::runtime_error("rider manager: too many pair reactions in a tick");
+    }
+    RelationshipEvent& e = R.event[R.events++];
+    e = RelationshipEvent{};
+    e.slot = slot;
+    e.other = other;
+    e.kind = kind;
+    e.attack = attack;
+    e.audio = other >= 0 && other < 6 && slot >= 0 && slot < 6 ? audioRelation(R, other, slot) : -1;
+    if (!R.enabled) {
+        return;
+    }
+    const int event = (kind == 2 ? 1 : 0) + (attack ? 2 : 0);
+    int8_t* record = R.table[R.banks[other]][R.characters[other]][R.characters[slot]];
+    const int before = record[1];
+    const ssx::rules::Relationship next = ssx::rules::relationshipEvent(record[0], record[2], event);
+    // stored as the page's hex bytes are (each & 255, read back signed)
+    record[0] = int8_t(next.kind);
+    record[1] = int8_t(next.level);
+    record[2] = int8_t(next.score);
+    e.notice = other == 0 && before < record[1] ? 1 : 0;
+    e.score = record[2];
+    bool changed = false;
+    for (int a = 0; a < 6; ++a) {
+        for (int p = 0; p < 6; ++p) {
+            const int own = R.characters[a];
+            const int8_t* r = R.table[R.banks[p]][R.characters[p]][own];
+            const float level = own == R.rival ? 3.f : float(r[1]);
+            R.kinds[a][p] = own == R.rival ? 2 : r[0];
+            if (level != R.scores[a][p]) {
+                changed = true;
+            }
+            R.scores[a][p] = level;
+        }
+    }
+    if (changed) {
+        pushRelationships(M);
+    }
+}
+}  // namespace
+
 // ---- hooks from the riders' passes (web/animation_bridge.cpp, web/race_bridge.cpp, web/race_world.cpp) ----
 // (C linkage: web/race_world.cpp and web/race_bridge.cpp declare them inside their extern "C" blocks)
 extern "C" {
@@ -542,7 +657,11 @@ void rider_manager_pair_velocity(int slot, float x, float y, float z, int reseed
 // 107E70 -> 10E228 / 10E2E8 / 10E3A8 / 10E468: speech 2A0A30 and the relationship 155BF0 (the page's), the KO count, the reaction.
 void rider_manager_pair_react(int slot, int kind, int animation, int attack, const float* event, int other) {
     RiderManager& M = *hostManager;
-    js_manager_react(slot, other, kind, attack);
+    if (M.rel.loaded) {
+        relationshipReaction(M, slot, other, kind, attack);
+    } else {
+        js_manager_react(slot, other, kind, attack);
+    }
     if (kind == 2 && attack && other >= 0 && unsigned(other) < M.riders) {
         inContext(M.rider[other].block, [] { pair_knockout(); });
     }
@@ -640,6 +759,7 @@ EMSCRIPTEN_KEEPALIVE void manager_set_anchor(const uint32_t* words) {
 // anchorTick: the document's anchor tick (-1 none); scores: rank mode 2 (freestyle, R&B: every slot's run score at the tick start).
 EMSCRIPTEN_KEEPALIVE float* manager_begin_tick(int anchorTick, int scores) {
     RiderManager& M = manager;
+    M.rel.events = 0;
     // WS1 phase 1's 128A48(C, 0) (0x234570): rank mode 0, every rank 0
     if (M.returnTick == 3) {
         race_world_rank_mode(0);
@@ -747,6 +867,310 @@ EMSCRIPTEN_KEEPALIVE void manager_end_tick() {
     M.tick++;
     if (M.returnTick >= 0) {
         M.returnTick++;
+    }
+}
+// pv coreRelationships: the race's records and levels (web/ai-race.js / compare-ai-capture.mjs at each start). spec (int32):
+// [enabled, characters x 6, banks x 6, rival, the tables 3 x 10 x 10 x (kind, level, score), the levels 6 x 6, the kinds 6 x 6 (-1
+// unknown)]. Returns 0 (nothing loaded: the page keeps them) for characters or banks out of range.
+EMSCRIPTEN_KEEPALIVE int manager_relationships(const int32_t* spec) {
+    Relationships& R = manager.rel;
+    R = Relationships{};
+    const int32_t* p = spec;
+    R.enabled = *p++ != 0;
+    for (int k = 0; k < 6; ++k) {
+        R.characters[k] = *p++;
+    }
+    for (int k = 0; k < 6; ++k) {
+        R.banks[k] = *p++;
+    }
+    R.rival = *p++;
+    for (int k = 0; k < 6; ++k) {
+        if (R.characters[k] < 0 || R.characters[k] > 9 || R.banks[k] < 0 || R.banks[k] > 2) {
+            R = Relationships{};
+            return 0;
+        }
+    }
+    for (int b = 0; b < 3; ++b) {
+        for (int c = 0; c < 10; ++c) {
+            for (int o = 0; o < 10; ++o) {
+                for (int f = 0; f < 3; ++f) {
+                    R.table[b][c][o][f] = int8_t(*p++);
+                }
+            }
+        }
+    }
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            R.scores[a][b] = float(*p++);
+        }
+    }
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            R.kinds[a][b] = *p++;
+        }
+    }
+    R.loaded = true;
+    return 1;
+}
+// The page's relationships again (the reactions call it back, ai-racers.js onPairAudio / onReact).
+EMSCRIPTEN_KEEPALIVE void manager_relationships_off() {
+    manager.rel = Relationships{};
+}
+// After a tick: [count, then per reaction: slot, other, kind, attack, audio, notice, score]; the queue starts empty each tick.
+EMSCRIPTEN_KEEPALIVE int32_t* manager_relationship_events() {
+    RIDER_LOCAL static int32_t out[1 + 7 * kRelationshipEvents];
+    const Relationships& R = manager.rel;
+    out[0] = int32_t(R.events);
+    for (unsigned k = 0; k < R.events; ++k) {
+        const RelationshipEvent& e = R.event[k];
+        int32_t* q = out + 1 + 7 * k;
+        q[0] = e.slot;
+        q[1] = e.other;
+        q[2] = e.kind;
+        q[3] = e.attack;
+        q[4] = e.audio;
+        q[5] = e.notice;
+        q[6] = e.score;
+    }
+    return out;
+}
+// The records and levels as they stand: the tables 3 x 10 x 10 x 3, the levels 6 x 6, the kinds 6 x 6 (int32).
+EMSCRIPTEN_KEEPALIVE int32_t* manager_relationship_state() {
+    RIDER_LOCAL static int32_t out[900 + 72];
+    const Relationships& R = manager.rel;
+    int32_t* p = out;
+    for (int b = 0; b < 3; ++b) {
+        for (int c = 0; c < 10; ++c) {
+            for (int o = 0; o < 10; ++o) {
+                for (int f = 0; f < 3; ++f) {
+                    *p++ = R.table[b][c][o][f];
+                }
+            }
+        }
+    }
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            *p++ = int32_t(R.scores[a][b]);
+        }
+    }
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            *p++ = R.kinds[a][b];
+        }
+    }
+    return out;
+}
+}
+
+namespace {
+using nlohmann::json;
+// A JSON value as the page's JS number of it (Float32Array.set / HEAPF32.set coerce so): absent (undefined) NaN, null 0, a bool 1 / 0,
+// a number itself, anything else NaN.
+double jsNumber(const json* v) {
+    if (!v) {
+        return NAN;
+    }
+    if (v->is_null()) {
+        return 0;
+    }
+    if (v->is_boolean()) {
+        return v->get<bool>() ? 1 : 0;
+    }
+    if (v->is_number()) {
+        return v->get<double>();
+    }
+    return NAN;
+}
+const json* member(const json& o, const char* key) {
+    if (!o.is_object()) {
+        return nullptr;
+    }
+    const auto it = o.find(key);
+    return it == o.end() ? nullptr : &*it;
+}
+const json* element(const json* a, unsigned k) {
+    if (!a || !a->is_array() || k >= a->size()) {
+        return nullptr;
+    }
+    return &(*a)[k];
+}
+// JS truthiness of a JSON value (an object or a nonzero number / true / a non-empty string)
+bool truthy(const json* v) {
+    if (!v || v->is_null()) {
+        return false;
+    }
+    if (v->is_boolean()) {
+        return v->get<bool>();
+    }
+    if (v->is_number()) {
+        const double d = v->get<double>();
+        return d != 0 && !std::isnan(d);
+    }
+    if (v->is_string()) {
+        return !v->get<std::string>().empty();
+    }
+    return true;
+}
+// `a ?? b` for a JSON value: null and absent take b
+const json* defined(const json* v) {
+    return v && !v->is_null() ? v : nullptr;
+}
+
+// The race world's reset (ai-racers.js world.reset / proximity): 10F560's records from the document, their distance / bearing from
+// the riders' grid positions (one race_world_frame at tick 0), the ranks, the relationship levels, then the pair inputs.
+void worldReset(RiderManager& M, const json& world, const json& relationships, bool isolate, const int32_t* ranks) {
+    const json* records = member(world, "records");
+    const double tail = jsNumber(member(world, "tail"));
+    const double rankMode = jsNumber(member(world, "rank_mode"));
+    const int count = M.count;
+    std::vector<float> init;
+    // proximity: every record from the grid positions
+    init = {float(count), float(tail), float(rankMode)};
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            const float on = a != b && a < count && b < count ? 1.f : 0.f;
+            init.insert(init.end(), {on, 0.f, float(1e10), 0.f, 0.f, 0.f, 0.f, 0.f, 0.f});
+        }
+        init.push_back(float(a));
+    }
+    init.insert(init.end(), 36, 0.f);
+    race_world_reset(init.data());
+    std::fill(std::begin(M.riderBuffer), std::end(M.riderBuffer), 0.f);
+    for (unsigned k = 0; k < M.riders; ++k) {
+        const float* st = liveState(M.rider[k]);
+        float* b = M.riderBuffer + M.rider[k].slot * 6;
+        b[0] = st[0];
+        b[1] = st[1];
+        b[2] = st[2];
+        b[3] = float(1e5);
+        b[4] = 0;
+        b[5] = 1;
+    }
+    race_world_frame(0, M.riderBuffer);
+    float near[6][6][2] = {};
+    {
+        const float* w = race_world_state();
+        for (int a = 0; a < 6; ++a) {
+            for (int b = 0; b < 6; ++b) {
+                near[a][b][0] = w[(a * 6 + b) * 10 + 2];
+                near[a][b][1] = w[(a * 6 + b) * 10 + 3];
+            }
+        }
+    }
+    // the document's records with those distances
+    init = {float(count), float(tail), float(rankMode)};
+    const json* docRanks = member(world, "ranks");
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            const json* r = a < count && b < count ? defined(element(element(records, unsigned(a)), unsigned(b))) : nullptr;
+            double enabled = r ? jsNumber(member(*r, "enabled")) : 0;
+            if (isolate && (a == 0 || b == 0) && a != b) {
+                enabled = 0;
+            }
+            double distance = 0;
+            double bearing = 0;
+            if (r && a != b) {
+                distance = near[a][b][0];
+                bearing = near[a][b][1];
+            } else {
+                distance = r ? jsNumber(member(*r, "distance")) : 1e10;
+                bearing = r ? jsNumber(member(*r, "bearing")) : 0;
+            }
+            auto field = [&](const char* key) { return r ? float(jsNumber(member(*r, key))) : 0.f; };
+            init.insert(init.end(), {float(enabled), field("human"), float(distance), float(bearing), field("t10"), field("t14"), field("t18"), field("t1c"),
+                                     field("t20")});
+        }
+        double rank = a;
+        if (ranks) {
+            rank = ranks[a];
+        } else if (const json* v = defined(element(docRanks, unsigned(a)))) {
+            rank = jsNumber(v);
+        }
+        init.push_back(float(rank));
+    }
+    const json* scores = member(relationships, "scores");
+    for (int a = 0; a < 6; ++a) {
+        for (int b = 0; b < 6; ++b) {
+            const json* v = defined(element(element(scores, unsigned(a)), unsigned(b)));
+            init.push_back(v ? float(jsNumber(v)) : 0.f);
+        }
+    }
+    race_world_reset(init.data());
+    std::vector<float> pairs;
+    const json* inputs = member(world, "pair_inputs");
+    for (unsigned s = 0; s < 6; ++s) {
+        const json* w = element(inputs, s);
+        const bool has = truthy(w);
+        pairs.push_back(has ? float(jsNumber(member(*w, "weight_attribute"))) : 0.f);
+        pairs.push_back(has ? float(jsNumber(member(*w, "collision_stat"))) : 0.f);
+        pairs.push_back(has ? float(jsNumber(member(*w, "attack_stat"))) : 0.f);
+    }
+    pairs.push_back(truthy(member(world, "knockdown_cheat")) ? 1.f : 0.f);
+    race_world_pair_setup(pairs.data());
+}
+}  // namespace
+
+extern "C" {
+// pv coreEventStart (docs/core-migration.md M4b): the computer riders' event start (ai-racers.js start): each rider's provider set
+// up again from its record (npc_configure; the event reloads on a restart), its stat bytes (attribute bank 2) when they are not the
+// seeds', its pad history settled, its start (npc_start_event, or with gridStart the grid placement npc_grid_start, under hold its
+// event clock held in PreRace), then the manager's tick and counts, the race world's reset from the document, the previous run's
+// world events dropped. riders: each computer rider's record text (JSON); context: the provider's document text; world: {world,
+// relationships} text; ranks: 6 ranks or null. In the human's context.
+EMSCRIPTEN_KEEPALIVE void manager_event_start(const char* const* riders, const char* context, const char* worldText, int gridStart, int hold, int isolate,
+                                              const int32_t* ranks) {
+    RiderManager& M = manager;
+    for (unsigned k = 1; k < M.riders; ++k) {
+        const char* text = riders[k - 1];
+        const json record = json::parse(text);
+        inContext(M.rider[k].block, [&] {
+            npc_configure(text, context);
+            // the rider's own stat getters (0x1494C0..: attribute bank 2 for computer riders): only when they are not all 5
+            const json* a = member(record, "attributes");
+            const json* raw = a ? member(*a, "raw") : nullptr;
+            if (raw && raw->is_array() && raw->size() == 7) {
+                bool seeds = true;
+                int32_t bytes[7];
+                for (unsigned j = 0; j < 7; ++j) {
+                    const double v = jsNumber(&(*raw)[j]);
+                    if (!(v == 5)) {
+                        seeds = false;
+                    }
+                    bytes[j] = ssx::rules::jsToInt32(v);
+                }
+                if (!seeds) {
+                    set_rider_attributes(bytes, ssx::rules::jsToInt32(jsNumber(member(*a, "override"))));
+                }
+            }
+            reset_pad_history();
+            if (hold) {
+                event_clock_hold(1);
+            }
+            try {
+                if (gridStart) {
+                    npc_grid_start();
+                } else {
+                    npc_start_event();
+                }
+            } catch (...) {
+                if (hold) {
+                    event_clock_hold(0);
+                }
+                throw;
+            }
+            if (hold) {
+                event_clock_hold(0);
+            }
+        });
+        M.rider[k].finished = false;
+    }
+    manager_start();
+    const json doc = json::parse(worldText);
+    const json* world = member(doc, "world");
+    const json* relationships = member(doc, "relationships");
+    worldReset(M, world ? *world : json::object(), relationships ? *relationships : json::object(), isolate != 0, ranks);
+    for (unsigned k = 0; k < M.riders; ++k) {
+        inContext(M.rider[k].block, [] { world_events(); });
     }
 }
 // [tick, stage, returnTick, worldEvents, the pair counts x 5, the event kinds x 16]

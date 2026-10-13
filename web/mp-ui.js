@@ -9,6 +9,7 @@
 // Lobby screens are drawn with the career menus' frame/help helpers so they match the rest of the front end.
 import { inviteLink } from './net/mp-client.js';
 import { raceTime } from './race-time.mjs';
+import { pv } from './pv-flags.js';
 const Y = (y) => Math.round(y * 448 / 480);
 const SCREENS = ['mp-connect', 'mp-lobbies', 'mp-lobby'];
 const ORDINAL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
@@ -20,6 +21,22 @@ export class MultiplayerScreens {
     this.notice = '';
     this.noticeUntil = 0;
     this.onlineResults = false;
+    // pv onlineTimeAttack: the time-attack screens (web/ta-ui.js, loaded only with the switch on), a 'Time Attack' row above the
+    // lobbies once they are loaded
+    this.ta = null;
+    if (pv('onlineTimeAttack') && ui.timeAttack) {
+      import('./ta-ui.js')
+        .then(({ TaScreens }) => {
+          this.ta = new TaScreens(ui, ui.timeAttack);
+          return this.ta.load();
+        })
+        .then(() => ui.sync?.())
+        .catch((e) => console.warn('Time attack screens unavailable', e));
+    }
+  }
+  // the lobby list's first row is Time Attack while its screens are ready
+  get taRow() {
+    return this.ta?.ready ? 1 : 0;
   }
   get client() {
     return this.session.client;
@@ -28,7 +45,7 @@ export class MultiplayerScreens {
     return this.session.racing;
   }
   owns(screen) {
-    return SCREENS.includes(screen) || (screen === 'results' && this.onlineResults);
+    return SCREENS.includes(screen) || (screen === 'results' && this.onlineResults) || !!this.ta?.owns(screen);
   }
   // Main menu -> Online -> rider select -> here.
   enter() {
@@ -50,10 +67,12 @@ export class MultiplayerScreens {
     return s.lobby?.members.find((m) => m.id === s.id);
   }
   items(screen) {
+    if (this.ta?.owns(screen)) return this.ta.items(screen);
     const s = this.client.state;
     if (screen === 'mp-connect') return [s.status === 'connecting' || s.status === 'reconnecting' ? 'Connecting...' : 'Retry', 'Back'];
     if (screen === 'mp-lobbies')
       return [
+        ...(this.taRow ? ['Time Attack'] : []),
         'Create Lobby',
         ...s.lobbies.map((l) => `${l.name} (${l.players}/${l.maxPlayers})${l.racing ? ' racing' : ''}`),
         'Refresh',
@@ -72,26 +91,47 @@ export class MultiplayerScreens {
     return [];
   }
   disabled(screen, i) {
+    if (this.ta?.owns(screen)) return this.ta.disabled(screen, i);
     const s = this.client.state;
     if (screen === 'mp-connect') return i === 0 && (s.status === 'connecting' || s.status === 'reconnecting');
     if (screen === 'mp-lobbies') {
-      const l = s.lobbies[i - 1];
+      const l = s.lobbies[i - 1 - this.taRow];
       return !!l && l.players >= l.maxPlayers;
     }
     if (screen === 'mp-lobby') return (i === 1 || i === 2) && (!this.client.isHost || !!s.lobby?.race);
     return false;
   }
   layout(screen, i) {
+    if (this.ta?.owns(screen)) return this.ta.layout(screen, i);
     if (screen === 'mp-lobby') return [40, Y(120) + i * Y(30), 250, Y(26)];
     if (screen === 'results') return [450, 299 + i * 15, 126, 17];
     return [40, Y(110) + i * Y(26), 360, Y(24)];
   }
-  key() {
-    return false;
+  key(e) {
+    return !!this.ta?.key(e);
+  }
+  // the in-race HUD line of a time-attack session (web/ui.js after the career HUD)
+  hud(c, s) {
+    this.ta?.hud(c, s);
+  }
+  // over a cutscene: the time-attack podium's labels (web/ui.js after the cutscene's own overlay)
+  cutsceneOverlay(c) {
+    this.ta?.cutsceneOverlay(c);
   }
   choose(i) {
     const ui = this.ui,
       s = this.client.state;
+    if (this.ta?.owns(ui.screen)) {
+      this.ta.choose(i);
+      return;
+    }
+    if (ui.screen === 'mp-lobbies' && this.taRow) {
+      if (i === 0) {
+        this.ta.open();
+        return;
+      }
+      i--;
+    }
     if (ui.screen === 'mp-connect') {
       if (i === 0) this.enter();
       else this.leaveToMenu();
@@ -132,6 +172,10 @@ export class MultiplayerScreens {
   }
   back() {
     const ui = this.ui;
+    if (this.ta?.owns(ui.screen)) {
+      this.ta.back();
+      return;
+    }
     if (ui.screen === 'mp-lobby') {
       this.client.leave();
       ui.set('mp-lobbies');
@@ -193,6 +237,7 @@ export class MultiplayerScreens {
       screen = ui.screen,
       career = ui.careerUI;
     if (screen === 'results') return this.drawResults(c);
+    if (this.ta?.owns(screen)) return this.ta.draw(c, b);
     const frame = (title) => {
       if (career?.mcommFrame) career.mcommFrame(c, b, title);
       else {
@@ -232,7 +277,9 @@ export class MultiplayerScreens {
       row(`${s.status === 'online' ? 'Online' : s.status}${Number.isFinite(s.rtt) ? `  ${s.rtt} ms` : ''}`, 460, Y(110), 14, '#eef4f7');
       help(
         this.noticeText() ||
-          (ui.index === 0
+          (this.taRow && ui.index === 0
+            ? 'Time attack sessions: everyone rides the same event against the clock; the best run wins.'
+            : ui.index === this.taRow
             ? 'Create a lobby on the current course. Share its invite link with a friend.'
             : 'Join a lobby, or refresh the list. A racing lobby seats you for its next race.')
       );

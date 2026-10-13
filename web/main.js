@@ -1681,6 +1681,26 @@ function resetPhysics(keepTick = false) {
   // the CTM plane drop as the PS2 has it (web/plane-drop.js, menus/fr/ctmstart f02700): the rider lies head first (+0x120;
   // its forward +0x1B0 68 degrees down; set_rider_velocity commits it), and the camera takes that tick's words: 10 ticks into the lock the
   // drop's set-target 0x176FE0 started from that forward, looking down the slope
+  // pv coreEventStart (docs/core-migration.md M4b): the same seeds, in the same order, through the core's plane_drop_seed
+  if (drop && pv('coreEventStart') && core._plane_drop_seed && PLANE_DROP.animation) {
+    const v = spawn.velocity;
+    const text = new TextEncoder().encode(PLANE_DROP.animation + '\0');
+    const q = core._malloc(16),
+      a = core._malloc(text.length),
+      w = core._malloc(271 * 4),
+      f = core._malloc(PLANE_DROP.streamer.length * 4);
+    new Uint32Array(core.HEAPU8.buffer, q, 4).set(PLANE_DROP.quaternion);
+    core.HEAPU8.set(text, a);
+    new Uint32Array(core.HEAPU8.buffer, w, 271).set(PLANE_DROP.camera);
+    core.HEAPF32.set(PLANE_DROP.streamer, f >> 2);
+    try {
+      core._plane_drop_seed(q, v ? 1 : 0, v?.[0] ?? 0, v?.[1] ?? 0, v?.[2] ?? 0, a, w, f);
+    } finally {
+      for (const p of [q, a, w, f]) core._free(p);
+    }
+    state = new Float32Array(core.HEAPF32.buffer, core._rider_state(), 16).slice();
+    return;
+  }
   if (drop) new Uint32Array(core.HEAPU8.buffer, core._rider_orientation(), 4).set(PLANE_DROP.quaternion);
   if (spawn.velocity) core._set_rider_velocity(...spawn.velocity);
   if (drop && core._drop_air_seed && PLANE_DROP.animation) {

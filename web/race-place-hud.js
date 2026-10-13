@@ -60,6 +60,22 @@ function tintedAtlas(image, rgb) {
   tinted.set(key, canvas); return canvas;
 }
 function quad(ctx, image, name, x, y, w, h) { const [u0, v0, u1, v1] = RECTS[name]; ctx.drawImage(image, u0, v0, u1 - u0, v1 - v0, x, y, w, h); }
+// The place number and its suffix (1ST gold, 2ND / 3RD .. blue, as 0x21E1B0 draws them) at (x, y), scaled: web/ta-ui.js labels
+// the time-attack podium's riders with it. Returns the drawn width.
+export function drawPlaceLabel(ui, ctx, place, x, y, scale = 1) {
+  const atlas = ui.images['OV_1-3'];
+  if (!atlas || place < 0 || place > 5) return 0;
+  const first = place === 0;
+  const W = first ? 26 : 40;
+  const tint = tintedAtlas(atlas, first ? GOLD : BLUE);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  quad(ctx, tint, `nm${place + 1}w`, 0, 0, W, 42);
+  quad(ctx, tint, SUFFIX[place < 4 ? place : 3], W, 0, 40, 22);
+  ctx.restore();
+  return (W + 40) * scale;
+}
 export function drawRacePlace(ui, ctx, hud) {
   const atlas = ui.images['OV_1-3'];
   if (!atlas || !hud || hud.place < 0 || hud.place > 5) return;

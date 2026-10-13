@@ -43,6 +43,11 @@ float* race_result_info();
 uint32_t* score_object_dump();
 int race_timed_out();
 void finish_celebrate(int celebrate);
+float* rider_orientation();
+void set_rider_velocity(float x, float y, float z);
+void drop_air_seed(const char* sequences);
+void camera_seed_words(const uint32_t* words, const uint8_t* mask);
+void rider_fx_streamer_seed(const float* w);
 }
 
 namespace {
@@ -270,4 +275,29 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tick_results(float* io) {
     io[3] = show ? 1 : 0;
     io[4] = float(post);
     io[5] = stop ? 1 : 0;
+}
+
+// pv coreEventStart (docs/core-migration.md M4b): the CTM plane drop's seeds as web/main.js resetPhysics gives them on its first
+// race tick (web/plane-drop.js, PS2 menus/fr/ctmstart f02700), in its order: the rider head first (+0x120; set_rider_velocity
+// commits it), the start velocity, the air controller's sequences (drop_air_seed), the camera's 271 words (all known), the air
+// streamers. Any pointer may be null (that seed is left out).
+extern "C" EMSCRIPTEN_KEEPALIVE void plane_drop_seed(const uint32_t* quaternion, int hasVelocity, float vx, float vy, float vz, const char* animation,
+                                                     const uint32_t* camera, const float* streamer) {
+    if (quaternion) {
+        std::memcpy(rider_orientation(), quaternion, 4 * sizeof(uint32_t));
+    }
+    if (hasVelocity) {
+        set_rider_velocity(vx, vy, vz);
+    }
+    if (animation) {
+        drop_air_seed(animation);
+    }
+    if (camera) {
+        uint8_t known[271];
+        std::memset(known, 1, sizeof known);
+        camera_seed_words(camera, known);
+    }
+    if (streamer) {
+        rider_fx_streamer_seed(streamer);
+    }
 }

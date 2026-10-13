@@ -45,8 +45,9 @@ The JS that decides simulation results, beyond presentation:
 | --- | --- | --- | --- |
 | M1 | Pure event / career rules (lineup, anchor RNG, estimates, rankings, medals, records, difficulty) | coreRules | core1, verified |
 | M2 | The game tick's core sequence (tick_begin = tick_input + race_begin + tick_rider + tick_progress, tick_mid, tick_end, tick_finish, tick_results); M2b the gates on the page's sequence | coreTick | core3, verified |
-| M3 | The rider manager into C++ (stages, RNG cursor, pair host, world sync, FX phases) | coreRiderManager | core5, in proof |
-| M4 | Event start (startRun's sequence, lineup install, anchor RNG, relationships push, plane-drop seeds, the toggles) | | planned |
+| M3 | The rider manager into C++ (stages, RNG cursor, pair host, world sync, FX phases) | coreRiderManager | core5, verified |
+| M4a | The race's relationship records in the core's rider manager (the last mid-tick page callback) | coreRelationships | core6, verified (page tests pending a tree fix) |
+| M4b | The computer riders' event start and the race world's reset; the plane-drop seeds | coreEventStart | core8, verified |
 | M5 | Career progression state (results, awards, unlocks, gear, attributes; the presentation-RNG draw order kept) | | planned |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
@@ -208,3 +209,55 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
 - Proof: web/test-core-rider-manager.mjs (two identical cores, the switch off and on: every tick's ?simtrace hash, tick record,
   manager state and hook calls equal; Snow Jam with five computer riders through a Give Up and its results, 4909 ticks; with the
   QA hooks, 1500 ticks and 19,509 hook calls).
+- Full ps2-captures 534 / 534 on core5 with SSX_PV=coreRiderManager (every AI gate through compare-ai-capture's createAiRacers)
+  and with the defaults, every report line the same as core1's. Page (CORE_DIR=core5): the Metro City race with five computer
+  riders, 8687 ticks, ?simtrace and dumps identical with the switch off and on; test-rival-page, test-replay,
+  test-records-verifier pass with PAGE_PV=coreRiderManager; test-ai-racers, test-lineups, test-slopestyle-bigair,
+  test-rider-contexts (CORE_JS now honoured by ai-race-node.mjs and test-rider-contexts.mjs), test-stage-world, test-mp-pickups
+  pass with SSX_PV=coreRiderManager.
+- Left in JS for later slices: the event set-up (M4), the relationships the reactions change mid-tick (the manager calls the page
+  back for them; moving the tables in is M4 / M5 work), holdTick (WS1's approach), the online pair-net host (M7).
+
+## M4a: the relationships in the core (pv coreRelationships, core6)
+
+- web/rider_manager.cpp `Relationships`: the race's records (3 banks x 10 characters x 10 [kind, level, score]), the participants,
+  the 6x6 levels / kinds, and a per-tick queue of the pair reactions. On a reaction (107E70's handlers) the core keeps the speech's
+  relation value of that moment (web/sfx-game.js relationOf), applies 0x155BF0 (engine/game_rules.hpp relationshipEvent, the
+  record stored as the page's hex bytes are), recomputes the levels / kinds (the peak rival 3 / 2) and pushes changed levels to
+  race_world and each computer rider's row, in the order web/ai-race.js onReact did, then the knockout and the reaction.
+- web/ai-race.js loads them at each start and a replay's restore (loadCoreRelationships) and drains the queue after each tick
+  (drainCoreRelationships): the speech hook with the core's value (web/game-audio.js takes it as onPairAudio's 5th argument), the
+  career notice when the human's record rose a level (not in replays), then the changed records back into its tables (their
+  text), the document's levels / kinds, and its storage. compare-ai-capture.mjs loads its aged tables the same way.
+- A no-op unless the switch is on, the rider manager runs and the core has the exports (ai-racers.js relationshipsAvailable). A
+  first version called an export core5 lacks with the switch off and broke every AI race on the tree for a while; guarded since.
+- Proof: test-core-rider-manager.mjs's relationships pair (the page rule in the tick against the core's: the same traces, the 4
+  reactions with their notices and scores, the records after 3000 ticks); full ps2-captures 534 / 534 with SSX_PV=coreRelationships
+  and with the defaults on core6 (bc/bc-race-tuck2's levels change in the core: Mac's record of Zoe to 2); the Metro City page race
+  (8687 ticks): ?simtrace, dumps, the stored records and the document's levels / kinds identical off / on; test-rival-page and
+  test-records-verifier pass with the switch.
+
+## M4b: the event start in the core (pv coreEventStart, core8)
+
+- web/rider_manager.cpp `manager_event_start`: web/ai-racers.js start(): each computer rider's provider set up again from its
+  record text (npc_configure with the same document text), its stat bytes when they are not all 5, its pad history settled, its
+  start (npc_start_event, or npc_grid_start, under `hold` with its event clock held in PreRace); the manager's counts; the race
+  world's reset (world.reset / proximity: the records' distances and bearings from one race_world_frame of the grid positions,
+  the ranks, the levels, then the pair inputs) read from the document (JS number coercions kept: an absent field NaN, null 0, a
+  bool 1 / 0); every context's world-event log dropped. The page passes the same texts it passed before.
+- web/game_tick.cpp `plane_drop_seed`: main.js resetPhysics's CTM plane drop seeds in their order (the rider head first, the
+  start velocity, drop_air_seed, the camera's 271 words, the air streamers); the data stays web/plane-drop.js's.
+- Not moved, on purpose: the rest of main.js startRun. Its core calls are interleaved with page modules that also call the core
+  (freeRide.afterReset, mpGame.beforeStart, the collectibles, the computer riders' start, the in-world sync, the presentation
+  resets), so a single core call would change their order; they move with the modules (M5, M7). The order a native front end
+  must make, from startRun: race_time_limit, set_race_bonus, reset_fog, reset_rider_lighting, reset_animation, reset_race (not for
+  an in-world grid start), the pad history (reset, or the replay's pad state, or kept under pv padCarry), set_input_map, the
+  placement (reset_rider and the seeds, or the in-world NIS release), set_camera_view (a replay), the free-ride reset, the
+  multiplayer grid seed, the collectibles, start_event or (in-world) event_route_seed / section_restart / event_grid_start, the
+  computer riders' start, the in-world node sync, and for a replay the RNG words.
+- The two toggles applyPresentationFast sets every frame (stage_teleport_enable 1, set_fx_reset_kicker 1) stay page calls: they
+  default off in the core and compare-ai-capture does not set them, so making them core defaults would change its runs.
+- Proof: test-core-rider-manager.mjs's event-start pair (both on the core's rider manager, started by makeGame, restarted at 700 and
+  given a held grid start with the human's rank at 1400: 2000 ticks identical); test-plane-drop-seed.mjs (the page's calls and the
+  core's, 600 ticks identical); full ps2-captures 534 / 534 on core7 with SSX_PV=coreRelationships,coreEventStart and with the
+  defaults; the CTM plane drop on the page (a new career's Happiness start, clock frozen, 600 ticks): identical off / on.

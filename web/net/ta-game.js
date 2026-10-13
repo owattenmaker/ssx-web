@@ -12,6 +12,9 @@
 // The page's own run rules are untouched: a time-attack attempt is a Single Event run of the event. The session's state for the
 // screens: session, roster, standings, you, results, votes.
 import { encodeReplayFile } from '../server/replay-file.mjs';
+import { BUNDLE } from '../server/ghost-packet.mjs';
+import { createTaGhosts } from './ta-ghosts.js';
+import { pv } from '../pv-flags.js';
 
 export const MAX_ATTRIBUTES = Object.freeze([55, 55, 55, 55, 55, 55, 55]);
 const LOAD_POLL_MS = 250;
@@ -33,7 +36,8 @@ export function eventEntry(courses, key) {
 // The better of two values of an event (records.mjs better without the submission order).
 export const betterValue = (key, a, b) => (TIMED_MODES.has(+String(key).split(':')[0]) ? a < b : a > b);
 
-export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.fetch(...a), base = '', log = console }) {
+// scene: {T, scene, load, loader, origin, getCore} from web/net/mp-game.js, for the ghosts (pv ghostRiders); without it no ghosts.
+export function createTimeAttack({ ui, client, scene = null, fetchImpl = (...a) => globalThis.fetch(...a), base = '', log = console }) {
   const listeners = new Set();
   const state = {
     sessions: [],
@@ -52,6 +56,12 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
     note: null
   };
   let loadTimer = null;
+  // the session's players by their ghost index (web/server/sessions.mjs member.index)
+  const byIndex = new Map();
+  const reindex = () => {
+    byIndex.clear();
+    for (const m of state.roster.values()) if (m.index != null) byIndex.set(m.index, m);
+  };
   const changed = () => {
     for (const f of listeners) {
       try {
@@ -70,6 +80,8 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
     return t >= s.window.startAt && t < s.window.endAt;
   };
   const eventKey = () => state.session?.window?.event ?? state.session?.event ?? null;
+  // the name the session shows: the player's own (Options > Player Name, web/fe-screens.js), else the rider's
+  const playerName = () => ui.feScreens?.playerName || scene?.rider?.()?.name || 'Rider';
   const mode = () => +String(eventKey() ?? '').split(':')[0];
 
   // ---- the event on the page ----
@@ -90,10 +102,14 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
       changed();
       return;
     }
-    state.attempt = 0;
+    // the attempt numbers only grow within a window (the server refuses a repeated one): a new window starts them again
+    if (state.attemptWindow !== s.window?.id) {
+      state.attemptWindow = s.window?.id;
+      state.attempt = 0;
+      state.best = null;
+      state.results = null;
+    }
     state.attemptOpen = false;
-    state.best = null;
-    state.results = null;
     armRun();
     ui.startSingleEvent(entry);
     // loaded = the event's objectives card is up (career-ui single -> the load screen -> 'ctm-objectives')
@@ -121,7 +137,9 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
   function applyState(s) {
     const before = state.session;
     state.session = s;
-    if (s.phase === 'load' && (!before || before.window?.id !== s.window?.id || before.phase !== 'load')) enterEvent();
+    // a new window loads its event; so does a player who joins while the window is open
+    const fresh = !before || before.window?.id !== s.window?.id;
+    if ((s.phase === 'load' && (fresh || before.phase !== 'load')) || (s.phase === 'window' && fresh)) enterEvent();
     if (s.phase === 'vote' && before?.phase !== 'vote') {
       state.myVote = -1;
       state.votes = s.candidates.map(() => 0);
@@ -130,6 +148,7 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
   }
   client.on('ta-joined', (m) => {
     state.roster = new Map((m.roster ?? []).map((p) => [p.id, p]));
+    reindex();
     state.standings = m.standings ?? [];
     state.you = state.standings.find((r) => r.id === m.you) ?? null;
     state.results = m.results ?? null;
@@ -147,7 +166,12 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
   client.on('ta-roster', (m) => {
     if (m.add) state.roster.set(m.add.id, m.add);
     if (m.update) state.roster.set(m.update.id, m.update);
-    if (m.drop) state.roster.delete(m.drop);
+    if (m.drop) {
+      const gone = state.roster.get(m.drop);
+      if (gone?.index != null) ghosts?.drop(gone.index);
+      state.roster.delete(m.drop);
+    }
+    reindex();
     if (m.host && state.session) state.session = { ...state.session, hostId: m.host };
     changed();
   });
@@ -168,6 +192,7 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
   });
   client.on('ta-left', () => {
     clearInterval(loadTimer);
+    ghosts?.clear();
     state.session = null;
     state.roster = new Map();
     state.standings = null;
@@ -175,6 +200,14 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
     state.results = null;
     disarm();
     changed();
+  });
+
+  // ---- ghosts (pv ghostRiders) ----
+  const ghosts = scene && pv('ghostRiders')
+    ? createTaGhosts({ ...scene, client, ui, members: () => byIndex, serverNow, riding: () => state.attemptOpen && ui.screen === 'game', attempt: () => state.attempt })
+    : null;
+  client.on('state', (frame) => {
+    if (frame[0] === BUNDLE && state.session) ghosts?.receive(frame);
   });
 
   // ---- uploads ----
@@ -193,6 +226,16 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
 
   const api = {
     state,
+    ghosts,
+    // the page's scene pieces (camera, origin), for web/ta-ui.js's podium labels
+    view: scene,
+    // this page's player id in the session
+    myId: () => client.state?.id ?? null,
+    // web/net/mp-game.js aiAllowed(), right before an event's computer-rider lineup is prepared (main.js), on whichever course's race is
+    // current: a course switch builds a new one, so the solo lineup is armed there, not only at the event's start
+    armLineup() {
+      if (state.session) armRun();
+    },
     on(f) {
       listeners.add(f);
       return () => listeners.delete(f);
@@ -214,11 +257,15 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
     list() {
       client.session({ t: 'ta-list' });
     },
+    // the session's event on the page again (web/ta-ui.js: the room's Ride when the page is elsewhere)
+    enter() {
+      if (state.session) enterEvent();
+    },
     create({ name, limitMs, maxPlayers, event } = {}) {
-      client.session({ t: 'ta-create', name, limitMs, maxPlayers, event });
+      client.session({ t: 'ta-create', name, limitMs, maxPlayers, event, playerName: playerName() });
     },
     join(id) {
-      client.session({ t: 'ta-join', session: id });
+      client.session({ t: 'ta-join', session: id, playerName: playerName() });
     },
     leave() {
       if (state.attemptOpen) api.endAttempt('quit');
@@ -284,7 +331,7 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
       state.upload = { attempt, value, status: 'sending' };
       changed();
       const [modeText, code] = key.split(':');
-      Promise.resolve(ui.cb.onlineReplayFile?.({ event: key, mode: +modeText, course: code, name: ui.rider?.name ?? 'Rider', claim: timed ? { ticks: value } : { score: value } }))
+      Promise.resolve(ui.cb.onlineReplayFile?.({ event: key, mode: +modeText, course: code, name: playerName(), claim: timed ? { ticks: value } : { score: value } }))
         .then((file) => (file ? upload(file.meta, file.pad, attempt, windowId, sessionId) : { error: 'replay' }))
         .then((res) => {
           state.upload = { attempt, value, status: res?.ok ? (res.kept ? 'kept' : 'not kept') : 'failed', error: res?.error ?? null, rank: res?.rank ?? -1 };
@@ -300,6 +347,7 @@ export function createTimeAttack({ ui, client, fetchImpl = (...a) => globalThis.
     },
     dispose() {
       clearInterval(loadTimer);
+      ghosts?.dispose();
       disarm();
       listeners.clear();
     }

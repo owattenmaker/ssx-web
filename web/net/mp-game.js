@@ -66,7 +66,7 @@ export function createMpGame({
     token: sessionToken()
   });
   // pv onlineTimeAttack: time-attack sessions on the same connection (web/net/ta-game.js; web/career-ui.js play / finish ask it)
-  const timeAttack = pv('onlineTimeAttack') ? createTimeAttack({ ui, client }) : null;
+  const timeAttack = pv('onlineTimeAttack') ? createTimeAttack({ ui, client, scene: { T, scene, load, loader, origin, getCore, camera, rider } }) : null;
   if (timeAttack) ui.timeAttack = timeAttack;
   const stats = {
     frames: 0,

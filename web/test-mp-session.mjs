@@ -10,9 +10,10 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { createSessions, MAX_ATTRIBUTE } from './server/sessions.mjs';
+import { createSessions, MAX_ATTRIBUTE, RANDOM } from './server/sessions.mjs';
 import { eventTable } from './server/records.mjs';
 import { encodeReplayFile } from './server/replay-file.mjs';
+import { encodePose, decodeBundle, POSE, LITE, DOT, FLAG_RIDING } from './server/ghost-packet.mjs';
 import { createRecording } from './replay.js';
 
 const web = path.dirname(fileURLToPath(import.meta.url));
@@ -65,8 +66,9 @@ const tick = (ms) => {
     S.tick();
   }
 };
-const [a, b, c] = [client('a', 'ANNA'), client('b', 'BEN'), client('c', 'CAL')];
-S.message(a, { t: 'ta-create', name: 'Big', limitMs: 300000, event: '0:TST1' });
+const [a, b, c] = [client('a', 'Zoe'), client('b', 'BEN'), client('c', 'CAL')];
+// the name shown is the player's own (the page's Player Name), not the connection's rider name
+S.message(a, { t: 'ta-create', name: 'Big', limitMs: 300000, event: '0:TST1', playerName: 'ANNA' });
 let joined = last('a', 'ta-joined');
 assert.ok(joined, 'the creator joins');
 const sid = joined.session.id;
@@ -189,18 +191,18 @@ let res = last('a', 'ta-results');
 assert.deepEqual(res.podium.map((x) => [x.name, x.value]), [['CAL', 2950], ['ANNA', 3000]], 'only verified runs: BEN is still pending');
 assert.deepEqual(res.standings.map((x) => [x.name, x.status]), [['CAL', 'verified'], ['ANNA', 'verified'], ['BEN', 'pending']]);
 assert.equal(res.timed, true);
-// vote: three new events would be drawn, but the rotation has only three others; plus the same event again
+// vote: two events (not the one just ridden) and RANDOM
 tick(20000);
 assert.equal(st.phase, 'vote');
-assert.equal(st.candidates.length, 4);
-assert.equal(st.candidates[3], '0:TST1');
-assert.ok(!st.candidates.slice(0, 3).includes('0:TST1'));
+assert.equal(st.candidates.length, 3);
+assert.equal(st.candidates[2], RANDOM);
+assert.ok(!st.candidates.slice(0, 2).includes('0:TST1'));
 S.message(a, { t: 'ta-vote', choice: 1 });
 S.message(b, { t: 'ta-vote', choice: 1 });
 S.message(c, { t: 'ta-vote', choice: 2 });
 S.message(c, { t: 'ta-vote', choice: 9 });
 tick(250);
-assert.deepEqual(last('a', 'ta-votes').counts, [0, 2, 1, 0]);
+assert.deepEqual(last('a', 'ta-votes').counts, [0, 2, 1]);
 const next = st.candidates[1];
 tick(15000);
 assert.equal(st.phase, 'vote-result');
@@ -211,6 +213,21 @@ assert.equal(st.event, next);
 assert.equal(st.window.id, 2);
 assert.equal(st.limitMs, 90000, "the host's new limit");
 assert.equal(st.players.get('a').best, null, 'a new window starts empty');
+assert.equal(st.players.get('a').name, 'ANNA', 'the player name');
+// RANDOM wins: an event of the rotation but the two shown
+{
+  const R = createSessions({ events, now: () => clock, send: () => {}, clients, random: () => 0.99, log: { log() {}, warn() {} }, options: timing });
+  const x = client('rx', 'RX');
+  R.message(x, { t: 'ta-create', limitMs: 60000, event: '0:TST1' });
+  const rs = [...R.sessions.values()][0];
+  rs.candidates = ['1:TSS1', '4:TBC1', RANDOM];
+  rs.phase = 'vote';
+  rs.phaseEndsAt = clock;
+  rs.votes = new Map([['rx', 2]]);
+  R.tick();
+  assert.equal(rs.voteResult.random, true);
+  assert.ok(!['1:TSS1', '4:TBC1'].includes(rs.voteResult.event) && events.has(rs.voteResult.event), rs.voteResult.event);
+}
 assert.ok([...S.runs.values()].some((x) => x.window === 1), "the last window's replays stay");
 
 // ---- a score event: the highest wins; a session's podium wait ends after verifyMaxMs ----
@@ -254,6 +271,60 @@ assert.equal(last('b', 'ta-roster').update.online, false);
 S.resumed(a);
 assert.equal(last('b', 'ta-roster').update.online, true);
 assert.ok(last('a', 'ta-joined'));
+
+// ---- ghosts: the tiers per recipient (nearest 2 poses every bundle, the next 2 lite at 4 Hz + a pose every 2 s, the rest dots at 1 Hz) ----
+{
+  const bins = new Map();
+  const G = createSessions({ events, now: () => clock, send: () => {}, sendBinary: (id, bytes) => { if (!bins.has(id)) bins.set(id, []); bins.get(id).push(bytes); },
+    clients, random: () => 0, log: { log() {}, warn() {} }, options: { ...timing, nearCount: 2, midCount: 2 } });
+  const ps = Array.from({ length: 7 }, (_, i) => client(`g${i}`, `G${i}`));
+  G.message(ps[0], { t: 'ta-create', limitMs: 120000, event: '0:TST1' });
+  const gid = [...G.sessions.keys()][0];
+  for (const x of ps.slice(1)) G.message(x, { t: 'ta-join', session: gid });
+  const rig = Array.from({ length: 3 }, (_, i) => ({ parent_index: i - 1, source_translation_cm: [0, 0, 10, 1], name: `b${i}` }));
+  const poseAt = (x, n) => {
+    const pose = new Float32Array(21);
+    for (let b = 0; b < 3; b++) {
+      pose[b * 7] = x;
+      pose[b * 7 + 2] = 10 * b;
+      pose[b * 7 + 6] = 1;
+    }
+    return encodePose({ flags: FLAG_RIDING, serial: n, time: clock, pose, scale: [1, 1, 1], free: [], rigBones: rig });
+  };
+  // player i rides at x = 100 i (player 0 at 0): from player 0 the nearest are 1, 2 (near), 3, 4 (mid), 5, 6 (far)
+  let n = 0;
+  const feed = () => ps.forEach((x, i) => assert.ok(G.binary(x, poseAt(100 * i, ++n))));
+  bins.clear();
+  feed();
+  G.ghostTick();
+  const kinds = (id) => decodeBundle(bins.get(id).at(-1)).entries.map((e) => [e.player, e.kind]);
+  const idx = (i) => G.sessions.get(gid).players.get(`g${i}`).index;
+  assert.deepEqual(kinds('g0'), [[idx(1), POSE], [idx(2), POSE], [idx(3), POSE], [idx(4), POSE], [idx(5), DOT], [idx(6), DOT]], 'first bundle: poses for near and mid, dots for far');
+  const first = decodeBundle(bins.get('g0').at(-1)).entries[0].value;
+  assert.deepEqual([first.root[0], first.bones, first.flags], [100, 3, FLAG_RIDING]);
+  clock += 100;
+  feed();
+  G.ghostTick();
+  assert.deepEqual(kinds('g0'), [[idx(1), POSE], [idx(2), POSE]], '100 ms later: the near poses only (mid lite every 250 ms, its pose every 2 s)');
+  clock += 200;
+  feed();
+  G.ghostTick();
+  assert.deepEqual(kinds('g0'), [[idx(1), POSE], [idx(2), POSE], [idx(3), LITE], [idx(4), LITE]]);
+  clock += 1000;
+  feed();
+  G.ghostTick();
+  assert.deepEqual(kinds('g0'), [[idx(1), POSE], [idx(2), POSE], [idx(3), LITE], [idx(4), LITE], [idx(5), DOT], [idx(6), DOT]]);
+  // nothing new: nothing sent; a stale ghost is not sent
+  const before = bins.get('g0').length;
+  G.ghostTick();
+  assert.equal(bins.get('g0').length, before, 'no bundle without news');
+  clock += 4000;
+  G.ghostTick();
+  assert.equal(bins.get('g0').length, before, 'stale ghosts are not sent');
+  // a malformed pose is refused
+  assert.equal(G.binary(ps[0], new Uint8Array([5, 1, 0, 0])), false);
+  assert.equal(G.ghostStats.dropped, 1);
+}
 
 // ---- end to end through mp-server.mjs ----
 const freePort = () => new Promise((resolve) => {

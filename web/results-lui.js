@@ -110,7 +110,9 @@ export class ResultsLui {
   }
   // The results (43final_standings): heads [rank, riders, value], rows [{rank, name, value, human}] in rank order, medal
   // {row, kind} or null, message, items (menu labels), index (focus), disabled(i), noItems.
-  results(c, { title, sub, heads, rows, medal, message, items, index, disabled = () => false, noItems = false }) {
+  // medals (optional): [{row, kind}] for the three medal elements, one each (web/ta-ui.js: a time-attack window's top three); without it,
+  // the PS2's one medal of the human's row.
+  results(c, { title, sub, heads, rows, medal, medals = null, message, items, index, disabled = () => false, noItems = false }) {
     this.panelFrame(c, this.clock());
     const at = (list, name) => list.indexOf(name);
     this.content(c, index, (e) => {
@@ -128,6 +130,11 @@ export class ResultsLui {
       k = at(EL.values, n); if (k >= 0) return rows[k] ? { text: rows[k].value, ...(rows[k].human ? { props: colour(HUMAN_ROW) } : {}) } : { hidden: true };
       k = at(EL.medals, n);
       if (k >= 0) {   // one hex, left of the human's rank, of the medal earned (the gold element moved to that row)
+        if (medals) {
+          const m = medals[k];
+          if (!m || m.kind == null || m.row < 0) return { hidden: true };
+          return { sprite: { ...e.sprite, sy: MEDAL_SY[m.kind] ?? e.sprite.sy }, props: { 1: -8 + 20 * m.row } };
+        }
         if (k || !medal || medal.kind == null || medal.row < 0) return { hidden: true };
         const sp = e.sprite; return { sprite: { ...sp, sy: MEDAL_SY[medal.kind] ?? sp.sy }, props: { 1: -8 + 20 * medal.row } };
       }

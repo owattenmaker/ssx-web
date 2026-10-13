@@ -1,7 +1,8 @@
 // Node setup of a six-rider Snow Jam race (one core: the human and five computer-rider contexts), shared by
 // compare-ai-capture.mjs style tools and test-ai-racers.mjs.
 import fs from 'node:fs';
-import createCore from './runtime/core.js';
+// CORE_JS=<scratch core.js>: that core instead of web/runtime's (as the comparers)
+const createCore = (await import(process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js')).default;
 import { createAiRacers } from './ai-racers.js';
 
 const root = new URL('public/assets/', import.meta.url);

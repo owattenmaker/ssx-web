@@ -13,7 +13,28 @@ Status (2026-10-13, big-multiplayer agent): design reviewed; **building TA-1..TA
   any other bytes in a run's replay.
 - Session cap: **50** to start.
 - The vote (3 candidates + same course again) and translucent ghosts as proposed.
-Sections below that say otherwise (Q1's 10:00, the five-race rotation, stock attributes) are superseded by this list. Today's 6-player lobbies ([multiplayer.md](multiplayer.md)) stay as they are; both new modes go behind default-off
+Sections below that say otherwise (Q1's 10:00, the five-race rotation, stock attributes) are superseded by this list.
+
+**The user's rules for the podium and the vote (2026-10-13, TA-5; they replace section 2.4's vote):**
+- **Podium:** the CTM podium cutscene (web/cutscenes.js, WS12 0x27AC60) with the window's top three verified riders in their own
+  characters, each called out on screen with its place (the race HUD's own number and suffix, race-place-hud.js: gold 1ST, blue
+  2ND / 3RD) and its player name in the front-end font, above its step. The podium scripts stand binding 1 / 2 / 3 on anchors
+  20 / 21 / 22 (checked in every win_ps_* / placeshow_* script's actor tracks), so the winner's label is over anchor 20. Outfits:
+  the front end's preview models exist for the default outfits and this page's own worn outfit only, so another player's outfit
+  shows its character's default one.
+- **Courses without podium steps** (the backcountry ABC1, DBC2, EBC3: 6 of the 20 events): the PS2's Single Event results panel
+  (43final_standings) with the gold / silver / bronze hexes on the top three. The PS2 never shows a podium there, and its results
+  with medals are the closest presentation it has.
+- **Vote:** the last window's results stay on screen: the same results panel (the top six, their names and times or scores, the
+  medals on the top three). Below it, three thumbnail boxes: **two events and Random**. A box shows the event's Select Event map
+  art: its peak map (MAPGFX_map_peak<A|B|C>) with only its route, red, cropped around the route. There is no course picture on the
+  disc (99QPEvent is not played), so the map is the game's own event art. Random shows the whole mountain with the loading
+  screen's orange '?' (GL_1-1). Each box has its name and its live vote count. Left / Right pick, Select votes.
+- **Random** draws uniformly from the rotation, excluding the two events shown (the current event can come up). The two events are
+  drawn from the rotation except the event just ridden and the two before it (while the rotation has enough others).
+- **Ties and no votes:** drawn at random among the tied options (no votes: among all three).
+- **Names:** a session shows each player's Player Name (Options > Player Name), sent with ta-create / ta-join, not the rider's
+  name. Today's 6-player lobbies ([multiplayer.md](multiplayer.md)) stay as they are; both new modes go behind default-off
 switches (section 8).
 
 Goal: online sessions of 20-100 players in a new **time attack** mode (Trackmania style) next to today's lobbies: the server loads
@@ -419,3 +440,81 @@ Server: `MP_SESSIONS=1` (unset: no sessions). With all of them off, the page and
   to a session with a faster claim on the same replay and a forged empty-pad replay beside it, and the same run on the records board:
   one `--once` pass verifies the genuine session run (standings: verified), pulls both forgeries, and verifies the records run.
   test-records-verifier passes unchanged.
+
+### TA-3: the client (2026-10-13), pv onlineTimeAttack (off)
+
+- **web/net/ta-game.js** (new): the page's controller, created by mp-game.js on the lobby connection and installed as
+  `ui.timeAttack`. It follows the server's phases and drives the page's own Single Event flow. At load it starts the event with
+  `ui.startSingleEvent` and arms no computer riders (`ui.cb.soloLineupNext`; the backcountry rival events keep their rival:
+  prepareFixed would otherwise take the rival branch as Rival Time) and the maxed bytes (`ui.cb.attributeOverride`). It sends
+  'ta-loaded' when the objectives card is up. `attemptStart()` lets an attempt start only inside the window and sends
+  'ta-attempt'. `finish()` uploads a new best as its replay file (POST /mp/session/run, the reconnect token as credential) and
+  sends 'ta-end' (restart / gave up / finish, uploading). The vote and the next window's event load are handled too. The screens'
+  state is in `state` (session, roster, standings, you, results, votes, upload).
+- **web/career-ui.js:** `play()` asks `ui.timeAttack.attemptStart()` in a session (a refused Continue keeps the objectives card);
+  `finish()` hands a session attempt to `ui.timeAttack.finish()` and skips the records boards (time-attack runs, with maxed
+  attributes, never go to the online or local top 5). Without `ui.timeAttack` both are unchanged.
+- **web/net/mp-client.js:** every 'ta-*' message is its own event; `session(m)` sends one; `token`.
+- **web/online-replay.js:** `soloLineupNext(false)` disarms the solo lineup (leaving a session); the results' Restart re-prepares
+  the lineup (main.js heatLineup), so the controller re-arms it at every attempt start and finish.
+- **No main.js / game-tick.js edits.**
+- **web/test-ta-page.mjs** (new, in test:all; Chrome): the page creates a Snow Jam session and a node player joins. The page loads
+  the event and reports it loaded. An attempt before the window is refused. A solo run is uploaded (kept) with the solo lineup and
+  55 x 7, and the verifier verifies it. A given-up attempt does not upload. After the deadline Continue is refused. The podium shows
+  the page's player. The vote's event (Super Pipe The Junction in the run) loads on the page for window 2. Leaving disarms.
+  test-online-records, test-ctm-left, the career tests, test-fe-screens, test-mp, test-mp-session and test-mp-gate pass.
+- **Not done yet:** the screens (TA-5, from the PS2's online screens); the session name shown is the rider's name (mp-game's
+  hello), to become the Player Name with the screens; the in-race time left / standings HUD (with the screens).
+
+### The PS2's online screens (decomp for TA-3 / TA-5)
+
+FE.LUI and OV.LUI hold the original online UI (listed with tools/export_online_screens.py's header, which exports them). Their
+set-up code is found from the screen name strings (SLUS_207.72): 230online_main_menu 0x1BFBB8, 231lobby_menu 0x1BCB58,
+232CreateRoomPopup 0x1BE7D8, 235chat_room 0x1B1F88, 249Stats 0x1C2D18, 109MultiplayerStandings 0x24AE90 (next to
+43final_standings 0x249C68). Plan: the session list from 231lobby_menu, create from 232CreateRoomPopup with the time limit as a
+240challenge_popup list-box row (port-only), the session's players from 235chat_room, the standings from 249Stats (ten rows and the
+slider) and 109MultiplayerStandings (the circuit standings: "Current standings", "Winner:", "Congratulations %s! You have won the
+circuit."), the match card 102MPMatch (GL.LUI). Their behaviour (menus, focus, input) is to be traced from those functions before
+each screen is built.
+
+### TA-4: ghosts (2026-10-13), pv ghostRiders (off; needs onlineTimeAttack)
+
+- **The pose packet as built** (web/server/ghost-packet.mjs, shared by the page and the server): 34 + 7 F + 4 B bytes. Every rigid
+  bone is placed by forward kinematics from its parent's rotation and the rig's own `source_translation_cm` x the body scale: measured
+  within 0.022 cm on Zoe, Moby and Snowballs, so the receiver needs nothing but its own copy of rider.json. The free bones, sent as
+  positions from the root, are the rig's other roots (`board_rootg`, no parent), the board (`board_childg`) and any bone the sender's
+  FK misses by more than 0.5 cm (the feet stretch up to 11 cm in some crashes). Over 800 packets of a scripted run (tricks,
+  crashes): **156 B mean for Zoe (max 170), 160 for Moby, 155 for Snowballs; worst bone 0.19 cm, rotation 0.27 degrees**. The lite
+  (25 B) and dot (12 B) entries and the bundle are as section 3.1.
+- **Server** (sessions.mjs, mp-server.mjs): a session member's binary frame is a pose (size-checked, under the connection's rate
+  limits) kept as its newest. Every 100 ms each recipient gets one bundle of what is due: the 6 nearest players' poses (10 Hz), the
+  next 18's lite entries (4 Hz) and their pose every 2 s, everyone else's dot (1 Hz). Only news is sent: a pose supersedes that
+  moment's lite and dot, and a ghost silent for 3 s is not sent. `/mp/status` `ghosts` counts the bytes in and out.
+- **Page** (web/net/ta-ghosts.js, owned by ta-game.js): during an attempt the local rider's world pose goes out at 20 Hz. Bundles
+  come in. Each frame every ghost is drawn 300 ms behind on the server clock (low 32 bits, wrap-safe), interpolated between its
+  poses (never across a serial change), or its last pose moved to its newest lite / dot position; nearest first, at most 32.
+- **Renderer** (web/ghost-riders.js, web/ghost-package.js): one geometry and texture set per package; one InstancedMesh per package
+  texture; each instance's bone skin matrices (pose x scale x the rig's bind, plain floats: within 0.06 cm of the core's own palette)
+  in one RGBA32F row; GPU skinning from rider.json source_skin (up to 4 bones). A 4 x 4 Bayer screen-door at 50 % opacity, the
+  riders' unlit texels (a ps2-domain texel x 2) tinted pale blue, in the frame's colour space (frame-space.js toFrame); no lighting,
+  shadow, effects or morphs. `gameplayOnly`, so the pause and menus hide them. The scene origin is read every frame (it moves with the
+  course: main.js loadCourse). No main.js changes.
+- **Budget, measured** (web/.ghost-budget.mjs, scratch: a solo Snow Jam Single Event, the real frame loop for 8 s per step, synthetic
+  ghosts copying the rider's pose around it; this Mac, 1280 x 720):
+
+| Browser | Ghosts asked / drawn | Frame interval p50 / p95 / p99 | Ghost CPU per frame |
+|---|---|---|---|
+| WebKit (webkit-driver) | 0 / 0 | 17 / 20 / 24 ms | 0.02 ms |
+| WebKit | 20 / 20 | 17 / 19 / 27 ms | 0.12 ms |
+| WebKit | 50 / 32 (cap) | 17 / 20 / 26 ms | 0.20 ms |
+| Chrome (headless) | 0 / 0 | 16.7 / 16.8 / 16.8 ms | 0.01 ms |
+| Chrome | 20 / 20 | 16.7 / 16.8 / 16.8 ms | 0.08 ms |
+| Chrome | 50 / 32 (cap) | 16.7 / 16.8 / 16.8 ms | 0.18 ms |
+
+  The frame stays on vsync in both: the ghosts' GPU time is not visible in the frame interval at this size, and their CPU is under
+  0.2 ms a frame. Not measured yet: a phone-class device, and the frame with 100 players' bundles arriving (TA-6).
+- **Tests:** test-mp-session (the tiers per recipient, superseding, staleness, a malformed pose); test-ta-page now runs with
+  ghostRiders: the node player's ghost poses reach the page through the bundles and are drawn, and the page's own 27-bone poses
+  reach the node player.
+- **Not done:** the liveness check (section 2.3) needs the attempt tick in the pose packet (to compare with the replay's
+  re-simulated path); kept for after TA-6.

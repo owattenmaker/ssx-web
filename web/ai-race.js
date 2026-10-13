@@ -15,7 +15,7 @@ import { placeGlowStep } from './race-place-hud.js';
 import { FixedStepClock } from './fixed-step-clock.js';
 // pv coreRules (docs/core-migration.md slice M1): these rules run in the core when it is there (undefined: the JS version runs)
 import * as coreRules from './core-rules.js';
-import { ageRelationships, anchorRandomWords, applyRelationshipEvent, assembleLineup, humanCharacter, humanGridState, lineupFor, nextRosterSeed, noteRaced,
+import { ageRelationships, anchorRandomWords, applyRelationshipEvent, assembleLineup, relationshipHex, relationshipRecord, humanCharacter, humanGridState, lineupFor, nextRosterSeed, noteRaced,
   relationshipKinds, relationshipScores, rivalAnchorWords } from './lineup.js';
 
 // Relationship records (web/lineup.js): bank 0 is the human's profile (kept in localStorage like the memory-card profile),
@@ -246,6 +246,51 @@ export async function createAiRace({
   let replayLive = null,
     racedTicks = 0;
   const clone = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
+  // pv coreRelationships (docs/core-migration.md M4a): the records go into the core's rider manager at each start (and a replay's
+  // restore); after each tick the page hands the tick's reactions to the speech and the career notices and takes the records back.
+  let coreRelations = false;
+  const loadCoreRelationships = () => {
+    const R = api.doc.relationships;
+    coreRelations = false;
+    // a no-op unless the switch is on and the core has the exports (web/ai-racers.js relationshipsAvailable)
+    if (!R || !racers.relationshipsAvailable) return;
+    const tablesNow = tables ? [0, 1, 2].map((b) => Array.from({ length: 10 }, (_, c) => (tables[b]?.[c] ?? []).map((h) => relationshipRecord(h)))) : null;
+    coreRelations = racers.relationshipsInCore({
+      enabled: !!tables && !!R.characters,
+      characters: R.characters,
+      banks: R.target_banks,
+      rival: R.rival_character,
+      tables: tablesNow,
+      scores: R.scores,
+      kinds: R.kinds
+    });
+    if (!coreRelations) racers.relationshipsOff();
+  };
+  const drainCoreRelationships = () => {
+    if (!coreRelations) return;
+    const events = racers.relationshipEvents();
+    if (!events.length) return;
+    const R = api.doc.relationships,
+      enabled = !!tables && !!R.characters;
+    for (const e of events) {
+      // 10E228..10E468: the speech 2A0A30 first (its relation as it stood before this reaction), then 155BF0's notice
+      racers.onPairAudio?.(e.slot, e.other, e.kind, e.attack, e.audio);
+      if (enabled && !replayLive && e.notice) api.onRelationshipNotice?.(R.characters[e.slot], e.score);
+    }
+    if (!enabled) return;
+    const now = racers.relationshipState();
+    // the changed records only (the others keep their own text)
+    for (let b = 0; b < 3; b++)
+      for (let c = 0; c < 10; c++) {
+        const row = tables[b]?.[c];
+        if (!row) continue;
+        for (let o = 0; o < row.length && o < 10; o++)
+          if (relationshipRecord(row[o]).some((v, f) => v !== now.tables[b][c][o][f])) row[o] = relationshipHex(now.tables[b][c][o]);
+      }
+    R.kinds = now.kinds;
+    if (JSON.stringify(now.scores) !== JSON.stringify(R.scores)) R.scores = now.scores;
+    if (!replayLive) saveRelationships(tables);
+  };
   racers.onReact = (target, other, kind, attack) => {
     if (!tables || !api.doc.relationships.characters) return;
     const { characters, banks } = participants();
@@ -306,6 +351,7 @@ export async function createAiRace({
       // pv npcWorldNodes: a Single Event's riders share the human's world node states (the in-world race syncs in main.js worldAiSync)
       if (pv('npcWorldNodes') && !opts.gridStart) syncWorldNodes(human, racers.npcs.map((n) => n.core));
       if (tables) racers.setRelationships(api.doc.relationships.scores);
+      loadCoreRelationships();
       // this race's presentation draws, noted at the next load; a replay's ticks draw the presentation stream too (the PS2 replay
       // does not restore 0x4FF018), so they count on
       if (!replay) {
@@ -365,6 +411,7 @@ export async function createAiRace({
         api.doc.relationships.kinds = clone(replay.kinds);
       }
       if (tables) racers.setRelationships(api.doc.relationships.scores);
+      loadCoreRelationships();
       for (const o of opponents) o.reset = true;
       renderer?.reset(opponents);
       placeTimer = -1;
@@ -391,6 +438,7 @@ export async function createAiRace({
     },
     endTick() {
       racers.endTick();
+      drainCoreRelationships();
       racedTicks++;
       // Freestyle (R&B slope style): each computer rider's run score +0x198; latched on its finish tick (0x239230 stores it
       // from 125108 after the 1193E0 payout), docs/slopestyle-bigair.md.

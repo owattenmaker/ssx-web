@@ -198,6 +198,13 @@
 // coreRiderManager (core-migration agent, docs/core-migration.md slice M3): a race's computer riders run on the core's rider manager
 // (web/rider_manager.cpp: 0x128AF0's stages, the shared RNG cursor, the rider pairs, the shared world, the FX passes) instead of
 // web/ai-racers.js's choreography; the event set-up stays in ai-racers.js. Needs a core with manager_configure. Off: ai-racers.js.
+// coreRelationships (core-migration agent, docs/core-migration.md M4a; needs coreRiderManager): a race's relationship records live in
+// the core's rider manager, which applies the pair reactions' 0x155BF0 events in the tick and pushes the levels; the page loads them
+// at each start, then after each tick hands the reactions to the speech and the career notices and reads the records back for its
+// storage. Off: the reactions call the page in the tick (web/ai-race.js onReact).
+// coreEventStart (core-migration agent, docs/core-migration.md M4b; needs coreRiderManager): the computer riders' event start
+// (web/ai-racers.js start: each provider set up again, its stat bytes, its start or grid placement, the race world's reset from the
+// document) runs in the core (rider_manager.cpp manager_event_start). Off: ai-racers.js makes those calls.
 // coreRules (core-migration agent, docs/core-migration.md slice M1): the pure event / career rules (web/lineup.js roster, rounds,
 // relationships, difficulty, anchor RNG words; web/event-anchor-rng.js; the finish estimates and rankings of web/ai-race.js,
 // web/career.js and web/rival-mode.js) run in the core (engine/game_rules.hpp through web/rules_bridge.cpp, web/core-rules.js) once
@@ -260,7 +267,9 @@ export const PV_DEFAULTS = Object.freeze({
   npcWorldNodes: true,
   padTweak: false,
   replayPadState: false,
-  coreRiderManager: false,
+  coreRiderManager: true,
+  coreRelationships: true,
+  coreEventStart: false,
   coreRules: true,
   coreTick: true,
   onlineTimeAttack: false,

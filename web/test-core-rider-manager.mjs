@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { setPv } from './pv-flags.js';
 import { createGameTick, gameTrace, traceOut, TRACE_OUT_FLOATS } from './game-tick.js';
 import { createAiRacers } from './ai-racers.js';
+import { ageRelationships, applyRelationshipEvent, relationshipScores, relationshipRecord } from './lineup.js';
 
 const coreUrl = process.env.CORE_JS ? (await import('node:url')).pathToFileURL(process.env.CORE_JS).href : './runtime/core.js';
 const createCore = (await import(coreUrl)).default;
@@ -169,4 +170,78 @@ await runPair('Snow Jam with the QA hooks', 1500, -1, (log) => ({
     return slot === 2 || slot === -1 ? 1 : 0;
   }
 }));
+// pv coreRelationships (M4a): the relationship records in the core against the page's rule in the tick (web/ai-race.js onReact,
+// compare-ai-capture.mjs): both games on the core's rider manager; the same traces, reactions, notices and records.
+async function relationshipPair(ticks) {
+  const games = [];
+  const logs = [[], []];
+  setPv('coreRiderManager', true);
+  for (let k = 0; k < 2; k++) {
+    setPv('coreRelationships', k === 1);
+    const g = await makeGame({ ai: true });
+    const R = g.racers.document.relationships;
+    const characters = R.characters,
+      banks = R.target_banks,
+      riders = g.racers.npcs.length + 1;
+    const fresh = JSON.parse(fs.readFileSync(new URL('ARA1/lineup-sessions.json', root), 'utf8')).fresh;
+    const tables = ageRelationships(fresh, characters.slice(0, riders), banks);
+    const levels = () => relationshipScores(tables, characters, banks, R.rival_character);
+    if (k === 0) {
+      g.racers.onReact = (target, other, kind, attack) => {
+        const [before, after, score] = applyRelationshipEvent(tables, characters, banks, target, other, (kind === 2 ? 1 : 0) + (attack ? 2 : 0));
+        logs[0].push(`${target}:${other}:${kind}:${attack}:${other === 0 && before < after ? 1 : 0}:${score}`);
+        g.racers.setRelationships(levels());
+      };
+    } else {
+      const ok = g.racers.relationshipsInCore({ enabled: true, characters, banks, rival: R.rival_character, scores: levels(), kinds: null,
+        tables: tables.map((bank) => bank.map((row) => row.map((h) => relationshipRecord(h)))) });
+      assert(ok, 'the core took the relationships');
+    }
+    games.push({ g, tables });
+  }
+  setPv('coreRelationships', null);
+  setPv('coreRiderManager', null);
+  const [a, b] = games.map((x) => x.g);
+  for (let t = 0; t < ticks; t++) {
+    const pad = padAt(t);
+    const x = a.step(pad), y = b.step(pad);
+    for (const e of b.racers.relationshipEvents()) logs[1].push(`${e.slot}:${e.other}:${e.kind}:${e.attack}:${e.notice ? 1 : 0}:${e.score}`);
+    assert.equal(y.hash, x.hash, `relationships tick ${t}: trace`);
+    assert.deepEqual(logs[1], logs[0], `relationships tick ${t}: the reactions`);
+  }
+  const core = b.racers.relationshipState().tables;
+  const js = games[0].tables.map((bank) => bank.map((row) => row.map((h) => relationshipRecord(h))));
+  assert.deepEqual(core, js, 'the records after the race');
+  console.log(`relationships in the core: ${ticks} ticks identical, ${logs[0].length} reactions (${logs[0].join(' ')}), the records equal`);
+}
+await relationshipPair(3000);
+// pv coreEventStart (M4b): the computer riders' event start in the core against ai-racers.js's: both on the core's rider manager,
+// started by makeGame (racers.start) and started again mid-run (a restart, and a grid start with a hold and the human's rank).
+async function eventStartPair(ticks) {
+  const games = [];
+  setPv('coreRiderManager', true);
+  for (let k = 0; k < 2; k++) {
+    setPv('coreEventStart', k === 1);
+    const g = await makeGame({ ai: true });
+    if (k === 1 && !g.host.core._manager_event_start) return false;
+    games.push(g);
+  }
+  const [a, b] = games;
+  for (let t = 0; t < ticks; t++) {
+    for (const [k, g] of games.entries()) {
+      setPv('coreEventStart', k === 1);
+      if (t === 700) g.racers.start();
+      if (t === 1400) g.racers.start({ gridStart: true, hold: true, ranks: [2, 0, 0, 0, 0, 0] });
+    }
+    setPv('coreEventStart', null);
+    const pad = padAt(t);
+    const x = a.step(pad), y = b.step(pad);
+    assert.equal(y.hash, x.hash, `event start tick ${t}: trace`);
+    assert.equal(state(b), state(a), `event start tick ${t}: the manager's state`);
+  }
+  setPv('coreRiderManager', null);
+  console.log(`event start in the core: ${ticks} ticks identical, with a restart at 700 and a held grid start at 1400`);
+  return true;
+}
+await eventStartPair(2000);
 console.log('core-rider-manager: the core\'s rider manager gives ai-racers.js\'s game tick for tick');

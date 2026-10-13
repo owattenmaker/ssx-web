@@ -193,7 +193,11 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
     const racers = ai?.racers; if (!racers || racers.__audioPairHook) return;
     racers.__audioPairHook = true;
     // 10E228..10E468: the hit speech 2A0A30(A = other, B = target) runs before 155BF0 changes the records.
-    racers.onPairAudio = (target, other) => { const v = relFrom(relSnapshot(ai), other, target); if (v != null) state.relPair.set(`${other}:${target}`, v); };
+    // relation: the core's value of that moment (pv coreRelationships hands the reactions over after the tick), else read now
+    racers.onPairAudio = (target, other, kind, attack, relation) => {
+      const v = relation !== undefined ? relation : relFrom(relSnapshot(ai), other, target);
+      if (v != null) state.relPair.set(`${other}:${target}`, v);
+    };
   }
 
   // ---- animation clip events (basic.afl ids with the 0x8000 flag, tools/export_animation_audio.py) ----

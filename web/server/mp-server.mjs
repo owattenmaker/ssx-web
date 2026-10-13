@@ -215,11 +215,16 @@ if (process.env.MP_SESSIONS === '1') {
     if (process.env.MP_SESSION_MAX) options.maxPlayers = +process.env.MP_SESSION_MAX;
     // tests: the phase timings (sessions.mjs DEFAULTS) as JSON
     if (process.env.MP_SESSION_OPTIONS) Object.assign(options, JSON.parse(process.env.MP_SESSION_OPTIONS));
-    SESSIONS = createSessions({ events, floors: floorTable(events, RECORDS_ASSETS), send: (id, m) => send(clients.get(id), m), clients, verifierToken, options });
+    // the ghost bundles (sessions.mjs ghostTick): binary frames, dropped by a congested socket like the race state frames
+    const sendBinary = (id, bytes) => clients.get(id)?.ws.send(bytes);
+    SESSIONS = createSessions({ events, floors: floorTable(events, RECORDS_ASSETS), send: (id, m) => send(clients.get(id), m), sendBinary, clients, verifierToken, options });
     if (!SESSIONS.enabled) {
       console.warn('sessions: off (no CAREER/career.json under the assets root)');
       SESSIONS = null;
-    } else setInterval(() => SESSIONS.tick(), 250).unref();
+    } else {
+      setInterval(() => SESSIONS.tick(), 250).unref();
+      setInterval(() => SESSIONS.ghostTick(), options.bundleMs ?? 100).unref();
+    }
   } catch (e) {
     console.warn('sessions: off (failed to start)', e?.message);
     SESSIONS = null;
@@ -411,6 +416,12 @@ function onMessage(c, m) {
 const binaryStats = { in: 0, relayed: 0, bytes: 0, dropped: 0, reason: '' };
 function onBinary(c, data) {
   binaryStats.in++;
+  // a time-attack session member's ghost pose (web/server/sessions.mjs), under the same per-connection limits
+  if (c?.session && SESSIONS) {
+    if (take(c.limits.binary) && take(c.limits.bytes, data.length)) SESSIONS.binary(c, data);
+    else binaryStats.dropped++;
+    return;
+  }
   const l = lobbies.get(c?.lobby), slot = l?.race?.slots.get(c.id);
   const ok = slot != null && l.race.goAt && !l.race.finish.get(c.id)?.dnf && data.length >= 2 && data.length <= MAX_BINARY && (data[0] === 2 || data[0] === 3 || data[0] === 4);
   if (!ok || !take(c.limits.binary) || !take(c.limits.bytes, data.length)) { binaryStats.dropped++; binaryStats.reason = ok ? 'rate' : `slot ${slot} len ${data.length} kind ${data[0]}`; return; }
@@ -583,6 +594,7 @@ const server = http.createServer((req, res) => {
         protocol: PROTOCOL,
         binary: binaryStats,
         sessions: SESSIONS ? SESSIONS.status() : null,
+        ghosts: SESSIONS ? SESSIONS.ghostStats : null,
         clients: clients.size,
         lobbies: [...lobbies.values()].map((l) => ({
           ...summary(l),

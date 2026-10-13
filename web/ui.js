@@ -179,6 +179,8 @@ export class OriginalUI {
       if (this.previews?.key(e)) return;
       // web/fe-previews.js
       if (this.saveLoad?.key(e)) return;
+      // web/mp-ui.js: the time-attack screens' own keys (Left / Right values, the game keyboard)
+      if (pv('onlineTimeAttack') && this.mpUI?.owns(this.screen) && this.mpUI.key(e)) return;
       // Square: Options (PS2 main menu legend)
       if (
         this.screen === 'main' &&
@@ -958,6 +960,8 @@ export class OriginalUI {
       this.audioMenus?.drawHud(c);
       // EA RADIO BIG now-playing, as in the PS2 intro
       this.cutscene?.draw(c, this);
+      // pv onlineTimeAttack: the podium riders' places and names (web/ta-ui.js)
+      if (pv('onlineTimeAttack')) this.mpUI?.cutsceneOverlay?.(c);
       return;
     }
     if (this.replayUi?.owns(this.screen)) {
@@ -1059,6 +1063,8 @@ export class OriginalUI {
       }
       this.careerUI?.tick(s);
       if (hudLevel < 2) this.careerUI?.hud(c, s);
+      // pv onlineTimeAttack: the session's time left and this player's best (web/ta-ui.js)
+      if (hudLevel < 2 && pv('onlineTimeAttack')) this.mpUI?.hud?.(c, s);
       // freestyle (career-ui.js freestyleHud): its own clock/standings, no progress meter, banner only once finished
       const fs = !!this.careerUI?.freestyleHud?.();
       // pv finishHudHide: once the rider has finished (rider+0x470 >= 0; TIME'S UP too) 1EB9E8 sets the per-player mask +0x80 = 0xFFEFFFFF

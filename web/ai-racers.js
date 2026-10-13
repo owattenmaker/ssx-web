@@ -800,6 +800,37 @@ export async function createAiRacers({
     // ranks (pv eventReturnInWorld, WS13's 1289F0): the +0xEC each rider keeps into the grid wait (the round's fresh riders 0, the human its own)
     start({ gridStart = false, hold = false, ranks = null } = {}) {
       if (hostAtStart && !detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
+      // pv coreEventStart (docs/core-migration.md M4b): the same start made by the core, with the same documents
+      const coreRanks = ranks == null || (Array.isArray(ranks) && ranks.length === 6 && ranks.every(Number.isInteger));
+      if (native && pv('coreEventStart') && human._manager_event_start && coreRanks) {
+        const texts = npcs.map((n) => enc.encode(JSON.stringify(n.record) + '\0'));
+        const context = JSON.stringify({ event_variant: doc.event_variant, relationships: doc.relationships, anchor_tick: anchorTick ?? doc.anchor_tick });
+        const strings = [...texts, enc.encode(context + '\0'), enc.encode(JSON.stringify({ world: doc.world, relationships: doc.relationships }) + '\0')];
+        const ptrs = strings.map((b) => {
+          const p = human._malloc(b.length);
+          human.HEAPU8.set(b, p);
+          return p;
+        });
+        const list = human._malloc(Math.max(1, npcs.length) * 4),
+          rankPtr = ranks ? human._malloc(24) : 0;
+        new Uint32Array(human.HEAPU8.buffer, list, npcs.length).set(ptrs.slice(0, npcs.length));
+        if (rankPtr) new Int32Array(human.HEAPU8.buffer, rankPtr, 6).set(ranks);
+        try {
+          human._manager_event_start(list, ptrs[npcs.length], ptrs[npcs.length + 1], gridStart ? 1 : 0, hold ? 1 : 0, isolate ? 1 : 0, rankPtr);
+        } finally {
+          for (const p of ptrs) human._free(p);
+          human._free(list);
+          if (rankPtr) human._free(rankPtr);
+        }
+        for (const n of npcs) n.finished = false;
+        tick = 0;
+        stage = 0;
+        lastControllerDraws.fill(0);
+        knownTriggers.clear();
+        worldEvents = 0;
+        for (const k of Object.keys(worldEventKinds)) delete worldEventKinds[k];
+        return;
+      }
       for (const n of npcs) {
         configureNpc(n.core, n.record);
         n.core._reset_pad_history();
@@ -967,6 +998,73 @@ export async function createAiRacers({
         n.core._npc_set_relationships(q);
         n.core._free(q);
       }
+    },
+    // pv coreRelationships (docs/core-migration.md M4a; with the core's rider manager): the race's relationship records move into the
+    // core, which applies the pair reactions' 0x155BF0 events in the tick and pushes the levels itself. spec: {enabled, characters,
+    // banks, rival, tables (bank -> character -> 10 records [kind, level, score]), scores 6x6, kinds 6x6 | null}. false: not taken
+    // (the reactions call onReact / onPairAudio as before).
+    get native() {
+      return native;
+    },
+    // whether this race can keep them in the core (the switch, the rider manager, the exports)
+    get relationshipsAvailable() {
+      return native && pv('coreRelationships') && !!human._manager_relationships && !!human._manager_relationships_off;
+    },
+    relationshipsInCore(spec) {
+      if (!this.relationshipsAvailable) return false;
+      const { enabled, characters, banks, rival, tables, scores, kinds } = spec;
+      if (characters?.length !== 6 || banks?.length !== 6 || scores?.length !== 6) return false;
+      const words = [enabled ? 1 : 0, ...characters, ...banks, rival ?? -1];
+      for (let b = 0; b < 3; b++)
+        for (let c = 0; c < 10; c++)
+          for (let o = 0; o < 10; o++) {
+            const r = tables?.[b]?.[c]?.[o];
+            words.push(r ? r[0] : 0, r ? r[1] : 0, r ? r[2] : 0);
+          }
+      for (let a = 0; a < 6; a++) for (let k = 0; k < 6; k++) words.push(scores[a]?.[k] ?? 0);
+      for (let a = 0; a < 6; a++) for (let k = 0; k < 6; k++) words.push(kinds?.[a]?.[k] ?? -1);
+      const p = human._malloc(words.length * 4);
+      new Int32Array(human.HEAPU8.buffer, p, words.length).set(words);
+      try {
+        return !!human._manager_relationships(p);
+      } finally {
+        human._free(p);
+      }
+    },
+    relationshipsOff() {
+      if (this.relationshipsAvailable) human._manager_relationships_off();
+    },
+    // After a tick: the tick's pair reactions [{slot, other, kind, attack, audio (null none), notice, score}] and the records as they stand
+    relationshipEvents() {
+      const p = human._manager_relationship_events(),
+        n = new Int32Array(human.HEAPU8.buffer, p, 1)[0],
+        q = new Int32Array(human.HEAPU8.buffer, p + 4, n * 7);
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const e = q.subarray(7 * k, 7 * k + 7);
+        out.push({ slot: e[0], other: e[1], kind: e[2], attack: e[3], audio: e[4] < 0 ? null : e[4], notice: !!e[5], score: e[6] });
+      }
+      return out;
+    },
+    relationshipState() {
+      const v = Array.from(new Int32Array(human.HEAPU8.buffer, human._manager_relationship_state(), 972));
+      const tables = [];
+      let at = 0;
+      for (let b = 0; b < 3; b++) {
+        tables.push([]);
+        for (let c = 0; c < 10; c++) {
+          tables[b].push([]);
+          for (let o = 0; o < 10; o++) {
+            tables[b][c].push(v.slice(at, at + 3));
+            at += 3;
+          }
+        }
+      }
+      const scores = [],
+        kinds = [];
+      for (let a = 0; a < 6; a++) scores.push(v.slice(900 + a * 6, 906 + a * 6));
+      for (let a = 0; a < 6; a++) kinds.push(v.slice(936 + a * 6, 942 + a * 6));
+      return { tables, scores, kinds };
     },
     // A new lineup (web/lineup.js): the document for world.reset/relationships, and every slot whose record or
     // relationship row changed is set up again in its own core (init_animation + npc_configure). Returns the slots
