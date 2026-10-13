@@ -113,6 +113,8 @@ import { EVENT_ANCHOR_DRAWS, eventAnchorWords } from './event-anchor-rng.js';
 import { createMpGame } from './net/mp-game.js';
 import { createOpponentFx } from './opponent-fx.js';
 import { pv } from './pv-flags.js';
+// pv coreRules: the event / career rules in the course's core (docs/core-migration.md slice M1)
+import { setRulesCore } from './core-rules.js';
 import { installYieldShim, yieldBudget } from './yield-shim.js';
 import { startGcWatchdog, isJavaScriptCore } from './gc-watchdog.js';
 import { collectBefore, collectNow, coreTracker } from './switch-gc.js';
@@ -5367,6 +5369,8 @@ async function unloadCourse() {
   releasePreviewCores();
   // FE previews / cutscene actors light through the last core they were given
   if (ui.characterSelect) ui.characterSelect.core = null;
+  // the rules run in JS until the next course's core (pv coreRules)
+  setRulesCore(null);
   core = null;
   replayTriggersCore = null;
   replayTriggersText = null;
@@ -5436,6 +5440,8 @@ async function loadCourse(next) {
   courseMilestone('core');
   // race_end asks it at a freestyle finish (0x239230 / 0x23A05C, fsCelebrate)
   core.finishHost = { place: (score) => gameHost.freestylePlace(score) ?? -1 };
+  // pv coreRules (web/core-rules.js)
+  setRulesCore(core);
   coreRefs.push(new WeakRef(core));
   core._set_fx_deferred?.(1);
   // FX passes after every rider's 121818 (simTick / ai-racers endTick)

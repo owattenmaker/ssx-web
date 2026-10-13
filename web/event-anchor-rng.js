@@ -7,6 +7,8 @@
 // its 1776 soft collision; seeded, it stays exact to the end.
 // Measured: record 0 of each course's countdown-anchor capture (Zoe), draws from seed 0 = base - 1 + start.
 import { seededWords, nextWord, loadDraws } from './lineup.js';
+// pv coreRules (docs/core-migration.md slice M1): these rules run in the core when it is there (undefined: the JS version runs)
+import * as coreRules from './core-rules.js';
 export const EVENT_ANCHOR_DRAWS = Object.freeze({
   ABA1: { tick: 18, base: 10, start: 0 },   // Crow's Nest big air: 9 (air-release/crows-invert, monster-xexec)
   BHP1: { tick: 18, base: 17, start: 0 },   // The Junction super pipe: 16 (pipe-brake)
@@ -20,6 +22,8 @@ export const EVENT_ANCHOR_DRAWS = Object.freeze({
 const RULE = { character: { 4: -1, 0: 1 }, cheat: 4 };   // lineups.json load_draws (every course with one has this rule)
 // { tick, words } for this course and human ({ base, cheat }: web/lineup.js humanCharacter), or null.
 export function eventAnchorWords(code, human = { base: 4, cheat: 0 }) {
+  const c = coreRules.coreEventAnchor(code, human);
+  if (c !== undefined) return c;
   const e = EVENT_ANCHOR_DRAWS[code]; if (!e) return null;
   const n = loadDraws({ load_draws: { base: e.base, ...RULE } }, human) + e.start;
   const w = seededWords(0); for (let k = 0; k < n; k++) nextWord(w);

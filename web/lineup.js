@@ -19,6 +19,8 @@
 // sessions; ?lineupSeed=0x... fixes the roster seed. A restart keeps the lineup (0x238C80 resets it only when an
 // event is chosen).
 import { pv } from './pv-flags.js';
+// pv coreRules (docs/core-migration.md slice M1): the rules below run in the core when it is there (undefined: the JS version runs)
+import * as coreRules from './core-rules.js';
 
 export const SEED_ADD = [0xF22D0E56, 0x96041893, 0x3DF3B646, 0x40DDE76D, 0x97327AE1, 0xD1A9FBE7];
 export const REFERENCE_PRESENTATION_SEED = 0x182200;   // the reference ARMSX2 sessions' boot seed
@@ -26,9 +28,16 @@ export const REFERENCE_ROSTER_SEED = 0xB57109A9;       // their draw 130
 export const SEED_DRAW = 130;                         // presentation draw that seeds the roster (boot -> first race)
 
 // 0x317958: seed a six-word generator.
-export function seededWords(seed) { const w = []; let a = seed >>> 0; for (const k of SEED_ADD) { a = (a + k) >>> 0; w.push(a); } return w; }
+export function seededWords(seed) {
+  const c = coreRules.coreSeededWords(seed);
+  if (c) return c;
+  return seededWordsJs(seed);
+}
+function seededWordsJs(seed) { const w = []; let a = seed >>> 0; for (const k of SEED_ADD) { a = (a + k) >>> 0; w.push(a); } return w; }
 // 0x317A08: one draw (the same generator as the shared game RNG, web/ai-racers.js rngNext).
 export function nextWord(w) {
+  const c = coreRules.coreNextWord(w);
+  if (c !== undefined) return c;
   let value = (w[5] + w[4]) >>> 0; let carry = (value < w[5] || value < w[4]) ? 1 : 0; w[4] = value;
   for (let k = 3; k >= 1; --k) { const nv = (value + w[k] + carry) >>> 0; carry = nv < w[k] ? 1 : 0; value = nv; w[k] = value; }
   value = (value + w[0] + carry) >>> 0; w[0] = value; w[5] = (w[5] + 1) >>> 0;
@@ -37,6 +46,8 @@ export function nextWord(w) {
 }
 // 0x31AE94: the boot seed from sceCdReadClock (stat, second, minute, hour | pad, day, month, year; BCD bytes).
 export function clockSeed(date = new Date()) {
+  const c = coreRules.coreClockSeed(date);
+  if (c !== undefined) return c;
   const bcd = (v) => ((Math.floor(v / 10) % 10) << 4) | (v % 10);
   const w0 = (bcd(date.getSeconds()) << 8) | (bcd(date.getMinutes()) << 16) | (bcd(date.getHours()) << 24);
   const w1 = (bcd(date.getDate()) << 8) | (bcd(date.getMonth() + 1) << 16) | (bcd(date.getFullYear() % 100) << 24);
@@ -45,6 +56,8 @@ export function clockSeed(date = new Date()) {
 
 // 0x145750: the peak rival (course table 0x43D950 + event * 100 + 0x54 = peak index).
 export function peakRival(peak, human) {
+  const c = coreRules.corePeakRival(peak, human);
+  if (c !== undefined) return c;
   if (peak === 0) return human === 3 ? 5 : 3;
   if (peak === 1) return human === 7 ? 4 : 7;
   if (peak === 2) return human === 8 ? 6 : 8;
@@ -55,6 +68,8 @@ export function buildRoster(seed, human, peak) { return buildRosterFrom(seededWo
 // The same build on a running roster generator (Conquer the Mountain: seeded once at the world load, every fresh event
 // draws on; the words are advanced in place).
 export function buildRosterFrom(w, human, peak) {
+  const c = coreRules.coreBuildRosterFrom(w, human, peak);
+  if (c) return c;
   const first = 10 + (nextWord(w) % 7);
   const r = nextWord(w) % 6;
   const entries = [first, 10 + r < first ? 10 + r : 11 + r];
@@ -69,6 +84,8 @@ export function buildRosterFrom(w, human, peak) {
 // the semi's top three (human skipped) then entries 8..9. `previous`: roster values of the previous round's riders
 // in finishing order, human as null.
 export function roundEntries(entries, { round = 3, career = false, rival = 3, previous = [] } = {}) {
+  const c = coreRules.coreRoundEntries(entries, round, career, rival, previous);
+  if (c) return c;
   if (!career || round === 1) return entries.slice(0, 5);
   const advanced = previous.slice(0, 3).filter((v) => v != null);   // the loop reads three places, skips the human's
   // semi: +0x2C.. = [x, x, entries 5..7], the advanced riders written from +0x2C; final: +0x44.. = [rival, x, x,
@@ -85,6 +102,8 @@ export function roundEntries(entries, { round = 3, career = false, rival = 3, pr
 // The posting 0x239AA0 -> 0x1453D0 then draws one word per posted score from the same generator (web/career.js).
 // Draw counts: 50 + 4 (Quick Play slope style) / 5 (pipe, big air) / 15 (career: three rounds, 5 riders).
 export function freestyleRoster(w, human, rival) {
+  const c = coreRules.coreFreestyleRoster(w, human, rival);
+  if (c) return c;
   const e = [];
   for (let v = 0; v < 10; v++) if (v !== human && v !== rival) e.push(v);
   for (let k = 0; k < 25; k++) { const i = nextWord(w) % e.length, j = nextWord(w) % e.length; const t = e[i]; e[i] = e[j]; e[j] = t; }
@@ -141,7 +160,13 @@ export function nextRosterSeed() {
 // load_draws: base, per base character, +4 for a cheat skin), then each computer rider's first countdown start
 // command draws two (0x10AED8 start branch: DF0 amount and sign). Every savestate and capture checks it.
 export function loadDraws(data, human) { const d = data.load_draws; return d.base + (d.character[String(human.base)] ?? 0) + (human.cheat ? d.cheat : 0); }
-export function anchorRandomWords(data, human) { const w = seededWords(0), n = loadDraws(data, human) + data.load_draws.start; for (let k = 0; k < n; k++) nextWord(w); return w; }
+export function anchorRandomWords(data, human) {
+  const draws = loadDraws(data, human) + data.load_draws.start;
+  const c = coreRules.coreWordsAfterDraws(0, draws);
+  if (c) return c;
+  return anchorRandomWordsJs(draws);
+}
+function anchorRandomWordsJs(n) { const w = seededWords(0); for (let k = 0; k < n; k++) nextWord(w); return w; }
 // A backcountry rival challenge (docs/backcountry.md "Rival computer rider"): no countdown, so the game RNG of the ready
 // state is the anchor (race tick 0; the rival's provider draws from it on that tick). rivals.json keeps each document's
 // ready-state words (doc.anchor_rng: seeded 0, then 4 or 5 draws that depend on the human and the menu path). The
@@ -158,6 +183,8 @@ export function rivalAnchorDraws(rivals, doc, human, roster = []) {
 }
 export function rivalAnchorWords(rivals, doc, human, roster = []) {
   const n = rivalAnchorDraws(rivals, doc, human, roster); if (n == null) return null;
+  const c = coreRules.coreWordsAfterDraws(0, n);
+  if (c) return c;
   const w = seededWords(0); for (let k = 0; k < n; k++) nextWord(w); return w;
 }
 const CHARACTER_OF = { moby: 0, kaori: 1, allegra: 2, mac: 3, zoe: 4, griff: 5, elise: 6, nate: 7, psymon: 8, viggo: 9 };
@@ -173,9 +200,21 @@ function rules(kind, level, score, ageing) {
   return [kind, level, score];
 }
 // 0x155E58: every participant's records age at each event load (also a restart): score - 3 (not below 0), level = score / 5.
-export function relationshipAge(hexRecord) { const [kind, , score] = rec(hexRecord), s = Math.max(score - 3, 0); return hex(rules(kind, Math.trunc(s / 5), s, true)); }
+export function relationshipAge(hexRecord) {
+  const [kind, , score] = rec(hexRecord);
+  const c = coreRules.coreRelationshipAge(kind, score);
+  if (c) return hex(c);
+  return relationshipAgeJs(kind, score);
+}
+function relationshipAgeJs(kind, score) { const s = Math.max(score - 3, 0); return hex(rules(kind, Math.trunc(s / 5), s, true)); }
 // 0x155BF0: event 0 soft bump, 1 crash, 2 soft attack, 3 crash attack (+1/+2/+4/+6).
-export function relationshipEvent(hexRecord, event) { const [kind, , score] = rec(hexRecord), s = score + ([1, 2, 4, 6][event] ?? 0); return hex(rules(kind, Math.trunc(s / 5), s, false)); }
+export function relationshipEvent(hexRecord, event) {
+  const [kind, , score] = rec(hexRecord);
+  const c = coreRules.coreRelationshipEvent(kind, score, event);
+  if (c) return hex(c);
+  return relationshipEventJs(kind, score, event);
+}
+function relationshipEventJs(kind, score, event) { const s = score + ([1, 2, 4, 6][event] ?? 0); return hex(rules(kind, Math.trunc(s / 5), s, false)); }
 // notice(other character, aged score) runs for every record in participant order, as 0x155E58 calls 0x1E2A08 (the
 // Conquer-the-Mountain relationship messages, web/career-messages.js).
 export function ageRelationships(table, characters, banks, notice = null) {
@@ -248,6 +287,8 @@ export function skinName(data, value) { return value < 10 ? data.names.base[valu
 // lineups.json's slot tables hold round 3's (its anchor is a Single Event). Not covered: the game mode 0x535C12 4 / 5 overrides
 // (E00 0 / 2: the backcountry rival events) and the 0x5308D0 bit 2 branch.
 export function npcRoundRole(slot, round) {
+  const c = coreRules.coreNpcRoundRole(slot, round);
+  if (c !== undefined) return c;
   if (slot === 1 || slot === 2) return round === 1 || round === 2 ? 1 : 2;
   if (slot === 3) return round === 1 ? 0 : 1;
   if (slot === 4) return round === 1 || round === 2 ? 0 : 1;
@@ -273,6 +314,8 @@ const towardZero = (x) => {
   return v.getFloat32(0);
 };
 export function npcDifficulty(slot, level, course) {
+  const c = coreRules.coreNpcDifficulty(slot, level, course);
+  if (c) return c;
   const [df8, base] = SLOT_DIFFICULTY[level][slot - 1];
   let dfc = towardZero(Math.fround(base) * Math.fround(0.009999999776482582));
   const k = course === 4 ? 0.25 : course === 2 || course === 3 ? Math.fround(0.10000000149011612) : null;

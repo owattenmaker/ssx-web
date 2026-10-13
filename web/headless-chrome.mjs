@@ -16,9 +16,28 @@ export function findChrome() {
   return found.find((p) => fs.existsSync(p)) || null;
 }
 
+// CORE_DIR=<a CORE_OUT= build>: that core is served over web/runtime (a scratch core in any page test).
+// PAGE_PV=name,-name: added to the ?pv= of every game page a browser opens (goto of a URL with qa=1), e.g. a switch under test.
+const corePlugin = () => {
+  const coreDir = process.env.CORE_DIR;
+  if (!coreDir) return [];
+  return [{ name: 'scratch-core', configureServer(server) { server.middlewares.use((req, res, next) => {
+    const m = /^\/runtime\/core\.(js|wasm)$/.exec((req.url || '').split('?')[0]);
+    if (!m) return next();
+    res.setHeader('Content-Type', m[1] === 'js' ? 'application/javascript' : 'application/wasm');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(fs.readFileSync(`${coreDir}/core.${m[1]}`));
+  }); } }];
+};
+function withPagePv(url) {
+  const extra = process.env.PAGE_PV;
+  if (!extra || !/[?&]qa=1(&|$)/.test(url)) return url;
+  if (/[?&]pv=/.test(url)) return url.replace(/([?&]pv=)([^&]*)/, (m, k, v) => `${k}${v ? v + ',' : ''}${extra}`);
+  return `${url}&pv=${extra}`;
+}
 export async function startServer() {
   const { createServer } = await import('vite');
-  const server = await createServer({ root: web, logLevel: 'error', server: { host: '127.0.0.1', port: 29000 + Math.floor(Math.random() * 2000), strictPort: false, hmr: false } });
+  const server = await createServer({ root: web, logLevel: 'error', plugins: corePlugin(), server: { host: '127.0.0.1', port: 29000 + Math.floor(Math.random() * 2000), strictPort: false, hmr: false } });
   await server.listen();
   const origin = (server.resolvedUrls?.local?.[0] || `http://127.0.0.1:${server.config.server.port}/`).replace(/\/$/, '');
   return { origin, close: () => server.close() };
@@ -50,7 +69,7 @@ export async function startBrowser({ init = '', width = 1280, height = 960 } = {
   if (init) await send('Page.addScriptToEvaluateOnNewDocument', { source: init });
   return {
     send, evaluate, logs,
-    async goto(url) { await send('Page.navigate', { url }); await sleep(800); },
+    async goto(url) { await send('Page.navigate', { url: withPagePv(url) }); await sleep(800); },
     async waitFor(expr, ms) { const t = Date.now(); while (Date.now() - t < ms) { try { if (await evaluate(expr)) return; } catch {} await sleep(250); } throw Error(`timeout (${ms / 1000} s): ${expr}`); },
     async screenshot(selector = '#stage') {
       const rect = await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`);

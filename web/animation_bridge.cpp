@@ -273,7 +273,6 @@ static void setup_skin_bind(const json& rig){
 }
 RIDER_LOCAL static int completedMainSemantic=-1;RIDER_LOCAL static bool completedMain=false;
 RIDER_LOCAL static uint32_t crashSerial=0,crashObservers=0;RIDER_LOCAL static int lastCrashObserver=-1,lastCrashSemantic=-1;RIDER_LOCAL static float lastCrashImpact=0,crashPresentation=0;
-RIDER_LOCAL static float tmpBegin[8]; //TMPDEBUG
 RIDER_LOCAL static bool animationPostActive=false; // inside 121750: a crash entered here (13A530 touchdown) sees 106538's pending rider+0x9D0 translation
 // The pair part of rider+0x9D0: 107888's 106538 pushes of this rider (web/npc_gameplay.inc pair_translate) from its motion tick on (121020
 // clears the companion translation; animation_pose here) until its own 121750 commits +0x9D0 to the cached world bones (310530) with the
@@ -335,7 +334,7 @@ static void enter_crash(int semantic,const OriginalCollisionEvent& event,bool at
   if(control==13)board_press_crash_exit();physicsState.controlState=gs.controlState=control;if(control==13)return;
   OriginalCrashActorState actor;actor.position=value.physical.position;actor.quaternion=value.physical.rotation;actor.velocity=physicsState.velocity;actor.groundNormal=physicsState.normal; //rider+370: landing contact normal, air +180 copy, or ground normal
   actor.surfaceVelocity=physicsState.surfaceVelocity;actor.surface=physicsProfile.surface.id;actor.timeScale=physicsState.timeScale;actor.contactDistance=physicsState.distance;
-  crash.beginControl(actor,pending_pose_translation()); /*12CA30: the control-8 entry adds rider+0x9D0 (the tick's 106538 translations: landing, body and pair pushes; score-uber 480, c0a-ws13 Allegra 5940) to the cached primary/secondary before 136D40 detaches the board*/tmpBegin[0]=float(animationTick);for(unsigned k=0;k<3;k++){tmpBegin[1+k]=crash.actor.detachedPosition[k];tmpBegin[4+k]=browserLandingTranslation[k];} /*TMPDEBUG*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
+  crash.beginControl(actor,pending_pose_translation()); /*12CA30: the control-8 entry adds rider+0x9D0 (the tick's 106538 translations: landing, body and pair pushes; score-uber 480, c0a-ws13 Allegra 5940) to the cached primary/secondary before 136D40 detaches the board*/if(crash_clip().animationClass==22)legWeight=0;boostState.window=physicsState.boostWindow=0;
  };
  cb.enterMotion=[&](int mode,OriginalHardCrashEntryState&){if(mode!=2)throw std::runtime_error("Invalid original crash motion entry");crash.beginMotion(previousMotion);if(crash.motion.submode==1)sync_crash_prediction(crash.trajectory,{crash.actor.position,crash.actor.velocity},true); /*136C40 restarts the rider's predictor (heading 0) before this tick's camera: 163E8C's landing angle is 0 (event-race 899)*/detach_rail_for_crash();browserCrashActive=true;browserSoftActive=browserSoftFrame=false;heldAirMode=passiveMode=false;if(crashFromAirControl)prewind={};air={};landingAirExitBaked=false; /*only the control-5 exit 134CB0 zeroes the prewind triplets (tech-oob-hops 3368: 12F620 rates survive a crash from control 3/4)*/
   //10EB30 clears only the 1F0/208/250 triplets (and +330); 11FE78(2) then runs the old motion's exit: 13F410 from the
@@ -1074,9 +1073,7 @@ static bool browser_air_switch(OriginalAirControlState& control){
 // rider's tick up to and including the pose and its collision body; animation_post is its 121750
 // (touchdown, 13F488/13AA48, 105398, rider pairs 107888, the 13F358 clamp, rail/crash posts).
 // animation_tick runs both, with the race host's hook (the other riders' passes) in between.
-RIDER_LOCAL static std::vector<AnimationTransform> tmpPreContact; //TMPDEBUG
 RIDER_LOCAL extern bool browserAdjustFiltersApproached;RIDER_LOCAL extern GroundControlValue browserAdjustBefore28C,browserAdjustBefore298; // web/core.cpp
-RIDER_LOCAL static float tmpDebug[24]; RIDER_LOCAL static float tmpDebug2[8]; //TMPDEBUG
 EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,float charge,int grounded,int jumpHeld,int mask,int tweak,int boost,float predictedLanding,float impact,float flip){
  if(browserNisHold)return; // 121700 / 121728: rider+0xAC4 set skips 11EB60 / 11EB98; motion 3's second phase 136978 is empty
  pairCompanion={};tickBodyTranslation={};instancePendingTranslation={}; // 121020 (this rider's motion tick): +0x9D0 starts again
@@ -1096,7 +1093,6 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  // departure; a charged release takes off in the controller instead).
  const bool groundMotionDeparture=physicsAttached&&!grounded&&previousGround&&!(previousHeld&&!jumpHeld)&&!startFrame&&!resetFrame&&!crashFrame&&!railFrame&&!softFrame;
  groundDeparturePending=groundMotionDeparture;
- tmpDebug[0]=groundMotionDeparture;for(unsigned k=0;k<3;k++)tmpDebug[1+k]=browserDeparturePush[k];tmpDebug[4]=browserDeparturePrePosition.has_value(); //TMPDEBUG
  // A ground get-up (12D848: control 0, motion 0) whose 13F178 leaves the ground in the same tick is a passive departure: the next tick's
  // control 0 runs in the air and requests control 4 (PS2 hl2/attack-bra2 1374: +0x2A8 = 1/30 at 1375; the port ran the air animation
  // selector instead)
@@ -1132,7 +1128,7 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
    // nonzero 311B20's channel-2 head clip plays at (1 + 0.5 x trick) x max(spin, flip rate) x 1/7 (0x133274..0x1332DC; fuzz r2-0204-bones
    // 2565: Mac's 287 at 1.2744 on the PS2, 1 here, his posed board drifting until the 2585 landing probe)
    air=originalAirControlBegin(prewind.spin.current,prewind.flip.current);
-   if(prewind.spin.current!=0||prewind.flip.current!=0)graph.setRate(2,originalAirReleaseAnimationRate(airProfile.trickStat,air.spinRate,air.flipRate));}};tmpDebug[16]=gs.turn.current;tmpDebug[17]=gs.turn.rate;tmpDebug[18]=gs.turn.target;tmpDebug[19]=gs.crouch.current;tmpDebug[20]=gs.brake.current;tmpDebug[21]=float(animationTick); /*TMPDEBUG*/originalPassiveAirStep(passive,gs,passive_command(turn,jumpHeld),access);airEntryTick=!passiveMode;passiveEntryApproached=airEntryTick;groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);}
+   if(prewind.spin.current!=0||prewind.flip.current!=0)graph.setRate(2,originalAirReleaseAnimationRate(airProfile.trickStat,air.spinRate,air.flipRate));}};originalPassiveAirStep(passive,gs,passive_command(turn,jumpHeld),access);airEntryTick=!passiveMode;passiveEntryApproached=airEntryTick;groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);}
   if(passiveDeparture==2){groundControlApproach(gs.turn);groundControlApproach(gs.crouch);groundControlApproach(gs.brake);groundControlApproach(gs.animationTurn);passiveDeparture=0;} /*1211F8 approaches +1FC too (the kind-4 cycle blend reads it)*/ //1211F8 still runs while airborne control0 requests control4
   if(!passiveMode&&!heldAirMode&&!airReleaseTick&&!airEntryTick&&!passiveDeparture&&!bpAirTransition&&!board_press_air_frame()){
   constexpr std::array<int,15> masks={1,2,4,8,3,5,9,6,10,12,7,11,13,14,15};int index=-1;for(int i=0;i<15;i++)if(masks[i]==mask)index=i;
@@ -1209,9 +1205,8 @@ EMSCRIPTEN_KEEPALIVE void animation_pose(float speed,float turn,float braking,fl
  // The rider frame +0x160..+0x190 (the air probe's board-root frame, 1057B8's up) is 11FA10's board root with that identity local
  // board: the physical transform (PS2 peak2/dbc2-race-tuck 3934.., +0x180 = +0x120's up, +0x190 = +0x110), not the free board.
  AnimationTransform frameBoardRoot=boardRoot;if(detachedBoardPose)originalRiderRootPresentation(poseRoot,{0,0,0},graph.scale,rootState,&frameBoardRoot);
- if(detachedBoardPose){for(unsigned b:{22u,23u}){local.at(b)={{0,0,0},{0,0,0,1}};if(graph.sampledLocal)graph.sampledLocal->at(b)=local.at(b);}boardRoot={crash.actor.detachedPosition,crash.actor.detachedQuaternion};}for(unsigned k=0;k<3;k++)tmpDebug[5+k]=boardRoot.position[k]; //TMPDEBUG
-auto worldPose=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});legWeight=originalGrabLegWeight(legWeight,graph.currentClass(2));poseContact.legWeight=legWeight;poseControls[16]=legWeight;tmpPreContact=worldPose;originalRiderPoseContact(worldPose,local,graph.scale,poseContact);if(crashFrame&&crash.actor.detached&&!physicsAttached){{const auto&q=physicsState.quaternion;AnimationTransform inverse;inverse.rotation={-q[0],-q[1],-q[2],q[3]};auto delta=crash.actor.detachedPosition;for(unsigned k=0;k<3;k++)delta[k]-=physicsState.position[k];worldPose.at(23)=originalAnimationCompose(inverse,{delta,crash.actor.detachedQuaternion});}}
- for(unsigned k=0;k<3;k++){tmpDebug[8+k]=crash.actor.detachedPosition[k];tmpDebug[11+k]=crash.motion.detachedVelocity[k];}tmpDebug[14]=crash.actor.detached;tmpDebug[15]=crashFrame; //TMPDEBUG
+ if(detachedBoardPose){for(unsigned b:{22u,23u}){local.at(b)={{0,0,0},{0,0,0,1}};if(graph.sampledLocal)graph.sampledLocal->at(b)=local.at(b);}boardRoot={crash.actor.detachedPosition,crash.actor.detachedQuaternion};}
+auto worldPose=originalAnimationWorldPose(graph.rig->bones,local,bodyRoot,graph.scale,{bodyRoot,boardRoot});legWeight=originalGrabLegWeight(legWeight,graph.currentClass(2));poseContact.legWeight=legWeight;poseControls[16]=legWeight;originalRiderPoseContact(worldPose,local,graph.scale,poseContact);if(crashFrame&&crash.actor.detached&&!physicsAttached){{const auto&q=physicsState.quaternion;AnimationTransform inverse;inverse.rotation={-q[0],-q[1],-q[2],q[3]};auto delta=crash.actor.detachedPosition;for(unsigned k=0;k<3;k++)delta[k]-=physicsState.position[k];worldPose.at(23)=originalAnimationCompose(inverse,{delta,crash.actor.detachedQuaternion});}}
 completedMain=false;completedMainSemantic=graph.requestedSemantics[2];for(const auto& sequence:graph.sequences)if(sequence.channel==2&&sequence.semantic==completedMainSemantic)completedMain|=sequence.completed;
 // rider_host bit 4 (web/ai-racers.js, computer riders): nothing reads this context's renderer poses (its renderer draws the
 // skin palette, which reads cachedCrashWorld), so the poses below (a compose per bone, pure, writing only `poses`) are skipped
@@ -1688,9 +1683,6 @@ EMSCRIPTEN_KEEPALIVE float* animation_sequences_info(){
  for(const auto& q:graph.sequences){values.insert(values.end(),{float(q.channel),float(q.semantic),float(q.priority),q.rate,q.weight,q.targetWeight,q.fadeRemaining,float(q.stopWhenFaded),float(q.completed),float(q.seekPending),float(q.slots.size())});for(unsigned k=0;k<3;++k){if(k<q.slots.size()){const auto&l=q.slots[k];values.insert(values.end(),{float(l.clip),l.time,l.duration,l.weight,float(l.loop)});}else values.insert(values.end(),{0,0,0,0,0});}}
  values[0]=float(values.size()-1);return values.data();
 }
-EMSCRIPTEN_KEEPALIVE float* tmp_debug(){for(int k=0;k<8;k++)tmpDebug2[k]=tmpBegin[k];return tmpDebug;} //TMPDEBUG
-EMSCRIPTEN_KEEPALIVE float* tmp_begin(){return tmpBegin;} //TMPDEBUG
-EMSCRIPTEN_KEEPALIVE float* tmp_pre_contact(){RIDER_LOCAL static std::vector<float> v;v.clear();for(auto&b:tmpPreContact){v.insert(v.end(),b.position.begin(),b.position.end());v.insert(v.end(),b.rotation.begin(),b.rotation.end());}return v.data();} //TMPDEBUG
 // QA only: per-sequence root (+0x60/+0x70) and mirror (+0x80) as [channel, semantic, px,py,pz, qx,qy,qz,qw, mirror] (compare-ps2-capture SEQ_ROOTS).
 EMSCRIPTEN_KEEPALIVE float* animation_sequence_roots(){
  RIDER_LOCAL static std::vector<float> values;values.assign(1,0);

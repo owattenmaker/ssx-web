@@ -12,6 +12,8 @@ import {isPeakRun,peakSetup,peakResult} from './peak-run.js'; // peak challenges
 import {GearInventory,initialUber,uberEntries,SONG_FREE_CREDITS,SONG_PRICE} from './lodge.js';
 import {recordRun,unlockedMonsters} from './monster-tricks.js'; // monster-trick medals (0x155420 / 0x155390)
 import {buildRosterFrom,freestyleRoster,freestyleSlots,nextRosterSeed,nextWord,seededWords,presentationDraw} from './lineup.js'; // the roster generator 0x4C9548
+// pv coreRules (docs/core-migration.md slice M1): the pure rules below run in the core when it is there (undefined: the JS version runs)
+import * as coreRules from './core-rules.js';
 import {bigChallengeRows} from './big-challenges.js'; // Big Challenge table 0x43EE10 (1544D0 counts a peak's completed challenges)
 
 export const MODE={RACE:0,SLOPESTYLE:1,HALFPIPE:2,BIGAIR:3,RIVAL_TIME:4,RIVAL_POINTS:5};
@@ -43,6 +45,8 @@ export function nextRandom(state){let x=state.seed>>>0||0x9E3779B9;x^=x<<13;x>>>
 
 // 0x14AB68: record slot of an event (26 = none); modes 6..11 map to slots 0..5, otherwise table 0x45A2F8.
 export function recordSlot(rules,mode,course){
+ const c=coreRules.coreRecordSlot(rules?.record_slots,mode,course);
+ if(c!==undefined)return c;
  if(mode>=6&&mode<=11)return mode-6;
  if(course==null||course>=17)return 26;
  const row=rules.record_slots[course];
@@ -52,7 +56,10 @@ export const isTimed=mode=>mode===MODE.RACE||mode===MODE.RIVAL_TIME||(mode>=6&&m
 
 // 0x1456A0: platinum when a medal was earned and time <= T*60 ticks (race / rival time) or score >= T*100.
 // 1589B0 / 158A50: the first medal of the peak's [platinum, gold, silver, bronze] row the count reaches.
-export function exploreMedal(count,row){const i=row.findIndex((x)=>count>=x);return i<0?MEDAL.NONE:i;}
+export function exploreMedal(count,row){
+ const c=coreRules.coreExploreMedal(count,row);
+ if(c!==undefined)return c;
+ const i=row.findIndex((x)=>count>=x);return i<0?MEDAL.NONE:i;}
 // 0x205098 @0x205EE0: the line under a Freeride goal count: the next medal and its threshold (none at platinum):
 // kT_CMNPlatinumAt / kT_CMNGoldAt / kT_CMNSilverAt / kT_CMNBronzeAt.
 export function exploreNext(count,row){
@@ -62,11 +69,15 @@ export function exploreNext(count,row){
 // 0x204D40..0x204F9C, the All Mountain percentage: 20 x (golds/14 + rivals/12 + challenges/all + collectibles/all + highlights/24)
 // in floats; 100 only when exactly complete, else truncated and at most 99.
 export function mountainPercent({golds,rivals,challenges,challengeTotal,collected,collectTotal,highlights}){
+ const c=coreRules.coreMountainPercent({golds,rivals,challenges,challengeTotal,collected,collectTotal,highlights});
+ if(c!==undefined)return c;
  const f=Math.fround;
  const sum=f(f(f(f(f(f(golds)*f(1/14))+f(f(rivals)*f(1/12)))+f(f(challenges)/f(challengeTotal)))+f(f(collected)/f(collectTotal)))+f(f(highlights)*f(1/24)));
  const pct=f(sum*20);return pct===100?100:Math.min(99,Math.trunc(pct));
 }
 export function platinumThreshold(rules,mode,course){
+ const c=coreRules.corePlatinumThreshold(rules?.platinum,mode,course);
+ if(c!==undefined)return c;
  if(mode>=6)return null;
  if(mode===MODE.RIVAL_POINTS)return {score:rules.platinum[course+3][1]*100};
  const value=rules.platinum[course][1];
@@ -75,6 +86,8 @@ export function platinumThreshold(rules,mode,course){
 
 // 0x155328: 1st gold, 2nd silver, 3rd bronze; rival challenges give gold only to the winner.
 export function placementMedal(mode,rank){
+ const c=coreRules.corePlacementMedal(mode,rank);
+ if(c!==undefined)return c;
  if(mode===MODE.RIVAL_TIME||mode===MODE.RIVAL_POINTS)return rank===0?MEDAL.GOLD:MEDAL.NONE;
  return rank<3?MEDAL.GOLD+rank:MEDAL.NONE;
 }
@@ -82,6 +95,8 @@ export function placementMedal(mode,rank){
 // 0x122D78: finishing-time estimate for a rider still on course when the round is decided.
 // average speed = (progress origin - remaining) / race ticks, at least 30 - place cm/tick.
 export function estimateFinishTicks({raceTicks,origin,remaining,place},minimumSpeed=30){
+ const c=coreRules.coreEstimateCareer(raceTicks,origin,remaining,place,minimumSpeed);
+ if(c!==undefined)return c;
  let speed=f32(f32(f32(origin)-f32(remaining))/f32(raceTicks));
  const floor=f32(minimumSpeed-place);
  if(speed<floor)speed=floor;
@@ -90,6 +105,8 @@ export function estimateFinishTicks({raceTicks,origin,remaining,place},minimumSp
 
 // 0x238BF8 / 0x238B70: ranks by time (ascending) or score (descending); ties keep slot order.
 export function rankEntries(values,ascending){
+ const c=coreRules.coreRankEntries(values,ascending);
+ if(c)return c;
  const order=values.map((v,i)=>i).sort((a,b)=>ascending?values[a]-values[b]||a-b:values[b]-values[a]||a-b);
  const rank=[];order.forEach((slot,r)=>rank[slot]=r);return rank;
 }
@@ -98,9 +115,14 @@ export function rankEntries(values,ascending){
 // scaled 0.9 at difficulty 0 / 1.2 at 2 (the leading AI is never scaled), +-5% jitter, rounded down to 20.
 export function aiFreestyleScore(rules,course,round,aiIndex,level,random){
  const row=rules.freestyle_ai.find(r=>r.course===course&&r.round===round);if(!row)return -1;
+ // the draw comes first here (the JS computes the scaled score first; nothing it reads depends on the draw)
+ const draw=random();
+ const a=rules.ai_score;
+ const c=coreRules.coreAiFreestyleScore(row.scores[aiIndex],aiIndex,level,a?.level0_scale,a?.level2_scale,a?.jitter,draw);
+ if(c!==undefined)return c;
  let scale=f32(1);if(aiIndex!==0){if(level===0)scale=f32(rules.ai_score.level0_scale);else if(level===2)scale=f32(rules.ai_score.level2_scale);}
  let s=Math.trunc(f32(f32(row.scores[aiIndex])*scale));
- const r=(random()%200)-100;
+ const r=(draw%200)-100;
  s+=Math.trunc(f32(f32(s*r)*f32(rules.ai_score.jitter)));
  return s-(s%20);
 }
@@ -108,6 +130,8 @@ export function freestyleTimeLimit(rules,course){const row=rules.freestyle_ai.fi
 
 // 0x147D20 / 0x147E18: adaptive difficulty (profile char +0x280/+0x282 race, +0x284/+0x286 freestyle).
 export function adaptLevel(state,up){
+ const c=coreRules.coreAdaptLevel(state.level,state.counter,up);
+ if(c)return c;
  let {level,counter}=state;
  if(up){counter++;if(counter>=2){if(level<2)level++;counter=0;}}
  else{counter--;if(counter<-1){if(level!==0)level--;counter=0;}}
@@ -458,6 +482,8 @@ export class Career {
   // 0x122E50: final-round estimate of a computer rider still on course when the player finishes:
   // s1 = score +0x198 + 1; (s1 + cvt.w.s(max(rem - 1000, 0) * (float(s1) / max(orig - rem, 1)))), rem = +0x4D0, orig = +0x4D8 (113130).
   static opponentEstimate(score, remaining, origin) {
+    const c = coreRules.coreEstimatePoints(score, remaining, origin);
+    if (c !== undefined) return c;
     const f = Math.fround,
       s1 = ((score | 0) + 1) | 0,
       rem = f(remaining),

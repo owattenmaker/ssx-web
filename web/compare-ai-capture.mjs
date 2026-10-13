@@ -43,6 +43,10 @@ const exactAssetPath = (p) => {
 const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const text = (p) => read(p).toString('utf8');
 const human = await createCore();
+// PAGE_SEQUENCE=1 (docs/core-migration.md M2b): the human's tick as the page makes it (web/game-tick.js simulate): the boost word as
+// animation_tick's tweak and a rescue's reset_animation. Off: this comparer's own sequence.
+const pageSequence = process.env.PAGE_SEQUENCE === '1';
+let pageRescues = null; // (PAGE_SEQUENCE) the page's lastRescues
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
 // console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact' && human._ps2_arith_exact) {
@@ -144,7 +148,8 @@ const rngTrace = process.env.RNG_TRACE ? process.env.RNG_TRACE.split(':').map(Nu
 // after every rider's 121818, phase-major; world visual pass; camera last), seeded from --visual-state (a
 // tools/export_world_visual_state.py export of the location's ready savestate) and checked against a capture that watches
 // 0x4ff018:0x18 (and 0x4a3afc:4).
-const sharedVisual = args.includes('--shared-visual');
+// (PAGE_SEQUENCE: the page's one visual stream, web/ai-race.js createAiRacers sharedVisual)
+const sharedVisual = args.includes('--shared-visual') || pageSequence;
 // --replay-return (pv eventReturnInWorld (b), the ctm-events/c0a-ret3 gate): the in-world results' auto replay as the page runs it
 // (web/event-snapshot.js): the countdown snapshot at the start, the results-time snapshot at the live stop, then the replay (the
 // countdown snapshot back and REPLAY_TICKS of the recorded run, default 600) before the Transport restores the results time.
@@ -249,8 +254,15 @@ function humanTick(pad) {
   if (process.env.PAD_TICKS) { const [a, b] = process.env.PAD_TICKS.split(':').map(Number), t = globalThis.__compareTick; if (t >= a && t <= b) console.error('padtick', t, BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // (diagnostic: a tick range's pads and commands)
   if (process.env.PAD_TRACE && globalThis.__padTrace > 0) { globalThis.__padTrace--; console.error('pad', BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // PAD_TRACE (diagnostic): the return's first ticks
   globalThis.__compareStage = 'race_begin'; human._race_begin();
-  globalThis.__compareStage = 'step_rider'; const state = f32(human, human._step_rider(o[0], o[6], o[2] ? 1 : 0, o[7]), 16);
-  globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], o[12], o[7], 0, state[15], o[13]);
+  if (pageSequence && pageRescues === null) pageRescues = f32(human, human._rider_state(), 16)[13];
+  globalThis.__compareStage = 'step_rider'; const stepped = f32(human, human._step_rider(o[0], o[6], o[2] ? 1 : 0, o[7]), 16);
+  const state = pageSequence ? stepped.slice() : stepped;
+  if (pageSequence && state[13] !== pageRescues) {
+    pageRescues = state[13];
+    human._reset_animation();
+  }
+  const tweak = pageSequence ? o[7] : o[12];
+  globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], tweak, o[7], 0, state[15], o[13]);
   const pose = f32(human, human._pose_physical(), 12);
   globalThis.__compareStage = 'race_end'; human._race_end();
   if (sharedVisual) globalThis.__pendingCameraHead = [pose[9], pose[10], pose[11]]; else human._step_camera_head(pose[9], pose[10], pose[11]);

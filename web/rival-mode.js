@@ -5,6 +5,9 @@
 // 0x23B6C0, results 0x23B8C8); mode 5 -> handler 6 (vtable 0x47CCC8, init 0x23BB98, results 0x23BDB8). Both: one round
 // (+0 = +0x70 = 1), two riders (+0x10 = 1): the player and the peak rival 0x145750 in the next slot.
 
+// pv coreRules (docs/core-migration.md slice M1): these rules run in the core when it is there (undefined: the JS version runs)
+import * as coreRules from './core-rules.js';
+
 export const RIVAL_TIME = 4, RIVAL_POINTS = 5;
 export const DNF_TICKS = 360000;          // 0x23B964: lui 5 / ori 0x7E40
 // Event kind 0x535C10 of the rival modes (0x43E7D0): 5 time challenge, 6 points challenge.
@@ -24,6 +27,8 @@ export function hudFlags(mode) {
 // 0x145750: Peak 1 Mac (3), or Griff (5) when the player is Mac; Peak 2 Nate (7) / Zoe (4); Peak 3 Psymon (8) / Elise (6).
 // CHARDB indices; the browser's Sam takes Mac's slot (as in the Sam PS2 build), so Sam meets Griff.
 export function rivalCharacter(peak, humanCharacter) {
+  const c = coreRules.coreRivalCharacter(peak, humanCharacter);
+  if (c !== undefined) return c;
   return [[3, 5], [7, 4], [8, 6]][peak - 1][humanCharacter === [3, 7, 8][peak - 1] ? 1 : 0];
 }
 export const CHARACTER_ID = ['moby', 'kaori', 'allegra', 'mac', 'zoe', 'griff', 'elise', 'nate', 'psymon', 'viggo'];
@@ -38,6 +43,8 @@ export function timeLimitTicks(mode, course) {
 const f = Math.fround;
 // 0x122D78 race estimate of a rider still on course when the player finishes (cm per tick, floor 30 - slot).
 export function estimateTicks(raceTicks, origin, remaining, slot) {
+  const c = coreRules.coreEstimateRace(raceTicks, origin, remaining, slot);
+  if (c !== undefined) return c;
   let average = f(f(f(origin) - f(remaining)) / f(raceTicks));
   const floor = f(30 - slot);
   if (!(average >= floor)) average = floor;
@@ -45,6 +52,8 @@ export function estimateTicks(raceTicks, origin, remaining, slot) {
 }
 // 0x122E50 points estimate: s = +0x198 + 1; s + cvt.w.s(max(+0x4D0 - 1000, 0) * (float(s) / max(113130 - +0x4D0, 1))).
 export function estimatePoints(score, remaining, origin) {
+  const c = coreRules.coreEstimatePoints(score, remaining, origin);
+  if (c !== undefined) return c;
   const s1 = ((score | 0) + 1) | 0, rem = f(remaining);
   let done = f(f(origin) - rem); if (done < 1) done = 1;
   let left = f(rem - 1000); if (left < 0) left = 0;
@@ -54,6 +63,8 @@ export function estimatePoints(score, remaining, origin) {
 
 // 0x238BF8 (rank 10, times ascending, unsigned) / 0x238B70 (rank 2, scores descending): 0-based places.
 function rankBy(values, ascending) {
+  const c = coreRules.coreRankBy(values, ascending);
+  if (c) return c;
   const order = values.map((v, slot) => ({ v: ascending ? v >>> 0 : v | 0, slot }))
     .sort((a, b) => (ascending ? a.v - b.v : b.v - a.v) || a.slot - b.slot);
   const place = []; order.forEach((e, k) => { place[e.slot] = k; }); return place;

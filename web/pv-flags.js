@@ -185,6 +185,12 @@
 // world node states (DeadNode / Hide / RestoreNode, instance flags) and its later changes as kind 9 events (web/ai-racers.js syncWorldNodes),
 // as the in-world event does. The PS2 has one world: a RestoreNode a computer rider's trigger program made is restored by the section scan
 // in that world (fuzz r7-0082 3001: Psymon's trigger 193069 fires again the next tick); the computer riders' contexts run no sections.
+// coreRules (core-migration agent, docs/core-migration.md slice M1): the pure event / career rules (web/lineup.js roster, rounds,
+// relationships, difficulty, anchor RNG words; web/event-anchor-rng.js; the finish estimates and rankings of web/ai-race.js,
+// web/career.js and web/rival-mode.js) run in the core (engine/game_rules.hpp through web/rules_bridge.cpp, web/core-rules.js) once
+// main.js has a core. Byte-identical with the JS versions (web/test-core-rules.mjs). Off: the JS versions.
+// coreTick (core-migration agent, docs/core-migration.md slice M2): the game tick's core sequence (web/game-tick.js simulate) runs in
+// the core as tick_begin / tick_end (web/game_tick.inc). Off: game-tick.js makes each core call itself.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -235,7 +241,9 @@ export const PV_DEFAULTS = Object.freeze({
   fxCull: true,
   setBlendClass: true,
   loadMeter: true,
-  npcWorldNodes: true
+  npcWorldNodes: true,
+  coreRules: false,
+  coreTick: false
 });
 const overrides = new Map();
 function fromQuery() {

@@ -1,3 +1,13 @@
+> **Deployed 2026-10-13 (coordinator): core-migration core1** (slice M1). web/runtime core.wasm `d292326e…`, core.js `506ff5a9…` (adds _rules_eval) from local/core-migration/core1 (534/534; test-core-rules 41,255 cases bit-identical). pv coreRules stays OFF in this deploy. Built from the shared tree, so it also ships the physics agent's core64 tree changes (131620 brake gate, event-10 guard clear), covered by the same full suite.
+
+> **Core migration M1: the pure event / career rules in the core, pv coreRules (off); core to install: local/core-migration/core1 (2026-10-13, core-migration agent).** See [core-migration.md](core-migration.md) (the survey, the plan M1..M7, the decomp check of the duplicate rules, the native rider-context design item).
+> - **Snapshot:** local/core-migration/core1: core.wasm `d292326ecf101077…`, core.js `506ff5a968c45eae…` (the export list gained `_rules_eval`). Built from the shared tree as it stands, so it also carries the physics agent's unshipped web/core.cpp 131620 brake gate and the shared-world event-10 guard (its scratch core64). Full ps2-captures 534 / 534 on it.
+> - **New:** engine/game_rules.hpp (the rules, header-only), web/rules_bridge.cpp (`rules_eval`, added to web/build-core.sh's sources and exports), web/core-rules.js, web/test-core-rules.mjs (41,255 cases bit-identical to the JS versions).
+> - **Changed (each function asks the core first and keeps its JS body):** web/lineup.js, web/event-anchor-rng.js, web/ai-race.js, web/career.js, web/rival-mode.js; web/main.js registers the course's core (`setRulesCore`, cleared at the unload); web/pv-flags.js adds coreRules and coreTick (both off).
+> - **Harness:** web/headless-chrome.mjs: `CORE_DIR=<scratch core dir>` serves that core over web/runtime and `PAGE_PV=<switches>` joins the ?pv= of every game page, for any page test. Unset: unchanged.
+> - **Page proof:** a whole Metro City race (local/tas/best-8507.tas, Mac, 5 computer riders, 8687 ticks) with the switch off and on: ?simtrace hashes, per-tick dumps and lineup identical (local/core-migration/page-run.mjs). test-rival-page, test-replay, test-records-verifier pass with CORE_DIR=core1 PAGE_PV=coreRules (the first run of the first and last timed out under the capture suite's load; they pass on a rerun).
+> - **To flip coreRules:** install core1 (or a later core with `_rules_eval`), then turn the switch on.
+
 > **PS2 arithmetic, round 6 wrap-up (2026-10-07, paused at the user's request).** Nothing of mine is running.
 > - **Exact-base scores** (trace core of today's tree, `score_gates.mjs --runs local/ps2-capture/runs-exactbase --arith exact-base`):
 >   - **Snow Jam slice:** 180 of 187 (score-sj-t12 179 + bf-score-uber-R1).

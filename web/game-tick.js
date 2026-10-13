@@ -93,6 +93,8 @@ export function createGameTick(host, { trace = null } = {}) {
     core.HEAPF32.set(input, s.padPtr >> 2);
     s.worldAiBefore?.(); // (pv eventReturnInWorld: WS15's riders leave at the WS4 restart, before this tick's passes; main.js)
     if (s.aiActive) s.aiRace.beginTick(); else { s.soloTickStart?.(core); s.mpGame?.beginTick(); }   // soloTickStart: a solo event's anchor RNG (main.js, eventAnchorRng)
+    // pv coreTick (docs/core-migration.md M2): the same calls, made by the core (web/game_tick.cpp)
+    if (pv('coreTick') && core._tick_begin) return simulateInCore(s, core, rec, input);
     const cmd = f32(core, core._pad_tick(s.padPtr), 24).slice();
     rec.cmdAir = cmd[14] === 4 || cmd[14] === 5; // controllers 4 passive air, 5 air: Simple keyboard mode routes new direction presses to the D-pad
     core._race_begin();
@@ -180,6 +182,112 @@ s.worldAiTick?.();
     // end where its auto replay starts (0x2706B8: finish + 288 TIME'S UP / + 408 FINISH, counting the finish tick; PS2 c0a-ret2 records
     // 3032..3320, the Give Up's coast), whose results-time state 0x2706F0 restores at the Transport
     if (s.finished && ++s.postFinishTicks >= (s.liveStopAt?.(!!core._race_timed_out?.()) ?? POST_FINISH_TICKS)) s.running = false;
+    if (trace) trace(rec);
+    return rec;
+  }
+  // pv coreTick: simulate's part from pad_tick on, with the core making its calls in the same order (web/game_tick.cpp tick_begin,
+  // tick_mid, tick_end, tick_finish, tick_results); the host state stays here and goes in and out of each call.
+  const coreResults = new Float32Array(10);
+  const resultsBuffers = new WeakMap(); // core -> its tick_results buffer (10 floats, made once)
+  function simulateInCore(s, core, rec, input) {
+    const known = teleports.has(core);
+    const b = f32(core, core._tick_begin(s.padPtr, s.lastRescues, s.lastResetPlacement, s.animationReady ? 1 : 0, s.boneCount, known ? 1 : 0, known ? teleports.get(core) : 0), 96);
+    const words = new Uint32Array(b.buffer, b.byteOffset, 96);
+    const flags = words[79];
+    const cmd = b.slice(0, 24);
+    rec.cmdAir = cmd[14] === 4 || cmd[14] === 5; // controllers 4 passive air, 5 air: Simple keyboard mode routes new direction presses to the D-pad
+    if (flags & 1) {
+      s.lastRescues = b[80];
+      rec.rescue = true;
+      s.pending = 0;
+    }
+    if (flags & 4) {
+      s.animPose = f32(core, words[83], s.boneCount * 7).slice();
+      s.animInfo = b.slice(40, 59);
+      s.posePhysicalFrame = b.slice(59, 71);
+      s.pending = s.animInfo[12];
+      if (s.animInfo[13] > 0) {
+        s.score += s.animInfo[13];
+        s.trickUntil = s.clock + 2;
+      }
+    }
+    s.state = b.slice(24, 40);
+    s.raceInfo = b.slice(71, 79);
+    // a placement: the animation tick's reset placement count changed, or a stage teleport placed the rider in race_end (its
+    // placement count then wins; the pose is the one after race_end)
+    if (flags & 2) {
+      rec.placement = true;
+      s.lastResetPlacement = b[81];
+    }
+    if (flags & 8 && s.posePhysicalFrame) s.posePhysicalFrame = b.slice(59, 71);
+    teleports.set(core, b[82]);
+    if (!s.replay?.active) s.rideTick?.(s.state, !!(rec.placement || rec.rescue)); // field stats (main.js gameHost -> diagnostics.js diagRide; reads only)
+    if (!s.replay?.active) s.bailTick?.(core, s.state, input, rec.ticksLeft); // field bail reports (web/diag-bail.js; reads only)
+    s.freeRide?.tick();
+    s.bigChallenges?.tick();
+    s.faqTick?.();
+    s.worldAiTick?.();
+    if (s.aiActive) {
+      s.aiRace.endTick();
+      // 0x2D4C08 per game tick: relationship icons over the computer riders
+      rec.relations = s.aiRace.racers.npcs.map((n) => s.aiRace.racers.relation?.(n.slot, 0)?.score ?? 0);
+    } else {
+      core._tick_mid();
+      s.mpGame?.endTick();
+    }
+    if (s.progressMeter) rec.meter = s.progressMeterRiders(core, s.aiActive ? s.aiRace.racers.npcs : []);
+    const p = s.posePhysicalFrame;
+    const replayCamera = !!(s.replay?.active && core._replay_camera_step);
+    const m = replayCamera ? (s.replay.manual ?? NO_STICKS) : NO_STICKS;
+    const e = f32(core, core._tick_end(s.animPose ? 1 : 0, p?.[7] ?? 0, p?.[9] ?? 0, p?.[10] ?? 0, p?.[11] ?? 0, replayCamera ? 1 : 0, m[0], m[1], m[2], s.animationReady ? 1 : 0, s.raceInfo[2] ? 1 : 0), 32);
+    const ew = new Uint32Array(e.buffer, e.byteOffset, 32);
+    if (e[0] === 1) throw Error('Missing posed physical frame');
+    const endFlags = ew[20];
+    if (endFlags & 1) rec.camera = e.slice(1, 10);
+    if (endFlags & 2) rec.replayCamera = e.slice(10, 20);
+    if (endFlags & 4) {
+      s.pending = e[21];
+      const name = ew[22];
+      rec.trick = trickNames.decode(core.HEAPU8.subarray(name, core.HEAPU8.indexOf(0, name)));
+    }
+    if (endFlags & 8) {
+      s.finished = true;
+      s.postFinishTicks = 0;
+      const score = new Int32Array(e.buffer, e.byteOffset, 32)[23];
+      const dump = Uint32Array.from(new Uint32Array(core.HEAPU8.buffer, ew[26], 0x1d0 / 4));
+      rec.finish = { score, ticks: e[24], dnf: !!e[25] };
+      rec.finishDump = dump;
+      s.replay?.finish(rec.finish);
+      const fsPlace = s.freestylePlace?.(rec.finish.dnf ? 0 : rec.finish.score) ?? null;
+      core._tick_finish(fsPlace != null ? 1 : 0, s.aiActive ? 1 : 0, s.aiActive ? (s.aiRace.hud()?.place ?? 0) : 0, s.backcountry ? 1 : 0);
+    }
+    const cross = (s.finishCross ??= { held: 0, age: 0 });
+    const timedOut = !!core._race_timed_out();
+    const liveStop = s.finished ? (s.liveStopAt?.(timedOut) ?? null) : null;
+    const r = coreResults;
+    r.set([s.raceInfo[3], s.resultsPending ? 1 : 0, s.finished ? 1 : 0, s.postFinishTicks ?? 0, cross.held, cross.age, input[10] > 0 ? 1 : 0, pv('finishSkip') ? 1 : 0, timedOut ? 1 : 0, liveStop ?? -1]);
+    let q = resultsBuffers.get(core);
+    if (!q) {
+      q = core._malloc(40);
+      resultsBuffers.set(core, q);
+    }
+    core.HEAPF32.set(r, q >> 2);
+    core._tick_results(q);
+    r.set(f32(core, q, 10));
+    s.resultsPending = !!r[0];
+    cross.held = r[1];
+    cross.age = r[2];
+    if (r[3]) {
+      const result = f32(core, core._race_result_info(), 6);
+      if (!result[0]) throw Error('Results requested without finish record');
+      rec.results = { ticks: result[1], dnf: timedOut, rows: s.aiActive ? s.aiRace.results(result[4]) : undefined, standings: s.aiActive ? s.aiRace.standings() : undefined };
+    }
+    rec.place = s.aiActive ? s.aiRace.hud()?.place : 0;
+    // the run's replay highlights (web/replay.js observe): take-off / landing / crash / forced reset of the human
+    if (s.replay && !s.replay.active) s.replay.observe(!!s.state[8], s.score, !!f32(core, core._crash_info(), 1)[0], !!f32(core, core._reset_info(), 1)[0]);
+    s.clock += 1 / 60;
+    if (s.finished) s.postFinishTicks = r[4];
+    if (r[5]) s.running = false;
     if (trace) trace(rec);
     return rec;
   }

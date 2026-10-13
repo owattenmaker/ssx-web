@@ -13,6 +13,8 @@ import { rivalCharacter, CHARACTER_ID as RIVAL_IDS } from './rival-mode.js';
 import { createOpponentRiders, initOpponentLighting } from './opponent-riders.js';
 import { placeGlowStep } from './race-place-hud.js';
 import { FixedStepClock } from './fixed-step-clock.js';
+// pv coreRules (docs/core-migration.md slice M1): these rules run in the core when it is there (undefined: the JS version runs)
+import * as coreRules from './core-rules.js';
 import { ageRelationships, anchorRandomWords, applyRelationshipEvent, assembleLineup, humanCharacter, humanGridState, lineupFor, nextRosterSeed, noteRaced,
   relationshipKinds, relationshipScores, rivalAnchorWords } from './lineup.js';
 
@@ -50,13 +52,19 @@ const DISPLAY = { psymon: 'Psymon', allegra: 'Allegra', moby: 'Moby', griff: 'Gr
 
 // 0x122D78: estimated finish ticks of a rider still on course when the last human finished.
 export function estimateFinishTicks(raceTicks, origin, remaining, slot) {
+  const c = coreRules.coreEstimateRace(raceTicks, origin, remaining, slot);
+  if (c !== undefined) return c;
   let average = fround(fround(fround(origin) - fround(remaining)) / fround(raceTicks));
   const floor = fround(30 - slot);
   if (!(average >= floor)) average = floor;
   return raceTicks + Math.trunc(fround(fround(remaining) / average));
 }
 // 0x238BF8: slots ordered by recorded time (unsigned ascending; stable for equal times).
-export function orderByTime(times) { return times.map((t, slot) => ({ t: t >>> 0, slot })).sort((a, b) => a.t - b.t || a.slot - b.slot).map((x) => x.slot); }
+export function orderByTime(times) {
+  const c = coreRules.coreOrderByTime(times);
+  if (c) return c;
+  return times.map((t, slot) => ({ t: t >>> 0, slot })).sort((a, b) => a.t - b.t || a.slot - b.slot).map((x) => x.slot);
+}
 
 export async function createAiRace({
   T,

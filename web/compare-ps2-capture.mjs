@@ -38,6 +38,12 @@ const exactAssetPath = (p) => {
 const read = (p) => fs.readFileSync(exactAssetPath(p) || new URL(p, root));
 const json = (p) => JSON.parse(read(p));
 const core = await createCore();
+// PAGE_SEQUENCE=1 (docs/core-migration.md M2b): the pad path's tick as the page makes it (web/game-tick.js simulate): the rider FX
+// passes deferred to after race_end (main.js set_fx_deferred), the boost word as animation_tick's tweak, a rescue's reset_animation,
+// then fx_pass(-1) and section_pass after every race_end. Off: this comparer's own sequence.
+const pageSequence = process.env.PAGE_SEQUENCE === '1';
+if (pageSequence) core._set_fx_deferred(1);
+let pageRescues = null; // (PAGE_SEQUENCE) the page's lastRescues: rider_state[13] at the start, then after each rescue
 // PS2_ARITH=exact: an SSX_PS2_EXACT_FPU core runs the setup below in mode 1 (the baselines' history) and the capture on the
 // console model, from the switch before the first tick (docs/ps2-float.md "Mode-1 history").
 if (process.env.PS2_ARITH === 'exact' && core._ps2_arith_exact) {
@@ -368,13 +374,21 @@ function padFrame(c) {
   if (globalThis.__visualSeedOnce) { const w = new Uint32Array(core.HEAPU8.buffer, core._visual_rng_words(), 6), rec = globalThis.__visualSeedOnce; globalThis.__visualSeedOnce = null;
     if (process.env.VISUAL_CHECK) console.error('visual seed: browser words before the copy are', drawsBetween(rec, Array.from(w)), 'draws ahead of the record (-1: not on the path)', drawsBetween(Array.from(w), rec), 'behind');
     w.set(rec); if (process.env.VISUAL_CHECK) globalThis.__visAfterBegin = Array.from(w); }
-  const state = f32(core._step_rider(c.turn, c.jump, c.brake ? 1 : 0, c.boost), 16); phases?.push(vw());
-  core._animation_tick(state[7], c.animTurn, c.animBrake, state[9], state[8], c.jump, c.grab, c.tweak, c.boost, 0, state[15], c.animFlip); phases?.push(vw());
+  if (pageSequence && pageRescues === null) pageRescues = f32(core._rider_state(), 16)[13];
+  const stepped = f32(core._step_rider(c.turn, c.jump, c.brake ? 1 : 0, c.boost), 16); phases?.push(vw());
+  const state = pageSequence ? stepped.slice() : stepped;
+  if (pageSequence && state[13] !== pageRescues) {
+    pageRescues = state[13];
+    core._reset_animation();
+  }
+  const tweak = pageSequence ? c.boost : c.tweak;
+  core._animation_tick(state[7], c.animTurn, c.animBrake, state[9], state[8], c.jump, c.grab, tweak, c.boost, 0, state[15], c.animFlip); phases?.push(vw());
   const pose = f32(core._pose_physical(), 12);
   boothInject(); // PS2 booth-contact injection captures (docs/stage-teleport.md): this tick's 121818 runs the booth program
   core._race_end(); // course events (finish -> camera 0x162258) precede the camera update, as in main.js
   if (globalThis.__beforeSectionPass) { const f = globalThis.__beforeSectionPass; globalThis.__beforeSectionPass = null; f(); } // --station-hold with STATION_HOLD_EARLY
-  if (stageSnaps || peakWorld) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)
+  if (pageSequence) core._fx_pass(-1);
+  if (stageSnaps || peakWorld || pageSequence) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)
   // --station-hold: the next update's NIS tick (0x230BE4) runs after this section pass and before the next record (the provider exit),
   // so this tick's outputs below are compared with a record that already holds the rider at the actor
   if (stationPending) { const [x, y, z, fx, fy] = stationPending; stationPending = null; core._nis_hold(1, x, y, z, fx, fy); console.error('station hold after the section pass of tick', globalThis.__visTickNow); }
