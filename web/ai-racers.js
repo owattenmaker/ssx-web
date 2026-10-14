@@ -823,7 +823,8 @@ export async function createAiRacers({
     // hold (pv eventReturnInWorld, WS13's 1289F0): the riders' event clocks stay in PreRace (core event_clock_hold) until the next start.
     // ranks (pv eventReturnInWorld, WS13's 1289F0): the +0xEC each rider keeps into the grid wait (the round's fresh riders 0, the human its own)
     start({ gridStart = false, hold = false, ranks = null } = {}) {
-      if (hostAtStart && !detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
+      // An online race can have borrowed the host since this roster was prepared. Reclaim its dispatch on every start.
+      if (!detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
       // pv coreEventStart (docs/core-migration.md M4b): the same start made by the core, with the same documents
       const coreRanks = ranks == null || (Array.isArray(ranks) && ranks.length === 6 && ranks.every(Number.isInteger));
       if (native && pv('coreEventStart') && human._manager_event_start && coreRanks) {
@@ -946,7 +947,7 @@ export async function createAiRacers({
       pairViewSeen.fill(-1);
     },
     resume({ place }) {
-      if (hostAtStart && !detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
+      if (!detached) human._rider_host((pairsEnabled ? 3 : 1) | nativeBit);
       for (const n of npcs) explain(n.core, `${n.character} return placement`, () => place(n.core));
       // 230180's C vt+0xCC+0x28(3) = 129768 -> 1297C8(C, 1) -> 10F398: the pair records made again (core race_world_pair_restart),
       // and the game tick restarts at 0 (WS15), so 107888's first check (+0x14 < tick) is the second tick (PS2 c0a-ret: no pushes

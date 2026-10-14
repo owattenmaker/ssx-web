@@ -37,6 +37,8 @@ std::vector<T> readArray(const std::string& path) {
 const char* kWorldShader = R"(
 struct Frame { mvp: mat4x4f };
 @group(0) @binding(0) var<uniform> frame: Frame;
+// UVScroll: the texture translation of each scroll group (index 0 none; a scrolled batch draws with first instance = group + 1)
+@group(0) @binding(1) var<storage, read> scroll: array<vec2f>;
 @group(1) @binding(0) var mapTex: texture_2d<f32>;
 @group(1) @binding(1) var mapSampler: sampler;
 @group(1) @binding(2) var atlasTex: texture_2d<f32>;
@@ -58,10 +60,10 @@ struct Out {
   @location(2) lightUv: vec2f,
   @location(3) vertexAlpha: f32,
 };
-@vertex fn vs(v: In) -> Out {
+@vertex fn vs(v: In, @builtin(instance_index) instance: u32) -> Out {
   var o: Out;
   o.position = frame.mvp * vec4f(v.position, 1.0);
-  o.uv = v.uv;
+  o.uv = v.uv + scroll[instance];
   o.color = v.color;
   o.lightUv = v.lightUv;
   o.vertexAlpha = v.vertexAlpha;
@@ -127,9 +129,49 @@ struct Params {
 @group(0) @binding(2) var depthTex: texture_depth_2d;
 @group(0) @binding(3) var paletteTex: texture_2d<f32>;
 @group(0) @binding(4) var skyTex: texture_2d<f32>;
+// post_effects.hpp: the light glow target, the sun sprites (a header, then ten sprites of three rows: centre / half / alpha, uv, rgb),
+// the sun textures, the sun's visibility
+struct Sprite { place: vec4f, uv: vec4f, rgb: vec4f };
+struct Sprites { header: vec4f, sprite: array<Sprite, 10> };
+@group(1) @binding(0) var glowTex: texture_2d<f32>;
+@group(1) @binding(1) var<uniform> sprites: Sprites;
+@group(1) @binding(2) var sun1: texture_2d<f32>;
+@group(1) @binding(3) var sun2: texture_2d<f32>;
+@group(1) @binding(4) var lens: texture_2d<f32>;
+@group(1) @binding(5) var spriteSampler: sampler;
+@group(1) @binding(6) var sunVis: texture_2d<f32>;
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   let p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
   return vec4f(p[i], 0.0, 1.0);
+}
+// web/sun-flare.js spriteAdd: the GS texture as bytes, Cs = T x Vc >> 7, As = Ta x Va >> 7, add = Cs x As >> 7
+fn spriteAdd(t0: vec4f, p: vec2f, s: Sprite, va: f32) -> vec3f {
+  let local = (p - (s.place.xy - s.place.z)) / (s.place.z * 2.0);
+  let inside = local.x >= 0.0 && local.x < 1.0 && local.y >= 0.0 && local.y < 1.0;
+  let t = round(t0 * 255.0);
+  let cs = min(floor(t.rgb * s.rgb.rgb / 128.0), vec3f(255.0));
+  let as_ = floor(t.a * va / 128.0);
+  return select(vec3f(0.0), floor(cs * as_ / 128.0), inside);
+}
+fn spriteUv(p: vec2f, s: Sprite) -> vec2f {
+  let local = (p - (s.place.xy - s.place.z)) / (s.place.z * 2.0);
+  return vec2f(s.uv.x + local.x * (s.uv.z - s.uv.x), s.uv.y + local.y * (s.uv.w - s.uv.y));
+}
+fn sunAdd(frag: vec2f, size: vec2f) -> vec3f {
+  let screenUv = frag / size;
+  let p = vec2f(screenUv.x * sprites.header.z, screenUv.y * sprites.header.w);
+  let visibility = textureLoad(sunVis, vec2i(0, 0), 0).r;
+  let glow = sprites.sprite[0];
+  let glowUv = spriteUv(p, glow);
+  let a = textureSampleLevel(sun1, spriteSampler, glowUv, 0.0);
+  let b = textureSampleLevel(sun2, spriteSampler, glowUv, 0.0);
+  var sum = spriteAdd(select(a, b, sprites.header.y > 0.5), p, glow, floor(glow.place.w * visibility * 128.0));
+  for (var k = 1; k < 10; k++) {
+    let s = sprites.sprite[k];
+    let t = textureSampleLevel(lens, spriteSampler, spriteUv(p, s), 0.0);
+    sum += spriteAdd(t, p, s, floor(s.place.w * visibility * 128.0));
+  }
+  return sum;
 }
 @fragment fn fog(@builtin(position) p: vec4f) -> @location(0) vec4f {
   let xy = vec2i(p.xy);
@@ -147,6 +189,11 @@ struct Params {
   let blended = clamp(floor((source - fogBytes) * alpha / 128.0) + fogBytes, vec3f(0.0), vec3f(255.0));
   var out = source;
   if (originalZ < 65535.0) { out = mix(source, blended, params.enabled); }
+  // web/fog-renderer.js: the light glow halos (priority 7), then the sun glow and lens flare (priority 8), then ScreenTint
+  out = min(out + textureLoad(glowTex, xy, 0).rgb, vec3f(255.0));
+  if (sprites.header.x > 0.5) {
+    out = min(out + sunAdd(p.xy, vec2f(textureDimensions(worldTex))), vec3f(255.0));
+  }
   // web/screen-tint.js apply: C * s >> 7 (then + a), clamped; the lightning flash (ALPHA 0x44) over it
   let scaled = clamp(floor(out * params.tintScale.rgb / 128.0), vec3f(0.0), vec3f(255.0));
   var tinted = out;
@@ -353,13 +400,18 @@ void WorldRenderer::buildPipelines() {
     atlasSampler_ = wgpuDeviceCreateSampler(d, &ad);
 
     // layouts
-    WGPUBindGroupLayoutEntry fe = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
-    fe.binding = 0;
-    fe.visibility = WGPUShaderStage_Vertex;
-    fe.buffer.type = WGPUBufferBindingType_Uniform;
+    WGPUBindGroupLayoutEntry fe[2];
+    fe[0] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+    fe[0].binding = 0;
+    fe[0].visibility = WGPUShaderStage_Vertex;
+    fe[0].buffer.type = WGPUBufferBindingType_Uniform;
+    fe[1] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+    fe[1].binding = 1;
+    fe[1].visibility = WGPUShaderStage_Vertex;
+    fe[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
     WGPUBindGroupLayoutDescriptor fd = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
-    fd.entryCount = 1;
-    fd.entries = &fe;
+    fd.entryCount = 2;
+    fd.entries = fe;
     frameLayout_ = wgpuDeviceCreateBindGroupLayout(d, &fd);
     WGPUBindGroupLayoutEntry me[4];
     for (int k = 0; k < 4; ++k) {
@@ -499,9 +551,13 @@ void WorldRenderer::buildPipelines() {
     cd.entryCount = 5;
     cd.entries = ce;
     compositeLayout_ = wgpuDeviceCreateBindGroupLayout(d, &cd);
+    // group 1: the glow and sun (post_effects.hpp)
+    post_.init(*gpu_);
+    post_.attach(nullptr, nullptr);
+    const WGPUBindGroupLayout compositeLayouts[2] = {compositeLayout_, post_.layout()};
     WGPUPipelineLayoutDescriptor cpl = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
-    cpl.bindGroupLayoutCount = 1;
-    cpl.bindGroupLayouts = &compositeLayout_;
+    cpl.bindGroupLayoutCount = 2;
+    cpl.bindGroupLayouts = compositeLayouts;
     WGPUPipelineLayout compositeLayout = wgpuDeviceCreatePipelineLayout(d, &cpl);
     WGPUShaderModule cm = gpu_->shader(kCompositeShader, "composite");
     WGPUShaderModule copy = gpu_->shader(kCopyShader, "sky background");
@@ -551,15 +607,21 @@ void WorldRenderer::buildPipelines() {
     worldUniform_ = gpu_->buffer(64, WGPUBufferUsage_Uniform, nullptr, "world frame");
     skyUniform_ = gpu_->buffer(64, WGPUBufferUsage_Uniform, nullptr, "sky frame");
     compositeUniform_ = gpu_->buffer(80, WGPUBufferUsage_Uniform, nullptr, "composite");
+    scrollBuffer_ = gpu_->buffer(kScrollGroups * 8, WGPUBufferUsage_Storage, nullptr, "uv scroll");
     for (int k = 0; k < 2; ++k) {
-        WGPUBindGroupEntry e = WGPU_BIND_GROUP_ENTRY_INIT;
-        e.binding = 0;
-        e.buffer = k == 0 ? worldUniform_ : skyUniform_;
-        e.size = 64;
+        WGPUBindGroupEntry e[2];
+        e[0] = WGPU_BIND_GROUP_ENTRY_INIT;
+        e[0].binding = 0;
+        e[0].buffer = k == 0 ? worldUniform_ : skyUniform_;
+        e[0].size = 64;
+        e[1] = WGPU_BIND_GROUP_ENTRY_INIT;
+        e[1].binding = 1;
+        e[1].buffer = scrollBuffer_;
+        e[1].size = kScrollGroups * 8;
         WGPUBindGroupDescriptor bd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
         bd.layout = frameLayout_;
-        bd.entryCount = 1;
-        bd.entries = &e;
+        bd.entryCount = 2;
+        bd.entries = e;
         (k == 0 ? worldFrame_ : skyFrame_) = wgpuDeviceCreateBindGroup(d, &bd);
     }
     // the fog CLUT (256 RGBA entries, nearest)
@@ -673,6 +735,9 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
         draw.count = b["index_count"].get<uint32_t>();
         draw.material = g->second;
         draw.chunk = b.contains("chunk") ? b["chunk"].get<int>() : -1;
+        if (world && instance && b.contains("uv_scroll_group")) {
+            draw.scroll = std::min<int>(b["uv_scroll_group"].get<int>() + 1, int(kScrollGroups) - 1);
+        }
         draw.batch = batch;
         if (!world) {
             draw.kind = blend ? 6 : 5;
@@ -778,7 +843,7 @@ void WorldRenderer::drawPackage(WGPURenderPassEncoder pass, const Package& p, co
                 continue;
             }
             wgpuRenderPassEncoderSetPipeline(pass, it->second);
-            wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, 0);
+            wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, uint32_t(d.scroll));
         }
     }
 }
@@ -804,6 +869,14 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         sf[k] = float(skyMvp[size_t(k)]);
     }
     wgpuQueueWriteBuffer(gpu_->queue, worldUniform_, 0, wf, 64);
+    {
+        std::vector<float> s(kScrollGroups * 2, 0.f);
+        for (size_t g = 0; g < state.scroll.size() && g + 1 < kScrollGroups; ++g) {
+            s[(g + 1) * 2] = state.scroll[g][0];
+            s[(g + 1) * 2 + 1] = state.scroll[g][1];
+        }
+        wgpuQueueWriteBuffer(gpu_->queue, scrollBuffer_, 0, s.data(), s.size() * 4);
+    }
     if (!state.riders.empty()) {
         // a rider bypasses the model matrix: origin-relative positions through the camera's projection x view
         const Mat4 vp = multiply(P, V);
@@ -823,6 +896,11 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
                               tn.addBytes[0], tn.addBytes[1], tn.addBytes[2], 0,
                               tn.flashRGB[0], tn.flashRGB[1], tn.flashRGB[2], 0};
     wgpuQueueWriteBuffer(gpu_->queue, compositeUniform_, 0, params, sizeof params);
+    {
+        // three's camera.matrixWorld: the inverse of the view (columns right, up, back, eye)
+        const Mat4 W = {V[0], V[4], V[8], 0, V[1], V[5], V[9], 0, V[2], V[6], V[10], 0, eye[0], eye[1], eye[2], 1};
+        post_.prepare(W.data(), V.data(), P.data(), near, far, width, height, depthSample_);
+    }
     if (state.fogPalette && state.fogRevision != paletteRevision_) {
         gpu_->writeTexture(palette_.texture, 256, 1, state.fogPalette);
         paletteRevision_ = state.fogRevision;
@@ -878,11 +956,14 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
     }
+    // the depth queries and the glow halos on the world depth
+    post_.encode(enc);
     // the fog composite into the target
     {
         WGPURenderPassEncoder pass = colorPass(target, false);
         wgpuRenderPassEncoderSetPipeline(pass, composite_);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, compositeGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, post_.group(), 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);

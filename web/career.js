@@ -14,6 +14,8 @@ import {recordRun,unlockedMonsters} from './monster-tricks.js'; // monster-trick
 import {buildRosterFrom,freestyleRoster,freestyleSlots,nextRosterSeed,nextWord,seededWords,presentationDraw} from './lineup.js'; // the roster generator 0x4C9548
 // pv coreRules (docs/core-migration.md slice M1): the pure rules below run in the core when it is there (undefined: the JS version runs)
 import * as coreRules from './core-rules.js';
+// pv coreCareerCascade (docs/core-migration.md M5d): the award cascade and its messages in the rules module
+import { cascadeKernel, lodgeModule, FAILED } from './career-kernel.js';
 import {bigChallengeRows} from './big-challenges.js'; // Big Challenge table 0x43EE10 (1544D0 counts a peak's completed challenges)
 
 export const MODE={RACE:0,SLOPESTYLE:1,HALFPIPE:2,BIGAIR:3,RIVAL_TIME:4,RIVAL_POINTS:5};
@@ -206,6 +208,10 @@ export class Career {
   // - 1 at once (159170 -> 159CD0: the cards and poster with the next peak's pass ...), without a reward list. The message
   // notices (1E3760: 247 / 248) run before, in web/career-messages.js.
   earnCash(id, amount) {
+    // pv coreCareerCascade: in the rules module, with the earnings messages (undefined: the JS)
+    const k = cascadeKernel(this, 'earn', { id, amount });
+    if (k === FAILED) this.messagesHost?.earnMessages(this, id, amount);
+    else if (k !== undefined) return k;
     return this.earn159818(id, amount); // the award cascade inside 159CD0 opens the passes
   }
   // ---- the Freeride (EXPLORE) goal: collectible and Big Challenge medals of a peak --------------------------------------------
@@ -247,6 +253,9 @@ export class Career {
   // icon). Nothing else shows in the world and the reward record stays empty (PS2 ctm-parity/runs/sd-goal: lock bit 12
   // cleared, +0xF28 bit 11, inbox item 249, the mail icon at the MISSION SUCCESS popup).
   exploreGoal(id, peak, kind = null) {
+    // pv coreCareerCascade: in the rules module, with the awards' messages (undefined: the JS)
+    const k = cascadeKernel(this, 'explore', { id, peak, kind });
+    if (k !== undefined && k !== FAILED) return k;
     return this.exploreGoal1599A0(id, peak, kind);
   }
   rider(id) {
@@ -693,7 +702,12 @@ export class Career {
     const out = { medal, cash: 0, opened: [] };
     if (ev.mode >= MODE.RIVAL_TIME) out.record = this.heatRecord(isTimed(ev.mode) ? ticks : score); // rival / peak runs: their one round
     if (ev.career) {
-      Object.assign(out, this.complete1591E8(medal, { ticks, score }));
+      // pv coreCareerCascade: 1591E8 and the event's messages in the rules module (undefined: the JS, and the messages' hook after)
+      const { id, key } = this.active;
+      const k = cascadeKernel(this, 'complete', { id, key, ev, medal, ticks, score, place });
+      const done = k !== undefined && k !== FAILED;
+      this.cascadeDone = done;
+      Object.assign(out, done ? k : this.complete1591E8(medal, { ticks, score }));
       ev.fresh = place < 3;
       ev.round = place < 3 ? 1 : 3;
     }
@@ -771,6 +785,10 @@ export class Career {
   // peak 1 -> 4 random cards + 1 poster (+ Peak 2 pass), peak 2 -> 1 toy + 2 art (+ Peak 3 pass), peak 3 -> a cheat
   // character; 17..19 random gear of the peak pool (flag 0x100<<peak), 20..31 random special board (flag 0x800).
   grantAward(id, award) {
+    // pv coreCareerCascade: in the rules module, with the award's message (undefined: the JS)
+    const k = cascadeKernel(this, 'grant', { id, award });
+    if (k === FAILED) this.messagesHost?.awardMessage(this, id, award);
+    else if (k !== undefined) return k;
     return this.grant159CD0(id, award);
   }
   // 0x157080: uniform pick among every unowned item of the category (peak / price are not filtered).
@@ -1061,6 +1079,12 @@ export class Career {
     };
   }
   buyGear(id, item, lodgePeak) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buyGear', { id, item, lodgePeak }, lodgeModule(this, true));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const st = this.gearStatus(id, item, lodgePeak);
     if (!st || st.state !== 'buy') return false;
     const inv = this.gear(id);
@@ -1071,6 +1095,12 @@ export class Career {
     return true;
   }
   equipGear(id, item, on) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'equipGear', { id, item, on: !!on }, lodgeModule(this, true));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const inv = this.gear(id);
     if (!inv || !inv.owned(item)) return false;
     inv.equip(item, on);
@@ -1091,6 +1121,12 @@ export class Career {
     return { entry: e, state: this.rider(id).cash >= e.price ? 'buy' : 'short' };
   }
   buyUber(id, category, entry) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buyUber', { id, category, entry }, lodgeModule(this, true));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const st = this.uberStatus(id, category, entry);
     if (!st || st.state !== 'buy') return false;
     this.rider(id).cash -= st.entry.price;
@@ -1099,6 +1135,12 @@ export class Career {
     return true;
   }
   selectUber(id, category, entry) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'selectUber', { id, category, entry }, lodgeModule(this, true));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const st = this.uberStatus(id, category, entry);
     if (!st || st.state === 'buy' || st.state === 'short') return false;
     this.uber(id)[category].selected = entry;
@@ -1124,6 +1166,12 @@ export class Career {
     return (r.songs ??= { owned: [], playlist: [] });
   }
   buySong(id, index) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buySong', { id, index }, lodgeModule(this, true));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const st = this.songState(id);
     if (st.owned.includes(index) || !this.songs()[index]) return false;
     const pay = st.owned.length >= SONG_FREE_CREDITS;
@@ -1159,6 +1207,15 @@ export class Career {
     };
   }
   buyReward(id, category, index, lodgePeak) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buyReward', { id, category, index, lodgePeak }, lodgeModule(this, false));
+    if (k !== undefined && k !== FAILED) {
+      if (k.ok) {
+        this.lastBonus = k.bonus;
+        this.persist();
+      }
+      return k.ok;
+    }
     const st = this.rewardStatus(id, category, index, lodgePeak);
     if (!st || st.state !== 'buy') return false;
     this.rider(id).cash -= st.item.price;
@@ -1186,6 +1243,9 @@ export class Career {
     return level >= 1 && level <= this.rules.attribute_cost.length ? this.rules.attribute_cost[level - 1] : null;
   }
   buyAttributePoint(id, index) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buyAttributePoint', { id, index }, lodgeModule(this, false));
+    if (k !== undefined && k !== FAILED) return k;
     const r = this.rider(id),
       v = r.attributes[index],
       cost = this.attributePointCost(v);
@@ -1195,6 +1255,12 @@ export class Career {
     return true;
   }
   buyAttribute(id, index) {
+    // pv coreCareerLodge (M5e): in the rules module (undefined: the JS)
+    const k = cascadeKernel(this, 'buyAttribute', { id, index }, lodgeModule(this, false));
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     const r = this.rider(id),
       cost = this.attributeCost(r.attributes[index]);
     if (cost == null || r.cash < cost) return false;

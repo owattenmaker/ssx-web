@@ -13,6 +13,17 @@ const rig = json('RIDER_ZOE/rider.json');
 const clients = [];
 for (const slot of [0, 1]) {
   const rider = await createTestRider({ rider: 'RIDER_ZOE' });
+  // A page prepares computer riders before entering an online lobby. Their manager remains configured, but the
+  // online rider_host(2) must route every pair callback to the network host, including reactions and random draws.
+  // The unused context has no body pose: routing to it reproduces the gate-opening crash from the live page.
+  const core = rider.core;
+  if (core._manager_configure) {
+    const dormant = core._rider_context_create();
+    const setup = core._malloc(16);
+    new Uint32Array(core.HEAPU8.buffer, setup, 4).set([core.___tls_base.value, dormant, 0, 1]);
+    core._manager_configure(setup, setup + 8, 2, 2, 1);
+    core._free(setup);
+  }
   const remote = createRemoteRiders();
   remote.add(1 - slot, rig, { name: slot ? 'A' : 'B' });
   const client = { slot, rider, remote, outbox: [] };

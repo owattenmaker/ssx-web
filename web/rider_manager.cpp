@@ -30,6 +30,7 @@
 
 extern "C" {
 void rider_tls_set(void*);
+int rider_host_flags();
 float* rider_world_state();
 float* race_progress_info();
 float* npc_world_buffer();
@@ -605,7 +606,9 @@ void relationshipReaction(RiderManager& M, int slot, int other, int kind, int at
 extern "C" {
 // Whether this context's race runs on the core's rider manager.
 bool rider_manager_native() {
-    return hostManager != nullptr && hostManager->active;
+    // A prepared offline roster can stay configured while online races install rider_host(2).
+    // Bit 8 selects this manager; without it pair views and responses belong to the page's network host.
+    return (rider_host_flags() & 8) != 0 && hostManager != nullptr && hostManager->active;
 }
 // The human's pose is done: the computer riders' stage 1.
 void rider_manager_after_pose() {

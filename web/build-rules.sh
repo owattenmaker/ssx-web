@@ -9,8 +9,8 @@ mkdir -p "$out"
 tmp=$(mktemp -d "$out/.rules.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 EMXX=${EMXX:-local/vendor/emsdk/upstream/emscripten/em++}
-"$EMXX" web/rules_bridge.cpp web/rules_module.cpp -Iengine -std=c++20 -O3 -ffp-contract=off -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 \
+"$EMXX" web/rules_bridge.cpp web/rules_module.cpp -Iengine -Iweb/third_party/nlohmann -Wno-deprecated-literal-operator -std=c++20 -O3 -ffp-contract=off -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 \
   -sMODULARIZE -sEXPORT_ES6 -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=1048576 -sSTACK_SIZE=65536 \
-  -sEXPORTED_FUNCTIONS='["_malloc","_free","_rules_eval","_presentation_boot","_presentation_booted","_presentation_draw","_presentation_note","_presentation_roster_seed","_presentation_state"]' \
+  -sEXPORTED_FUNCTIONS='["_malloc","_free","_rules_eval","_presentation_boot","_presentation_booted","_presentation_draw","_presentation_note","_presentation_roster_seed","_presentation_state","_career_data","_career_kernel","_career_out_size"]' \
   -sEXPORTED_RUNTIME_METHODS='["HEAPF32","HEAPU8"]' -o "$tmp/rules.js"
 mv -f "$tmp/rules.wasm" "$out/rules.wasm" && mv -f "$tmp/rules.js" "$out/rules.js"

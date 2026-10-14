@@ -6,8 +6,13 @@
 import assert from 'node:assert/strict';
 import { createNodeRace } from './ai-race-node.mjs';
 import { estimateFinishTicks, orderByTime } from './ai-race.js';
+import { createPairNet } from './net/pair-net.js';
+import { createRemoteRiders } from './net/remote-riders.js';
 
 const race = await createNodeRace({});
+// Leaving online restores the page hooks, then the next offline start must select its core manager again.
+const online = createPairNet({ core: race.human, remote: createRemoteRiders(), slot: 0, count: 2 });
+online.dispose();
 race.start();
 const pad = new Float32Array(24);
 const pos = (c) => Array.from(new Float32Array(c.HEAPF32.buffer, c._rider_world_state(), 16)).slice(0, 3);

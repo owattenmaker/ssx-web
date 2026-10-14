@@ -98,6 +98,8 @@ float* animation_info();
 float* boost_info();
 // the presentation read-outs the native front end draws from
 uint32_t* section_chunks();
+float* set_piece_info();
+uint32_t* set_piece_sections();
 float* fog_palette_info();
 uint8_t* fog_palette_rgba();
 float* fog_info();

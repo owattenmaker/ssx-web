@@ -21,6 +21,8 @@
 import { presentationDraw } from './lineup.js';
 import { pv } from './pv-flags.js';
 import { glyphKeyRect } from './input-glyphs.js';
+// pv coreCareerCascade (docs/core-migration.md M5d): the cascade and these hooks' messages in the rules module
+import { cascadeModule } from './career-kernel.js';
 
 export const INBOX_SIZE = 25;
 export const PEAK_RIVALS = [3, 7, 8];   // 0x145750: Mac / Nate / Psymon (their riders get the other half of the texts)
@@ -234,6 +236,8 @@ export class CareerMessages {
   hook(career) {
     if (!career || career.messagesHooked) return;
     career.messagesHooked = true;
+    // pv coreCareerCascade: the kernel posts the messages itself (web/career-kernel.js reads the data and calls kernelPosts)
+    career.messagesHost = this;
     const self = this,
       complete = career.completeEvent,
       grant = career.grantAward,
@@ -241,33 +245,53 @@ export class CareerMessages {
     career.completeEvent = function (place, result) {
       const before = self.ready ? self.snapshot(this) : null;
       self.awards = [];
+      this.cascadeDone = false;
       try {
         const out = complete.call(this, place, result);
-        if (before) self.eventComplete(this, before, place, out);
+        // pv coreCareerCascade: the kernel posted the event's messages (kernelPosts)
+        if (before && !this.cascadeDone) self.eventComplete(this, before, place, out);
         return out;
       } finally {
         self.awards = null;
+        this.cascadeDone = false;
       }
     };
     career.grantAward = function (id, award) {
-      // 159CD0 posts an award's message at its case, before the items, the pass (158F60) and the cascade's awards
-      if (!this.rider(id).awards?.includes(award) && self.ready) {
-        if (self.awards) self.awards.push(award);
-        else self.postAward(this, id, award, self.snapshot(this));
-      }
+      // pv coreCareerCascade: the kernel posts it (career.js grantAward calls awardMessage when the kernel failed)
+      if (!cascadeModule(this)) self.awardMessage(this, id, award);
       return grant.call(this, id, award);
     };
     // 119EF8 -> 1E3760 before 1597B0 adds the cash: every award's cash in the world (collectibles, free-ride tricks, Big
     // Challenges; web/career.js earnCash).
     career.earnCash = function (id, amount) {
-      if (self.ready && amount > 0) {
-        const r = this.rider(id),
-          rules = new MessageRules(self.data, self.inbox(r));
-        rules.earnings(amount, r.earned, this.rules.earnings_goal, (n) => !r.peaks[n]);
-        if (rules.posts.length) self.hud = { frames: 0 };
-      }
+      if (!cascadeModule(this)) self.earnMessages(this, id, amount);
       return earn.call(this, id, amount);
     };
+  }
+  // grantAward's hook step: 159CD0 posts an award's message at its case, before the items, the pass (158F60) and the cascade's awards
+  awardMessage(career, id, award) {
+    if (!career.rider(id).awards?.includes(award) && this.ready) {
+      if (this.awards) this.awards.push(award);
+      else this.postAward(career, id, award, this.snapshot(career));
+    }
+  }
+  // earnCash's hook step: 1E3760 before 1597B0 adds the cash (every award's cash in the world: collectibles, free-ride tricks, Big
+  // Challenges; web/career.js earnCash)
+  earnMessages(career, id, amount) {
+    if (this.ready && amount > 0) {
+      const r = career.rider(id),
+        rules = new MessageRules(this.data, this.inbox(r));
+      rules.earnings(amount, r.earned, career.rules.earnings_goal, (n) => !r.peaks[n]);
+      if (rules.posts.length) this.hud = { frames: 0 };
+    }
+  }
+  // pv coreCareerCascade (web/career-kernel.js): the kernel posted messages; the HUD's mail icon as the hooks set it
+  kernelPosts(op) {
+    if (op === 'complete') {
+      this.cu.career.persist();
+      this.hud = { frames: pv('mailFreeze') ? 182 : 0 };
+      if (pv('mailFreeze')) this.lastHud = 0;
+    } else this.hud = { frames: 0 };
   }
   // Career facts before the event result is applied: rival locks (+0x278 bits 6+peak / 9+peak) and peak passes.
   snapshot(career) {

@@ -8,6 +8,7 @@
 // All colour work is on GS bytes in RGBA8Unorm targets (pv encodedBlend: no sRGB, output = the bytes).
 #include "gpu.hpp"
 #include "json.hpp"
+#include "post_effects.hpp"
 #include "rider_renderer.hpp"
 #include "screen_tint.hpp"
 #include <array>
@@ -32,6 +33,8 @@ struct WorldFrameState {
     const uint8_t* fogPalette = nullptr;
     // chunk id -> drawn (state 3)
     std::map<uint32_t, bool> chunks;
+    // the UVScroll groups' texture translations (uv_scroll_group order)
+    std::vector<std::array<float, 2>> scroll;
     // ScreenTint and the lightning flash (web/screen-tint.js)
     TintOutput tint;
     // the riders drawn in the world pass after the world (renderOrder 600): the human first, then the computer riders (their
@@ -45,6 +48,14 @@ public:
     void load(Gpu& gpu, const std::string& assetsRoot, const std::string& code);
     // the frame into target (an RGBA8Unorm view of width x height); camera aspect: the stage's (4/3, widescreen Off)
     void render(const CameraView& camera, const WorldFrameState& state, WGPUTextureView target, uint32_t width, uint32_t height, double aspect);
+
+    // the course's light glows and sun flare (after load; either may be null)
+    void attachEffects(LightGlow* glow, SunFlare* sun) {
+        post_.attach(glow, sun);
+    }
+    const PostEffects& effects() const {
+        return post_;
+    }
 
     std::array<double, 3> origin{};
 
@@ -62,6 +73,8 @@ private:
         int chunk = -1;
         int order = 0;
         size_t batch = 0;
+        // the UVScroll group + 1 (0: none), drawn as the first instance
+        int scroll = 0;
     };
     struct Package {
         WGPUBuffer vertices = nullptr;
@@ -97,6 +110,8 @@ private:
     WGPUBuffer worldUniform_ = nullptr;
     WGPUBuffer skyUniform_ = nullptr;
     WGPUBuffer compositeUniform_ = nullptr;
+    static constexpr uint64_t kScrollGroups = 256;
+    WGPUBuffer scrollBuffer_ = nullptr;
     WGPUBindGroup worldFrame_ = nullptr;
     WGPUBindGroup skyFrame_ = nullptr;
     // pipelines by kind: 0 terrain, 1 instance opaque, 2 blend pass (alpha test), 3 blend fringe, 4 additive, 5 sky opaque, 6 sky blend;
@@ -113,6 +128,7 @@ private:
     Texture depth_;
     WGPUTextureView depthSample_ = nullptr;
     WGPUBindGroup compositeGroup_ = nullptr;
+    PostEffects post_;
 };
 
 }  // namespace ssx_native

@@ -32,6 +32,8 @@ module._rules_eval = (fn, io, n) => {
     process.exit(0);
   }
 }
+// (the kernel answers under coreRules; SSX_PV= with an empty list turns every switch off)
+setPv('coreRules', true);
 if (courseCore) setRulesCore(courseCore);
 else setPv('rulesModule', true);
 

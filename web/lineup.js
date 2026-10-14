@@ -166,6 +166,11 @@ export function noteRaced(source) { pendingRace = source; }
 // A course change in the page (main.js unloadCourse): the raced event's draws are final; note them now so the source (its
 // computer riders, their core) is not kept alive until the next roster seed.
 export function settleRaced() { if (pendingRace) { const r = pendingRace(); pendingRace = null; if (r) noteEventDraws(r.model, r.ticks); } }
+// pv coreCareerCascade (web/career-kernel.js): whether the session's generator lives in the rules module (booted here when it was not)
+export function presentationInModule() {
+  bootPresentation();
+  return !!presentationModule;
+}
 // One draw of the session's presentation generator (0x3177F0), for the other presentation consumers the browser runs
 // (career messages 0x1E2A08 / 0x1E2FE0 / 0x1E3100).
 export function presentationDraw() {

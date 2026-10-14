@@ -3,6 +3,7 @@
 // by the distance travelled, stepped once per camera tick after the core's tick; applied after the fog composite
 // (C = C * s >> 7, then C + a; the lightning flash over it). The arithmetic is the JS version's (Math.fround at each step).
 #include "json.hpp"
+#include "painter_tree.hpp"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -86,30 +87,7 @@ private:
         return {1, 1, 1, 0, 0, 0};
     }
     int payloadIndex(float x, float y) const {
-        const auto& nodes = tint_["nodes"];
-        if (nodes.empty()) {
-            return -1;
-        }
-        const float px = float(float(double(x) - tint_["origin"][0].get<double>()) * tint_["scale"].get<double>());
-        const float py = float(float(double(y) - tint_["origin"][1].get<double>()) * tint_["scale"].get<double>());
-        const nlohmann::json* leaf = nullptr;
-        if (px > -1 && px < 32768 && py > -1 && py < 32768) {
-            uint32_t a = (uint32_t(int32_t(std::trunc(px))) << 1) & 0xffffu;
-            uint32_t b = (uint32_t(int32_t(std::trunc(py))) << 1) & 0xffffu;
-            int index = tint_["root"].get<int>();
-            for (size_t steps = 0; steps <= nodes.size(); ++steps) {
-                const auto& node = nodes.at(size_t(index));
-                if (!(node[0].get<int64_t>() & 1)) {
-                    leaf = &node;
-                    break;
-                }
-                index = int(node[size_t(((a >> 15) << 1) | (b >> 15))].get<int64_t>() >> 1);
-                a = (a << 1) & 0xfffcu;
-                b = (b << 1) & 0xfffcu;
-            }
-        }
-        const uint32_t value = leaf ? uint32_t((*leaf)[2].get<int64_t>() | ((*leaf)[3].get<int64_t>() << 16)) : uint32_t(tint_["outside_words"][1].get<int64_t>());
-        return value == 0xffffffffu ? -1 : int(value);
+        return tint_.contains("nodes") ? painterPayloadIndex(tint_, x, y) : -1;
     }
     void blend(const std::array<float, 6>& values, double weight) {
         const float w = float(weight * weight);

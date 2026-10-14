@@ -12,6 +12,14 @@ serves CORE_DIR over web/runtime and adds PAGE_PV to the ?pv= of every game page
 server). local/core-migration/page-run.mjs is tools/tas/page-run.mjs with CORE_DIR, `--pv` and a fixed presentation seed
 (?presentationSeed=0x182200), for whole-race ?simtrace traces with a switch off and on.
 
+## M3 online host correction (2026-10-14)
+
+See [multiplayer.md](multiplayer.md#gate-opening-freeze-hotfix-2026-10-14). A configured manager does not own an
+online race: `rider_manager_native()` must also require `rider_host_flags() & 8`. Otherwise gate-opening pair
+queries access dormant NPC bodies and throw. Offline start/resume re-arms the manager bit after online disposal.
+Core `1e117b0c` contains this correction; no exports or collision rules changed. The online pair regression now
+retains a configured offline manager, and the offline smoke test exercises an online host takeover/disposal.
+
 ## Survey (2026-10-13)
 
 The JS that decides simulation results, beyond presentation:
@@ -50,8 +58,8 @@ The JS that decides simulation results, beyond presentation:
 | M4b | The computer riders' event start and the race world's reset; the plane-drop seeds | coreEventStart | core8, verified |
 | M5a/b | The rules module (rules without a course core) and the session's presentation generator | rulesModule | in the tree, verified |
 | M5c | The career's result kernel (race / freestyle rounds, medal, records entry, peak runs) | coreCareerResults | core11, verified |
-| M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | | approved, next |
-| M5e | The lodge (gear, uber tricks, songs, attributes) | | planned |
+| M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | coreCareerCascade | in the tree, verified |
+| M5e | The lodge's purchases (gear, uber tricks, songs, rewards, attributes) | coreCareerLodge | in the tree, verified |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
 
@@ -305,6 +313,28 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   rulesModule + coreCareerResults: draws, results, the generator's next words, the save blob identical); full ps2-captures 534 / 534
   on core11; CORE_DIR=core11 PAGE_PV=coreCareerResults: test-rival-page, test-replay, test-records-verifier, test-online-records,
   test-ctm-flow pass.
+
+## M5d / M5e: the award cascade, the career messages and the lodge (pv coreCareerCascade, pv coreCareerLodge)
+
+- engine/career_cascade.hpp in the rules module (web/rules_module.cpp career_data / career_kernel / career_out_size; web/build-rules.sh
+  adds the nlohmann include): web/career.js complete1591E8, earn159818, exploreGoal1599A0 and grant159CD0 with the goal predicates,
+  the gear inventory (web/lodge.js GearInventory), the reward record and the collection bonuses; web/career-messages.js's hooks
+  (eventComplete, postAward, the earnings notices) with MessageInbox / MessageRules; M5e the lodge's purchases (buyGear, equipGear,
+  buyUber, selectUber, buySong, buyReward with lastBonus, buyAttributePoint, buyAttribute).
+- The save: the page sends JSON.stringify(save) and the kernel works on it as an ordered JSON document (nlohmann::ordered_json: new keys
+  in the JS's creation order; integer-like keys are ordered by JSON.parse as JS orders them). web/career-kernel.js writes the result
+  into the page's save in place (syncInto: the objects the page holds stay the same objects; a value JSON cannot carry stays as it
+  was). Non-integer numbers are doubles both ways and round-trip exactly (JSON.parse / nlohmann's shortest form); the differential
+  carries one.
+- Draws: the cascade's reward picks and message variants come from the session's presentation generator, so M5d runs only when it
+  lives in the rules module (web/lineup.js presentationInModule) and the career draws from it; otherwise the JS runs. M5e draws
+  nothing (lodgeModule). A failed kernel call leaves the generator and the save as they were; the kernel is then off for the session
+  and the JS runs with the hooks' own steps (CareerMessages.awardMessage / earnMessages), so nothing is lost.
+- Proof: web/test-core-career-cascade.mjs (child processes, 2 sessions x 500 events with every path: rounds, collectibles, cash,
+  Big Challenges, explore goals, direct awards, monster medals, notices, all eight lodge operations, a non-integer value: results,
+  the reward record, the mail icon, the generator's next words and the save blob identical off / on / after a kernel failure); the
+  M5d session differential (3 x 1500 events); the page (a won R&B career final: the kernel ran, the save, inbox, reward record, HUD
+  and dumps identical off / on); boot with the 266 KB module: Chrome title 815 vs 817 ms, WebKit 462 vs 464 ms (no cost).
 
 ## Native core
 

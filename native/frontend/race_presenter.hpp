@@ -4,8 +4,12 @@
 // lighting capture (web/rider-skinning.js, web/opponent-riders.js), the camera pair, and the frame's core state for the renderer.
 #include "replay_session.hpp"
 #include "rider_capture.hpp"
+#include "light_glow.hpp"
 #include "screen_tint.hpp"
+#include "sun_flare.hpp"
+#include "uv_scroll.hpp"
 #include "world_renderer.hpp"
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -18,6 +22,18 @@ public:
         if (v.assets.exists(v.courseRoot() + "screen-tint.json")) {
             tint_ = std::make_unique<ScreenTint>(nlohmann::json::parse(v.assets.text(v.courseRoot() + "screen-tint.json")));
         }
+        // UVScroll (Snow Jam's exports live in /assets/UVSCROLL, other locations under their root; web/set-pieces-renderer.js)
+        const std::string scrollBase = v.code == "ARA1" ? std::string() : v.courseRoot();
+        if (v.assets.exists(scrollBase + "UVSCROLL/uv-scroll.json")) {
+            const bool sections = v.assets.exists(v.courseRoot() + "SECTIONS/sections.json") && v.assets.exists(v.courseRoot() + "SECTIONS/ready-state.json");
+            const nlohmann::json ready = sections ? nlohmann::json::parse(v.assets.text(v.courseRoot() + "SECTIONS/ready-state.json")) : nlohmann::json();
+            scroll_ = std::make_unique<UvScrollSet>(nlohmann::json::parse(v.assets.text(scrollBase + "UVSCROLL/uv-scroll.json")), ready);
+        }
+        // main.js loadCourse: the sun flare (course.sunFlare, default /assets/SUN_FLARE/); its painter steps from the first tick
+        const std::string sunDir = v.assetPath(session::str(session::at(v.course, "sunFlare"), "/assets/SUN_FLARE/"));
+        if (v.assets.exists(sunDir + "sun-flare.json")) {
+            sun_ = std::make_unique<SunFlare>(v.assets.path(sunDir));
+        }
         const auto& irradiance = v.environmentMeta["irradiance"];
         human_ = std::make_unique<RiderCapture>(irradiance);
         for (size_t k = 0; k < v.npcs.size(); ++k) {
@@ -29,6 +45,10 @@ public:
     void afterTick() {
         if (tint_) {
             tint_->step(fog_info(), weather_info(), weather_lightning(), environment_world_loads());
+        }
+        // web/game-tick.js present: the sun painter once per camera tick, after ScreenTint
+        if (sun_ && v_.hasCamera) {
+            sun_->tick(fog_info(), environment_world_loads());
         }
         const bool reset = (v_.tickFlags & 3) != 0;
         human_->capture(reset);
@@ -70,6 +90,20 @@ public:
             }
         }
     }
+    // the light glows (course.lightGlow, default /assets/LIGHT_GLOW/; none when course.lightGlowCount is 0 or the package has no
+    // lights) at the world's origin, and the sun, attached to the renderer
+    void loadEffects(WorldRenderer& renderer) {
+        const auto& count = session::at(v_.course, "lightGlowCount");
+        const std::string glowDir = v_.assetPath(session::str(session::at(v_.course, "lightGlow"), "/assets/LIGHT_GLOW/"));
+        if (!glow_ && !(count.is_number() && count.get<double>() == 0) && v_.assets.exists(glowDir + "light-glow.json")) {
+            try {
+                glow_ = std::make_unique<LightGlow>(v_.assets.path(glowDir), renderer.origin);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "No light glows: %s\n", e.what());
+            }
+        }
+        renderer.attachEffects(glow_.get(), sun_.get());
+    }
     // the frame at render alpha a (0: the previous tick's camera and palettes, 1: the newest)
     WorldFrameState frame(double alpha, CameraView& camera) {
         WorldFrameState state;
@@ -86,6 +120,11 @@ public:
         }
         if (tint_) {
             state.tint = tint_->output();
+        }
+        // the set pieces' clock runs to the core's (main.js frame: setPieceRenderer.update)
+        if (scroll_) {
+            scroll_->update();
+            state.scroll = scroll_->offsets();
         }
         frames_.clear();
         frames_.reserve(1 + npcs_.size());
@@ -114,6 +153,9 @@ public:
 private:
     session::Verifier& v_;
     std::unique_ptr<ScreenTint> tint_;
+    std::unique_ptr<UvScrollSet> scroll_;
+    std::unique_ptr<SunFlare> sun_;
+    std::unique_ptr<LightGlow> glow_;
     std::unique_ptr<RiderCapture> human_;
     std::vector<std::unique_ptr<RiderCapture>> npcs_;
     std::vector<float> placements_;

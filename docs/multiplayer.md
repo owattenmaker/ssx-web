@@ -6,6 +6,45 @@ every rider, a shared world (pickups, crashbags, sections), and the original Sin
 
 Big sessions (20-100 players, a Trackmania-style time attack with ghosts): design in [big-multiplayer.md](big-multiplayer.md), not built.
 
+## Gate-opening freeze hotfix (2026-10-14)
+
+Field reports at 04:53 UTC (ARA1, both clients of one lobby) and 05:05 UTC (ERA5) show repeated WebAssembly
+exceptions and later out-of-bounds accesses. Two local Chrome pages reproduced the first exception on gate opening:
+`std::runtime_error: Native pair body pose is unavailable`; later attempts throw `Race tick already open`.
+
+M3 configured the offline rider manager while preparing the course. Online installs `rider_host(2)` and its own
+`pairHost`, but `rider_manager_native()` checked only whether an offline manager remained configured. Thus the
+0x107888 dispatch read dormant computer riders instead of the online human and streamed ghosts. A missing body
+pose aborts the tick; repeatedly re-entering that unfinished tick accounts for the subsequent errors.
+
+The original 0x107888 reads the participating actors' posed AA0 volumes in the second motion phase (121750),
+with the pair records refreshed by 0x10F560 every sixth tick; the order and collision arithmetic are unchanged.
+Network ownership is port-only: flag 8 selects the core manager, flag 2 alone selects the page's network host.
+`web/rider_manager.cpp` now requires flag 8 in `rider_manager_native()` for every pair callback. An offline
+`ai-racers.js` start/resume always restores its own host flags after the online host has been disposed.
+
+Regression coverage:
+
+- `test-mp-pairs.mjs` now leaves an unused computer-rider manager configured before the online takeover. It fails
+  on shipped core11 with the same first exception, and passes on the fix (contacts, punches, reactions, rankings).
+- `test-ai-racers.mjs` borrows and disposes the online host before starting its offline race. Without re-arming
+  the host, it fails in the JS controller callback; with the fix all five opponents run their normal 1500 ticks.
+- `test-mp-page.mjs`: two browser pages connect through a local server, start, stream at least 720 ticks, perform
+  pair checks, ride over 10 m beyond the gates, return to the lobby and start again. Default Chrome + Chrome;
+  `--webkit` uses Chrome + WebKit. `MP_COURSE=ERA5` checks the second reported course; `MP_SHOTS=directory` saves frames.
+- Five targeted ARMSX2 capture regressions pass: event-start, event-race-ai, ai-idle, event-race-ai-pairs,
+  bc/bc-race-tuck2. The core-rider-manager differential also passes, including relationships and event restarts.
+
+Chrome + Chrome passes two starts on both ARA1 and ERA5. Chrome + WebKit passes two ARA1 starts, including
+contacts/reactions, with screenshots checked. The WebKit driver reports `visibilityState=hidden`, so native rAF
+never runs; `MP_WK_TIMER=1 node test-mp-page.mjs --webkit` explicitly pumps the renderer's queued animation
+callbacks from Node at real wall time. This verifies WebKit simulation and rendering, not visible-window frame
+scheduling. The ordinary `--webkit` check needs an available display and is not in the unattended default suite.
+
+Scratch core: `local/mp-freeze/core`; verified local runtime core SHA-256 begins `1e117b0c`. Deployed on 2026-10-14 after the full PS2 capture gate passed, with unchanged game data. Public bundle
+`main-D9E5OnW8.js` serves the verified core; `/mp/status` is healthy. Existing tabs must reload.
+Browser and deployment logs and screenshots: `local/mp-freeze/` (private).
+
 ## Run it
 
 Development / LAN:

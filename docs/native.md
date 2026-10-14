@@ -288,27 +288,33 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/pacing.hpp | tick-lock.js, fixed-step-clock.js, ps2-frame-pacing.js | one tick per 60 Hz frame (debt paid with 0 / 2), else the fixed clock with the render alpha |
 | frontend/pad_input.hpp | pad-input.js | the 24 channels, bit for bit (ctest frontend_pad_input) |
 | frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
+| frontend/uv_scroll.hpp | uv-scroll.js, set-pieces-renderer.js | the scroller 0x35F7D0 in the EE scalar arithmetic (chop MUL / ADD / SUB with the guard bit, DIV.S nearest), the scroll groups by first appearance, the set-piece clock (set_piece_info, the slot-1 section enters, the ready state's phases); drawn as the first instance indexing a storage buffer |
+| frontend/sun_flare.hpp, light_glow.hpp, post_effects.cpp, painter_tree.hpp | sun-flare.js, light-glow.js, fog-renderer.js | the Sun painter per camera tick; the 16 x 16 sun depth query and the glow plus nine lens sprites (2F4DB8 / 2F4A08 / 2F4690); each light's sprite quad and query record (2E2B00 / 2E2868 / 2EC478), drawn additively (copies) into the glow target; the composite adds glow, then sun, after the fog and before ScreenTint |
 
-**Visual parity:** Snow Jam, Zoe, the solo lineup, tick 1200 (local/native-port/shots/sj-solo-1200-web-native-diff.png).
-- The page's and native's ?simtrace hash of tick 1200 are equal (3993471844), so the states are the same.
-- The frames differ by a mean of 4.8 / 255 per channel; 30 % of channels are equal and the 95th percentile is 21.
-- The geometry, the camera, the rider's pose and lighting and the fog / tint match. The differences are what is not ported yet:
-  - the light glows and the sun flare (the beam over the kicker);
-  - the board trail and the snow spray;
-  - the chevron fence's UV scroll (uv_scroll_group);
-  - the rider shadow;
-  - the Xbox HD rider textures (the page's desktop default; native uses the PS2 set);
-  - texture filtering details (three.js generates mips on the GPU; anisotropy).
+**Visual parity** (local/native-port/shots: web | native | difference x 4; the ?simtrace hashes of the tick are equal in every shot):
 
-**Paused 2026-10-13. Resume point:**
-- **Done:** computer riders drawn (race_presenter.hpp: each context's palette pair and lighting, the human core's view), built and run once (6 riders); the picture is not checked yet.
-- **Resume with:** compare against the page on an AI run, then rerun the native ctest (replay_session.hpp changed).
+| Shot | Run, tick | Mean / p95 | Notes |
+| --- | --- | --- | --- |
+| sj-solo-1200-uvscroll | Snow Jam, Zoe, solo, 1200 | 4.53 / 19 | the chevron fence scrolls in step (it was 4.8 / 21 before UV scroll) |
+| sj-solo-300-glow-sun | the same run, 300 | 5.70 / 27 | 10 light glows and the sun in view: the halos, the sun glow and its lens ring match |
+| sj-ai-900-sun | Snow Jam, Zoe, 5 computer riders, 900 | 6.91 / 40 | 6 riders; 23.3 / 135 before the sun flare |
+| sj-solo-2700 | solo, 2700 | 3.12 / 17 | 7 glows |
+
+The geometry, the camera, the riders' poses and lighting, the fog / tint, UV scroll, the glows and the sun match. What differs is not
+ported yet:
+- the board trails and the snow spray / snow cloud (the largest remaining area in every shot);
+- the moving set pieces: the gondola and its cable, the banners (MeshAnim / LiveComp), pickups;
+- the rider shadow;
+- the Xbox HD rider textures (the page's desktop default; native uses the PS2 set);
+- texture filtering details (three.js generates mips on the GPU; anisotropy).
+
+ssx3_render_shot prints the frame's light glow count and whether the sun is in view (`glows`, `sun`), to pick ticks that show them.
 
 **Next:**
-- the light glows and sun flare;
 - the board trail, the snow and wake particles;
-- UV scroll and the set pieces (moving instances, LiveComp, MeshAnim, pickups);
+- the remaining set pieces (moving instances, LiveComp, MeshAnim, the cable, pickups, flags);
 - the rider shadow;
+- the Windows front-end build (llvm-mingw);
 - the HUD from the game's own LUI screens;
 - audio.
 

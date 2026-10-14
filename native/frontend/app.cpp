@@ -297,6 +297,7 @@ int main(int argc, char** argv) {
         WGPUBindGroup blitGroup = wgpuDeviceCreateBindGroup(gpu.device, &bd);
 
         RacePresenter presenter(v);
+        presenter.loadEffects(renderer);
         PadReader reader(v.pad);
         KeyboardContext keyboard;
         std::set<std::string> keys;

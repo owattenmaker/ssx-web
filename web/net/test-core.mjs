@@ -1,7 +1,9 @@
 // Node helpers for the online tests (web/test-remote-riders.mjs, web/test-mp-pairs.mjs): a human core on a course,
 // set up and ticked like web/main.js simTick (pad_tick, race_begin, step_rider, animation_tick, race_end, camera).
 import fs from 'node:fs';
-import createCore from '../runtime/core.js';
+import { pathToFileURL } from 'node:url';
+const coreUrl = process.env.CORE_JS ? pathToFileURL(process.env.CORE_JS).href : '../runtime/core.js';
+const createCore = (await import(coreUrl)).default;
 const root = new URL('../public/assets/', import.meta.url);
 export const file = (p) => fs.readFileSync(new URL(p, root));
 export const json = (p) => JSON.parse(file(p));

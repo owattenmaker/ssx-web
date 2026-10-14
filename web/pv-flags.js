@@ -209,6 +209,13 @@
 // (engine/career_rules.hpp through rules_eval: web/career.js raceResult / freestyleResult / completeEvent's medal / addRecord's entry,
 // web/peak-run.js peakResult); the page applies the outputs to its records. Needs coreRules and a core (the course core, or the
 // rules module with rulesModule) that has the kernel; off, or without it: the JS versions.
+// coreCareerLodge (core-migration agent, docs/core-migration.md M5e): the lodge's purchases in the rules module (web/career.js buyGear /
+// equipGear / buyUber / selectUber / buySong / buyReward / buyAttributePoint / buyAttribute through engine/career_cascade.hpp); the
+// page persists after them as before. Needs rulesModule; off, or without it: the JS versions.
+// coreCareerCascade (core-migration agent, docs/core-migration.md M5d): the career's award cascade and its messages in the rules
+// module (engine/career_cascade.hpp: web/career.js complete1591E8 / earnCash / exploreGoal / grantAward with the goal predicates, the
+// gear awards and the reward record; web/career-messages.js's hooks), on the page's save (written back in place). Needs rulesModule
+// (the session's presentation generator in the module); off, or without it: the JS versions.
 // rulesModule (core-migration agent, docs/core-migration.md M5): the rules module (web/runtime/rules.{js,wasm}, web/build-rules.sh) loads
 // at boot; the pure rules (web/core-rules.js) run in it while no course core is there, and the session's presentation generator
 // (web/lineup.js: the career's reward picks and messages, the roster seeds) lives in it when it has loaded by the generator's first
@@ -280,6 +287,8 @@ export const PV_DEFAULTS = Object.freeze({
   coreEventStart: true,
   rulesModule: true,
   coreCareerResults: true,
+  coreCareerCascade: true,
+  coreCareerLodge: true,
   coreRules: true,
   coreTick: true,
   onlineTimeAttack: false,

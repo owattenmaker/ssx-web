@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
         gpu.init();
         WorldRenderer renderer;
         renderer.load(gpu, v.assets.root, v.code);
+        presenter.loadEffects(renderer);
         presenter.loadRiders(gpu);
         CameraView camera;
         WorldFrameState state = presenter.frame(0, camera);
@@ -88,8 +89,9 @@ int main(int argc, char** argv) {
         renderer.render(camera, state, view, width, height, 4.0 / 3.0);
         const auto pixels = gpu.readback(target, width, height);
         writePng(positional[2], int(width), int(height), pixels.data());
-        std::printf("{\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"out\":%s}\n", tickTarget, trace, state.riders.size(),
-                    camera.v[0], camera.v[1], camera.v[2], camera.v[3], camera.v[4], camera.v[5], camera.v[6], camera.v[7], camera.v[8],
+        const auto& effects = renderer.effects();
+        std::printf("{\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"glows\":%u,\"sun\":%d,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"out\":%s}\n",
+                    tickTarget, trace, state.riders.size(), effects.glows(), effects.sunVisible() ? 1 : 0, camera.v[0], camera.v[1], camera.v[2], camera.v[3], camera.v[4], camera.v[5], camera.v[6], camera.v[7], camera.v[8],
                     json(positional[2]).dump().c_str());
         std::fflush(stdout);
         std::_Exit(0);
