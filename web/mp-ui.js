@@ -2,6 +2,8 @@
 //   mp-connect  connecting / server unreachable / version mismatch
 //   mp-lobbies  lobby browser: Create Lobby, every open lobby, Refresh, Back
 //   mp-lobby    the lobby: Ready, Start Race (host), Course (host), Copy Invite Link, Chat, Leave Lobby
+//   mp-card     pv mpPreRace: the race's card over the gate idle (overlay 8 '40race_pre', as a Single Event's), Continue = ready;
+//               then 'Waiting for other player...' (0x258CB0's kT_OVRCMNWaitPlayer) until the server's GO
 //   results     during an online race (onlineResults): the original Single Event Results screen (0x23A760 layout,
 //               as ui.js draws it) with every online racer: recorded finish times, 0x122D78 estimates for racers
 //               still on course, DNF last. It keeps ui.js's 'results' screen name, so main.js keeps drawing the
@@ -11,7 +13,7 @@ import { inviteLink } from './net/mp-client.js';
 import { raceTime } from './race-time.mjs';
 import { pv } from './pv-flags.js';
 const Y = (y) => Math.round(y * 448 / 480);
-const SCREENS = ['mp-connect', 'mp-lobbies', 'mp-lobby'];
+const SCREENS = ['mp-connect', 'mp-lobbies', 'mp-lobby', 'mp-card'];
 const ORDINAL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
 
 export class MultiplayerScreens {
@@ -88,7 +90,13 @@ export class MultiplayerScreens {
         'Leave Lobby'
       ];
     if (screen === 'results') return ['Back to Lobby'];
+    if (screen === 'mp-card') return [this.cardLabel()];
     return [];
+  }
+  // the card's one item: Continue (0x0F3AB955), then the PS2's 'Waiting for other player...' (0x0BA409E2)
+  cardLabel() {
+    const t = (key, fallback) => this.ui.careerUI?.t?.(key, fallback) || fallback;
+    return this.session.card?.ready ? t(0x0ba409e2, 'Waiting for other player...') : t(0x0f3ab955, 'Continue');
   }
   disabled(screen, i) {
     if (this.ta?.owns(screen)) return this.ta.disabled(screen, i);
@@ -99,12 +107,14 @@ export class MultiplayerScreens {
       return !!l && l.players >= l.maxPlayers;
     }
     if (screen === 'mp-lobby') return (i === 1 || i === 2) && (!this.client.isHost || !!s.lobby?.race);
+    if (screen === 'mp-card') return !!this.session.card?.ready;
     return false;
   }
   layout(screen, i) {
     if (this.ta?.owns(screen)) return this.ta.layout(screen, i);
     if (screen === 'mp-lobby') return [40, Y(120) + i * Y(30), 250, Y(26)];
     if (screen === 'results') return [450, 299 + i * 15, 126, 17];
+    if (screen === 'mp-card') return [430, Y(380), 160, Y(24)];
     return [40, Y(110) + i * Y(26), 360, Y(24)];
   }
   key(e) {
@@ -159,7 +169,7 @@ export class MultiplayerScreens {
     if (ui.screen === 'mp-lobby') {
       if (i === 0) this.client.ready(!this.me()?.ready);
       else if (i === 1 && this.client.isHost && !s.lobby?.race) this.client.start();
-      else if (i === 2 && this.client.isHost && !s.lobby?.race) this.session.cycleCourse();
+      else if (i === 2 && this.client.isHost && !s.lobby?.race) this.chooseCourse();
       else if (i === 3) this.copyInvite();
       else if (i === 4) this.chat();
       else if (i === 5) {
@@ -169,9 +179,13 @@ export class MultiplayerScreens {
       return;
     }
     if (ui.screen === 'results') this.toLobby();
+    // the card takes Continue from its phase 5 (web/screen-phases.js), as the Single Event card does
+    if (ui.screen === 'mp-card' && (!ui.phases || ui.phases.accepts())) this.session.continueCard?.();
   }
   back() {
     const ui = this.ui;
+    // the card has no Back (Triangle does nothing on overlay 8)
+    if (ui.screen === 'mp-card') return;
     if (this.ta?.owns(ui.screen)) {
       this.ta.back();
       return;
@@ -209,6 +223,31 @@ export class MultiplayerScreens {
       this.ui.sync();
     }
   }
+  // The host's Course row. pv mpCourseSelect: the Single Event selector (Select Peak / Mode / Event, web/fe-event-select.js openLobby) picks
+  // the lobby's course; nothing loads until the race starts. Off: the next course, loaded in the lobby by every page.
+  chooseCourse() {
+    const ui = this.ui,
+      select = ui.eventSelect;
+    if (!pv('mpCourseSelect') || !select?.ready || !select.openLobby) {
+      this.session.cycleCourse();
+      return;
+    }
+    const toLobby = () => {
+      ui.set(this.client.state.lobby ? 'mp-lobby' : 'mp-lobbies');
+      if (this.client.state.lobby) {
+        ui.index = 2;
+        ui.sync();
+      }
+    };
+    select.openLobby({
+      code: this.client.state.lobby?.course ?? null,
+      pick: (e) => {
+        this.session.chooseCourse?.(e.code);
+        toLobby();
+      },
+      back: toLobby
+    });
+  }
   async copyInvite() {
     const id = this.client.state.lobby?.id;
     if (!id) return;
@@ -237,6 +276,7 @@ export class MultiplayerScreens {
       screen = ui.screen,
       career = ui.careerUI;
     if (screen === 'results') return this.drawResults(c);
+    if (screen === 'mp-card') return this.drawCard(c);
     if (this.ta?.owns(screen)) return this.ta.draw(c, b);
     const frame = (title) => {
       if (career?.mcommFrame) career.mcommFrame(c, b, title);
@@ -325,6 +365,70 @@ export class MultiplayerScreens {
               : 'Waiting for the host to start. Set Ready when you are set.')
       );
     }
+  }
+  // pv mpPreRace: the race card over the gate idle: the Single Event card's own drawing (career-ui.js drawObjectivesOpen / 40race_pre,
+  // web/results-lui.js raceCard): the event, the objective of the event's final round (0x23A174: a Single Event is round 3), the
+  // racers in slot order (this page's in the human colour), Continue. The subtitle is 'Online' (0x0012F325): which line the PS2's
+  // online card prints there is not traced.
+  drawCard(c) {
+    const ui = this.ui,
+      cu = ui.careerUI;
+    ui.cutscene?.drawFade?.(c);
+    // after Continue the card is closed (Cross closes overlay 8: command 1). The waiting line is the HUD's: 0x258CB0 formats
+    // kT_OVRCMNWaitPlayer and sends it to the 'hud' screen as command 14 (0x1EC2A0: the text at +0xA48, flag 0x40000), which
+    // cOVStateHUD1P_onRender2D (0x1EC810) draws with 0x1F2DB0 in FEFONT (+0x428) at descriptor 63: centred on (320, 270), scale 0.7,
+    // yellow, wrapped at 360 (the line fits on one); command 15 clears it.
+    if (this.session.card?.ready) {
+      const hud = ui.trickHud,
+        list = [];
+      if (hud && ui.trickHudRenderer && hud.desc(63)) {
+        hud.text(list, 'FEFONT', 63, this.cardLabel());
+        ui.trickHudRenderer.render(c, list);
+      } else ui.text(c, this.cardLabel(), 320, Y(270), 16, '#f4f400', 'FEFONT', 'center');
+      return;
+    }
+    const t = cu?.cardTicks ? cu.cardTicks() : 60;
+    if (t < 3) return;
+    if (t < 33 && cu?.luiPanels?.()) {
+      cu.resultsLui.panel(c, '', '', { openOnly: true });
+      return;
+    }
+    const code = ui.course?.code,
+      index = cu?.data?.courses?.findIndex((x) => x.code === code) ?? -1;
+    const mode = index >= 0 && cu?.career ? cu.career.standardMode(index) : 0;
+    const ev = { mode, course: index, round: 3, career: false };
+    let title = ui.course?.label || ui.course?.name || '',
+      objective = '';
+    try {
+      if (index >= 0) title = cu.eventTitle(ev);
+      if (index >= 0 && mode < 4)
+        objective = cu.career
+          .objectives(ev)
+          .map((o) => (typeof o === 'string' ? cu.t(o) : cu.t(o.key)))
+          .join('  ');
+    } catch {}
+    const race = this.session.race,
+      riders = [...(race?.players ?? [])]
+        .sort((a, b) => a.slot - b.slot)
+        .map((p) => ({ name: p.name, human: p.slot === race.slot }));
+    const label = this.cardLabel();
+    if (
+      cu?.resultsLui?.raceCard?.(c, {
+        title,
+        sub: cu.t(0x0012f325, 'Online'),
+        objective,
+        riders,
+        recordLabel: '',
+        record: null,
+        continueLabel: label
+      })
+    )
+      return;
+    c.fillStyle = 'rgba(13,58,79,.92)';
+    c.fillRect(50, Y(62), 540, Y(350));
+    ui.text(c, title, 88, Y(96), 21, '#d1e1e2');
+    riders.forEach((r, i) => ui.text(c, r.name, 120, Y(170) + i * Y(22), 17, r.human ? '#e8bd72' : '#d1e1e2'));
+    ui.text(c, label, 450, Y(380), 15, '#dce5e4');
   }
   // The owned Single Event Results layout (ui.js 'results'), rows from the online race.
   drawResults(c) {

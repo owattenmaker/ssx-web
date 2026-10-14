@@ -32,8 +32,12 @@ public:
             resetPending_ = reset;
             if (available_) {
                 frame_.previous = frame_.current;
+                if (!frame_.bonesCurrent.empty() && frame_.bonesPrevious.size() == frame_.bonesCurrent.size()) {
+                    frame_.bonesPrevious = frame_.bonesCurrent;
+                }
             }
         } else {
+            const bool hadPose = available_ && !reset;
             const std::vector<float> now(pointer, pointer + stride);
             if (available_ && !reset) {
                 frame_.previous = frame_.current;
@@ -42,6 +46,16 @@ public:
             }
             frame_.current = now;
             available_ = true;
+            // the pose bones of this capture and the last one (a reset or a new length: both this one's)
+            const float* bones = world_pose_bones();
+            const size_t length = 1 + 7 * size_t(bones[0]);
+            const bool keep = hadPose && frame_.bonesCurrent.size() == length;
+            frame_.bonesPrevious.swap(frame_.bonesCurrent);
+            frame_.bonesCurrent.assign(bones, bones + length);
+            if (!keep) {
+                frame_.bonesPrevious = frame_.bonesCurrent;
+            }
+            std::memcpy(frame_.physical.data(), pose_physical(), sizeof(float) * 12);
         }
         // the lighting rows, every pose tick
         const float* physical = pose_physical();

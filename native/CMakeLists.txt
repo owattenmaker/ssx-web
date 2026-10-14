@@ -156,6 +156,9 @@ message(STATUS "ssx3_verify_replay reports core ${SSX_CORE_ID_USED}")
 
 # ---- The native front end (docs/native.md "N3"): webgpu.h (wgpu-native) rendering, SDL3 for the window and input ----
 option(SSX_BUILD_FRONTEND "Build the native front end (fetches the pinned wgpu-native release; the window needs SDL3)" OFF)
+if(SSX_BUILD_FRONTEND AND WIN32)
+    message(FATAL_ERROR "The Windows front end is not supported yet (parked, docs/native.md \"Windows\"): configure without -DSSX_BUILD_FRONTEND=ON for the core tools")
+endif()
 if(SSX_BUILD_FRONTEND)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/wgpu_native.cmake")
     # the renderer: course, sky, rider and the composites from the exported assets, offscreen or into a window surface
@@ -200,8 +203,8 @@ if(CMAKE_CROSSCOMPILING)
     # a cross build (Windows with llvm-mingw): its programs cannot run here; the test checks they link standalone
     if(SSX_NODE)
         find_program(SSX_OBJDUMP llvm-objdump HINTS "${LLVM_MINGW}/bin" NO_CMAKE_FIND_ROOT_PATH)
-        add_test(NAME windows_link COMMAND "${SSX_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check-pe.mjs" "${SSX_OBJDUMP}"
-            $<TARGET_FILE:ssx3_race_driver> $<TARGET_FILE:ssx3_replay_calls> $<TARGET_FILE:ssx3_verify_replay>)
+        set(SSX_PE_FILES $<TARGET_FILE:ssx3_race_driver> $<TARGET_FILE:ssx3_replay_calls> $<TARGET_FILE:ssx3_verify_replay>)
+        add_test(NAME windows_link COMMAND "${SSX_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check-pe.mjs" "${SSX_OBJDUMP}" ${SSX_PE_FILES})
     endif()
 elseif(SSX_NODE)
     set(SSX_PARITY "${CMAKE_CURRENT_SOURCE_DIR}/tests/parity.mjs")

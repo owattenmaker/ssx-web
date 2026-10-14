@@ -114,10 +114,12 @@ export async function createFreeRide({
   let coreEvents = false;
   const runSetup = () => {
     if (!core._peak_run_setup) return;
-    coreEvents = pv('coreWorldEvents');
+    // pv stationSplitPs2: the split at the PS2's point (the end of the tick after the Load's) with its clock (core bit 1)
+    const ps2 = pv('stationSplitPs2');
+    coreEvents = pv('coreWorldEvents') || ps2;
     const st = coreEvents && eventKind !== FREE_RIDE_KIND ? peakSetup() : null;
     const s = st?.splits ?? [];
-    core._peak_run_setup(coreEvents ? 1 : 0, st ? 1 : 0, st?.time ? 1 : 0, s[0] ?? 0, s[1] ?? 0, s[2] ?? 0, s[3] ?? 0, s[4] ?? 0);
+    core._peak_run_setup(coreEvents ? 1 | (ps2 ? 2 : 0) : 0, st ? 1 : 0, st?.time ? 1 : 0, s[0] ?? 0, s[1] ?? 0, s[2] ?? 0, s[3] ?? 0, s[4] ?? 0);
   };
   let setPieces = null; // stage world of the resident locations (web/peak-set-pieces.js)
   const flagsApplied = new Set();

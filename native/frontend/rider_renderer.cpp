@@ -215,6 +215,38 @@ fn shade(i: Out) -> vec4f {
   let c = shade(i);
   return vec4f(c.rgb, select(c.a, 0.0, c.a > 184.5 / 255.0));
 }
+// web/rider-shadow.js: the silhouette into the rider's 128 x 128 slot of the shadow atlas, the parts in painter's order by depth
+// (0.8 before the board, 0.5 the board and bindings, 0.2 after), PSMCT16 38 -> 32 (the board 0 while grounded), 128 x 128 scissor
+struct Shadow { rowX: vec4f, rowY: vec4f, misc: vec4f };
+@group(1) @binding(0) var<uniform> shadow: Shadow;
+struct ShadowIn {
+  @location(0) position: vec3f,
+  @location(3) group: u32,
+  @location(4) rank: u32,
+};
+struct ShadowOut {
+  @builtin(position) position: vec4f,
+  @location(0) ndc: vec2f,
+  @location(1) rank: f32,
+};
+@vertex fn vsShadow(v: ShadowIn) -> ShadowOut {
+  let groups = u32(frame.params.z);
+  let point = vec4f(v.position, 1.0);
+  let world = mix(transformPosition(v.group, 0u, point), transformPosition(v.group, groups, point), frame.params.x);
+  let p = vec4f(world.xyz / world.w, 1.0);
+  let n = vec2f(dot(shadow.rowX, p), dot(shadow.rowY, p));
+  let r = f32(v.rank);
+  var o: ShadowOut;
+  o.position = vec4f((shadow.misc.x + (n.x * 0.5 + 0.5)) / 6.0 * 2.0 - 1.0, -n.y, 0.8 - r * 0.3, 1.0);
+  o.ndc = n;
+  o.rank = r;
+  return o;
+}
+@fragment fn fsShadow(i: ShadowOut) -> @location(0) vec4f {
+  if (abs(i.ndc.x) > 1.0 || abs(i.ndc.y) > 1.0) { discard; }
+  let v = select(32.0 / 255.0, shadow.misc.y, i.rank == 1.0);
+  return vec4f(v, v, v, 1.0);
+}
 )";
 
 }  // namespace
@@ -276,6 +308,27 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
         const uint32_t n = b["index_count"].get<uint32_t>();
         auto& m = by[key].indices;
         m.insert(m.end(), indices.begin() + first, indices.begin() + first + n);
+    }
+    // web/rider-shadow.js entryFor: each vertex's painter's rank from the original part order (before the board 0, the board and
+    // bindings ('bord') 1, after it 2)
+    {
+        std::vector<uint32_t> rank(count, 2);
+        bool seenBoard = false;
+        for (const auto& b : d["batches"]) {
+            const bool board = b.value("material", "") == "bord";
+            const uint32_t r = board ? 1 : (seenBoard ? 2 : 0);
+            if (board) {
+                seenBoard = true;
+            }
+            const uint32_t first = b["first_index"].get<uint32_t>();
+            const uint32_t n = b["index_count"].get<uint32_t>();
+            for (uint32_t k = first; k < first + n; ++k) {
+                rank[indices[k]] = r;
+            }
+        }
+        for (size_t i = 0; i < count; ++i) {
+            vertices[i].pad = rank[i];
+        }
     }
     std::vector<uint32_t> merged;
     WGPUDevice dev = gpu.device;
@@ -458,6 +511,80 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
             pipelines_[kind][side] = wgpuDeviceCreateRenderPipeline(dev, &pd);
         }
     }
+    // the shadow silhouette (group 1: its rows)
+    {
+        WGPUBindGroupLayoutEntry se = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
+        se.binding = 0;
+        se.visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
+        se.buffer.type = WGPUBufferBindingType_Uniform;
+        WGPUBindGroupLayoutDescriptor sld = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
+        sld.entryCount = 1;
+        sld.entries = &se;
+        WGPUBindGroupLayout shadowLayout = wgpuDeviceCreateBindGroupLayout(dev, &sld);
+        const WGPUBindGroupLayout sl[2] = {frameLayout_, shadowLayout};
+        WGPUPipelineLayoutDescriptor spl = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
+        spl.bindGroupLayoutCount = 2;
+        spl.bindGroupLayouts = sl;
+        WGPUPipelineLayout shadowPipelineLayout = wgpuDeviceCreatePipelineLayout(dev, &spl);
+        WGPUVertexAttribute sa[3] = {
+            {nullptr, WGPUVertexFormat_Float32x3, 0, 0},
+            {nullptr, WGPUVertexFormat_Uint32, 32, 3},
+            {nullptr, WGPUVertexFormat_Uint32, 36, 4},
+        };
+        WGPUVertexBufferLayout svl = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
+        svl.arrayStride = sizeof(Vertex);
+        svl.stepMode = WGPUVertexStepMode_Vertex;
+        svl.attributeCount = 3;
+        svl.attributes = sa;
+        WGPURenderPipelineDescriptor pd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+        pd.layout = shadowPipelineLayout;
+        pd.vertex.module = module;
+        pd.vertex.entryPoint = sv("vsShadow");
+        pd.vertex.bufferCount = 1;
+        pd.vertex.buffers = &svl;
+        pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+        pd.primitive.cullMode = WGPUCullMode_None;
+        WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
+        ds.format = WGPUTextureFormat_Depth24Plus;
+        ds.depthWriteEnabled = WGPUOptionalBool_True;
+        ds.depthCompare = WGPUCompareFunction_LessEqual;
+        pd.depthStencil = &ds;
+        WGPUColorTargetState ct = WGPU_COLOR_TARGET_STATE_INIT;
+        ct.format = WGPUTextureFormat_RGBA8Unorm;
+        ct.writeMask = WGPUColorWriteMask_All;
+        WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
+        fs.module = module;
+        fs.entryPoint = sv("fsShadow");
+        fs.targetCount = 1;
+        fs.targets = &ct;
+        pd.fragment = &fs;
+        pd.multisample.count = 1;
+        pd.multisample.mask = 0xffffffffu;
+        shadowPipeline_ = wgpuDeviceCreateRenderPipeline(dev, &pd);
+        shadowUniform_ = gpu.buffer(48, WGPUBufferUsage_Uniform, nullptr, "rider shadow");
+        WGPUBindGroupEntry be = WGPU_BIND_GROUP_ENTRY_INIT;
+        be.binding = 0;
+        be.buffer = shadowUniform_;
+        be.size = 48;
+        WGPUBindGroupDescriptor sbd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
+        sbd.layout = shadowLayout;
+        sbd.entryCount = 1;
+        sbd.entries = &be;
+        shadowGroup_ = wgpuDeviceCreateBindGroup(dev, &sbd);
+        indexCount_ = uint32_t(merged.size());
+    }
+}
+
+void RiderRenderer::drawShadow(WGPURenderPassEncoder pass, const ShadowSlot& slot) {
+    const float u[12] = {slot.rowX[0], slot.rowX[1], slot.rowX[2], slot.rowX[3], slot.rowY[0], slot.rowY[1], slot.rowY[2], slot.rowY[3],
+                         slot.slot, slot.board, 0, 0};
+    wgpuQueueWriteBuffer(gpu_->queue, shadowUniform_, 0, u, sizeof u);
+    wgpuRenderPassEncoderSetPipeline(pass, shadowPipeline_);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, frame_, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(pass, 1, shadowGroup_, 0, nullptr);
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertices_, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderSetIndexBuffer(pass, indices_, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderDrawIndexed(pass, indexCount_, 1, 0, 0, 0);
 }
 
 void RiderRenderer::update(const std::array<float, 16>& viewProjection, const std::array<double, 3>& origin, const RiderFrame& frame) {

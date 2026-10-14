@@ -15,7 +15,8 @@ import { CTX } from './pause-contexts.js';
 import { introLockFrames, PS2_CHOICE_OUTRO } from './menu-rules.js';
 
 export const PHASE = Object.freeze({ BUILD: 2, SHOW: 3, WAIT: 4, ACTIVE: 5, EXIT: 6, STOP: 7 });
-const SCREEN_CONTEXT = new Map([['ctm-objectives', CTX.CARD]]);
+// mp-card: pv mpPreRace's online race card (web/mp-ui.js), the same overlay 8
+const SCREEN_CONTEXT = new Map([['ctm-objectives', CTX.CARD], ['mp-card', CTX.CARD]]);
 
 // contexts(): the page's pause contexts (null in tests without them).
 export function createScreenPhases({ contexts = () => null, lockFrames = introLockFrames, outroFrames = (s) => PS2_CHOICE_OUTRO.get(s) || 0 } = {}) {

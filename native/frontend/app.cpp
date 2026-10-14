@@ -218,8 +218,25 @@ int main(int argc, char** argv) {
         hwnd.hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
         hwnd.hinstance = SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, nullptr);
         sdesc.nextInChain = &hwnd.chain;
+#elif defined(__linux__)
+        // X11 or Wayland, as SDL's video driver chose (SDL_VIDEO_DRIVER overrides)
+        const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+        WGPUSurfaceSourceWaylandSurface wayland = WGPU_SURFACE_SOURCE_WAYLAND_SURFACE_INIT;
+        WGPUSurfaceSourceXlibWindow xlib = WGPU_SURFACE_SOURCE_XLIB_WINDOW_INIT;
+        const char* driver = SDL_GetCurrentVideoDriver();
+        if (driver && std::string(driver) == "wayland") {
+            wayland.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+            wayland.surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+            sdesc.nextInChain = &wayland.chain;
+        } else if (driver && std::string(driver) == "x11") {
+            xlib.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+            xlib.window = uint64_t(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+            sdesc.nextInChain = &xlib.chain;
+        } else {
+            throw std::runtime_error(std::string("the native front end's surface: X11 or Wayland, not ") + (driver ? driver : "no video driver"));
+        }
 #else
-#error "the native front end's surface: macOS (Metal) and Windows (HWND) so far"
+#error "the native front end's surface: macOS (Metal), Windows (HWND) and Linux (X11 / Wayland) so far"
 #endif
         Gpu gpu;
         WGPUInstanceDescriptor idesc = WGPU_INSTANCE_DESCRIPTOR_INIT;

@@ -404,12 +404,14 @@ export function createCutscenes(host) {
   function filterList(location, group) { return index?.filters?.[location]?.[group] || null; }
 
   // Resolve queued steps [{group | script, flags}] to script numbers (ScriptChoice), dropping empty lists.
-  function resolve(steps, cast, location) {
+  // random (pv mpPreRace: an online race's intro): a draw shared by every page, without this page's play counts.
+  function resolve(steps, cast, location, random = null) {
     const words = castWords(cast), out = [];
+    const counts = random ? {} : playCount;
     for (const s of steps) {
       if (s.fmv) { out.push(s); continue; }
       let number = s.script ?? null;
-      if (number == null) { number = api.qaScripts?.[s.group] ?? chooseScript(filterList(s.location ?? location, s.group), words, playCount); }   // qaScripts: PS2 comparisons
+      if (number == null) { number = api.qaScripts?.[s.group] ?? chooseScript(filterList(s.location ?? location, s.group), words, counts, random ?? Math.random); }   // qaScripts: PS2 comparisons
       if (number == null) continue;
       playCount[number] = (playCount[number] || 0) + 1;
       out.push({ ...s, script: number });
@@ -842,7 +844,7 @@ export function createCutscenes(host) {
       state.at++; return startStep(state);
     }
     const loaded = state.loaded[state.at];
-    const seq = new Sequence(loaded, state.cast, Math.random, step.alts ?? api.qaAlts?.[loaded.number] ?? null);   // qaAlts: PS2 comparisons
+    const seq = new Sequence(loaded, state.cast, state.random ?? Math.random, step.alts ?? api.qaAlts?.[loaded.number] ?? null);   // qaAlts: PS2 comparisons
     state.seq = seq; state.hold = !!(step.flags & FLAG.HOLD) || !!step.idle;
     prepareSequence(seq);
     await Promise.all(seq.actors.map(async (a) => { a.model = a.rider ? await actorModel(a.rider) : null; }));
@@ -892,9 +894,10 @@ export function createCutscenes(host) {
 
   // Queue and play. steps: [{group|script|fmv, flags, idle?}], cast, location. The promise resolves when the last
   // non-idle step ends (an `idle` step keeps looping under the next screen until stop()).
-  async function play({ steps, cast, location, hub = null, kind = 'script', onIdle = null, place = -1, restore = true, prevFadeOut = null, barsFull = false, skipLock = 0, onStep = null }) {
+  async function play({ steps, cast, location, hub = null, kind = 'script', onIdle = null, place = -1, restore = true, prevFadeOut = null, barsFull = false, skipLock = 0, onStep = null,
+    random = null }) {
     await ensureIndex();
-    const resolved = resolve(steps, cast, location);
+    const resolved = resolve(steps, cast, location, random);
     if (!resolved.length) { overlay = null; return { played: false, skipped: false, scripts: [] }; }
     endLinger();
     const loaded = await Promise.all(resolved.map((s) => (s.fmv ? null : loadScript(index, s.script, s.location ?? location, hub))));
@@ -920,6 +923,7 @@ export function createCutscenes(host) {
         barsFull: barsFull || !!overlay,
         skipLock,
         onStep,
+        random,
         releaseT: null
       };
       active = state; overlay = null; host.onActive?.(true); host.audio?.cutscene?.(true);
@@ -995,10 +999,17 @@ export function createCutscenes(host) {
     host.sectionPoint(pose.eye);
     return pose;
   };
-  function update(dt, self = false) {
+  // ticks (pv nisOnTicks, docs/core-migration.md M6): this call is whole NIS ticks (tick() and the self-driven frames), not frame time
+  function update(dt, self = false, ticks = null) {
     if (!self) mainAt = performance.now();
     const s = active; if (!s) { lastPose = null; return null; }
-    if (s.skipLock > 0 && !qa.frozen) s.skipLock -= dt * TICK_HZ;   // 278DE8(nis, 30) at 0x236550: nis+0x554 counts down every NIS update, a list or not
+    // pv nisOnTicks: a pause context with mask bit 0x08 skips the NIS tick (0x230BDC); the fade's own clock still steps
+    if (ticks != null && host.nisStopped?.()) {
+      if (s.seq?.ready) s.seq.fadeT = (s.seq.fadeT ?? s.seq.t) + ticks;
+      return lastPose;
+    }
+    const prevPose = lastPose;
+    if (s.skipLock > 0 && !qa.frozen) s.skipLock -= ticks ?? dt * TICK_HZ;   // 278DE8(nis, 30) at 0x236550: nis+0x554 counts down every NIS update, a list or not
     if (!s.seq || !s.seq.ready) return lastPose;   // between steps (the next one is loading): hold the last camera
     if (qa.frozen) dt = 0;
     const seq = s.seq, step = s.steps[s.at];
@@ -1012,6 +1023,7 @@ export function createCutscenes(host) {
     if (!nisStopped) s.heldSeq = null;
     else if (s.heldSeq === seq) { seq.fadeT = (seq.fadeT ?? seq.t) + dt * TICK_HZ; return lastPose; }
     const stopTick = nisStopped; if (stopTick) s.heldSeq = seq;
+    // (pv nisOnTicks: dt = 1 / TICK_HZ, so one whole tick: (1 / 60) x 60 is 1 exactly)
     const adv = stopTick ? Math.floor(seq.t) + 1 - seq.t : dt * TICK_HZ;   // this update's NIS ticks
     // NISSkip (Cross) on skippable steps: a hard cut to the next step without flag 2 (0x276F48).
     const cross = crossDown();
@@ -1040,7 +1052,28 @@ export function createCutscenes(host) {
     const st = stage(); if (st) { st.sync(seq.t); st.apply(); }
     if (t1 < t0) { seq.fired.clear(); for (const a of seq.actors) a.fired.clear(); }
     poseActors(seq, seq.t);
-    return (lastPose = sectionFeed(seq, cameraPose(seq, seq.t)));
+    const pose = cameraPose(seq, seq.t);
+    // pv nisOnTicks: the section point is the previous tick's eye (0x281100 in update U copies the camera 0x22E840 left in U-1)
+    sectionFeed(seq, ticks != null && prevPose && sectionSeq === seq ? prevPose : pose);
+    return (lastPose = pose);
+  }
+  // pv nisOnTicks (docs/core-migration.md M6; local/core-migration/decomp/nis-tick.md): one NIS tick, as 0x278720 at 0x230BEC steps
+  // it once per game update (the script clock +0x28 by +0x24 = 1.0; no dt): main.js calls it at each game update's NIS point, and
+  // per rendered frame only pose()
+  function tick() {
+    return update(1 / TICK_HZ, false, 1);
+  }
+  // pv nisOnTicks: frames the director drives itself (the Transport's draw across the course switch): whole ticks of the frame time,
+  // at most 12 a frame (the PS2 frame loop 0x316F00)
+  let selfAcc = 0;
+  function selfTicks(dt) {
+    selfAcc += dt;
+    for (let n = 0; selfAcc >= 1 / TICK_HZ && n < 12; n++) {
+      update(1 / TICK_HZ, true, 1);
+      selfAcc -= 1 / TICK_HZ;
+    }
+    if (selfAcc >= 1 / TICK_HZ) selfAcc = 0;
+    return lastPose;
   }
 
   // Apply a camera pose to a three.js camera (FOV: half-horizontal angle of 4:3, main.js 376C58 convention).
@@ -1242,7 +1275,8 @@ export function createCutscenes(host) {
     const tick = (now) => {
       if (across !== me || active !== s) return;
       if (now - mainAt > 100) {
-        const pose = update(Math.min(Math.max(0, now - prev) / 1000, 0.25), true);
+        const frameDt = Math.min(Math.max(0, now - prev) / 1000, 0.25);
+        const pose = pv('nisOnTicks') ? selfTicks(frameDt) : update(frameDt, true);
         for (const p of sets.values()) p.then((g) => { if (g?.visible) g.position.set(-host.origin.x, -host.origin.y, -host.origin.z); });
         if (pose) { host.camera.clearViewOffset?.(); applyCamera(host.camera, pose); }
         const scene = host.scene, bg = scene.background; if (me.background) scene.background = me.background;
@@ -1305,6 +1339,8 @@ export function createCutscenes(host) {
             script: active.steps[active.at]?.script,
             t: active.seq?.t ?? 0,
             duration: active.seq?.duration ?? 0,
+            // (QA: the step's script and actors are in; until then the camera holds)
+            ready: !!active.seq?.ready,
             skippable: !!(active.steps[active.at]?.flags & FLAG.SKIP)
           }
         : null;
@@ -1313,6 +1349,9 @@ export function createCutscenes(host) {
     play,
     stop,
     update,
+    // pv nisOnTicks: one NIS tick (main.js at the game update's NIS point) and the last tick's camera (per rendered frame)
+    tick,
+    pose: () => (active ? lastPose : null),
     applyCamera,
     draw,
     introSteps,
@@ -1374,7 +1413,8 @@ export function createCutscenes(host) {
     // Event intro (world state 10 -> 1 -> 2): onIdle when the start-gate idle loop begins (the objectives card
     // then opens over it); resolves {played:false} when the location has no intro lists (free ride, backcountry).
     // onStep(step, at): each list step's start (main.js pv eventRiderWarm: the warm begins once the approach draws, its cast built)
-    playEventIntro({ mode = 'single', cast, location, onIdle = null, onStep = null }) {
+    // random (pv mpPreRace): the online race's shared draw for the script and its alternatives (resolve)
+    playEventIntro({ mode = 'single', cast, location, onIdle = null, onStep = null, random = null }) {
       // the fly-over already played in free ride; the approach continues its list: its fade-in comes from the fly-over's
       // fade-out record (every sga fly-over: in 0), so it starts bright (PS2 s1045)
       if (mode === 'career' && host.ui?.careerUI?.active?.rideIn)
@@ -1388,7 +1428,7 @@ export function createCutscenes(host) {
           barsFull: true,
           onStep
         });
-      return play({ steps: introSteps(mode), cast, location, kind: 'intro', onIdle, onStep });
+      return play({ steps: introSteps(mode), cast, location, kind: 'intro', onIdle, onStep, random });
     },
     // The scripts and animation banks of a list (fetched once per page, like prepare's): riderPrefetch loads the event intro's
     // under the warm-up, before prepare() (its actors) runs.

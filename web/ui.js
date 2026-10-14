@@ -294,7 +294,9 @@ export class OriginalUI {
     this.sync();
   }
   // Event load (loading-screen.js): the original "Basic Controls" load screen, then next(); work = promises to await.
-  loadEvent(next, work = []) {
+  // hold (pv mpPreRace, web/net/mp-game.js): called once all of the load's work has settled; the load screen also waits for the
+  // promise it returns (the online race's shared intro instant).
+  loadEvent(next, work = [], { hold = null } = {}) {
     let framesDone;
     const frames = new Promise((r) => (framesDone = r));
     this.warmFramesDone = framesDone;
@@ -313,7 +315,9 @@ export class OriginalUI {
           .catch((e) => console.warn('Intro cutscene prep failed', e))
           .finally(() => this.loading.done('intro'))
       : null;
-    this.loading.run(this.cb.intro ? () => this.cb.intro(next) : next, [...work, warm, intro].filter(Boolean));
+    const all = [...work, warm, intro].filter(Boolean);
+    const held = hold ? Promise.allSettled(all).then(() => hold()) : null;
+    this.loading.run(this.cb.intro ? () => this.cb.intro(next) : next, held ? [...all, held] : all);
     // pv loadMeter: the event load's stages (main.js cb.loadStages: the course still loading, the rider, the lineup, the warm-up), then
     // the intro's preparation
     const stages = this.cb.loadStages?.() ?? ['rider', 'lineup', 'warm'];

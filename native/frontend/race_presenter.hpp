@@ -6,7 +6,10 @@
 #include "rider_capture.hpp"
 #include "light_glow.hpp"
 #include "screen_tint.hpp"
+#include "set_piece_fx.hpp"
 #include "set_pieces.hpp"
+#include "startfire.hpp"
+#include "terrain_sparkle.hpp"
 #include "sun_flare.hpp"
 #include "uv_scroll.hpp"
 #include "world_renderer.hpp"
@@ -35,6 +38,11 @@ public:
         if (v.assets.exists(sunDir + "sun-flare.json")) {
             sun_ = std::make_unique<SunFlare>(v.assets.path(sunDir));
         }
+        // web/startfire-renderer.js: a course whose courses.json entry has startfire (main.js loads its courses from courses.json, whose
+        // entries carry none at present: only main.js's built-in Snow Jam entry, replaced at boot, had it)
+        if (session::truthy(session::at(v.course, "startfire")) && v.assets.exists("STARTFIRE/startfire.json")) {
+            startfire_ = std::make_unique<Startfire>(nlohmann::json::parse(v.assets.text("STARTFIRE/startfire.json")));
+        }
         const auto& irradiance = v.environmentMeta["irradiance"];
         human_ = std::make_unique<RiderCapture>(irradiance);
         for (size_t k = 0; k < v.npcs.size(); ++k) {
@@ -46,6 +54,10 @@ public:
     void afterTick() {
         if (tint_) {
             tint_->step(fog_info(), weather_info(), weather_lightning(), environment_world_loads());
+        }
+        // web/startfire-renderer.js update: one step per snow update serial (Snow Jam's start-gate fountains)
+        if (startfire_) {
+            startfire_->afterTick(snow_info()[20], rider_state());
         }
         // web/game-tick.js present: the sun painter once per camera tick, after ScreenTint
         if (sun_ && v_.hasCamera) {
@@ -105,10 +117,37 @@ public:
         }
         renderer.attachEffects(glow_.get(), sun_.get());
         // the set pieces' batches (main.js: an event course's start hides the event-dead batches; the stage world when PARTICLES exists)
+        SetPieceAssets a;
         const auto& eventStart = session::at(v_.course, "eventStart");
-        const bool started = !(eventStart.is_boolean() && !eventStart.get<bool>());
-        const bool stageWorld = v_.assets.exists(v_.courseRoot() + "PARTICLES/particles.json");
-        setPieces_ = std::make_unique<SetPieces>(nlohmann::json::parse(v_.assets.text(v_.code + "/world.json")), renderer.origin, started, stageWorld);
+        a.eventStart = !(eventStart.is_boolean() && !eventStart.get<bool>());
+        const std::string root = v_.courseRoot();
+        // Snow Jam's FLAGS / UVSCROLL / LIVECOMP exports live in /assets/, other locations' under their root
+        const std::string base = v_.code == "ARA1" ? std::string() : root;
+        auto doc = [&](const std::string& path) { return v_.assets.exists(path) ? nlohmann::json::parse(v_.assets.text(path)) : nlohmann::json(); };
+        a.code = v_.code;
+        a.world = doc(v_.code + "/world.json");
+        a.liveComp = doc(base + "LIVECOMP/livecomp.json");
+        a.attached = doc(base + "LIVECOMP/attached.json");
+        a.flags = doc(base + "FLAGS/flags.json");
+        if (v_.assets.exists(root + "SECTIONS/sections.json") && v_.assets.exists(root + "SECTIONS/ready-state.json")) {
+            a.sections = doc(root + "SECTIONS/sections.json");
+            a.ready = doc(root + "SECTIONS/ready-state.json");
+        }
+        a.rails = doc(root + "rails.json");
+        a.avalanches = doc(root + "avalanches.json");
+        a.stageWorld = v_.assets.exists(root + "PARTICLES/particles.json");
+        a.coreStarts = a.stageWorld && a.liveComp.is_object();
+        setPieces_ = std::make_unique<SetPieces>(a, renderer.origin);
+        setPieceFx_ = std::make_unique<SetPieceFx>(doc(root + "PARTICLES/particles.json"), doc(root + "fog-puffs.json"), doc(root + "CROWD/crowd.json"),
+                                                   renderer.origin);
+        // web/terrain-sparkle.js (a course: its terrain-sparkle.bin)
+        sparkle_ = std::make_unique<TerrainSparkle>(v_.assets.path(root + "terrain-sparkle.bin"), renderer.origin);
+        setPieceFx_->avalanche = &setPieces_->avalanche();
+        setPieceFx_->nodePosition = [this](uint32_t r, uint32_t n, float* out) { return setPieces_->nodePosition(r, n, out); };
+        setPieceFx_->resident = [this](int chunk) {
+            auto it = chunks_.find(uint32_t(chunk));
+            return it == chunks_.end() ? std::optional<bool>() : std::optional<bool>(it->second);
+        };
     }
     // the frame at render alpha a (0: the previous tick's camera and palettes, 1: the newest)
     WorldFrameState frame(double alpha, CameraView& camera) {
@@ -127,8 +166,22 @@ public:
         if (tint_) {
             state.tint = tint_->output();
         }
+        chunks_ = state.chunks;
+        state.setPieceFx = setPieceFx_.get();
+        if (startfire_) {
+            startfireParticles_ = startfire_->particles();
+            state.startfire = &startfireParticles_;
+        }
+        if (sparkle_ && sparkle_->loaded()) {
+            state.sparkle = sparkle_.get();
+            std::memcpy(fogInfo_.data(), fog_info(), sizeof(float) * 11);
+            state.fogInfo = &fogInfo_;
+            state.resets = weather_info()[46];
+        }
         if (setPieces_) {
             state.batches = &setPieces_->update();
+            state.flags = &setPieces_->flagMeshes();
+            state.cables = &setPieces_->cables();
         }
         // the set pieces' clock runs to the core's (main.js frame: setPieceRenderer.update)
         if (scroll_) {
@@ -180,7 +233,13 @@ private:
     std::unique_ptr<ScreenTint> tint_;
     std::unique_ptr<UvScrollSet> scroll_;
     std::unique_ptr<SunFlare> sun_;
+    std::unique_ptr<Startfire> startfire_;
+    std::vector<double> startfireParticles_;
     std::unique_ptr<SetPieces> setPieces_;
+    std::unique_ptr<SetPieceFx> setPieceFx_;
+    std::unique_ptr<TerrainSparkle> sparkle_;
+    std::array<float, 11> fogInfo_{};
+    std::map<uint32_t, bool> chunks_;
     std::unique_ptr<LightGlow> glow_;
     std::unique_ptr<RiderCapture> human_;
     std::vector<std::unique_ptr<RiderCapture>> npcs_;

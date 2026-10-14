@@ -89,6 +89,7 @@ uint32_t game_tick();
 // read-outs
 float* rider_state();
 float* pose_physical();
+float* world_pose_bones();
 float* rider_world_state();
 uint32_t* visual_rng_words();
 uint32_t* animation_rng_words();

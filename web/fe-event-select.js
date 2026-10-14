@@ -224,6 +224,32 @@ export class FeEventSelect {
     this.ui.set('fe-peak');
     this.ui.sync();
   }
+  // pv mpCourseSelect: the online lobby host's course choice walks these maps (web/mp-ui.js). The cursor starts on the lobby's course;
+  // Cross on an event calls pick(event) (its course code names the lobby's course, nothing loads), Back on Select Peak calls back().
+  // The rows are the Single Event ones; the peak runs and the Jam rows of a backcountry (Rival Points: the same course as its Rival
+  // Time row) are not playable, and the returning player's own Single Event selection is left as it was.
+  openLobby({ code = null, pick, back }) {
+    this.boards = false;
+    this.lobby = { pick, back };
+    for (const peak of SINGLE_EVENT_OPEN_PEAKS)
+      for (const mode of MODES) {
+        const e = this.events(peak, mode).find((x) => x.code === code && x.playable);
+        if (e && this.lobby.peak == null) Object.assign(this.lobby, { peak, mode, key: e.key });
+      }
+    this.saved = { peak: this.peak, mode: this.mode, eventKey: this.eventKey };
+    if (this.lobby.peak != null) {
+      this.peak = this.lobby.peak;
+      this.mode = this.lobby.mode;
+      this.eventKey = this.lobby.key;
+    }
+    this.ui.set('fe-peak');
+    this.ui.sync();
+  }
+  closeLobby() {
+    if (this.saved) Object.assign(this, this.saved);
+    this.saved = null;
+    this.lobby = null;
+  }
   onlineTop(e) {
     if (!pv('onlineRecords') || !e?.code || !(e.mode < 6)) return null;
     const r = this.ui.careerUI?.online?.records?.top(`${e.mode}:${e.code}`)?.[0];
@@ -242,22 +268,27 @@ export class FeEventSelect {
         riderId: this.riderId,
         order: mapRowOrder(this.data?.screens?.Map, peak, mode)
       });
+      if (this.lobby) return list.map((e) => ({ ...e, playable: e.playable && e.mode < 5 }));
       return this.boards ? list.map((e) => ({ ...e, playable: e.mode < 6 && !!e.code })) : list;
     } // Leaderboards: an event has a board when it has a course (not the peak runs)
     // no career tables: the courses.json events of Peak 1 by kind
     const list = (this.ui.courses || []).filter(
       (c) => (c.peak ?? 1) === peak && (mode === 'race' ? c.event === 'race' || c.rivalMode === 4 : c.event !== 'race' && c.rivalMode !== 4)
     );
-    return list.map((c) => ({
-      mode: c.rivalMode ?? (c.event === 'race' ? 0 : 1),
-      course: null,
-      code: c.code,
-      key: c.rivalMode ? `${c.code}:${c.rivalMode}` : c.code,
-      name: c.name,
-      kind: c.event,
-      entry: c,
-      playable: c.ready !== false
-    }));
+    return list.map((c) => {
+      const mode = c.rivalMode ?? (c.event === 'race' ? 0 : 1);
+      return {
+        mode,
+        course: null,
+        code: c.code,
+        key: c.rivalMode ? `${c.code}:${c.rivalMode}` : c.code,
+        name: c.name,
+        kind: c.event,
+        entry: c,
+        // pv mpCourseSelect: a lobby's choice as above
+        playable: c.ready !== false && (!this.lobby || mode < 5)
+      };
+    });
   }
   items(screen = this.ui.screen) {
     if (screen === 'fe-peak') return [1, 2, 3].reverse().map((p) => this.t(`kT_Peak${p}name`, `Peak ${p}`));
@@ -280,6 +311,7 @@ export class FeEventSelect {
   enter(screen, from) {
     if (!this.owns(screen)) return;
     if (from === 'setup' || from === 'details') this.boards = false; // Single Event's own way in (pv onlineRecords: not the Leaderboards)
+    if ((from === 'setup' || from === 'details') && this.lobby) this.closeLobby();
     const now = this.now();
     if (from !== screen) this.enterAt[screen] = now;
     this.focusAt = now;
@@ -316,6 +348,7 @@ export class FeEventSelect {
     };
   }
   remember() {
+    if (this.lobby) return;
     saveSelection({ peak: this.peak, mode: this.mode, event: this.eventKey });
   }
 
@@ -394,6 +427,17 @@ export class FeEventSelect {
         };
         return;
       }
+      if (this.lobby) {
+        const lobby = this.lobby;
+        this.flash = {
+          at: this.now(),
+          to: () => {
+            this.closeLobby();
+            lobby.pick(e);
+          }
+        };
+        return;
+      }
       this.eventKey = e.key;
       this.remember();
       this.flash = {
@@ -412,7 +456,16 @@ export class FeEventSelect {
       this.info = false;
       return;
     }
-    if (s === 'fe-peak' && this.boards) {
+    if (s === 'fe-peak' && this.lobby) {
+      const lobby = this.lobby;
+      this.flash = {
+        at: this.now(),
+        to: () => {
+          this.closeLobby();
+          lobby.back();
+        }
+      };
+    } else if (s === 'fe-peak' && this.boards) {
       this.boards = false;
       this.go('main', 5);
     } // Leaderboards: back to the main menu on its row

@@ -26,7 +26,9 @@ export function createMpClient({
   pair = null,
   token = sessionToken(),
   WebSocketImpl = globalThis.WebSocket,
-  version = PROTOCOL
+  version = PROTOCOL,
+  // pv mpPreRace (web/net/mp-game.js): this page plays the pre-race (the server's intro / ready phases)
+  preRace = false
 } = {}) {
   const listeners = new Map();
   const emit = (type, value) => {
@@ -45,6 +47,7 @@ export function createMpClient({
     race: null,
     slot: -1,
     goAt: 0,
+    introAt: 0,
     results: null,
     error: null,
     errorCode: null,
@@ -64,7 +67,7 @@ export function createMpClient({
   const send = (m) => {
     if (ws?.readyState === 1) ws.send(JSON.stringify(m));
   };
-  const hello = () => send({ t: 'hello', name, rider, pkg, base, outfit, pair, version, token });
+  const hello = () => send({ t: 'hello', name, rider, pkg, base, outfit, pair, version, token, ...(preRace ? { preRace: true } : {}) });
   function onMessage(m) {
     switch (m.t) {
       case 'welcome':
@@ -118,12 +121,18 @@ export function createMpClient({
         state.race = m.race;
         state.slot = m.you;
         state.goAt = 0;
+        state.introAt = 0;
         state.results = null;
         emit('start', m.race);
         break;
       case 'go':
         state.goAt = m.at;
         emit('go', m.at);
+        break;
+      // pre-race (pv mpPreRace): the shared intro instant (server clock)
+      case 'intro':
+        state.introAt = m.at;
+        emit('intro', m.at);
         break;
       case 'finished':
         emit('finished', m);
@@ -270,10 +279,17 @@ export function createMpClient({
       send({ t: 'course', course: code });
     },
     start() {
-      send({ t: 'start' });
+      send({ t: 'start', ...(preRace ? { preRace: true } : {}) });
     },
     loaded() {
       send({ t: 'loaded' });
+    },
+    // pre-race: the card's Continue (or its auto-continue)
+    raceReady() {
+      send({ t: 'ready' });
+    },
+    get preRace() {
+      return preRace;
     },
     finish(ticks, dnf = false, reason = '') {
       send({ t: 'finish', ticks, dnf, reason });

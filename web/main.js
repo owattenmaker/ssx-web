@@ -598,7 +598,17 @@ function nisHoldAt(station) {
   return true;
 }
 let nisStartPending = null;
+// pv nisOnTicks (docs/core-migration.md M6): the NIS director (web/cutscenes.js) steps one tick per game update at its NIS point
+// (0x230BEC: after the world states, before the rider manager), or, on frames that run no game update (the simulation held by a
+// context that leaves the NIS running, or not racing), whole 60 Hz ticks of the frame time paced as the PS2 frame loop paces updates
+const nisOnTicks = () => pv('nisOnTicks') && !!cutscenes?.tick;
+// (the same update clock as the simulation's: its phase carries across a hold and its release, as the PS2's updates run on)
+function nisFrameTicks(dt) {
+  if (!nisOnTicks() || !cutscenes?.active) return;
+  simulation.advance(dt, () => cutscenes.tick());
+}
 function nisStart() {
+  if (nisOnTicks() && cutscenes?.active) cutscenes.tick();
   const a = nisStartPending;
   if (a) {
     nisStartPending = null;
@@ -1273,7 +1283,8 @@ async function selectRider(rider) {
  the card's Continue starts the run from scratch (startRun resets the rider, the camera 0x11D390 set-targets and the race). */
 let readyShown = false,
   readyAi = false;
-const readyScreen = () => readyShown && ui.screen === 'ctm-objectives';
+// pv mpPreRace: an online card without an intro list (a backcountry: no start hut) lies over the ready state too (web/mp-ui.js mp-card)
+const readyScreen = () => readyShown && (ui.screen === 'ctm-objectives' || (ui.screen === 'mp-card' && pv('mpPreRace')));
 function readyView() {
   {
     // pv ws13Rebuild: a peak run's streamed world (no event start) gets its card's ready view too, without _start_event (as startRun)
@@ -1304,6 +1315,8 @@ function readyView() {
     core._reset_pad_history();
     resetPhysics();
     freeRide?.afterReset();
+    // pv mpPreRace: an online racer's own grid slot (web/net/grid-seed.js), as startRun's beforeStart sets it
+    if (mpGame?.preRace) mpGame.beforeStart(core);
     if (course.eventStart !== false) core._start_event();
     const f = (p, n) => new Float32Array(core.HEAPF32.buffer, p, n).slice(),
       pose = f(core._animation_tick(0, 0, 0, 0, 1, 0, 0, 0, 0, 0), bones.length * 7),
@@ -1782,6 +1795,13 @@ function cutsceneCast() {
   for (const n of npcs) race[n.slot] = cutsceneRider(n.character, n.slot);
   return { humans: [human], race, ai: race.slice(1).filter(Boolean), roles: [] };
 }
+// pv mpPreRace: an online race's cutscene cast, the same on every page: race rider k = the racer of slot k, the humans (bindings 4 / 5)
+// slots 0 and 1, no computer riders
+function onlineCast() {
+  const race = [];
+  for (const r of mpGame?.introRacers?.() ?? []) race[r.slot] = r.entry ? cutsceneRider(r.entry, r.slot) : null;
+  return { humans: [race[0] ?? null, race[1] ?? null].filter(Boolean), race, ai: [], roles: [] };
+}
 function setupCutscenes() {
   if (new URL(location.href).searchParams.get('cutscenes') === '0') return;
   cutscenes = createCutscenes({
@@ -1871,7 +1891,12 @@ function setupCutscenes() {
   window.__cutscenes = cutscenes;
   // the actors' pipelines are built before the intro shows
   ui.cb.introPrepare = () =>
-    course?.freeRide || mpGame?.racing || ui.mpUI?.racing
+    // pv mpPreRace: an online race's intro with every racer (its entries come with the race's own load work)
+    !course?.freeRide && mpGame?.preRace
+      ? Promise.resolve(mpGame.preRaceWork)
+          .then(() => cutscenes.prepare({ steps: cutscenes.introSteps('single'), cast: onlineCast(), location: course.code }))
+          .then((r) => gpuIdle().then(() => r))
+      : course?.freeRide || mpGame?.racing || ui.mpUI?.racing
       ? null
       : cutscenes
           .prepare({
@@ -2283,6 +2308,24 @@ function setupCutscenes() {
     return true;
   };
   ui.cb.intro = (next) => {
+    // pv mpPreRace: the online race's intro, as a Single Event's (WS10 table 0x481E68: start hut, then the gate idle under the card),
+    // every racer at its grid slot, the script and its alternatives drawn from the race seed so every page plays the same
+    if (!course?.freeRide && mpGame?.preRace) {
+      ui.set('cutscene');
+      let done = false;
+      const go = () => {
+        if (done) return;
+        done = true;
+        next();
+      };
+      cutscenes
+        .playEventIntro({ mode: 'single', cast: onlineCast(), location: course.code, onIdle: go, random: mpGame.introRandom() })
+        .then(go, (e) => {
+          console.warn('Online intro failed', e);
+          go();
+        });
+      return;
+    }
     if (course?.freeRide || mpGame?.racing || ui.mpUI?.racing) {
       next();
       return;
@@ -3870,6 +3913,8 @@ function frame(ms) {
       flushHumanSkin();
       padCarryAcc = 0;
     } else {
+      // pv nisOnTicks: no game update this frame: the NIS on its own ticks
+      nisFrameTicks(Math.min(ps2FrameTime(dt), quality.maxFrameDt));
       keyBase = new Set(keys);
       keyLog.length = 0;
       padCarryFeed(input, dt);
@@ -3886,8 +3931,15 @@ function frame(ms) {
         const phase = raceInfo ? raceInfo[5] : null;
         if (audioPhase === 4 && phase !== 4 && phase != null) gameAudio.go();
         // rival challenge rolling start (2872A8, docs/backcountry.md)
-        if (audioPhase === 3 && phase === 5 && course.event === 'backcountry')
-          gameAudio.rivalStart?.({ rival: aiRace?.lineup?.rival ?? aiRace?.racers?.npcs?.[0]?.character ?? 'mac', mp: !!mpGame });
+        // pv rivalStartAudio: the first frame at phase 5 without the countdown 4 (the race starts at 5), and only an online race is
+        // multiplayer (0x535C11 == 2)
+        const rivalAudio = pv('rivalStartAudio');
+        const rolling = rivalAudio ? phase === 5 && audioPhase !== 5 && audioPhase !== 4 : audioPhase === 3 && phase === 5;
+        if (rolling && course.event === 'backcountry')
+          gameAudio.rivalStart?.({
+            rival: aiRace?.lineup?.rival ?? aiRace?.racers?.npcs?.[0]?.character ?? 'mac',
+            mp: rivalAudio ? !!mpGame?.racing : !!mpGame
+          });
         audioPhase = phase;
         if (finished && !audioFinished) {
           audioFinished = true;
@@ -3964,7 +4016,9 @@ function frame(ms) {
     // a backcountry heli hovering on after its arrival (web/cutscenes.js)
     // web/cutscenes.js: its camera and actors replace the chase camera and the race rider
     const cutscenePose = cutscenes?.active
-      ? cutscenes.update(Math.min(dt, 0.25))
+      ? nisOnTicks()
+        ? cutscenes.pose()
+        : cutscenes.update(Math.min(dt, 0.25))
       : (cutscenes?.linger?.(isPaused() ? 0 : Math.min(dt, 0.25)), null);
     const originalCameraActive =
       cameraPose &&
@@ -6467,6 +6521,17 @@ async function init() {
         const input = pad ? Float32Array.from(pad) : new Float32Array(24);
         for (let i = 0; i < n; i++) padCarryFeed(input, 1 / 60);
         return padStateTouched;
+      },
+      // QA (?qa=1 only; docs/core-migration.md "B"): queue one streamed-world event in the core (core peak_world_qa_event: kind 1 is
+      // builtin 68's course / action / mode), as a station's Load trigger queues it
+      peakEvent(kind, a, b, c) {
+        if (!new URL(location.href).searchParams.has('qa') || !core?._peak_world_qa_event) return false;
+        core._peak_world_qa_event(kind, a, b, c);
+        return true;
+      },
+      // QA: the score object's HUD slots now (web/game-tick.js readTrickHudSlots)
+      hudSlots() {
+        return readTrickHudSlots(core);
       },
       advance(ticks, pad) {
         const input = pad ? Float32Array.from(pad) : new Float32Array(24);

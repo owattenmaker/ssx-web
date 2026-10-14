@@ -282,13 +282,16 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 
 | Native | Web | What |
 | --- | --- | --- |
-| frontend/world_renderer.cpp | main.js asset(), world-material.js, fog-renderer.js | the packages (40-byte vertices, colours, indices, vertex alpha, the PS2 light UVs per patch), the terrain combine (Cd - Cl) x Al >> 7, the static-model modulate with blend classes 0 / 1 (pass + fringe) / 2 / 3 (additive), three.js's draw order and its two-pass transparent DoubleSide, the sky pass as the world pass's background, the CLUT fog on the world depth (three.js perspectiveDepthToViewZ), texture chunks hidden while not streamed (section_chunks) |
+| frontend/world_renderer.cpp | main.js asset(), world-material.js, fog-renderer.js | the packages (40-byte vertices, colours, indices, vertex alpha, the PS2 light UVs per patch), the terrain combine (Cd - Cl) x Al >> 7, the static-model modulate with blend classes 0 / 1 (pass + fringe) / 2 / 3 (additive), three.js's render lists (opaque by renderOrder, the projected bounding-sphere depth near first, id; transparent far first; every DoubleSide transparent back face, riders' included, before the front faces), one object record per moved / copied batch, the sky pass as the world pass's background, the CLUT fog on the world depth (three.js perspectiveDepthToViewZ), texture chunks hidden while not streamed (section_chunks) |
 | frontend/screen_tint.hpp | screen-tint.js | the quadtree payload, the distance blend in fround steps, the lightning flash |
 | frontend/rider_renderer.cpp, rider_capture.hpp | rider-skinning.js, rider-lighting-nodes.js, rider-material.js | the core's skin palette pair (previous / current), VU chop add / mul in WGSL, the per-vertex irradiance of the core's ten rows, GS HIGHLIGHT2 on PS2-domain texels, riderDrawState's two blended passes for 'alph' / 'ea*' |
 | frontend/pacing.hpp | tick-lock.js, fixed-step-clock.js, ps2-frame-pacing.js | one tick per 60 Hz frame (debt paid with 0 / 2), else the fixed clock with the render alpha |
 | frontend/pad_input.hpp | pad-input.js | the 24 channels, bit for bit (ctest frontend_pad_input) |
 | frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
 | frontend/uv_scroll.hpp | uv-scroll.js, set-pieces-renderer.js | the scroller 0x35F7D0 in the EE scalar arithmetic (chop MUL / ADD / SUB with the guard bit, DIV.S nearest), the scroll groups by first appearance, the set-piece clock (set_piece_info, the slot-1 section enters, the ready state's phases); drawn as the first instance indexing a storage buffer |
+| frontend/set_pieces.hpp, livecomp.hpp, flags.hpp, ee_float.hpp | main.js frame, moving-instances.js, set-pieces-renderer.js, livecomp-animation.js, attached-setpieces.js, flag-animation.js, set-piece-cables.js, ee-scalar-float.js | per world batch this frame: hidden (pickups, event-dead from the event start, stage-program draw states), shown (the hidden batches of flag static draws, MeshAnim pieces, LiveComp 'object' players) and moved (moving instances and their clones, LiveComp node deltas, teeters, attached children, magnets, break pieces); the LiveComp players and the flag cloth stepped one game tick at a time to the core's set-piece clock (the go tick, the section log, the core's trigger / timer starts, section clocks, flag words), from the ready state; the cables as screen-space lines (guard band, near / far), alive by CableLife and the owner's chunk |
+| frontend/rider_shadow.hpp, world_renderer.cpp terrain, rider_renderer.cpp drawShadow | rider-shadow.js, rider-skinning.js shadowPose, world-material.js riderShadowReceiver / glintBytes | the rider shadows: the six-bone box fit (374D00, float32), the nearest six riders in view, each silhouette (the drawn palettes, the parts' painter's rank, the board 0 while grounded) into its slot of the 768 x 128 atlas, the terrain's max(Cd - T, 0) in the 30 m slab; and the terrain glint pass 38D168 (terrain-glint.json) before it |
+| frontend/set_piece_fx.hpp, particles.hpp, terrain_sparkle.hpp, avalanche.hpp, startfire.hpp | set-piece-particles.js, set-piece-particle-eval.js, fog-puffs.js, set-piece-halos.js, crowd-2d.js, terrain-sparkle.js, avalanche-state.js, avalanche-trails.js, startfire-renderer.js, impact-fx-renderer.js | the stage programs' particle sprites (the VU1 burst / trail kernels: accumulators in the VU / EE operations, the sprite arithmetic in doubles like the page), the fog puffs (0x22A270 box cull, 0x2DC190 fades, far-to-near), the HaloModifier sprites, the 2D crowd's texture frames and camera flashes, the terrain sparkle (program 4's RNG chain, the twinkle rotation, the Surface painter's density) at renderOrder 640, the avalanche pieces' visibility and trails, the impact sprites (sparks with the per-slot fade, glints, grind chunks, the fist sparkle) and the start-gate fountains, each in three's order in its pass |
 | frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
 | frontend/sun_flare.hpp, light_glow.hpp, post_effects.cpp, painter_tree.hpp | sun-flare.js, light-glow.js, fog-renderer.js | the Sun painter per camera tick; the 16 x 16 sun depth query and the glow plus nine lens sprites (2F4DB8 / 2F4A08 / 2F4690); each light's sprite quad and query record (2E2B00 / 2E2868 / 2EC478), drawn additively (copies) into the glow target; the composite adds glow, then sun, after the fog and before ScreenTint |
 
@@ -296,21 +299,37 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 
 | Shot | Run, tick | Mean / p95 | Notes |
 | --- | --- | --- | --- |
-| sj-solo-1200-fx | Snow Jam, Zoe, solo, 1200 | 2.54 / 9 | the trail and the kicker's streamer beam match (4.8 / 21 at first light, 4.53 with UV scroll) |
-| sj-solo-300-fx | the same run, 300 | 4.90 / 23 | 10 light glows and the sun; the trail behind the rider |
-| sj-ai-900-fx | Snow Jam, Zoe, 5 computer riders, 900 | 6.32 / 38 | 6 riders; the spray and the streamer under the jump match (23.3 / 135 at first, 6.91 with the sun) |
-| sj-solo-2700-fx | solo, 2700 | 1.26 / 5 | the spray and both air streamers |
+| sj-ai-900-shadow | Snow Jam, Zoe, 5 computer riders, 900 | 1.76 / 8 | the rider shadow on the pipe wall; 1.81 before it, 23.3 / 135 at first light |
+| sj-solo-2700-shadow | Snow Jam, Zoe, solo, 2700 | 1.10 / 4 | the shadow on the run-out; 1.25 before it |
+| sj-solo-190-crowd | Snow Jam, Zoe, solo, 190 | 2.06 / 8 | the stadium's animated crowd, the start-gate doors open at GO |
+| sj-solo-300-effects | the same run, 300 | 2.00 / 7 | gondolas, cable, banners, glows, sun |
+| sj-solo-1200-fx | the same run, 1200 | 2.47 / 9 | 4.8 / 21 at first light |
+| sj-solo-2700-fx | the same run, 2700 | 1.25 / 5 | the spray and both air streamers |
+| aba1-600 | Crow's Nest big air, Zoe, 600 | 1.21 / 4 | a second course (native/tools/replay-tas.mjs: the replay's pad as a TAS for browser-shot) |
 
-The earlier milestones' shots (sj-solo-1200-uvscroll, sj-solo-300-glow-sun, sj-ai-900-sun, sj-solo-2700) stay for comparison.
+The earlier milestones' shots stay in the folder for comparison.
 
-The geometry, the camera, the riders' poses and lighting, the fog / tint, UV scroll, the glows, the sun and the rider effects match. What
-differs is not ported yet:
-- the moving set pieces: the gondola and its cable, the banners (MeshAnim / LiveComp), pickups;
-- the snow cloud over the Snow Jam pipe (sj-ai 900, top right): set-piece particles or fog puffs, the next milestone's;
-- the rider shadow (the terrain under each rider is about 18 / 255 brighter than the page's);
-- the start-gate fire and the impact sparks (web/startfire-renderer.js, impact-fx-renderer.js), the light halos of set pieces;
-- the Xbox HD rider textures (the page's desktop default; native uses the PS2 set);
-- texture filtering details (three.js generates mips on the GPU; anisotropy).
+What differs is not ported yet, or not drawn the same:
+- the rider's board flex (pv boardFlex, web/board-flex.js: the board's and the hands' morph targets before skinning): the board's nose and
+  tail bend on the page, native draws the rest shape;
+- edges: texture filtering details (three.js generates mips on the GPU; anisotropy) and the Xbox HD rider textures (the page's desktop
+  default; native uses the PS2 set).
+
+Not checked against a page frame yet: the avalanches (no backcountry page shot: a Rival Time run's start needs its rival lineup), the
+impact sprites (no grind in these runs) and the start-gate fountains (see below).
+
+**A page finding: the start-gate fountains are never drawn.** main.js passes `startfire: !!course.startfire` to the snow renderer, but the
+courses it uses come from courses.json, whose entries have no `startfire` (only main.js's built-in Snow Jam entry had it, and courses.json
+replaces that list at boot). Native follows the page (no fountains); the port is there for a courses.json entry that sets it.
+
+Two page behaviours that are not reproduced, both noted in the code: the page draws `Math.random` words for the ready-state flag
+grids (their phases are then overwritten from the savestate) and once the core's flag words run out; native uses 0. A flag mesh whose
+source batch is blended would take only the pass, not the fringe (none is: every texture 138 / 268 hidden batch of the 14 courses
+with flags is blend class 0).
+
+Frame-history state: the page steps the terrain sparkle's Surface painter at most 8 times a frame and builds two patches' sprites a frame,
+and the start-gate fountains at most 30 serials a frame; native steps them once a tick and builds every patch in the frame. In live play
+(a frame a tick) they agree; a page capture that skips ticks between frames (browser-shot's 400-tick advances) can differ.
 
 **Known difference: tied strip order.** Two strip effects with the same renderOrder (two riders' wakes, the aura faces, the boost
 ribbons) are ordered by the depth of each geometry's bounding sphere centre. three computes that centre once, on the mesh's first
@@ -329,7 +348,6 @@ within the 8-bit rounding of each blend, so in practice this affects the normall
 ssx3_render_shot prints the frame's light glow count and whether the sun is in view (`glows`, `sun`), to pick ticks that show them.
 
 **Next:**
-- the remaining set pieces (moving instances, LiveComp, MeshAnim, the cable, pickups, flags);
 - the rider shadow;
 - the Windows front-end build (llvm-mingw);
 - the HUD from the game's own LUI screens;
@@ -374,6 +392,36 @@ ctest --test-dir build/native-win64        # windows_link
 A cross-built .exe from build/native-win64 also runs there: for example
 `ssx3_verify_replay.exe web\public\assets fixtures\sj-ai.ssxr`, which must print the fixture's verdict.
 
+**The front end: untested, parked** (2026-10-14, the user's call). Configuring a Windows build with `-DSSX_BUILD_FRONTEND=ON` stops
+with "The Windows front end is not supported yet". The core tools above (build/native-win64) are unchanged and need no new downloads.
+- A cross build of the front end linked cleanly once (ssx3.exe, ssx3_render_shot.exe, ssx3_image_compare.exe with wgpu-native's
+  windows-gnu release linked statically) and passed the PE import check. It needed SDL3's Windows release, a download that was not
+  approved, so that build and the fetch were removed. Bringing it back needs an approved SDL3 for Windows (the official mingw
+  development release, shipped as SDL3.dll next to ssx3.exe), and then the import check for the front-end images (check-pe.mjs
+  `--allow SDL3.dll`; the system DLLs wgpu-native imports are already in its list).
+- The toolchain file finds CMake packages only under the target's roots (`CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY`), so a host
+  SDL3 (Homebrew's) is never picked up by a cross build.
+- D3D12 / DXGI / Vulkan are not imported: wgpu-native loads them at run time (d3d12.dll, dxgi.dll, vulkan-1.dll), so the static
+  check cannot see them.
+
+**A first run on real Windows has to check** (once it is unparked; no Windows machine yet):
+1. **Start-up:** `ssx3.exe <assets> --course ARA1` opens the window. wgpu-native picks an adapter (D3D12 first) and the surface
+   (`WGPUSurfaceSourceWindowsHWND` from SDL's HWND / HINSTANCE) configures with a BGRA8Unorm or RGBA8Unorm format (the non-sRGB
+   choice in app.cpp). An adapter or surface failure prints the webgpu error and exits.
+2. **Shaders:** every pipeline compiles on the D3D12 backend (WGSL -> HLSL through naga, FXC or DXC). The windowed run builds them all
+   at load, and `--shot OUT.png --shot-tick N --hidden` covers the same code with no presenting.
+3. **Parity:** `ssx3_render_shot.exe <assets> sj-solo.ssxr out.png --tick 300` then `ssx3_image_compare.exe` against
+   local/native-port/shots' web frames. The trace hash it prints must equal the macOS one (3993471844 at 1200, 2318221815 at 300).
+   The image mean should be the macOS one within a little (D3D12's texture filtering and rasterization rules differ slightly from
+   Metal's).
+4. **Input:** keyboard focus only on click (SDL_WINDOW_NOT_FOCUSABLE is ignored on Windows: check the window does not take focus
+   when it opens), the keyboard mapping (scancodes), and an XInput / DirectInput pad through SDL's gamepad mapping.
+5. **Pacing:** tick-lock at 60 Hz on a 60 Hz display (debt paid with 0 / 2 ticks), the fixed clock on a 120 / 144 Hz one; vsync through
+   `WGPUPresentMode_Fifo`.
+6. **Console:** ssx3.exe is a console-subsystem program (main(), no SDL_main), so a console window opens with it. That is fine for a
+   first run. A release build would link `-mwindows`.
+7. **The float-conversion check** above (`SSX_NATIVE_UBSAN=ON`) on x86-64, with the front end on.
+
 ## 9. Layout
 
 | Path | What |
@@ -392,10 +440,12 @@ A cross-built .exe from build/native-win64 also runs there: for example
 | native/verify/ | the replay verifier: replay_file.hpp (SSXR and the pad stream), js_json.hpp (JS JSON semantics), core_api.hpp, verify_replay.cpp |
 | native/tools/browser-verify.mjs | the browser verifier's verdicts and replay traces (the N2 reference) |
 | native/tools/tas-replay.mjs | a replay file of a page run with no finish (page-run's start.json + the TAS pad) |
-| native/frontend/ | the front end: app.cpp (SDL3 window), render_shot.cpp, world_renderer, rider_renderer / rider_capture, screen_tint, pacing, pad_input, gpu (webgpu.h helpers), texture_archive, image_io, image_compare |
+| native/frontend/ | the front end: app.cpp (SDL3 window), render_shot.cpp, world_renderer (+ post_effects, rider_fx, rider_shadow), rider_renderer / rider_capture, race_presenter, set_pieces / set_piece_fx (livecomp, flags, particles, avalanche, startfire, terrain_sparkle), screen_tint, sun_flare, light_glow, uv_scroll, pacing, pad_input, gpu (webgpu.h helpers), texture_archive, image_io, image_compare |
 | native/verify/replay_session.hpp | the race set up as the page does (shared by the verifier and the front end; live or replay) |
-| native/tools/browser-shot.mjs | the page's frame at a tick (visual parity) |
+| native/tools/browser-shot.mjs | the page's frame at a tick (visual parity; `--eval` for page diagnostics) |
+| native/tools/replay-tas.mjs | a replay file's pad as a TAS file (browser-shot plays a replay's run) |
 | native/build-core-native.sh | the first prototype build script (superseded by CMake; kept while the migration agent uses it) |
 
-Third-party code: nlohmann/json (MIT, vendored in web/third_party/nlohmann, shared with the wasm build). Nothing else yet;
-each new library is listed here and in README with its licence.
+Third-party code: nlohmann/json (MIT, vendored in web/third_party/nlohmann, shared with the wasm build); stb (public domain or MIT,
+vendored in native/third_party/stb); fetched at configure time for the front end: wgpu-native (Apache-2.0 / MIT); SDL3 (zlib) is a
+system install. Each is listed here and in README with its licence.

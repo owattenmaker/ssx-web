@@ -24,6 +24,7 @@ const INTRO_ACTIVATE = new Map([
   ['ctm-saveprompt', 26],   // the lodge's FE cFEPopupConfirm: 25-step box growth, about 27 frames dead (ctm-gopeak is the Map's own confirm: not gated here)
   ['ctm-enterlodge', 38], ['ctm-session', 48],
   ['ctm-objectives', 30], ['ctm-results', 30], ['ctm-records', 30], ['ctm-award', 30],
+  ['mp-card', 30],   // pv mpPreRace: the online race card (web/mp-ui.js), overlay 8 as ctm-objectives
   // the lodge's FE.LUI screens activate at 25; ui.set runs at the FE flash's switch (about Cross + 11), so 25 + 2 from there puts input at
   // about press + 38 (ARMSX2 lodge-details: +32 dead, +40 taken; the lodge code trace: focus bar at press + 38). The buy popup and the
   // cheat list open without a flash: 30 + 2 / 31 + 2 from their own open.

@@ -23,6 +23,20 @@ struct RiderFrame {
     std::array<float, 40> lighting{};
     bool lit = false;
     float alpha = 1;
+    // web/rider-skinning.js shadowPose's inputs: world_pose_bones of the previous and the current capture (count, then 7 floats a
+    // bone) and the current pose_physical (12 floats)
+    std::vector<float> bonesPrevious;
+    std::vector<float> bonesCurrent;
+    std::array<float, 12> physical{};
+};
+
+// a rider's slot in the shadow atlas this frame (web/rider-shadow.js update): the silhouette rows over the skinned source position
+// (PS2 cm), the slot and the board's value (0 grounded)
+struct ShadowSlot {
+    std::array<float, 4> rowX{};
+    std::array<float, 4> rowY{};
+    float slot = 0;
+    float board = 0;
 };
 
 class RiderRenderer {
@@ -32,6 +46,8 @@ public:
     // the frame's uniforms: the camera's view-projection (origin-relative) and the origin
     void update(const std::array<float, 16>& viewProjection, const std::array<double, 3>& origin, const RiderFrame& frame);
     void drawOpaque(WGPURenderPassEncoder pass);
+    // the silhouette into the shadow atlas (after update: the drawn palettes)
+    void drawShadow(WGPURenderPassEncoder pass, const ShadowSlot& slot);
     // side 0: back faces, 1: front faces (three's transparent double pass; the world's blended batches interleave between the two)
     void drawTransparent(WGPURenderPassEncoder pass, int side);
 
@@ -54,6 +70,10 @@ private:
     WGPUSampler sampler_ = nullptr;
     // 0 opaque, 1 high pass (alpha test, depth written), 2 low pass; the blended ones twice (back faces, then front)
     WGPURenderPipeline pipelines_[3][2] = {};
+    WGPURenderPipeline shadowPipeline_ = nullptr;
+    WGPUBuffer shadowUniform_ = nullptr;
+    WGPUBindGroup shadowGroup_ = nullptr;
+    uint32_t indexCount_ = 0;
     std::vector<Batch> batches_;
 };
 

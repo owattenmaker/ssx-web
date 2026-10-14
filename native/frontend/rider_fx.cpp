@@ -1,5 +1,10 @@
 #include "rider_fx.hpp"
 #include "../verify/core_api.hpp"
+
+extern "C" {
+float* impact_fx_info();
+float* impact_fx_sprites(int kind);
+}
 #include "draw_order.hpp"
 #include "json.hpp"
 #include <algorithm>
@@ -13,7 +18,7 @@ namespace ssx_native {
 namespace {
 
 const char* kFxShader = R"(
-struct Frame { viewProjection: mat4x4f };
+struct Frame { viewProjection: mat4x4f, view: mat4x4f, projection: mat4x4f };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var mapTex: texture_2d<f32>;
 @group(1) @binding(1) var mapSampler: sampler;
@@ -59,6 +64,86 @@ struct Billboard {
   o.colour = i.colour;
   o.alphaScale = i.alphaScale;
   return o;
+}
+// the set pieces' quads (rider_fx.hpp QuadBatch): centre xyz + half size, spin (cos, sin, t sign, alpha scale), colour / 128
+struct Quad {
+  @location(0) centre: vec4f,
+  @location(1) spin: vec4f,
+  @location(2) colour: vec4f,
+};
+fn corner(k: u32) -> vec2f {
+  let corners = array<vec2f, 4>(vec2f(-1.0, 1.0), vec2f(1.0, 1.0), vec2f(-1.0, -1.0), vec2f(1.0, -1.0));
+  let order = array<u32, 6>(0u, 2u, 1u, 2u, 3u, 1u);
+  return corners[order[k]];
+}
+fn quadOut(position: vec4f, uv: vec2f, i: Quad) -> Out {
+  var o: Out;
+  o.position = position;
+  o.uv = uv;
+  o.colour = i.colour;
+  o.alphaScale = i.spin.w;
+  return o;
+}
+// web/set-piece-particles.js: the clip-space centre plus the half extent capped at 64 source pixels (MINI 64)
+fn cappedClip(c: vec2f, i: Quad, cap: f32) -> vec4f {
+  let clip = frame.viewProjection * vec4f(i.centre.xyz, 1.0);
+  let dx = min(abs(frame.projection[0][0] * i.centre.w), clip.w * (cap / 256.0));
+  let dy = min(abs(frame.projection[1][1] * i.centre.w), clip.w * (cap / 224.0));
+  return clip + vec4f(c.x * dx, c.y * dy, 0.0, 0.0);
+}
+fn particleClip(c: vec2f, i: Quad) -> vec4f {
+  return cappedClip(c, i, 64.0);
+}
+// web/avalanche-trails.js: the snow program's 128-pixel cap (entry 0xA00), uv y flipped
+@vertex fn quadAvalanche(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  return quadOut(cappedClip(c, i, 128.0), vec2f((c.x + 1.0) * 0.5, (1.0 - c.y) * 0.5), i);
+}
+// burst: PlaneGeometry uv (x, 1 - y); trail: (1 - x, y) (the texture turned 180 degrees)
+@vertex fn quadBurst(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  return quadOut(particleClip(c, i), vec2f((c.x + 1.0) * 0.5, (1.0 - c.y) * 0.5), i);
+}
+@vertex fn quadTrail(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  return quadOut(particleClip(c, i), vec2f((1.0 - c.x) * 0.5, (c.y + 1.0) * 0.5), i);
+}
+// web/fog-puffs.js: a view-aligned square of half side `size`, ST (0, 0) at the bottom-left
+@vertex fn quadPuff(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  let view = frame.view * vec4f(i.centre.xyz, 1.0);
+  let p = frame.projection * vec4f(view.x + c.x * i.centre.w, view.y + c.y * i.centre.w, view.z, 1.0);
+  return quadOut(p, vec2f((c.x + 1.0) * 0.5, (c.y + 1.0) * 0.5), i);
+}
+// web/set-piece-halos.js: the rotated (or screen-aligned) square; the centre alone decides the view-volume drop (0x37DBE8)
+@vertex fn quadHalo(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  let view = frame.view * vec4f(i.centre.xyz, 1.0);
+  let x = c.x * i.centre.w;
+  let y = c.y * i.centre.w * i.spin.z;
+  let rotated = vec4f(view.x + x * i.spin.x - y * i.spin.y, view.y + x * i.spin.y + y * i.spin.x, view.z, 1.0);
+  let cc = frame.projection * view;
+  let inside = abs(cc.x) <= cc.w && abs(cc.y) <= cc.w && cc.w > 0.0 && cc.z <= cc.w;
+  return quadOut(select(vec4f(0.0, 0.0, 2.0, 1.0), frame.projection * rotated, inside), vec2f((c.x + 1.0) * 0.5, (1.0 - c.y) * 0.5), i);
+}
+// web/terrain-sparkle.js: a screen-aligned sprite of half size min(10 cm projected, 3 px), GS ST (0, 0) at centre + half
+@vertex fn quadSparkle(@builtin(vertex_index) k: u32, i: Quad) -> Out {
+  let c = corner(k);
+  let clip = frame.viewProjection * vec4f(i.centre.xyz, 1.0);
+  let hx = min(0.1 * frame.projection[0][0], clip.w * (3.0 / 256.0));
+  let hy = min(0.1 * frame.projection[1][1], clip.w * (3.0 / 224.0));
+  return quadOut(clip + vec4f(c.x * hx, c.y * hy, 0.0, 0.0), vec2f((1.0 - c.x) * 0.5, (1.0 + c.y) * 0.5), i);
+}
+// GS ALPHA 0x49: Cd + Cd x As (blend src DstColor, dst One); the texture's colour is not used
+@fragment fn sparkle(i: Out) -> @location(0) vec4f {
+  let a = clamp(textureSample(mapTex, mapSampler, i.uv).a * (255.0 / 128.0) * i.colour.a, 0.0, 1.0);
+  return vec4f(a, a, a, 1.0);
+}
+// 0x48 / 0x42: Cs x As premultiplied (saturating like the GS COLCLAMP), alpha 1
+@fragment fn shadeAdd(i: Out) -> @location(0) vec4f {
+  let t = textureSample(mapTex, mapSampler, i.uv);
+  let rgb = clamp(t.rgb * i.colour.rgb, vec3f(0.0), vec3f(1.0));
+  return vec4f(clamp(rgb * (t.a * i.alphaScale * i.colour.a), vec3f(0.0), vec3f(1.0)), 1.0);
 }
 // the encoded colour: texel x vertex colour (GS MODULATE), the PS2 texture alpha scaled to 0..1 times the vertex alpha
 @fragment fn shade(i: Out) -> @location(0) vec4f {
@@ -236,6 +321,17 @@ void RiderFxFrame::read(bool boostRibbons) {
         const float* v = count ? rider_fx_vertices(s) : nullptr;
         fx[s].assign(v, v + count * 9);
     }
+    // web/impact-fx-renderer.js update
+    const float* ii = impact_fx_info();
+    auto sprites = [](int kind, size_t n, size_t floats, std::vector<float>& out) {
+        const float* p = n ? impact_fx_sprites(kind) : nullptr;
+        out.assign(p, p + n * floats);
+    };
+    sprites(0, size_t(ii[1]), 9, sparks);
+    sprites(1, size_t(ii[2]), 4, glints);
+    sprites(2, std::min<size_t>(size_t(ii[3]), 240), 8, chunks);
+    sprites(3, size_t(ii[4]), 8, fist);
+    chunkFrame = int(ii[5]);
     const float* flip = snow_flipbook_info();
     const float* si = snow_info();
     for (unsigned i = 0; i < 10; ++i) {
@@ -341,6 +437,25 @@ void RiderFx::load(Gpu& gpu, const std::string& assetsRoot) {
             }
         }
     }
+    // web/impact-fx-renderer.js and web/startfire-renderer.js
+    const auto impact = parseJson(assetsRoot + "/IMPACT_FX/impact-fx.json");
+    for (const auto& t : impact["textures"]) {
+        const std::string name = t["name"].get<std::string>();
+        const std::string file = assetsRoot + "/IMPACT_FX/" + t["file"].get<std::string>();
+        const float scale = t.value("gs_alpha_scale", 1.f);
+        const uint32_t w = t["width"].get<uint32_t>(), h = t["height"].get<uint32_t>();
+        billboardTextures_[name] = loadTexture(file, w, h, scale, name == "sprk", false);
+        if (name == "sprk") {
+            billboardTextures_["sprk-clamp"] = loadTexture(file, w, h, scale, false, false);
+        }
+    }
+    const std::string startfire = assetsRoot + "/STARTFIRE/startfire.json";
+    if (std::ifstream(startfire)) {
+        const auto doc = parseJson(startfire);
+        const auto& t = doc["texture"];
+        billboardTextures_["startfire"] = loadTexture(assetsRoot + "/STARTFIRE/" + t["gs_alpha_file"].get<std::string>(), t["width"].get<uint32_t>(),
+                                                      t["height"].get<uint32_t>(), t["gs_alpha_scale"].get<float>(), false, false);
+    }
     // web/boost-renderer.js createRiderFxMaterials: the raw GS FX textures (alpha 128 = 1.0)
     const auto fx = parseJson(assetsRoot + "/FX/fx.json");
     auto fxTexture = [&](const char* tag, bool repeat, bool flip) {
@@ -351,6 +466,31 @@ void RiderFx::load(Gpu& gpu, const std::string& assetsRoot) {
     aura_ = fxTexture("psmr", false, false);
     streamers_[63] = fxTexture("strm", false, true);
     streamers_[61] = fxTexture("prbn", true, false);
+    // the set pieces' quads: the PARTICLES textures (fog0 among them; LinearFilter, ClampToEdge) and the FX halos
+    const std::string particles = assetsRoot + "/PARTICLES/textures/textures.json";
+    if (std::ifstream(particles)) {
+        const auto doc = parseJson(particles);
+        for (const auto& t : doc["textures"]) {
+            Texture tex = loadTexture(assetsRoot + "/PARTICLES/textures/" + t["file"].get<std::string>(), t["width"].get<uint32_t>(), t["height"].get<uint32_t>(),
+                                      t.value("gs_alpha_scale", 1.f), false, false);
+            quadTextures_["p" + std::to_string(t["id"].get<int>())] = tex;
+            if (t.value("tag", std::string()) == "fog0") {
+                quadTextures_["fog0"] = tex;
+            }
+        }
+    }
+    if (fx["textures"].contains("gltr")) {
+        sparkle_ = fxTexture("gltr", false, false);
+    }
+    if (fx["textures"].contains("flsh")) {
+        flash_ = fxTexture("flsh", false, false);
+    }
+    static const std::map<int, const char*> halos = {{37, "blha"}, {38, "bsha"}, {39, "gcha"}, {40, "orha"}, {41, "rdha"}, {42, "whha"}};
+    for (const auto& [id, tag] : halos) {
+        if (fx["textures"].contains(tag)) {
+            quadTextures_["h" + std::to_string(id)] = fxTexture(tag, false, false);
+        }
+    }
 }
 
 void RiderFx::buildPipelines() {
@@ -382,17 +522,19 @@ void RiderFx::buildPipelines() {
     pl.bindGroupLayoutCount = 2;
     pl.bindGroupLayouts = layouts;
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(d, &pl);
-    uniform_ = gpu_->buffer(64, WGPUBufferUsage_Uniform, nullptr, "effects frame");
+    pipelineLayout_ = layout;
+    uniform_ = gpu_->buffer(192, WGPUBufferUsage_Uniform, nullptr, "effects frame");
     WGPUBindGroupEntry ue = WGPU_BIND_GROUP_ENTRY_INIT;
     ue.binding = 0;
     ue.buffer = uniform_;
-    ue.size = 64;
+    ue.size = 192;
     WGPUBindGroupDescriptor ud = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     ud.layout = frameLayout_;
     ud.entryCount = 1;
     ud.entries = &ue;
     frame_ = wgpuDeviceCreateBindGroup(d, &ud);
     WGPUShaderModule module = gpu_->shader(kFxShader, "rider effects");
+    module_ = module;
 
     WGPUVertexAttribute strip[4] = {
         {nullptr, WGPUVertexFormat_Float32x3, 0, 0},
@@ -504,14 +646,82 @@ void RiderFx::buildPipelines() {
     m.blend = &normal;
     m.billboard = true;
     snow_ = make(m);
+    m.blend = &additive;
+    snowAdd_ = make(m);
+}
+
+WGPURenderPipeline RiderFx::quadPipeline(int variant, int blend) {
+    const int key = variant * 3 + blend;
+    auto it = quadPipelines_.find(key);
+    if (it != quadPipelines_.end()) {
+        return it->second;
+    }
+    WGPUVertexAttribute attrs[3] = {
+        {nullptr, WGPUVertexFormat_Float32x4, 0, 0},
+        {nullptr, WGPUVertexFormat_Float32x4, 16, 1},
+        {nullptr, WGPUVertexFormat_Float32x4, 32, 2},
+    };
+    WGPUVertexBufferLayout vbl = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
+    vbl.arrayStride = 48;
+    vbl.stepMode = WGPUVertexStepMode_Instance;
+    vbl.attributeCount = 3;
+    vbl.attributes = attrs;
+    // 0x44: three NormalBlending; 0x48 / 0x42: One / One add or reverse subtract, alpha Zero / One
+    WGPUBlendState b{};
+    if (blend == 0) {
+        b.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
+        b.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha};
+    } else {
+        b.color = {blend == 2 ? WGPUBlendOperation_ReverseSubtract : WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_One};
+        b.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+    }
+    static const char* entries[6] = {"quadBurst", "quadTrail", "quadPuff", "quadHalo", "quadSparkle", "quadAvalanche"};
+    if (variant == 4) {
+        // the terrain sparkle: Cd + Cd x As
+        b.color = {WGPUBlendOperation_Add, WGPUBlendFactor_Dst, WGPUBlendFactor_One};
+        b.alpha = {WGPUBlendOperation_Add, WGPUBlendFactor_Zero, WGPUBlendFactor_One};
+    }
+    WGPURenderPipelineDescriptor pd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
+    pd.layout = pipelineLayout_;
+    pd.vertex.module = module_;
+    pd.vertex.entryPoint = sv(entries[variant]);
+    pd.vertex.bufferCount = 1;
+    pd.vertex.buffers = &vbl;
+    pd.primitive.topology = WGPUPrimitiveTopology_TriangleList;
+    pd.primitive.cullMode = WGPUCullMode_None;
+    WGPUColorTargetState ct = WGPU_COLOR_TARGET_STATE_INIT;
+    ct.format = WGPUTextureFormat_RGBA8Unorm;
+    ct.blend = &b;
+    ct.writeMask = WGPUColorWriteMask_All;
+    WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
+    fs.module = module_;
+    fs.entryPoint = sv(variant == 4 ? "sparkle" : (blend == 0 ? "shade" : "shadeAdd"));
+    fs.targetCount = 1;
+    fs.targets = &ct;
+    pd.fragment = &fs;
+    WGPUDepthStencilState ds = WGPU_DEPTH_STENCIL_STATE_INIT;
+    ds.format = WGPUTextureFormat_Depth24PlusStencil8;
+    ds.depthWriteEnabled = WGPUOptionalBool_False;
+    ds.depthCompare = WGPUCompareFunction_LessEqual;
+    ds.stencilReadMask = 0xff;
+    ds.stencilWriteMask = 0;
+    pd.depthStencil = &ds;
+    pd.multisample.count = 1;
+    pd.multisample.mask = 0xffffffffu;
+    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(gpu_->device, &pd);
+    quadPipelines_[key] = pipeline;
+    return pipeline;
 }
 
 void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const double eye[3], const double look[3], const double* view,
-                      const double* projection, const std::array<double, 3>& origin) {
+                      const double* projection, const std::array<double, 3>& origin, const std::vector<QuadBatch>* quads,
+                      const std::vector<double>* startfire) {
     const Mat vp = multiply(projection, view);
-    float vpf[16];
+    float vpf[48];
     for (int k = 0; k < 16; ++k) {
         vpf[k] = float(vp[size_t(k)]);
+        vpf[16 + k] = float(view[k]);
+        vpf[32 + k] = float(projection[k]);
     }
     wgpuQueueWriteBuffer(gpu_->queue, uniform_, 0, vpf, sizeof vpf);
     // three.js Frustum.setFromProjectionMatrix(projection x matrixWorldInverse) (main.js cullView: the default WebGL coordinate
@@ -585,6 +795,7 @@ void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const doub
         }
         s.range = addStrip(src, alphaScale, &s.positions);
     };
+    auto isHuman = [](const RiderFxFrame& f) { return !f.cullable; };
     bool populated = false;
     for (size_t r = 0; r < riders.size(); ++r) {
         const RiderFxFrame& f = *riders[r];
@@ -634,6 +845,112 @@ void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const doub
             }
             g.snow[size_t(i)] = range;
             populated = populated || range.count > 0;
+        }
+        // web/impact-fx-renderer.js update and (the human's) web/startfire-renderer.js update: camera-facing billboards
+        g.extras.clear();
+        namespace o = draw_order;
+        auto place = [&](const double* cm, double halfCm, double limit, const float* colour, float alphaScale) {
+            const double p[3] = {cm[0] / 100 - origin[0], cm[2] / 100 - origin[1], -cm[1] / 100 - origin[2]};
+            const double viewZ = inverse[2] * p[0] + inverse[6] * p[1] + inverse[10] * p[2] + inverse[14];
+            const auto extent = billboardScale(halfCm / 100, -viewZ, projection[0], projection[5], 512, 448, limit);
+            const Mat m = compose(p, q, extent[0], extent[1], 1);
+            for (int k = 0; k < 16; ++k) {
+                instances.push_back(float(m[size_t(k)]));
+            }
+            instances.insert(instances.end(), {colour[0], colour[1], colour[2], colour[3], alphaScale, 0, 0, 0});
+        };
+        auto inside = [&](const double* cm) {
+            const double p[3] = {cm[0] / 100 - origin[0], cm[2] / 100 - origin[1], -cm[1] / 100 - origin[2]};
+            double v[4];
+            for (int r = 0; r < 4; ++r) {
+                v[r] = inverse[size_t(r)] * p[0] + inverse[size_t(4 + r)] * p[1] + inverse[size_t(8 + r)] * p[2] + inverse[size_t(12 + r)];
+            }
+            double c[4];
+            for (int r = 0; r < 4; ++r) {
+                c[r] = projection[r] * v[0] + projection[4 + r] * v[1] + projection[8 + r] * v[2] + projection[12 + r] * v[3];
+            }
+            const double w = c[3];
+            return w > 0 && std::abs(c[0]) <= w && std::abs(c[1]) <= w && c[2] >= -w && c[2] <= w;
+        };
+        auto extra = [&](const Texture* texture, bool additive, double order, int id, auto&& fill) {
+            RiderGpu::Extra e;
+            e.range.first = instances.size() / kInstanceFloats;
+            fill();
+            e.range.count = uint32_t(instances.size() / kInstanceFloats - e.range.first);
+            e.texture = texture;
+            e.additive = additive;
+            e.order = order;
+            e.id = id;
+            if (e.range.count) {
+                g.extras.push_back(e);
+                populated = true;
+            }
+        };
+        const int base = isHuman(f) ? 110 : 1000 + 20 * int(r) + 10;
+        if (isHuman(f) && startfire && billboardTextures_.count("startfire")) {
+            const Texture* t = &billboardTextures_["startfire"];
+            extra(t, true, o::drawOrder({7, 0, 4, 28, 46}, 1), 110, [&] {
+                for (size_t i = 0; i + 8 <= startfire->size(); i += 8) {
+                    const double* s = startfire->data() + i;
+                    const float colour[4] = {float(s[4] / 128), float(s[5] / 128), float(s[6] / 128), float(s[7] / 128)};
+                    place(s, s[3], 128, colour, t->alphaScale);
+                }
+            });
+        }
+        // the grind chunks (the tmb frame, GS 0x44), sparks (64 px, the slot's 1/8 alpha fade over the accepted sprites), glints, fist
+        if (snowTextures_.count(f.chunkFrame)) {
+            const Texture* t = &snowTextures_[f.chunkFrame];
+            extra(t, false, o::drawOrder({7, 0, 4, f.chunkFrame, -1}, 11), base + 1, [&] {
+                for (size_t i = 0; i + 8 <= f.chunks.size(); i += 8) {
+                    const float* c = f.chunks.data() + i;
+                    const double cm[3] = {c[0], c[1], c[2]};
+                    place(cm, c[3], 128, c + 4, t->alphaScale);
+                }
+            });
+        } else if (!f.chunks.empty()) {
+            throw std::runtime_error("Grind chunk frame outside tmb1..8");
+        }
+        if (billboardTextures_.count("sprk")) {
+            const Texture* t = &billboardTextures_["sprk"];
+            extra(t, true, o::drawOrder({7, 0, 4, 22, -1}, 11), base + 2, [&] {
+                float slot = -1;
+                int drawnInSlot = 0;
+                for (size_t j = 0; j + 9 <= f.sparks.size(); j += 9) {
+                    const float* sp = f.sparks.data() + j;
+                    if (sp[8] != slot) {
+                        slot = sp[8];
+                        drawnInSlot = 0;
+                    }
+                    const double cm[3] = {sp[0], sp[1], sp[2]};
+                    if (!inside(cm)) {
+                        continue;
+                    }
+                    const double alpha = double(sp[7]) * (1 - double(drawnInSlot) / 8);
+                    ++drawnInSlot;
+                    const float colour[4] = {float(std::trunc(double(sp[4])) / 128), float(std::trunc(double(sp[5])) / 128), float(std::trunc(double(sp[6])) / 128),
+                                             float(std::max(0.0, std::trunc(alpha)) / 128)};
+                    place(cm, sp[3], 64, colour, t->alphaScale);
+                }
+            });
+            const Texture* tc = &billboardTextures_["sprk-clamp"];
+            extra(tc, true, o::drawOrder({7, 0, 0, 22, -1}, 11), base + 3, [&] {
+                const float white[4] = {1, 1, 1, 1};
+                for (size_t i = 0; i + 4 <= f.glints.size(); i += 4) {
+                    const float* gl = f.glints.data() + i;
+                    const double cm[3] = {gl[0], gl[1], gl[2]};
+                    place(cm, gl[3], INFINITY, white, tc->alphaScale);
+                }
+            });
+        }
+        if (billboardTextures_.count("ospk")) {
+            const Texture* t = &billboardTextures_["ospk"];
+            extra(t, true, o::drawOrder({7, 0, 0, 24, -1}, 19), base + 4, [&] {
+                for (size_t i = 0; i + 8 <= f.fist.size(); i += 8) {
+                    const float* fi = f.fist.data() + i;
+                    const double cm[3] = {fi[0], fi[1], fi[2]};
+                    place(cm, fi[3], INFINITY, fi + 4, t->alphaScale);
+                }
+            });
         }
     }
     auto upload = [&](WGPUBuffer& buffer, uint64_t& capacity, const std::vector<float>& data, const char* label) {
@@ -689,7 +1006,18 @@ void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const doub
         const RiderFxFrame& f = *riders[r];
         const bool human = !f.cullable;
         const int k = int(r);
-        addStripDraw(g.wake, o::drawOrder(o::wake(), o::kSubmitWake), human ? 110 : 200 + k, false, &snowTextures_[56]);
+        addStripDraw(g.wake, o::drawOrder(o::wake(), o::kSubmitWake), human ? 116 : 200 + k, false, &snowTextures_[56]);
+        for (const auto& x : g.extras) {
+            EncodedDraw e;
+            e.order = x.order;
+            e.z = originZ;
+            e.id = x.id;
+            e.billboard = true;
+            e.additive = x.additive;
+            e.range = x.range;
+            e.texture = x.texture;
+            encoded_.push_back(e);
+        }
         if (human) {
             for (int s = 0; s < 3; ++s) {
                 addStripDraw(g.boost[size_t(s)], o::drawOrder(o::boost(f.boostTexture), o::kSubmitBoost), 120 + s, true, &snowTextures_[f.boostTexture]);
@@ -713,12 +1041,41 @@ void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const doub
             const int texture = f.snowFrame[size_t(i)];
             e.order = o::drawOrder(o::snow(texture), o::kSubmitSnow);
             e.z = originZ;
-            e.id = human ? 100 + i : 300 + 10 * k + i;
+            e.id = human ? 100 + i : 1000 + 20 * k + i;
             e.billboard = true;
             e.range = g.snow[size_t(i)];
             e.texture = &snowTextures_[texture];
             encoded_.push_back(e);
         }
+    }
+    if (quads) {
+        std::vector<float> data;
+        for (const auto& q : *quads) {
+            const size_t n = q.instances.size() / 12;
+            if (!n) {
+                continue;
+            }
+            auto t = quadTextures_.find(q.texture);
+            if (t == quadTextures_.end()) {
+                continue;
+            }
+            EncodedDraw e;
+            e.order = q.order;
+            e.z = clipZ(q.position);
+            e.id = q.id;
+            e.quad = quadPipeline(q.variant, q.blend);
+            e.range.first = data.size() / 12;
+            e.range.count = uint32_t(n);
+            e.texture = &t->second;
+            const size_t base = data.size();
+            data.insert(data.end(), q.instances.begin(), q.instances.end());
+            // the texture's alpha scale (As / 128: the GS-alpha export's, or 255 / 128 for the raw FX textures)
+            for (size_t i = 0; i < n; ++i) {
+                data[base + i * 12 + 7] = t->second.alphaScale;
+            }
+            encoded_.push_back(e);
+        }
+        upload(quads_, quadCapacity_, data, "set-piece quads");
     }
     std::stable_sort(encoded_.begin(), encoded_.end(), [](const EncodedDraw& a, const EncodedDraw& b) {
         if (a.order != b.order) {
@@ -729,6 +1086,65 @@ void RiderFx::prepare(const std::vector<const RiderFxFrame*>& riders, const doub
         }
         return a.id < b.id;
     });
+}
+
+void RiderFx::prepareSparkle(const std::vector<float>& sprites) {
+    sparkleCount_ = uint32_t(sprites.size() / 4);
+    if (!sparkleCount_ || !sparkle_.group) {
+        return;
+    }
+    std::vector<float> data;
+    data.reserve(size_t(sparkleCount_) * 12);
+    for (uint32_t i = 0; i < sparkleCount_; ++i) {
+        const float* p = sprites.data() + size_t(i) * 4;
+        data.insert(data.end(), {p[0], p[1], p[2], 0, 0, 0, 0, 0, 0, 0, 0, p[3]});
+    }
+    const uint64_t bytes = data.size() * 4;
+    if (bytes > sparkleCapacity_) {
+        sparkleCapacity_ = std::max<uint64_t>(bytes, sparkleCapacity_ * 2);
+        sparkleBuffer_ = gpu_->buffer(sparkleCapacity_, WGPUBufferUsage_Vertex, nullptr, "terrain sparkle");
+    }
+    wgpuQueueWriteBuffer(gpu_->queue, sparkleBuffer_, 0, data.data(), bytes);
+}
+
+void RiderFx::drawSparkle(WGPURenderPassEncoder pass) {
+    if (!sparkleCount_ || !sparkle_.group) {
+        return;
+    }
+    wgpuRenderPassEncoderSetPipeline(pass, quadPipeline(4, 1));
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, frame_, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(pass, 1, sparkle_.group, 0, nullptr);
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, sparkleBuffer_, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderDraw(pass, 6, sparkleCount_, 0, 0);
+}
+
+void RiderFx::prepareFlashes(const std::vector<float>& centres) {
+    flashCount_ = uint32_t(centres.size() / 3);
+    if (!flashCount_ || !flash_.group) {
+        return;
+    }
+    // colour 128, 128, 128, 128: Cs = the texel, As = its alpha (255 / 128)
+    std::vector<float> data;
+    for (uint32_t i = 0; i < flashCount_; ++i) {
+        const float* c = centres.data() + size_t(i) * 3;
+        data.insert(data.end(), {c[0], c[1], c[2], 1, 0, 0, 0, flash_.alphaScale, 1, 1, 1, 1});
+    }
+    if (!flashBuffer_) {
+        flashBuffer_ = gpu_->buffer(40 * 48, WGPUBufferUsage_Vertex, nullptr, "crowd flashes");
+    }
+    flashCount_ = std::min<uint32_t>(flashCount_, 40);
+    wgpuQueueWriteBuffer(gpu_->queue, flashBuffer_, 0, data.data(), size_t(flashCount_) * 48);
+}
+
+void RiderFx::drawFlashes(WGPURenderPassEncoder pass) {
+    if (!flashCount_ || !flash_.group) {
+        return;
+    }
+    wgpuRenderPassEncoderSetPipeline(pass, quadPipeline(2, 1));
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, frame_, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(pass, 1, flash_.group, 0, nullptr);
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, flashBuffer_, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderDraw(pass, 6, flashCount_, 0, 0);
 }
 
 void RiderFx::drawTrails(WGPURenderPassEncoder pass) {
@@ -765,7 +1181,15 @@ void RiderFx::drawEncoded(WGPURenderPassEncoder pass) {
     wgpuRenderPassEncoderSetBindGroup(pass, 0, frame_, 0, nullptr);
     for (const auto& e : encoded_) {
         wgpuRenderPassEncoderSetBindGroup(pass, 1, e.texture->group, 0, nullptr);
-        if (e.billboard) {
+        if (e.billboard && e.additive) {
+            wgpuRenderPassEncoderSetPipeline(pass, snowAdd_);
+            wgpuRenderPassEncoderSetVertexBuffer(pass, 0, instances_, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderDraw(pass, 6, e.range.count, 0, uint32_t(e.range.first));
+        } else if (e.quad) {
+            wgpuRenderPassEncoderSetPipeline(pass, e.quad);
+            wgpuRenderPassEncoderSetVertexBuffer(pass, 0, quads_, 0, WGPU_WHOLE_SIZE);
+            wgpuRenderPassEncoderDraw(pass, 6, e.range.count, 0, uint32_t(e.range.first));
+        } else if (e.billboard) {
             wgpuRenderPassEncoderSetPipeline(pass, snow_);
             wgpuRenderPassEncoderSetVertexBuffer(pass, 0, instances_, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderDraw(pass, 6, e.range.count, 0, uint32_t(e.range.first));

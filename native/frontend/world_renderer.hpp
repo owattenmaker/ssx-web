@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,30 @@ struct BatchOverride {
     std::vector<Mat4d> copies;
 };
 
+// a flag cloth mesh (web/set-pieces-renderer.js addFlagMesh): drawn with its hidden source batch's material
+struct FlagMesh {
+    uint32_t resource = 0;
+    size_t sourceBatch = 0;
+    // native metres (not origin-relative), uv, rgba
+    std::vector<float> positions;
+    std::vector<float> uv;
+    std::vector<float> colour;
+    std::vector<uint32_t> indices;
+    bool uploaded = false;
+    uint64_t revision = 0;
+};
+
+// a MultiSpline cable (web/set-piece-cables.js cableGeometry): per quad 4 vertices of (own end, other end, corner), origin-relative
+struct CableMesh {
+    uint32_t owner = 0;
+    std::vector<float> own;
+    std::vector<float> other;
+    std::vector<float> corner;
+    std::vector<uint32_t> indices;
+    bool visible = true;
+    std::array<double, 3> centre{};
+};
+
 // What the core says each frame (fog palette, chunk residency, pickups)
 struct WorldFrameState {
     bool fogEnabled = false;
@@ -59,6 +84,17 @@ struct WorldFrameState {
     std::vector<const RiderFxFrame*> fx;
     // world.json batch index -> its set-piece state (null: everything static)
     const std::map<size_t, BatchOverride>* batches = nullptr;
+    // the flag cloth meshes and the cables (set_pieces.hpp)
+    const std::vector<FlagMesh>* flags = nullptr;
+    const std::vector<CableMesh>* cables = nullptr;
+    // the set pieces' particles, fog puffs and halos (built for the frame's camera)
+    class SetPieceFx* setPieceFx = nullptr;
+    // the terrain sparkle, the camera tick's fog_info (null: no camera tick) and weather_info()[46] (its painter's restarts)
+    class TerrainSparkle* sparkle = nullptr;
+    // the start-gate fountains' particles (startfire.hpp: x, y, z cm, size cm, colour bytes)
+    const std::vector<double>* startfire = nullptr;
+    const std::array<float, 11>* fogInfo = nullptr;
+    float resets = 0;
 };
 
 class WorldRenderer {
@@ -102,11 +138,16 @@ private:
         std::array<double, 3> centre{};
     };
     // one draw of the frame, in three's render-list order: its object record (first instance) and projected depth
+    struct Package;
     struct Item {
         const Draw* draw = nullptr;
+        // the package whose buffers it draws from
+        const Package* package = nullptr;
         uint32_t object = 0;
         double z = 0;
         size_t id = 0;
+        // the crowd's camera flashes (drawn by the effects renderer)
+        bool special = false;
     };
     struct Package {
         WGPUBuffer vertices = nullptr;
@@ -119,6 +160,10 @@ private:
     };
     Texture loadTexture(const std::string& assetsRoot, const nlohmann::json& entry);
     Texture upload(uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, bool mips);
+    void writeLevels(WGPUTexture texture, uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, uint32_t levels);
+    // web/crowd-2d.js: the crowd textures' frames (-1: the archive's own image)
+    void loadCrowd(const std::string& assetsRoot, const std::string& code, const nlohmann::json& world);
+    void swapCrowdFrame(int frame);
     void buildPipelines();
     void ensureTargets(uint32_t w, uint32_t h);
     // three.js's render lists for a package this frame: opaque by renderOrder, depth (near first), id; transparent by renderOrder,
@@ -126,6 +171,13 @@ private:
     void collect(const Package& p, const Mat4d& vp, const Mat4d& staticModel, const WorldFrameState& state, bool world, std::vector<Item>& opaque,
                  std::vector<Item>& transparent);
     void bindPackage(WGPURenderPassEncoder pass, const Package& p);
+    // the flag cloth meshes into the frame's lists (their source batch's material and pipeline) and the cables
+    void collectFlags(const WorldFrameState& state, const Mat4d& vp);
+    static void sortItems(std::vector<Item>& opaque, std::vector<Item>& transparent);
+    void drawCables(WGPURenderPassEncoder pass, const WorldFrameState& state);
+    void buildCablePipeline();
+    // the frame uniform (the camera, the origin, the rider shadows' receiver rows) and the shadow slots
+    void writeFrame(const WorldFrameState& state, const double eye[3], const Mat4d& P, const Mat4d& V);
     // side: -1 opaque, 0 back faces, 1 front faces (three's transparent double pass)
     void drawItems(WGPURenderPassEncoder pass, const std::vector<Item>& items, int side);
     void loadPackage(Package& p, const std::string& assetsRoot, const std::string& dir, bool world);
@@ -169,6 +221,39 @@ private:
     // the object records: [0, kScrollGroups) the static world (scroll group + 1), then this frame's moved / copied batches
     static constexpr uint64_t kObjects = 8192;
     static constexpr uint64_t kObjectFloats = 20;
+    struct FlagGpu {
+        uint64_t revision = ~uint64_t(0);
+        size_t capacity = 0;
+        std::unique_ptr<Package> package;
+        Draw draw;
+    };
+    std::map<uint32_t, FlagGpu> flagGpu_;
+    struct CrowdTarget {
+        WGPUTexture texture = nullptr;
+        uint32_t width = 0, height = 0, levels = 1;
+        std::vector<uint8_t> statics;
+    };
+    std::vector<CrowdTarget> crowdTargets_;
+    std::vector<std::vector<uint8_t>> crowdFrames_;
+    int crowdFrame_ = -1;
+    // the batch index -> its draws (a flag mesh takes its source batch's)
+    std::map<size_t, const Draw*> batchDraw_;
+    struct CableGpu {
+        WGPUBuffer own = nullptr, other = nullptr, corner = nullptr, indices = nullptr;
+        uint32_t count = 0;
+    };
+    std::map<size_t, CableGpu> cableGpu_;
+    WGPURenderPipeline cablePipeline_ = nullptr;
+    WGPUBindGroupLayout cableLayout_ = nullptr;
+    WGPUBuffer cableUniform_ = nullptr;
+    WGPUBindGroup cableGroup_ = nullptr;
+    static constexpr uint64_t kFrameBytes = 336;
+    Texture shadowAtlas_;
+    Texture shadowDepth_;
+    Texture glintGrey_;
+    Texture glintBlue_;
+    WGPUSampler linearClamp_ = nullptr;
+    std::vector<std::pair<RiderRenderer*, ShadowSlot>> shadowSlots_;
     WGPUBuffer worldObjects_ = nullptr;
     WGPUBuffer skyObjects_ = nullptr;
     std::vector<float> objectData_;

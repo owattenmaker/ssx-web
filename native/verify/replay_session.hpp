@@ -3,6 +3,7 @@
 // load / play, main.js loadCourse / startRun(R), web/ai-race.js / ai-racers.js / lineup.js / character-roster.js, and the 60 Hz
 // tick of web/game-tick.js simulateInCore. Each step names the page code it mirrors. Used by the replay verifier
 // (verify_replay.cpp) and the native front end.
+#include "board_flex.hpp"
 #include "core_api.hpp"
 #include "game_rules.hpp"
 #include "js_json.hpp"
@@ -348,6 +349,8 @@ struct Npc {
 
 // The race (named Verifier: the replay verifier was its first user)
 struct Verifier {
+    // the human rider's morph parts (pv boardFlex), configured after its init_animation
+    flex::Flex humanFlex;
     // the native front end: also the presentation set-up (the environment lattice for the rider lighting)
     bool presentation = false;
     json environmentMeta;
@@ -802,6 +805,9 @@ struct Verifier {
         const std::string settingsText = jsStringify(settings);
         init_animation(jsStringify(json::parse(packetsJson)).c_str(), jsStringify(json::parse(rig)).c_str(), settingsText.c_str(),
                        reinterpret_cast<const uint8_t*>(packetsBin.data()), uint32_t(packetsBin.size()));
+        // main.js initializeRiderAnimation: the rider's morph parts (pv boardFlex, web/board-flex.js configureBoardFlex)
+        humanFlex = flex::load(assets.path(str(at(rider, "package")) + "/"), json::parse(rig));
+        flex::configure(humanFlex);
         init_race(settingsText.c_str());
         animation_use_physics(1);
         resetPhysics();

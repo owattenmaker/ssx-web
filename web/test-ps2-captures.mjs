@@ -8,6 +8,8 @@
 // Cases run in parallel (PAR=n, default: cores - 1); ONLY=name,... runs a subset.
 import fs from 'node:fs';
 import os from 'node:os';
+// pv stationSplitPs2 (SSX_PV): a gate's limits with a switch under test
+import { pv } from './pv-flags.js';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 // PS2_RUNS=dir/: gate against another capture tree, e.g. ../local/ps2-capture/runs-exact/ (ARMSX2's console-model
@@ -339,7 +341,7 @@ const cases = [
   // the restart from the record's tick field (web/peak-capture.mjs -> core game_tick_restart), as it does the rows; the page's
   // model is web/peak_world.inc. Physics exact to the end; 12472 the E station split HUD 0x2A, posted by the page's
   // web/free-ride.js (not by the comparer).
-  { name: 'allpeak/apr-start', keepCheck: true, args: ['--zoe', '--course', 'MOUNTAIN', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: 12471, why: 'All Peak Race from Continue on the whole-mountain world: physics to the end across the EBC3_E crossing\'s game-tick restart (11883, driven from the record\'s 1298C8); 12472 the E station split (HUD 0x2A), which the page posts (web/free-ride.js) and the comparer does not' },
+  { name: 'allpeak/apr-start', keepCheck: true, args: ['--zoe', '--course', 'MOUNTAIN', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: pv('stationSplitPs2') ? END : 12471, why: 'All Peak Race from Continue on the whole-mountain world: physics to the end across the EBC3_E crossing\'s game-tick restart (11883, driven from the record\'s 1298C8); 12472 the E station split (HUD 0x2A): with pv stationSplitPs2 the core posts it at the PS2\'s point (the score exact to the end), otherwise the page posts it (web/free-ride.js) and the comparer does not' },
   // The Peak 2 Race (seed MOUNTAIN2: its objectives card at Ruthless) on the same world: the first 6000 ticks (DBC2 at Ruthless;
   // the Unload into Yellow station D is at 13817). Physics exact to the end (the 1258 ground crash among the rocks: 104E70's
   // octree order). Score to the end (round 2, 2026-09-26): the PS2 collects mdl_DBC2_collecta_1001 at 1841 during a crash after

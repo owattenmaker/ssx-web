@@ -195,6 +195,12 @@
 // again after each pause (the live run notes a 'padState' event before the first tick after samples fed between ticks), so a
 // button held into the start or pressed in a pause decodes the same in the replay and the verifier. Off: a replay starts settled and
 // ignores the events, and the live run records neither.
+// mpCourseSelect (mp pre-race agent, docs/multiplayer.md "Lobby course"): the lobby's Course row opens the Single Event selector
+// (Select Peak / Mode / Event, web/fe-event-select.js lobby mode) for the host; the pick only names the lobby's course, every page loads
+// it when the race starts (web/net/mp-game.js). Off: the row steps to the next course and every page loads it in the lobby at once.
+// mpPreRace (mp pre-race agent, docs/multiplayer.md "Pre-race"): an online race starts as a Single Event does (WS10 intro list 4 -> 5 with
+// every racer at its grid slot, the objectives card over the gate idle, Continue, then WS3's 3-2-1), the intro started on one server
+// instant and the countdown on the server's GO once every racer pressed Continue (web/net/mp-game.js, web/server/mp-server.mjs preRace).
 // coreRiderManager (core-migration agent, docs/core-migration.md slice M3): a race's computer riders run on the core's rider manager
 // (web/rider_manager.cpp: 0x128AF0's stages, the shared RNG cursor, the rider pairs, the shared world, the FX passes) instead of
 // web/ai-racers.js's choreography; the event set-up stays in ai-racers.js. Needs a core with manager_configure. Off: ai-racers.js.
@@ -212,6 +218,13 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// nisOnTicks (core-migration agent, docs/core-migration.md M6; a behaviour change, approved by the user): the NIS director
+// (web/cutscenes.js) steps one whole tick per game update (0x278720 via 0x230BEC: the script clock +0x28 by +0x24 = 1.0, no dt),
+// at the update's NIS point (main.js nisStart), or on whole 60 Hz ticks of frame time when no game update runs; its feeds (the held
+// rider, the section point = the previous tick's eye) on those ticks. Off: frame time (dt x 60 ticks a second).
+// stationSplitPs2 (core-migration agent, docs/core-migration.md "B"; a behaviour change): a peak run's station split at the PS2's point,
+// the end of the tick after the Load trigger's (22D088 -> WS10 enter -> its exit 235868 -> 238510 two updates on), with the race clock
+// as int(f32(clock) x f32 1/60) (0x23B65C); the page posts it one tick early today. Implies the core's station decisions (coreWorldEvents).
 // coreCareerWorld (core-migration agent, docs/core-migration.md M5f): the world's career events in the career kernel (web/career.js
 // markCollected: the collect bit, its cash, the explore goal; web/big-challenges.js challengeStatus: the status word, the explore goal).
 // Needs coreCareerCascade (it draws through the cascade); off, or without it: the JS versions.
@@ -235,6 +248,10 @@
 // in controller 5, the only one whose grab lifecycle reads it. Off: the boost word, as before.
 // coreTick (core-migration agent, docs/core-migration.md slice M2): the game tick's core sequence (web/game-tick.js simulate) runs in
 // the core as tick_begin / tick_end (web/game_tick.inc). Off: game-tick.js makes each core call itself.
+// rivalStartAudio (speech-speaker agent, docs/backcountry.md "HUD, speech, music, FX"): the backcountry rolling start runs 2872A8
+// (main.js -> game-audio.js rivalStart) on the first frame the race phase is 5 without the countdown 4 (the race now reaches 5
+// directly, so the old phase 3 -> 5 edge never came: no song event 0, BC_Challenge or artist intro), and only an online race counts
+// as multiplayer (0x535C11 == 2; mpGame always exists, so every offline rival start took the Radio BIG intro path). Off: as before.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -296,11 +313,16 @@ export const PV_DEFAULTS = Object.freeze({
   coreCareerCascade: true,
   coreCareerWorld: true,
   coreWorldEvents: false,
+  stationSplitPs2: false,
+  nisOnTicks: false,
   coreCareerLodge: true,
   coreRules: true,
   coreTick: true,
   onlineTimeAttack: false,
-  ghostRiders: false
+  ghostRiders: false,
+  mpCourseSelect: true,
+  mpPreRace: true,
+  rivalStartAudio: false
 });
 const overrides = new Map();
 function fromQuery() {

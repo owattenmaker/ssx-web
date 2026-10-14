@@ -424,7 +424,7 @@ function padFrame(c) {
   // course events (finish -> camera 0x162258) precede the camera update, as in main.js
   const finishedNow = coreTick ? f32(core._tick_progress(0, 0), 96)[73] : (core._race_end(), 0);
   // (pv coreWorldEvents: the station decisions after race_end, as web/free-ride.js tick)
-  if (peakRunEvents && process.env.PEAK_EVENTS_AT !== 'start') core._peak_world_apply_events();
+  if (peakRunEvents) core._peak_world_apply_events();
   if (globalThis.__beforeSectionPass) { const f = globalThis.__beforeSectionPass; globalThis.__beforeSectionPass = null; f(); } // --station-hold with STATION_HOLD_EARLY
   if (pageSequence) core._fx_pass(-1);
   if (stageSnaps || peakWorld || pageSequence) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)
@@ -487,16 +487,18 @@ if (args.includes('--weather') && core._set_world_visual_state) { const map = JS
 // With --course MOUNTAIN[x] (the All Peak runs / the Peak 2 Race on the whole mountain) the seed is the objectives card's own state
 // (tools/export_peak_seed.py --world), so only the words those frames leave are seeded, as with --event.
 if (args.includes('--peak-run')) { if (!(eventMode || peakMode) || !core._peak_run_start_seed || !core._reset_route_seed) throw new Error('--peak-run needs --event (or a streamed world) and a core with peak_run_start_seed/reset_route_seed'); core._peak_run_start_seed();
+  // the page's run start (web/free-ride.js afterReset): the race clock restarted in Race (PEAK_CLOCK=0: not, the comparer's old start)
+  if (process.env.PEAK_CLOCK !== '0') core._race_clock_restart?.();
   const w = core._malloc(52); for (let k = 0; k < 13; k++) core.HEAPF32[(w >> 2) + k] = dv.getFloat32(32 + 0x490 + 4 * k + (k >= 3 ? 4 : 0) + (k >= 6 ? 4 : 0) + (k >= 9 ? 4 : 0) - 0x100, true); core._reset_route_seed(w); core._free(w); }
 // pv coreWorldEvents (docs/core-migration.md "B"): a whole-mountain peak run's station splits from the core (peak_run_setup with the
 // tier row of a career without that run's medal, web/peak-run.js peakSetup), applied where the page applies them (after race_end)
-if (args.includes('--peak-run') && peakMode && pv('coreWorldEvents') && core._peak_run_setup && core._peak_world_apply_events) {
+if (args.includes('--peak-run') && peakMode && (pv('coreWorldEvents') || pv('stationSplitPs2')) && core._peak_run_setup && core._peak_world_apply_events) {
   const runMode = { MOUNTAIN: 8, MOUNTAIN2: 7, MOUNTAINJ: 11 }[course];
   if (runMode !== undefined) {
     const { peakSetup } = await import('./peak-run.js');
     const careerRules = JSON.parse(fs.readFileSync(new URL('public/assets/CAREER/career.json', import.meta.url), 'utf8')).rules;
     const st = peakSetup(careerRules, runMode, Number(process.env.PEAK_STORED_MEDAL ?? -1));
-    core._peak_run_setup(1, 1, st.time ? 1 : 0, ...st.splits.map((v) => v | 0));
+    core._peak_run_setup(1 | (pv('stationSplitPs2') ? 2 : 0), 1, st.time ? 1 : 0, ...st.splits.map((v) => v | 0));
     peakRunEvents = true;
   }
 }
@@ -720,7 +722,6 @@ for (let i = 0; i + 1 < records.length; i++) {
   }
   globalThis.__visualSyncWords = syncVisual >= 0 && core._visual_rng_words ? Array.from({ length: 6 }, (_, k) => dv.getUint32(i * RECORD + captureManifest.layout.watch_offset + syncVisual + 4 * k, true)) : null;
   let cmd, web;
-  if (peakRunEvents && process.env.PEAK_EVENTS_AT === 'start') core._peak_world_apply_events();
   peakWorld?.beforeTick(i); // the capture's streaming rows and path-bank events for this tick
   if (stationHold) { // this tick's check of builtin 68, before its section pass
     const q = (off) => dv.getFloat32((i + 1) * RECORD + 32 + off - 0x100, true), next = i + 1 < records.length ? [q(0x110), q(0x114), q(0x118), q(0x1B0), q(0x1B4)] : null;

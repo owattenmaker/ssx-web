@@ -35,6 +35,24 @@ import { pv } from '../pv-flags.js';
 const SEND_EVERY = 3;            // ticks: 20 Hz
 const BACKGROUND_MS = 50;        // hidden-tab sim cadence
 const HELD_FRAME_MS = 250;       // no animation frame for this long: the worker drives the simulation
+// pv mpPreRace: the online card closes itself after 1200 ticks (20 s): overlay 8's create 0x1FBBD8 sets comm+0x64 = 1200, the comm tick
+// 0x257750 counts it down, the card's update 0x1FBCE0 closes it at 0 (the PS2 restarts it on each received message; the port does not)
+const CARD_AUTO_MS = 20000;
+// the run starts this long before the GO instant (startRun's work); holding() keeps the countdown until the instant itself
+const START_LEAD_MS = 150;
+
+// pv mpPreRace: the intro's shared draw (script choice, alternatives; web/cutscenes.js resolve) from the race seed: the same words on
+// every page (port-only: the PS2 draws BXrand 0x3177F0 on its presentation stream 0x4FF018, which no two machines share)
+function seededRandom(seed) {
+  let a = (seed ^ 0x9e3779b9) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export function createMpGame({
   T,
@@ -63,7 +81,8 @@ export function createMpGame({
     rider: rider().id,
     pkg: rider().package,
     base: rider().kind === 'cheat' ? rider().base || 'zoe' : null,
-    token: sessionToken()
+    token: sessionToken(),
+    preRace: pv('mpPreRace')
   });
   // pv onlineTimeAttack: time-attack sessions on the same connection (web/net/ta-game.js; web/career-ui.js play / finish ask it)
   const timeAttack = pv('onlineTimeAttack') ? createTimeAttack({ ui, client, scene: { T, scene, load, loader, origin, getCore, camera, rider } }) : null;
@@ -103,7 +122,9 @@ export function createMpGame({
     lineups = null,
     gridScales = null,
     seedSet = false,
-    starting = false;
+    starting = false,
+    // pv mpPreRace: this race's pre-race (null without it): the intro gate, the card, the start timer
+    pre = null;
 
   // The local rider in the lobby profile: character, package, a cheat skin's base rider, the worn outfit
   // (web/wardrobe.js outfitKey: the committed item ids, 'sam:<package>', or null for the default outfit) and the
@@ -172,11 +193,22 @@ export function createMpGame({
     joinLobby(id) {
       client.join(id);
     },
+    // pv mpCourseSelect: the host's pick in the Single Event selector (web/mp-ui.js): the lobby's course, loaded at the start
+    chooseCourse(code) {
+      if (client.isHost && !client.state.lobby?.race && code) client.course(code);
+    },
     cycleCourse() {
-      const list = (ui.courses || []).filter((c) => c.ready !== false);
+      // one row per course: a backcountry's Jam entry (same code) after its Rival Time entry kept the cycle on Happiness for good
+      const list = (ui.courses || []).filter((c, k, all) => c.ready !== false && all.findIndex((x) => x.code === c.code) === k);
       const i = list.findIndex((c) => c.code === client.state.lobby?.course);
       const next = list[(i + 1) % list.length];
       if (next) client.course(next.code);
+    },
+    // pv mpPreRace: the card's Continue (web/mp-ui.js 'mp-card')
+    continueCard: () => continueCard(),
+    // the card's state for web/mp-ui.js: {ready, openedAt}, or null outside a pre-race card
+    get card() {
+      return pre && !pre.started ? { ready: pre.ready, openedAt: pre.cardAt } : null;
     },
     // Pause > Quit in an online race: DNF, back to the lobby.
     quitRace() {
@@ -208,18 +240,24 @@ export function createMpGame({
     }
   };
 
+  // The URL a reload would use for a lobby's course (?course&rider[&base]&online=1&lobby: the reconnect token keeps the seat then).
+  const lobbyUrl = (code, id) => {
+    const url = new URL(location.href);
+    url.search = '';
+    url.searchParams.set('course', code);
+    url.searchParams.set('rider', rider().id);
+    if (rider().kind === 'cheat') url.searchParams.set('base', rider().base || 'zoe');
+    url.searchParams.set('online', '1');
+    url.searchParams.set('lobby', id);
+    return url;
+  };
   // Lobby on another course: load it in the page while still in the lobby (main.js switchCourse; the socket and the seat stay).
-  // The URL is the one a reload would use (?course&rider[&base]&online=1&lobby: the reconnect token keeps the seat then).
+  // pv mpCourseSelect: the lobby only names the course; the start loads it (below).
   client.on('lobby', (lobby) => {
     if (!lobby) return;
-    if (lobby.course !== (pendingCourse() ?? course().code) && !racing && !lobby.race) {
-      const url = new URL(location.href);
-      url.search = '';
-      url.searchParams.set('course', lobby.course);
-      url.searchParams.set('rider', rider().id);
-      if (rider().kind === 'cheat') url.searchParams.set('base', rider().base || 'zoe');
-      url.searchParams.set('online', '1');
-      url.searchParams.set('lobby', lobby.id);
+    const loadNow = !pv('mpCourseSelect') || !switchCourse;
+    if (loadNow && lobby.course !== (pendingCourse() ?? course().code) && !racing && !lobby.race) {
+      const url = lobbyUrl(lobby.course, lobby.id);
       if (switchCourse) {
         leaveRace();
         switchCourse(url);
@@ -238,10 +276,79 @@ export function createMpGame({
   client.on('welcome', (m) => {
     const r = m.race;
     if (r && !r.finished && !(racing && race?.id === r.id)) client.finish(0, true, 'reload');
+    // pv mpPreRace: a reconnect inside the pre-race catches up with the intro / GO it missed
+    if (r && pre && racing && race?.id === r.id) {
+      if (r.introAt && !pre.introLocal) onIntro(r.introAt);
+      if (r.goAt && !goLocal) onGo(r.goAt);
+    }
   });
+
+  // pv mpPreRace (docs/multiplayer.md "Pre-race"). The Single Event sequence: the load, world state 10's intro lists (0x27AAF8 with
+  // table 0x481E68: [4 start hut, flags 3] -> [5 gate idle]; WS1 phase 3 waits for the idle step), the card over the idle (WS2 enter
+  // 0x236BB0, overlay 8 '40race_pre'), Continue (WS2 exit 0x236C88 -> 0x236CD8 stops the list: main.js startRun), then WS3's 180-tick
+  // countdown (0x234AD0 / 0x113D38). Port-only: the intro starts on the server's instant once every page has loaded, and the countdown
+  // on the server's GO once every racer has pressed Continue.
+  function onIntro(at) {
+    if (!pre || pre.introLocal) return;
+    pre.introLocal = client.localTimeOf(at);
+    clearTimeout(pre.introTimer);
+    pre.introTimer = setTimeout(pre.release, Math.max(0, pre.introLocal - Date.now()));
+  }
+  function openCard() {
+    if (!pre || pre.started) return;
+    if (pre.goPending) {
+      beginRace();
+      return;
+    }
+    pre.cardAt = performance.now();
+    ui.set('mp-card');
+    ui.index = 0;
+    // a course without intro lists (a backcountry): the card over the ready state, as the Single Event's rival card (main.js readyView)
+    if (!ui.cutscene?.active) ui.cb.readyView?.();
+    ui.sync?.();
+    clearTimeout(pre.cardTimer);
+    pre.cardTimer = setTimeout(continueCard, CARD_AUTO_MS);
+  }
+  // the card's Continue (or its 20 s auto-continue): ready, then 'Waiting for other player...' until the GO
+  function continueCard() {
+    if (!pre || pre.ready || !racing) return;
+    pre.ready = true;
+    clearTimeout(pre.cardTimer);
+    client.raceReady();
+    ui.sync?.();
+  }
+  // the GO instant: the card closes and the run starts (the countdown waits in holding() until the instant)
+  function beginRace() {
+    if (!pre || pre.started || !racing) return;
+    if (ui.screen === 'loading') {
+      pre.goPending = true;
+      return;
+    }
+    pre.started = true;
+    pre.ready = true;
+    clearTimeout(pre.cardTimer);
+    ui.set('game');
+    startRun();
+  }
+  function onGo(at) {
+    goLocal = client.localTimeOf(at);
+    if (race) race.goAt = at;
+    if (!pre) return;
+    clearTimeout(pre.startTimer);
+    pre.startTimer = setTimeout(beginRace, Math.max(0, goLocal - Date.now() - START_LEAD_MS));
+  }
+  client.on('intro', (at) => onIntro(at));
 
   // Host started: load the event (original loading screen), then report loaded and wait for the shared GO time.
   client.on('start', async (r) => {
+    // pv mpCourseSelect: the race's course loads now, under the load screen the event load then takes over (main.js afterSwitch keeps it
+    // while `starting`)
+    const code = r.course || client.state.lobby?.course;
+    if (pv('mpCourseSelect') && switchCourse && code && code !== (pendingCourse() ?? course().code)) {
+      starting = true;
+      leaveRace();
+      switchCourse(lobbyUrl(code, client.state.lobby?.id ?? ''));
+    }
     if (courseReady) {
       starting = true;
       try {
@@ -253,6 +360,11 @@ export function createMpGame({
     leaveRace();
     race = { ...r, slot: client.state.slot };
     racing = true;
+    // pv mpPreRace: the host asked for the pre-race and this page plays it (else the server counts this page ready once loaded)
+    if (r.preRace && client.preRace) {
+      pre = { ready: false, started: false, goPending: false, introLocal: 0, cardAt: 0, entries: [], work: null, release: null };
+      pre.gate = new Promise((resolve) => (pre.release = resolve));
+    }
     if (ui.mpUI) ui.mpUI.onlineResults = true;
     goLocal = 0;
     reportedFinish = false;
@@ -278,6 +390,7 @@ export function createMpGame({
           return { slot: p.slot, name: p.name, entry: resolved, root: resolved.root || `/assets/${resolved.package}/` };
         })
       );
+      if (pre) pre.entries = entries;
       // opponent-riders.js loads <root><package>/: the package is given as its full folder (default or outfit).
       renderer = await createOpponentRiders({
         T,
@@ -311,6 +424,26 @@ export function createMpGame({
         return null;
       });
     })().catch((e) => console.warn('Online riders unavailable', e));
+    if (pre) {
+      // the load screen holds until the shared intro instant (reported loaded once this page's own load has settled); main.js cb.intro
+      // then plays the intro with every racer and calls next at the gate idle
+      const p = pre;
+      p.work = work;
+      ui.loadEvent(
+        () => {
+          if (!racing || race?.id !== r.id || pre !== p) return;
+          openCard();
+        },
+        [work],
+        {
+          hold: () => {
+            if (racing && race?.id === r.id) client.loaded();
+            return p.gate;
+          }
+        }
+      );
+      return;
+    }
     ui.loadEvent(() => {
       if (!racing || race?.id !== r.id) return;
       ui.set('game');
@@ -318,10 +451,7 @@ export function createMpGame({
       client.loaded();
     }, [work]);
   });
-  client.on('go', (at) => {
-    goLocal = client.localTimeOf(at);
-    if (race) race.goAt = at;
-  });
+  client.on('go', (at) => onGo(at));
   client.on('clock', () => {
     if (race?.goAt) goLocal = client.localTimeOf(race.goAt);
   });
@@ -408,6 +538,13 @@ export function createMpGame({
 
   function leaveRace() {
     stopTicker();
+    if (pre) {
+      clearTimeout(pre.cardTimer);
+      clearTimeout(pre.startTimer);
+      clearTimeout(pre.introTimer);
+      pre.release?.();
+      pre = null;
+    }
     // Back to the rider's own grid seed (npc_gameplay.inc: clearing restores the settings seed init_animation installed).
     const c = getCore();
     if (seedSet && c?._human_grid_seed) {
@@ -508,6 +645,28 @@ export function createMpGame({
     },
     get pairs() {
       return pairNet?.counts ?? null;
+    },
+    // pv mpPreRace (main.js cb.introPrepare / cb.intro): this race plays the online intro before the card
+    get preRace() {
+      return !!pre && racing && !pre.started;
+    },
+    // the intro's cast: every racer in its slot (the same on every page: race rider k = slot k, humans = slots 0 and 1, as the PS2's
+    // two players), after the other racers' entries are in (preRaceWork)
+    introRacers() {
+      if (!race) return [];
+      return [...race.players]
+        .sort((a, b) => a.slot - b.slot)
+        .map((p) => ({
+          slot: p.slot,
+          name: p.name,
+          entry: p.slot === race.slot ? rider() : (pre?.entries.find((e) => e.slot === p.slot)?.entry ?? null)
+        }));
+    },
+    get preRaceWork() {
+      return pre?.work ?? null;
+    },
+    introRandom() {
+      return seededRandom(race?.seed >>> 0);
     },
     aiAllowed() {
       // pv onlineTimeAttack: main.js asks this right before an event's computer-rider lineup is prepared, on whichever course's race

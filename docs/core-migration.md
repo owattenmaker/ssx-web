@@ -350,6 +350,28 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   off, indexes -1 .. past the table): identical with every kernel switch off / on / after a kernel failure; the collect / challenge /
   career node tests and the round trips with the switch.
 
+## B: the peak world's station decisions (pv coreWorldEvents, pv stationSplitPs2)
+
+- web/peak_world.inc `peak_run_setup(on, active, time, s0..s4)` (web/free-ride.js at the world start and every run start, with
+  web/peak-run.js peakSetup's tier row) and `peak_world_apply_events()` (the end of `peak_world_tick`; alone in a capture comparison
+  that drives the rows): the station decisions free-ride.js drainEvents made, made in the core. A booth / lodge door (builtin 68
+  actions 3 / 4) ends a running Big Challenge (236250 -> 30B7F8: mission_world_session 0); a peak run's Load into a station (17..21)
+  posts the next split of the tier row for 5 s (0x2A time, 0x2B points; a zero split shows nothing, the counter advances anyway). The
+  events stay queued for the page's cutscenes, prompts and maps.
+- pv coreWorldEvents (on bit 0) keeps the page's point and inputs exactly (the end of the Load's tick; Math.round(raceInfo[0] x 60)).
+- pv stationSplitPs2 (on bit 1; a behaviour change): the PS2's point and clock (local/core-migration/decomp/station-split.md). The Load
+  is in update A's rider pass (121818 -> 30A060 -> builtin 68 -> 22D088: streamer +0x1B4 = 4); update A+1's streamer pass 22D8D8
+  case 4 requests world state 10 (231250) and 230F40 enters it; update A+2's 230F40 runs WS10's update and its exit 235868 ->
+  238510 -> 23B5F8 / 23C560 (0x235934), before that update's rider manager. In tick terms the split posts at the end of the tick
+  after the Load's tick, after that tick's 117C28 aging (the slot's clock reads 0 at the next sample), with
+  int(f32(C+0xC) x f32 0.016666668) (0x23B65C; C+0xC the race clock before the next increment). The page posted it one tick early.
+- The comparer (web/compare-ps2-capture.mjs --peak-run on the whole mountain) restarts the race clock as the page's run start does
+  (race_clock_restart; PEAK_CLOCK=0: the old start) and, with either switch, drives the core's decisions after race_end.
+- Proof: allpeak/apr-start (the E station split) with SSX_PV=stationSplitPs2 on core12: the score exact to the end (13999 / 13999;
+  the gate's limit is END with the switch, 12471 without); p2r-start, apj-start, peak1-race-start exact both ways.
+- **Unconfirmed: the points split (0x2B, 23C560).** No capture has a points-mode peak run reaching a station, so its value
+  (the page's score - split x 100) and its clock are not checked against the PS2; its timing follows the same 235868 path.
+
 ## Native core
 
 A native build of the course core (native/build-core-native.sh -> local/native-core: clang, the host's architecture, the sources of

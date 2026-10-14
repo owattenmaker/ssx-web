@@ -74,8 +74,9 @@ extracted game data from `web/public` second, plus `/mp` (WebSocket) and `/mp/st
 2. **Create Lobby** (current course). **Copy Invite Link** copies `…/?lobby=<ID>`; opening it goes straight into the
    lobby. The lobby list shows every lobby; a racing lobby can be joined and seats you for its next race.
 3. In the lobby: Ready, the host's **Course** (everyone's page loads the course in place, 2026-09-25: the socket and the
-   seat stay, the URL becomes `?course=<code>&rider=..&online=1&lobby=<ID>`; docs/course-switch.md "Online"),
-   **Chat** (optional, rate limited), **Start Race**.
+   seat stay, the URL becomes `?course=<code>&rider=..&online=1&lobby=<ID>`; docs/course-switch.md "Online"; with
+   pv `mpCourseSelect` the row opens the Single Event selector instead and nothing loads until the start, see
+   **Lobby course** below), **Chat** (optional, rate limited), **Start Race**.
 4. Start: every racer loads the event behind the original loading screen (the remote racers' models, their effect
    puppets and lighting included), reports loaded, and the server sends one GO time (server clock). The countdown is
    held until that instant, so all countdowns run together (backcountry events have none: a rolling start at GO). The
@@ -88,6 +89,93 @@ extracted game data from `web/public` second, plus `/mp` (WebSocket) and `/mp/st
    finished racers' times and 0x122D78 estimates for racers still on course, updating as they finish. The server's
    final order replaces the estimates once every racer finished / is DNF, or 90 s after the first finisher
    (then the rest are DNF), or 15 min after GO. **Back to Lobby** returns to the lobby for the next race.
+
+With pv `mpPreRace` the start runs a Single Event's pre-race (the intro with every racer, the card, Continue) before the GO;
+see **Pre-race** below.
+
+## Lobby course (pv mpCourseSelect, 2026-10-14)
+
+The field report: "clicking Course loads everything and puts you back in the lobby; you can't select a different course."
+Cause (by design since 2026-09-25, not a state bug): the row called `cycleCourse()`, which stepped to the next entry of
+`ui.courses`, and every page's `client.on('lobby')` then loaded that course in place (`switchCourse`, load screen, back to
+`mp-lobby`). One click was one full load on every page. Also, the backcountry's two entries (Happiness, Happiness Jam: one code)
+kept the cycle on Happiness for good, so the courses after it were unreachable. `cycleCourse` now steps once per course code
+(this fix is live without the switch).
+
+With the switch on, the host's Course row opens the original Single Event selector (`web/fe-event-select.js` `openLobby`: Select
+Peak, Select Mode, Select Event; docs/characters.md "Single Event track selector"). The cursor starts on the lobby's course. Cross
+on an event names the lobby's course (`{t:'course'}`, the others see it in the lobby), and Back on Select Peak returns to the lobby.
+Rows the online race cannot hold are listed but not playable: the peak runs, as in Single Event, and a backcountry's Jam row (its
+Rival Time row picks the same course). The player's own remembered Single Event choice is left alone. Nothing loads in the lobby.
+The race's course (`start.race.course`) loads at the start, under the load screen the event load then takes over (`mp-game.js`
+start, `session.starting`). Mixed pages work both ways: a page without the switch still loads the lobby's course when the lobby
+changes.
+
+The online lobby itself has no PS2 counterpart (the disc's online play is two-player challenges from EA's lobby screens, see
+below), so only the course list is the game's.
+
+## Pre-race (pv mpPreRace, 2026-10-14)
+
+Field report: "no pre-flight screen once the course loads, it just drops you into the start". Before this, `cb.introPrepare` /
+`cb.intro` skipped the intro in online races, and the start ran `startRun` right after the load; `holding()` held the countdown
+until the GO.
+
+**PS2 rules (recompiled code / ssx3-decomp asm; [N] = from notes only):**
+
+| Step | Address | Rule |
+|---|---|---|
+| load | 0x22F544 (cGame_load) | pushes WS10, ticks the world states 0x230F40 under the load screen until WS10 is ready; load screen enter 0x245418: 99QPEvent, or 102MPMatch when the game type 0x535C11 == 2 |
+| intro lists | WS10 pre-enter 0x234F40 -> 0x27AAF8(nis, 0) | table *(0x445488 + 4 x game type): CTM 0x481E48 [2,0][3,3][5,0]; Single Event and Multi Play 0x481E68 [4 start hut, flags 3 (skippable)][5 gate idle]; online flag 0x534B30 set: 0x481E80 [4,3] only (no idle) |
+| intro wait | WS10 update 0x2357F8, WS1 update 0x2343B0 phase 3 | the list must reach its kind-5 (idle) step or stop; grid placement 0x1289F0; then WS2 |
+| script choice | ScriptChoice 0x27B0C0 | masks, least played (nis+0x530), BXrand 0x3177F0 % n on the presentation stream 0x4FF018 |
+| card | WS2 enter 0x236BB0 (context 1), 0x20A8F8(2): race -> overlay 8 '40race_pre', Multi Play freestyle -> 0x15 '50multifs_pre' | Cross: command 1 -> 2 -> WS2 +8 = 1 [N for the chain]; exit 0x236C88 -> 0x236CD8 stops list 0, race camera, race audio 0x2871B0 |
+| online card | overlay 8 create 0x1FBBD8: comm+0x64 = 1200; comm tick 0x257750; card update 0x1FBCE0 | the card closes itself after 1200 ticks (20 s); a received message restarts the count (0x25801C) |
+| waiting | 0x258CB0 | formats kT_OVRCMNWaitPlayer "Waiting for other player..." (0x0BA409E2) and sends it to the 'hud' screen as command 14 (0x1EC2A0: text at +0xA48, flag 0x40000; command 15 clears); cOVStateHUD1P_onRender2D 0x1EC810 draws it with 0x1F2DB0 in FEFONT (+0x428) at HUD descriptor 63: centred on (320, 270), scale 0.7, yellow, wrapped at 360. When the comm code calls 0x258CB0 is not traced |
+| countdown | WS3 enter 0x234AD0, update 0x234C68; 0x113D38 C+0x1C = 180 | 180 ticks, 0x29C420 each 60, then StartgateOpen, GO, WS4 |
+
+The disc's online mode (game type 2 + 0x534B30, EA dirtysock, FE screens 230online_main_menu, 231lobby_menu, 233QuickPlayPopup,
+240challenge_popup...) is two-player head to head from challenges. No all-players-ready handshake before the countdown was
+found (the comm packet handler 0x257E98 is not traced), so the shared ready is port-only.
+
+**Port sequence** (`web/net/mp-game.js`, `web/mp-ui.js` `mp-card`, `web/server/mp-server.mjs` `maybePreRace`):
+
+1. The host's page sends `{t:'start', preRace:true}`; the race carries `preRace: true`.
+2. Each page loads under the load screen. Once its own load has settled it reports `loaded`, and the load screen holds
+   (`ui.loadEvent` `hold`) until the server's intro instant. The server sends `{t:'intro', at}` (1.5 s ahead) once every racer
+   has loaded, or after 45 s; the late racers are DNF 'late', as before.
+3. The intro: the Single Event / Multi Play lists (0x481E68): the start hut (skippable with Cross), then the gate idle. The cast is
+   the same on every page: race rider k = the racer of slot k, humans = slots 0 and 1, no computer riders. The script and its
+   track alternatives are drawn from the race seed (`seededRandom`, no play counts), so every page plays the same script. This is
+   port-only: the PS2's stream is per machine. The online table 0x481E80 (no idle) is not used, because what the PS2 shows under
+   its card then is not traced. A course without intro lists (backcountry) has no intro, and its card lies over the ready state
+   (`readyView`, as the Single Event rival card; it uses the racer's own online grid slot).
+4. The card at the idle: overlay 8 '40race_pre' (`results-lui.js raceCard`), with the event, the Single Event round's objective,
+   the racers in slot order (this page's in the human colour) and Continue. It holds the idle with context 1 and takes input from
+   phase 5, as `ctm-objectives` does. The subtitle 'Online' (0x0012F325) is the port's choice. Continue, or the PS2 online card's
+   own auto-continue after 20 s, sends `{t:'ready'}`. The card then closes, and "Waiting for other player..." stays over the idle
+   as the PS2's HUD line (descriptor 63, `trick-hud.js text`).
+5. The server sends `{t:'go', at}` (2.5 s ahead) once every racer is ready. A page 150 ms before the GO starts its run
+   (`startRun`: the NIS stops, the race camera, as WS2's exit). `holding()` holds the countdown until the instant, so the 3-2-1
+   runs together everywhere. A GO that arrives under the load screen starts the run when it closes.
+
+**Rules for pages from before the switch:** a racer whose `hello` did not announce `preRace: true` counts as ready once it has
+loaded (it rides the old start: gate, held countdown). A racer not ready 60 s after the intro instant (`MP_READY_TIMEOUT_MS`: a
+hidden tab, a stuck page) no longer holds the GO back; its page starts from its card on the GO. Racers already DNF (left, late)
+hold nothing back. A host without the switch never sends `preRace`, so the server keeps the old start (loaded -> GO); the
+server half is inert until a host turns it on. A reconnect inside the pre-race gets `introAt` / `goAt` in its `welcome`.
+
+**Checked:**
+- `test-mp-prerace.mjs` (server, node clients): the intro waits for every load, no GO while a card is open, an old page is ready on
+  its load, the ready timeout, a racer leaving on its card, a host without the switch (no intro).
+- `PAGE_PV=mpPreRace,mpCourseSelect MP_PRERACE=1 node test-mp-page.mjs` (two pages, cutscenes on, two races each):
+  - Chrome + Chrome on ARA1: the same script #89 `ra_sgb_var1` on both pages, intro start spread 7-11 ms, the game start within 2 ms.
+    Player 1's card auto-continued after 22 s; both countdowns ran from the same GO.
+  - Both pages bind the same racers in the start hut: actor 16 = Zoe (slot 0), 17 = Mac (slot 1), with models; 18..21 empty (no
+    racer in slots 2..5). The gate idle #73 `ra_sgb_static` has no actors in its data (a camera and cuts only), so the hut under the
+    card is empty, as in a Single Event.
+  - Chrome + WebKit (`MP_WK_TIMER=1 ... --webkit`, `MP_PICK=BRA2`): spread 11-14 ms.
+  - ABC1 (no intro: the card over the ready state, rolling start) in Chrome + Chrome.
+- Screenshots: local/mp-prerace/shots-pre*/.
 
 ## Riders: any character, skin and outfit
 
@@ -349,9 +437,9 @@ bound (a simulated run); only a server-side simulation of each rider would.
 | `web/server/records.mjs`, `web/server/replay-file.mjs` | Online course records and their replays (pv onlineRecords, docs/online-records.md); off without `MP_RECORDS_DIR`. |
 | `web/net/remote-fx.js`, `web/fx_puppet.inc` | Remote riders' effects: FX records, puppet cores, effect renderers. |
 | `web/net/mp-game.js` | Game glue (main.js hooks), results rows, hidden-tab ticker, race clock pace. |
-| `web/mp-ui.js` | Lobby screens and the online Single Event Results. |
+| `web/mp-ui.js` | Lobby screens, the pre-race card (`mp-card`, pv mpPreRace) and the online Single Event Results. |
 | Core exports | `rider_skin_scale`, `race_world_pair_disable`, `race_world_pair_respond`, `shade_external_rider_lighting`, `fx_recording`, `fx_records`, `fx_record_size`, `fx_puppet_reset`, `fx_puppet_step`, `pickup_revoke` (+ `OriginalPairCallbacks::attackHit`, `OriginalRiderPairSystem::respondToAttack`). None changes single-player / AI behaviour (capture gates exact). |
-| Tests | `test-mp-grid.mjs` (grid spots per slot, scale and stance), `test-mp.mjs` (server end to end), `test-remote-riders.mjs` (packets, bit-exact palettes, receiver), `test-mp-pairs.mjs` (rider vs rider over a link, attack reactions), `test-mp-fx.mjs` (effects replay), `test-mp-latency.mjs` (contacts at 50/100/200 ms vs zero latency), `test-mp-pickups.mjs` (pickup arbitration), `test-mp-plausibility.mjs` (finish checks: real runs and forgeries). |
+| Tests | `test-mp-grid.mjs` (grid spots per slot, scale and stance), `test-mp.mjs` (server end to end), `test-mp-prerace.mjs` (the pre-race protocol), `test-mp-page.mjs` (two pages; `MP_PICK`, `MP_PRERACE`), `test-remote-riders.mjs` (packets, bit-exact palettes, receiver), `test-mp-pairs.mjs` (rider vs rider over a link, attack reactions), `test-mp-fx.mjs` (effects replay), `test-mp-latency.mjs` (contacts at 50/100/200 ms vs zero latency), `test-mp-pickups.mjs` (pickup arbitration), `test-mp-plausibility.mjs` (finish checks: real runs and forgeries). |
 
 ## Known limits
 

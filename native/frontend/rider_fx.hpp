@@ -41,8 +41,29 @@ struct RiderFxFrame {
     // 8 floats per particle; the emitter's current flipbook texture
     std::array<std::vector<float>, 10> snow;
     std::array<int, 10> snowFrame{};
+    // impact_fx_info / impact_fx_sprites (web/impact-fx-renderer.js): sparks (9 floats), glints (4), grind chunks (8), the fist
+    // sparkle (8) and the chunks' tmb frame
+    std::vector<float> sparks, glints, chunks, fist;
+    int chunkFrame = 14;
     // the core's buffers (web/board-trail.js, wake-renderer.js, snow-renderer.js, boost-renderer.js update)
     void read(bool boostRibbons);
+};
+
+// A batch of the set pieces' camera-facing quads in the encoded pass (set_piece_fx.hpp): set-piece particles, fog puffs, halos
+struct QuadBatch {
+    // 0 particle burst, 1 particle trail (ST turned), 2 fog puff, 3 halo, 5 avalanche trail (4: the terrain sparkle's)
+    int variant = 0;
+    // 0 GS 0x44 (three NormalBlending), 1 0x48 (Cd + Cs x As), 2 0x42 (Cd - Cs x As)
+    int blend = 0;
+    // "p<id>" (PARTICLES/textures), "fog0", "h<id>" (FX halos 37 .. 42)
+    std::string texture;
+    // three's renderOrder (ps2-draw-order.js) and the mesh's creation order
+    double order = 0;
+    int id = 0;
+    // the mesh's world position (origin-relative): the transparent sort's depth
+    std::array<double, 3> position{};
+    // 12 floats per quad: centre xyz (origin-relative) + half size (m), spin (cos, sin, t sign, - : the texture's alpha scale), colour / 128
+    std::vector<float> instances;
 };
 
 class RiderFx {
@@ -52,11 +73,18 @@ public:
     // the frame's riders (index 0 the human) with the displayed camera (origin-relative eye and look-at; three's view and
     // projection, double column-major)
     void prepare(const std::vector<const RiderFxFrame*>& riders, const double eye[3], const double look[3], const double* view,
-                 const double* projection, const std::array<double, 3>& origin);
+                 const double* projection, const std::array<double, 3>& origin, const std::vector<QuadBatch>* quads = nullptr,
+                 const std::vector<double>* startfire = nullptr);
     // in the world pass, after the world's opaque draws
     void drawTrails(WGPURenderPassEncoder pass);
     // in the encoded pass (the fogged world, the world depth read-only)
     void drawEncoded(WGPURenderPassEncoder pass);
+    // the terrain sparkle (terrain_sparkle.hpp sprites: x, y, z, alpha / 128), in the world pass after the transparent draws
+    void prepareSparkle(const std::vector<float>& sprites);
+    void drawSparkle(WGPURenderPassEncoder pass);
+    // the crowd's camera flashes (web/crowd-2d.js: x, y, z origin-relative, half extent 1 m; 'flsh', GS 0x48), in the world pass
+    void prepareFlashes(const std::vector<float>& centres);
+    void drawFlashes(WGPURenderPassEncoder pass);
 
 private:
     struct Range {
@@ -70,18 +98,27 @@ private:
         std::vector<float> positions;
         std::optional<std::array<double, 3>> centre;
     };
+    struct Texture {
+        WGPUTexture texture = nullptr;
+        WGPUBindGroup group = nullptr;
+        float alphaScale = 1;
+    };
     struct RiderGpu {
         Range ribbon, roof;
         Strip wake;
         std::array<Strip, 3> boost;
         std::array<Strip, 6> fx;
         std::array<Range, 10> snow;
+        // the billboards besides the snow (the impact sprites, the start-gate fire): their instance ranges and draw keys
+        struct Extra {
+            Range range;
+            const Texture* texture = nullptr;
+            bool additive = false;
+            double order = 0;
+            int id = 0;
+        };
+        std::vector<Extra> extras;
         bool drawn = false;
-    };
-    struct Texture {
-        WGPUTexture texture = nullptr;
-        WGPUBindGroup group = nullptr;
-        float alphaScale = 1;
     };
     struct EncodedDraw {
         double order = 0;
@@ -90,11 +127,14 @@ private:
         bool additive = false;
         // a strip (vertices) or a snow emitter (instances)
         bool billboard = false;
+        // a set-piece quad batch: its pipeline
+        WGPURenderPipeline quad = nullptr;
         Range range;
         const Texture* texture = nullptr;
     };
     Texture loadTexture(const std::string& path, uint32_t w, uint32_t h, float alphaScale, bool repeat, bool flipRows);
     void buildPipelines();
+    WGPURenderPipeline quadPipeline(int variant, int blend);
 
     Gpu* gpu_ = nullptr;
     WGPUSampler repeat_ = nullptr;
@@ -108,6 +148,9 @@ private:
     WGPURenderPipeline strip_ = nullptr;
     WGPURenderPipeline stripAdd_ = nullptr;
     WGPURenderPipeline snow_ = nullptr;
+    WGPURenderPipeline snowAdd_ = nullptr;
+    // IMPACT_FX sprk (repeat for the sparks, clamp for the glints), ospk; STARTFIRE spx2
+    std::map<std::string, Texture> billboardTextures_;
     Texture trailTexture_;
     float trailAlpha_ = 1;
     // SNOW_FX textures by FX id (snow frames 5 .. 25, wake 56, boost palettes 57 .. 61)
@@ -118,6 +161,20 @@ private:
     // each emitter's initial texture (its alpha scale) and its flipbook frames
     std::array<int, 10> emitterTexture_{};
     std::array<std::vector<int>, 10> flipbooks_{};
+    // the set pieces' quad textures and pipelines (variant x 3 + blend)
+    std::map<std::string, Texture> quadTextures_;
+    std::map<int, WGPURenderPipeline> quadPipelines_;
+    WGPUPipelineLayout pipelineLayout_ = nullptr;
+    WGPUShaderModule module_ = nullptr;
+    WGPUBuffer quads_ = nullptr;
+    Texture sparkle_;
+    Texture flash_;
+    WGPUBuffer flashBuffer_ = nullptr;
+    uint32_t flashCount_ = 0;
+    WGPUBuffer sparkleBuffer_ = nullptr;
+    uint64_t sparkleCapacity_ = 0;
+    uint32_t sparkleCount_ = 0;
+    uint64_t quadCapacity_ = 0;
     // the frame's vertex and instance streams
     WGPUBuffer vertices_ = nullptr;
     uint64_t vertexCapacity_ = 0;

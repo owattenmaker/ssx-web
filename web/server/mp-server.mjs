@@ -24,6 +24,10 @@
 //   {t:'start'}                                  (host) -> {t:'start', race:{id, course, seed, players}, you: slot}
 //   {t:'loaded'}                                 -> when every racer loaded (or LOAD_TIMEOUT_MS): {t:'go', at};
 //                                                 racers not loaded by then are dropped from the race (DNF, 'late')
+//   Pre-race (docs/multiplayer.md "Pre-race"; only when the host's start says {t:'start', preRace:true}, pv mpPreRace): the start's
+//   race carries preRace: true; once every racer loaded (or LOAD_TIMEOUT_MS) {t:'intro', at} (the shared intro instant), then
+//   {t:'ready'} from each racer (the card's Continue) -> once every racer is ready (or READY_TIMEOUT_MS after the intro) {t:'go', at}.
+//   A racer whose hello did not say preRace:true (a page from before the switch) counts as ready once it has loaded.
 //   {t:'finish', ticks, dnf}                     -> {t:'finished', id, slot, ticks, dnf, reason} to the lobby;
 //                                                 {t:'results', results} once every racer finished or is DNF, or
 //                                                 FINISH_GRACE_MS after the first finisher, or RACE_LIMIT_MS after GO
@@ -91,6 +95,9 @@ if (process.env.MP_RECORDS_DIR) {
   catch (e) { console.warn('records: off (failed to start)', e?.message); RECORDS = null; }
 }
 const MAX_PLAYERS = 6, RESUME_GRACE_MS = +(process.env.MP_RESUME_MS ?? 30000), SILENT_DROP_MS = 10000, LOAD_TIMEOUT_MS = 45000, GO_DELAY_MS = 2500;
+// pre-race: the intro instant follows the last 'loaded' by INTRO_DELAY_MS (every page gets the message first); a racer not ready
+// READY_TIMEOUT_MS after it (a hidden tab, a lost page) no longer holds the GO back (its page starts on the GO from its card)
+const INTRO_DELAY_MS = 1500, READY_TIMEOUT_MS = +(process.env.MP_READY_TIMEOUT_MS ?? 60000);
 const FINISH_GRACE_MS = +(process.env.MP_FINISH_GRACE_MS ?? 90000), RACE_LIMIT_MS = +(process.env.MP_RACE_LIMIT_MS ?? 15 * 60000);
 // Default 'flag' (Owen, 2026-09-28: log only, never reject, for this friends-only build: honest finishes were rejected
 // twice -- backcountry finishes against a countdown the rolling start does not have, and clients ahead of the server clock
@@ -291,10 +298,30 @@ function recordFinish(l, c, { ticks, dnf, reason }, verdict = null) {
 }
 function maybeGo(l) {
   const r = l.race; if (!r || r.goAt) return;
+  if (r.preRace) return maybePreRace(l);
   const waiting = [...r.slots.keys()].filter((m) => !r.loaded.has(m));
   if (waiting.length && now() - r.startedAt < LOAD_TIMEOUT_MS) return;
   r.goAt = now() + GO_DELAY_MS;
   for (const m of waiting) { const c = clients.get(m); if (c) recordFinish(l, c, { dnf: true, reason: 'late' }); }
+  toLobby(l, { t: 'go', at: r.goAt });
+}
+// pre-race: loaded -> the shared intro instant -> every racer's Continue -> GO. Racers already DNF (left, late) hold nothing back.
+function maybePreRace(l) {
+  const r = l.race;
+  const out = (m) => !!r.finish.get(m)?.dnf;
+  if (!r.introAt) {
+    const loading = [...r.slots.keys()].filter((m) => !r.loaded.has(m) && !out(m));
+    if (loading.length && now() - r.startedAt < LOAD_TIMEOUT_MS) return;
+    for (const m of loading) {
+      const c = clients.get(m);
+      if (c) recordFinish(l, c, { dnf: true, reason: 'late' });
+    }
+    r.introAt = now() + INTRO_DELAY_MS;
+    toLobby(l, { t: 'intro', at: r.introAt });
+  }
+  const waiting = [...r.slots.keys()].filter((m) => !r.ready.has(m) && !out(m));
+  if (waiting.length && now() - r.introAt < READY_TIMEOUT_MS) return;
+  r.goAt = now() + GO_DELAY_MS;
   toLobby(l, { t: 'go', at: r.goAt });
 }
 function maybeResults(l) {
@@ -348,13 +375,16 @@ function onMessage(c, m) {
         previous.limits = c.limits; c = previous;
       }
       c.hello = true; c.token = token;
+      // pv mpPreRace: this page plays the pre-race (intro, card, ready); others count as ready once loaded
+      if ('preRace' in m) c.preRace = m.preRace === true;
       c.name = clean(m.name ?? c.name, 16) || 'Rider'; c.rider = clean(m.rider ?? c.rider, 24) || 'zoe';
       c.pkg = /^RIDER_[A-Z0-9_]{1,24}$/.test(String(m.pkg)) ? String(m.pkg) : c.pkg ?? `RIDER_${c.rider.toUpperCase()}`; c.pair = cleanPair(m.pair) ?? c.pair ?? null;
       if ('base' in m) c.base = cleanBase(m.base); if ('outfit' in m) c.outfit = cleanOutfit(m.outfit);
       const l2 = lobbies.get(c.lobby),
         race =
           l2?.race && l2.race.slots.has(c.id)
-            ? { id: l2.race.id, course: l2.course, slot: l2.race.slots.get(c.id), goAt: l2.race.goAt, finished: l2.race.finish.has(c.id) }
+            ? { id: l2.race.id, course: l2.course, slot: l2.race.slots.get(c.id), goAt: l2.race.goAt, finished: l2.race.finish.has(c.id),
+              ...(l2.race.preRace ? { introAt: l2.race.introAt } : {}) }
             : null;
       send(c, { t: 'welcome', id: c.id, serverTime: now(), version: PROTOCOL, resumed: !!previous, race });
       if (c.session) SESSIONS?.resumed(c);
@@ -385,9 +415,14 @@ function onMessage(c, m) {
       if (!l || l.host !== c.id || l.race) break;
       const racers = l.members.filter((id) => clients.get(id)?.ws.open);
       racers.forEach((id, slot) => { clients.get(id).slot = slot; });
+      // pv mpPreRace on the host's page: the pre-race phases (maybePreRace)
+      const preRace = m.preRace === true;
       l.race = {
         id: id6(),
         startedAt: now(),
+        preRace,
+        introAt: 0,
+        ready: new Set(),
         loaded: new Set(),
         finish: new Map(),
         claims: new Map(),
@@ -401,10 +436,16 @@ function onMessage(c, m) {
         riders: Object.fromEntries(racers.map((id) => [id, clients.get(id).rider]))
       };
       const race = { id: l.race.id, course: l.course, seed: crypto.randomInt(0x7fffffff), players: racers.map((id) => member(clients.get(id), l)) };
+      if (preRace) race.preRace = true;
       for (const id of racers) send(clients.get(id), { t: 'start', race, you: clients.get(id).slot });
       broadcastLobby(l); break;
     }
-    case 'loaded': if (l?.race?.slots.has(c.id) && !l.race.goAt) { l.race.loaded.add(c.id); maybeGo(l); } break;
+    case 'loaded': if (l?.race?.slots.has(c.id) && !l.race.goAt) {
+      l.race.loaded.add(c.id);
+      if (l.race.preRace && !c.preRace) l.race.ready.add(c.id);
+      maybeGo(l);
+    } break;
+    case 'ready': if (l?.race?.preRace && l.race.slots.has(c.id) && l.race.introAt && !l.race.goAt) { l.race.ready.add(c.id); maybeGo(l); } break;
     case 'finish': if (l?.race) { if (m.dnf) recordFinish(l, c, { ticks: 0, dnf: true, reason: m.reason || 'dnf' }); else claimFinish(l, c, m.ticks); maybeResults(l); } break;
     case 'chat': {
       if (!l || !take(c.limits.chat)) break;
@@ -600,6 +641,9 @@ const server = http.createServer((req, res) => {
           ...summary(l),
           race: l.race && {
             loaded: [...l.race.loaded],
+            preRace: l.race.preRace,
+            introAt: l.race.introAt,
+            ready: [...l.race.ready],
             goAt: l.race.goAt,
             racers: [...l.race.slots.entries()],
             finish: [...l.race.finish.entries()],

@@ -3,7 +3,7 @@
 // tools/tas/page-run.mjs plays it, the frame clock frozen, N + 2 ticks stepped (ssxQA.advance), the HUD hidden, #stage
 // captured. A frame right after a step draws render alpha 0: the camera of tick N (the previous camera pose) over the state of
 // tick N + 1, which ssx3_render_shot --tick N draws the same way. Prints {tick, trace} (the page's ?simtrace hash of tick N).
-//   node native/tools/browser-shot.mjs PAD.tas OUT.png --tick N [--course ARA1] [--rider zoe] [--attributes 55|none] [--lineup JSON]
+//   node native/tools/browser-shot.mjs PAD.tas OUT.png --tick N [--course ARA1] [--rider zoe] [--attributes 55|none] [--lineup JSON] [--eval JS]
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
 import { parse, toChannels } from '../../tools/tas/pad-format.mjs';
@@ -56,7 +56,9 @@ try {
   const png = await browser.screenshot('#stage');
   fs.writeFileSync(out, Buffer.from(png, 'base64'));
   const trace = await E(`window.__simTrace.ticks[${base}+${tick}]`);
-  console.log(JSON.stringify({ tick, trace, out }));
+  // --eval JS: an expression evaluated in the page at that state (diagnostics, e.g. ssxEffects states)
+  const extra = opt('eval') ? await E(opt('eval')) : undefined;
+  console.log(JSON.stringify({ tick, trace, out, ...(extra === undefined ? {} : { eval: extra }) }));
 } finally {
   await browser.close();
   await server.close();
