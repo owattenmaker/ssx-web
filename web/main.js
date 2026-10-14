@@ -602,7 +602,10 @@ let nisStartPending = null;
 // (0x230BEC: after the world states, before the rider manager), or, on frames that run no game update (the simulation held by a
 // context that leaves the NIS running, or not racing), whole 60 Hz ticks of the frame time paced as the PS2 frame loop paces updates
 const nisOnTicks = () => pv('nisOnTicks') && !!cutscenes?.tick;
+// (pv nisOnTicks: the NIS ticks nisStart made, so an update whose game tick returned before its NIS point still gets one)
+let nisTicks = 0;
 function nisStart() {
+  nisTicks++;
   if (nisOnTicks()) {
     // the cut's rider actor waiting for the rider's first posed tick, held at this update's NIS point (not at a frame's start)
     if (nisCut && nisCutAt !== null && nisPosed()) nisCutHold(nisCutAt === true ? null : nisCutAt);
@@ -3090,6 +3093,8 @@ const gameHost = {
 };
 const gameTick = createGameTick(gameHost, {
   trace: (rec) => {
+    // pv fadesOnTicks (docs/core-migration.md F): the fades' step at the update's end (the view fade 2E4370 in 22E840, after the riders)
+    if (pv('fadesOnTicks')) cutscenes?.fadeTick?.();
     if (simTrace)
       simTrace.ticks.push(
         gameTrace(
@@ -3128,7 +3133,8 @@ function createRaceReplay() {
           (inWorldReplay() || (course?.eventStart !== false && !course?.freeRide)) &&
           !mpGame?.racing &&
           !ui.mpUI?.racing &&
-          !ui.onlineMode &&
+          // pv onlineTimeAttack: a session's attempt is a Single Event run on the online page, recorded for its upload (web/net/ta-game.js)
+          (!ui.onlineMode || !!ui.timeAttack?.active) &&
           !((ui.careerUI?.career?.active?.ev?.mode ?? 0) >= 6))),
     snapshot: () => ({
       inWorld: inWorldReplay() ? inWorldCountdownSave() : null,
@@ -3897,11 +3903,17 @@ function frame(ms) {
       const tickPad = stallKeyInput(finished && !pv('padCarry') ? NEUTRAL_PAD : input, ms, dt, steerSnap, finished);
       let simulated = 0;
       simulation.advance(lockedTicks != null ? lockedTicks / 60 : Math.min(ps2FrameTime(dt), quality.maxFrameDt), () => {
+        const before = nisTicks;
         if (running && !contexts.simFrame() && !mpGame?.holding()) {
           gameTick.tick(typeof tickPad === 'function' ? tickPad(simulated) : tickPad, FixedStepClock.ticksLeft);
           simulated++;
-        } else {
+        }
+        // the game tick did not reach its NIS point (a context it reads as a pause): the NIS tick alone, unless the streamed world
+        // holds the whole update (+0x1D0: 2306B8's blocked path runs no NIS tick)
+        if (nisTicks === before && !freeRide?.stalled?.()) {
           cutscenes.tick();
+          // (pv fadesOnTicks: the update's views, after its NIS tick)
+          if (pv('fadesOnTicks')) cutscenes.fadeTick?.();
           // the pad sample the update consumes (padCarry: as a frame that does not tick feeds it)
           padCarryFeed(input, 1 / 60);
         }
@@ -3942,6 +3954,8 @@ function frame(ms) {
       flushHumanSkin();
       padCarryAcc = 0;
     } else {
+      // pv fadesOnTicks: a fade over a frame that runs no game update steps on whole ticks of the frame time
+      if (pv('fadesOnTicks')) cutscenes?.fadeFrames?.(Math.min(ps2FrameTime(dt), quality.maxFrameDt));
       keyBase = new Set(keys);
       keyLog.length = 0;
       padCarryFeed(input, dt);
@@ -3972,8 +3986,10 @@ function frame(ms) {
           audioFinished = true;
           // (place: a freestyle run's 0x536730 from 238B70's ranking, career-ui.js freestyleFinishPlace; races take the AI standings'
           // place)
+          // pv mpSpeechPlace: an online race's finish place (2A1E68 reads +0xEC in multiplayer)
+          const onlinePlace = !aiActive && pv('mpSpeechPlace') && mpGame?.racing ? (mpGame.hud()?.place ?? 0) : 0;
           gameAudio.finish({
-            place: aiActive ? (aiRace.hud()?.place ?? 0) : 0,
+            place: aiActive ? (aiRace.hud()?.place ?? 0) : onlinePlace,
             timedOut: !!core._race_timed_out?.(),
             ai: aiActive ? aiRace : null,
             challengeKind: course.event === 'backcountry' ? (ui.careerUI?.career?.active?.ev?.mode === 5 ? 6 : 5) : 0,

@@ -71,6 +71,14 @@ final class Driver: NSObject, WKNavigationDelegate {
     let origin = offscreen ? NSPoint(x: -20000, y: -20000) : NSPoint(x: 40, y: 40)
     window = NSWindow(contentRect: NSRect(origin: origin, size: NSSize(width: w, height: h)), styleMask: offscreen ? [.borderless] : [.titled], backing: .buffered, defer: false)
     window.title = "WebKit QA (automation)"
+    // A window covered by other windows is "occluded": WebKit then reports visibilityState = hidden and stops
+    // requestAnimationFrame, so the game never draws a frame (the MP_WK_TIMER pump in test-mp-page.mjs worked around it).
+    // Turn the occlusion detection off (WKWebView _setWindowOcclusionDetectionEnabled:) so the page stays visible on screen.
+    let occlusionSel = Selector(("_setWindowOcclusionDetectionEnabled:"))
+    if web.responds(to: occlusionSel) {
+      typealias SetOcclusion = @convention(c) (AnyObject, Selector, Bool) -> Void
+      unsafeBitCast(web.method(for: occlusionSel), to: SetOcclusion.self)(web, occlusionSel, false)
+    }
     window.contentView = web
     super.init()
     web.navigationDelegate = self

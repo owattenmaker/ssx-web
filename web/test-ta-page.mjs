@@ -1,11 +1,13 @@
 // Time attack on the page (pv onlineTimeAttack: web/net/ta-game.js, the career-ui play / finish hooks; docs/big-multiplayer.md
-// TA-3) against a local mp-server with sessions on: the page creates a Snow Jam session, a node player joins it; the page loads the
+// TA-3) against a local mp-server with sessions on: the page creates a Snow Jam session through Online Lobbies > Create Lobby (the
+// Create Lobby popup: Mode Time Attack, 3:00), a node player joins it; the page loads the
 // event (its objectives card: 'ta-loaded'), an attempt before the window opens is refused, then a solo run (no computer riders, the
 // maxed attribute bytes) is ridden to the finish and uploaded as the page player's best (no live verification: the live window's runs
 // are not queued); a second attempt started and given up ends without an upload; after the deadline Continue is refused; the podium
 // shows the page player's uploaded best; the vote
 // picks Metro City and the page loads it for the next window. With pv ghostRiders: the node player streams ghost poses, the page draws
-// its ghost from the server's bundles, and the page's own poses reach the node player. Skipped without Chrome / WebGPU / the game data.
+// its ghost from the server's bundles, and the page's own poses reach the node player. Then the popup's Race mode creates a lobby.
+// Skipped without Chrome / WebGPU / the game data.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -91,7 +93,15 @@ try {
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   assert.ok(await E(`!!${TA}`), 'pv onlineTimeAttack installs ui.timeAttack');
   await E(`(async()=>{await ssxQA.ui().mpUI.session.connect();return 1})()`);
-  await E(`(()=>{${TA}.create({name:'Page',limitMs:150000,event:'0:ARA1'});return 1})()`);
+  // Online Lobbies > Create Lobby: the Create Lobby popup (web/ta-ui.js ta-create) opens in Race mode; Mode -> Time Attack, the time
+  // limit 6:00 -> 3:00, Snow Jam's race picked with Left / Right on Select Event, the room name typed, Submit creates the session
+  await browser.waitFor('!!ssxQA.ui().mpUI?.ta?.ready', 60000);
+  const popup = await E(`(()=>{const ui=ssxQA.ui();ui.onlineMode=true;ui.set('mp-lobbies');ui.index=1;ui.sync();ui.choose(1);
+    const t=ui.mpUI.ta,out={screen:ui.screen,mode:t.form.mode,limitOff:ui.mpUI.disabled('ta-create',2)};
+    t.step(1,1);out.limit0=t.form.limitMin;for(let k=0;k<3;k++)t.step(2,-1);
+    for(let k=0;k<40&&t.createKey()!=='0:ARA1';k++)t.step(0,1);
+    t.form.name='Page';out.key=t.createKey();out.limit=t.form.limitMin;out.ta=t.form.mode;out.max=t.createMax();ui.index=5;ui.choose(5);return out})()`);
+  assert.deepEqual(popup, { screen: 'ta-create', mode: 'race', limitOff: true, limit0: 6, key: '0:ARA1', limit: 3, ta: 'ta', max: 50 }, JSON.stringify(popup));
   await browser.waitFor(`${TA}.active`, 30000);
   const sid = await E(`${TA}.state.session.id`);
   bot = await player('BOT');
@@ -181,6 +191,14 @@ try {
   // leaving: the solo lineup and the attribute override go
   await E(`(()=>{${TA}.leave();return 1})()`);
   await browser.waitFor(`!${TA}.active`, 10000);
+  assert.equal(await E(`${TA}.state.session?.name ?? null`), null);
+  // the popup's Race mode: a lobby on the page's course with the chosen riders, opened from Online Lobbies
+  const lobby = await E(`(async()=>{const ui=ssxQA.ui();ui.set('mp-lobbies');ui.index=1;ui.sync();ui.choose(1);const t=ui.mpUI.ta;t.form.name='';
+    t.step(4,-1);t.step(4,-1);ui.index=5;ui.choose(5);const c=ui.mpUI.session.client;for(let k=0;k<100&&!c.state.lobby;k++)await new Promise(r=>setTimeout(r,50));
+    const l=c.state.lobby;return l&&{screen:ui.screen,course:l.course,max:l.maxPlayers,name:l.name,page:ui.course?.code}})()`);
+  assert.ok(lobby, 'the race lobby was created');
+  assert.deepEqual({ screen: lobby.screen, course: lobby.course, max: lobby.max }, { screen: 'mp-lobby', course: lobby.page, max: 4 }, JSON.stringify(lobby));
+  assert.match(lobby.name, /'s lobby$/);
   console.log(`attempt 1: ${up.value} race ticks kept; podium ${podium}`);
 } catch (e) {
   failures.push(String(e?.stack || e));

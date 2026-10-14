@@ -1,6 +1,6 @@
 // The native front end, minimal (docs/native.md "N3"): an SDL3 window, the core ticking at 60 Hz with the page's pacing
 // (web/tick-lock.js / fixed-step-clock.js), the pad from the keyboard and gamepads exactly as web/pad-input.js builds it, and the
-// course, sky, fog, ScreenTint and the skinned rider drawn with webgpu.h (wgpu-native). No audio (SDL's audio is never opened).
+// course, sky, fog, ScreenTint, the skinned riders and the race HUD drawn with webgpu.h (wgpu-native). No audio (SDL's audio is never opened).
 //   ssx3 ASSETS_DIR [--course ARA1] [--rider zoe]   a live Snow Jam time trial (the solo lineup)
 //        [--start RUN.ssxr]                          the start (course, rider, lineup, start state) of a replay, played live
 //        [--watch RUN.ssxr]                          a replay's own pad
@@ -17,6 +17,7 @@
 #include "pad_input.hpp"
 #include "quality.hpp"
 #include "replay_session.hpp"
+#include "race_hud.hpp"
 #include "race_presenter.hpp"
 #include "world_renderer.hpp"
 #include <SDL3/SDL.h>
@@ -335,6 +336,13 @@ int main(int argc, char** argv) {
         RacePresenter presenter(v);
         presenter.riderTextures = quality.riderTextures;
         presenter.loadEffects(renderer);
+        // the race HUD (native/frontend/race_hud.hpp) on the UI canvas over the frame
+        RaceHud hud;
+        hud.load(gpu, v);
+        hud.begin(v);
+        v.afterMid = [&] { hud.afterMid(v); };
+        // web/input-glyphs.js: the device of the last input (a key, a pad button), else a connected pad, else the keyboard
+        std::string lastDevice;
         PadReader reader(v.pad);
         KeyboardContext keyboard;
         std::set<std::string> keys;
@@ -354,10 +362,13 @@ int main(int argc, char** argv) {
                         running = false;
                     }
                     keys.insert(codeOf(e.key.scancode));
+                    lastDevice = "keyboard";
                 } else if (e.type == SDL_EVENT_KEY_UP) {
                     keys.erase(codeOf(e.key.scancode));
                 } else if (e.type == SDL_EVENT_GAMEPAD_ADDED && !gamepad) {
                     gamepad = SDL_OpenGamepad(e.gdevice.which);
+                } else if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                    lastDevice = "gamepad";
                 } else if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                     configure();
                 }
@@ -387,8 +398,10 @@ int main(int argc, char** argv) {
                     const auto channels = buildPad([&](const std::string& c) { return keys.count(c) > 0; }, &sp, &keyboard);
                     std::memcpy(pad, channels.data(), sizeof pad);
                 }
+                hud.beforeTick();
                 v.tick(pad);
                 presenter.afterTick();
+                hud.afterTick(v);
                 ++tick;
                 if (!v.running) {
                     running = false;
@@ -401,6 +414,18 @@ int main(int argc, char** argv) {
             CameraView camera;
             WorldFrameState state = presenter.frame(alpha, camera);
             renderer.render(camera, state, frameView, fw, fh, 4.0 / 3.0);
+            hud.keyboard = lastDevice.empty() ? gamepad == nullptr : lastDevice == "keyboard";
+            hud.draw(v);
+            {
+                WGPUCommandEncoderDescriptor hed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
+                WGPUCommandEncoder henc = wgpuDeviceCreateCommandEncoder(gpu.device, &hed);
+                hud.canvas.encode(henc, frameView, fw, fh);
+                WGPUCommandBufferDescriptor hcd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
+                WGPUCommandBuffer hcmd = wgpuCommandEncoderFinish(henc, &hcd);
+                wgpuQueueSubmit(gpu.queue, 1, &hcmd);
+                wgpuCommandBufferRelease(hcmd);
+                wgpuCommandEncoderRelease(henc);
+            }
             if (!shotPath.empty() && tick > shotTick) {
                 const auto pixels = gpu.readback(frameTex, fw, fh);
                 writePng(shotPath, int(fw), int(fh), pixels.data());

@@ -28,10 +28,13 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     fill: { prev: 0, bend: 0x1000, tricky: 0 }, air: { flag: 0, T: 0, start: 0, end: 0, voice: null, gain: 0, loopsOn: false }, listener: null, clipEvents: animationEvents };
   const human = () => [...riders.values()].find((r) => r.human);
 
-  function rider(core, { character, slot, isHuman }) {
+  // remote (pv mpRiderSpeech): an online racer without a core (key = its web/net/remote-riders.js record); its telemetry comes
+  // from the ghost (remoteTelemetry), it has no events of its own and no board loops
+  function rider(core, { character, slot, isHuman, remote = false }) {
     let r = riders.get(core);
     if (!r) {
-      r = { core, slot, character, id: charId(character), human: isHuman, t: new Float32Array(TELEMETRY), prevT: new Float32Array(TELEMETRY),
+      r = { core: remote ? null : core, remote, slot, character, id: charId(character), human: isHuman, t: new Float32Array(TELEMETRY),
+        prevT: new Float32Array(TELEMETRY),
         loops: { a: null, b: null, c: null }, loopClass: -1, loopMotion: -1, smoothB: 0, smoothC: 0, crash: { a: null, b: null }, boost: 0, boostVoice: null,
         landVoice: null, takeoffVoice: null, retry: false, grunt: 0, meterPrev: 1, finished: false, place: 0 };
       riders.set(core, r);
@@ -277,11 +280,13 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
   // kinds) as they are when the original evaluates it: pair hits use the records before this contact's 155BF0
   // update (G.pairRelation, recorded by the pair hook), overtakes the records at the tick-start ranking 10F998.
   const relation = (A, B, source = 'tick') => {
-    if (riders.size === 2 || (A.human && B.human)) return 2;
+    // an online racer is a human too (2 with two humans)
+    if (riders.size === 2 || ((A.human || A.remote) && (B.human || B.remote))) return 2;
     const v = source === 'pair' ? G.pairRelation?.(A.slot, B.slot) : G.relation?.(A.slot, B.slot);
     return v ?? 2;
   };
   // 299E28: rank change of `slot` (old -> new place), behind / ahead riders.
+  const passes = [];
   function overtake(slot, oldPlace, newPlace, behind, ahead) {
     const r = coreOfSlot(slot); if (!r || !r.human || riders.size < 2 || !G.running || G.paused || G.raceKind !== 0) return;
     if (newPlace === 0 && oldPlace !== 0) arcade(0x6d); // tag 1
@@ -291,6 +296,9 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     if (A.t[4] === 2 || Bq.t[4] === 2 || !speech.free) return;
     const heading = Math.atan2(Bq.t[20], Bq.t[19]); // relative speed along B's heading
     const d = (A.t[19] - Bq.t[19]) * Math.cos(heading) + (A.t[20] - Bq.t[20]) * Math.sin(heading);
+    // QA (debug().passes): the last overtakes that reached the speed and range test
+    passes.push([A.slot, Bq.slot, Math.round(d), inRange(A), inRange(Bq)]);
+    if (passes.length > 16) passes.shift();
     if (!(d > 670.56 && d < 1788.16) || !inRange(A) || inRange(A) !== inRange(Bq)) return;
     speech.pass(speechRider(A), speechRider(Bq), relation(A, Bq), d >= 1341.12 ? 2 : 1);
   }
@@ -371,6 +379,16 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
   }
 
   // Drain one core's queue.
+  // the telemetry words the speech and the pair sounds read: 4 motion mode, 12..14 position, 19..21 velocity (pair view 96, 99..101,
+  // 87..89)
+  function remoteTelemetry(r, o) {
+    r.prevT.set(r.t);
+    r.t[4] = o.motion;
+    for (let k = 0; k < 3; k++) {
+      r.t[12 + k] = o.position[k];
+      r.t[19 + k] = o.velocity[k];
+    }
+  }
   function drain(r) {
     const c = r.core; if (!c._audio_events) return;
     const q = f32(c, c._audio_events(), 1 + 64 * 5); const n = q[0] | 0; const ev = q.slice(1, 1 + n * 5); c._audio_events_clear();
@@ -426,15 +444,22 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       G.running = running;
       G.paused = paused;
       if (G.sinceGo >= 0) G.sinceGo++; // ticks since GO, counted before this tick's events are dispatched
+      const online = list.some((x) => x.remote);
       for (const x of list) {
-        const r = rider(x.core, { character: x.character, slot: x.slot, isHuman: x.human });
+        const r = rider(x.remote ? x.key : x.core, { character: x.character, slot: x.slot, isHuman: x.human, remote: !!x.remote });
         r.finished = !!x.finished;
         r.place = x.place ?? 0;
-        drain(r);
+        if (x.remote) remoteTelemetry(r, x.remote);
+        else if (!online) drain(r);
       }
+      // pv mpRiderSpeech: the local core's events after every online racer's state of this tick (they read the other's telemetry)
+      if (online) for (const x of list) if (!x.remote) drain(riders.get(x.core));
+      // pv mpRiderSpeech: a racer that is no longer live this tick is no longer a rider
+      for (const [key, r] of riders) if (r.remote && !list.some((x) => x.remote && x.key === key)) riders.delete(key);
       const h = human();
       if (!h) return;
       for (const r of riders.values()) {
+        if (r.remote) continue;
         if (r.retry && (r.t[7] === 1 || r.t[7] === 3)) takeoffFollowup(r, r.t[8]); // 2947B0
         if (r.retry && r.t[4] !== 1) r.retry = false;
         updateLoops(r);
@@ -453,7 +478,10 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       else if (phase === 4 && raceInfo[6] > 0 && (raceInfo[6] + 1) % 60 === 0) beep((raceInfo[6] + 1) / 60);
       else if (phase === 5 && G.goPhase === 4) beep(0);
       G.countdown = digit;
-      if (G.goPhase === 3 && phase === 5 && G.backcountry) G.sinceGo = 0; // rolling start (2872A8 writes the GO tick 0x582C, no GO sound)
+      // rolling start (2872A8 writes the GO tick 0x582C at 0x2872D0, no GO sound); pv rollingGoTick (G.rollingGo, web/game-audio.js): the
+      // first tick at phase 5 without the countdown
+      const rolling = G.rollingGo ? phase === 5 && G.goPhase !== 4 && G.goPhase !== 5 : G.goPhase === 3 && phase === 5;
+      if (rolling && G.backcountry) G.sinceGo = 0;
       // a replay's GO: 0x62 only (PS2 replay audio log)
       if (G.goPhase === 4 && phase === 5) {
         G.sinceGo = 0;
@@ -527,9 +555,15 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     riders: () => [...riders.values()],
     debug() {
       return {
+        sinceGo: G.sinceGo,
+        passes: passes.slice(),
         riders: [...riders.values()].map((r) => ({
           slot: r.slot,
+          id: r.id,
           human: r.human,
+          remote: !!r.remote,
+          position: [r.t[12], r.t[13], r.t[14]].map(Math.round),
+          velocity: [r.t[19], r.t[20], r.t[21]].map(Math.round),
           motion: r.t[4],
           class: r.loopClass,
           loops: Object.values(r.loops).filter(Boolean).length,

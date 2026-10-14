@@ -265,10 +265,16 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
   - `ssx3 ASSETS [--course ARA1 --rider zoe]` is a live time trial: the solo lineup, the page's live startRun(null).
   - `--start RUN.ssxr` plays a replay's start live; `--watch RUN.ssxr` plays its recorded pad.
   - `--shot OUT.png --shot-tick N` writes a frame and quits; `--hidden` opens no window on screen; `--at X,Y` places the window.
+  - `--quality low|medium|high` is the page's tier (default `high`, a desktop's; frontend/quality.hpp ports web/quality.js
+    TIER_DEFAULTS): it sets the rider texture set and the core's presentationFast. `--riders ps2|xbox` and `--bc 0|1` are the
+    page's `?riders=` and `?bc=`.
   - Audio is never opened. The window is not focusable and the app does not activate (no Dock icon) unless `--focus`, so a run
     never takes the user's keyboard.
   - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits.
 - `ssx3_render_shot ASSETS RUN.ssxr OUT.png --tick N`: headless, no window.
+  - `--quality` defaults to `low` here, as browser-shot loads the page (`?quality=low`: the PS2 rider textures, presentationFast on);
+    `--riders` and `--bc` as in `ssx3`. The printed line names the tier, the rider set and whether BC blocks were uploaded.
+  - `--hud` draws the race HUD over the frame; `--canvas-log OUT.json` also writes that frame's UI canvas calls.
   - It draws the frame the page draws right after `ssxQA.advance` stepped N + 2 ticks (render alpha 0): the camera and rider
     palette of tick N over the world state of tick N + 1.
   - It prints the ?simtrace hash of tick N, so the page and native states can be checked equal before the pictures are compared.
@@ -276,7 +282,11 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 - native/tools/browser-shot.mjs: the page's frame at the same tick.
   - It plays the run's TAS pad in a Single Event (as tools/tas/page-run.mjs does) in headless Chrome, muted, widescreen Off, with
     the HUD hidden.
-  - It prints the page's ?simtrace hash of tick N.
+  - It prints the page's ?simtrace hash of tick N and the page's texture decode config.
+  - `--riders ps2|xbox` and `--bc 0|1` pass `?riders=` and `?bc=` to the page.
+  - `--hud` keeps the race HUD; `--canvas-log OUT.json` records the #ui canvas calls from one ui.draw to the next (op, arguments in
+    the 9-argument drawImage form, transform, global alpha, and the image: a PNG's name or the FNV-1a of a canvas's getImageData).
+- native/tools/compare-canvas-log.mjs PAGE.json NATIVE.json: the two logs compared entry by entry, numbers exactly.
 
 **What is ported** (each file names its web source):
 
@@ -288,6 +298,8 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/pacing.hpp | tick-lock.js, fixed-step-clock.js, ps2-frame-pacing.js | one tick per 60 Hz frame (debt paid with 0 / 2), else the fixed clock with the render alpha |
 | frontend/pad_input.hpp | pad-input.js | the 24 channels, bit for bit (ctest frontend_pad_input) |
 | frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
+| frontend/race_hud.hpp, trick_hud.hpp, hud_widgets.hpp, hud_canvas.cpp | ui.js draw ('game'), trick-hud.js, boost-gauge.js, boost-orb.js, boost-letters.js, race-place-hud.js, progress-meter-hud.js, input-glyphs.js (key caps), game-tick.js (readTrickHudSlots, the HUD pre-pass), ai-race.js (the place timers), main.js (ui.draw's state) | the race HUD on the 640 x 448 UI canvas: the place with its change and 1st-place glow timers, the race clock, the speed, the progress meter (EE float), the boost orb, coil glows, gauge and letters, the switch icon, the countdown, the trick slots (every slot case, the Uber hint, the recover meter, the big GO! / MISSION SUCCESS message), the finish / time-up banner and the reset fade; the page's tinted canvas copies made the way Chrome makes them (multiply / destination-in, source-in, ImageData with its float32 unpremultiply); Canvas 2D drawImage as Chrome rasterizes it (bilinear, strict source rect, edge coverage, float transform arguments composed in double); the canvas stretched over the 3D frame as the stage stacks #ui over #game. The key caps' rounded rects and arrows are rasterized at 4 x 4 samples a pixel |
+| frontend/bc_texels.hpp, rider_renderer.cpp, quality.hpp | bc-texels.js, texture-archive.js, rider-material.js, quality.js | the Xbox HD rider set (the desktop default, tier medium / high): a WARDROBE textures.tex / gear.tex read from its `-xbox` twin (the PS2 archive when the twin is missing), its 'SXBC' entries uploaded as BC1 / BC2 with bcMipChain's levels where the device has texture-compression-bc (else decodeBC's texels), the entry's own texel domain ('xbox': scale 127.5). The decode and every re-encoded mip level are bit-identical to bc-texels.js on 938 entries of five archives (JS Math.round and V8 / JavaScriptCore's Math.hypot ported; the render library builds with -ffp-contract=off) |
 | frontend/uv_scroll.hpp | uv-scroll.js, set-pieces-renderer.js | the scroller 0x35F7D0 in the EE scalar arithmetic (chop MUL / ADD / SUB with the guard bit, DIV.S nearest), the scroll groups by first appearance, the set-piece clock (set_piece_info, the slot-1 section enters, the ready state's phases); drawn as the first instance indexing a storage buffer |
 | frontend/set_pieces.hpp, livecomp.hpp, flags.hpp, ee_float.hpp | main.js frame, moving-instances.js, set-pieces-renderer.js, livecomp-animation.js, attached-setpieces.js, flag-animation.js, set-piece-cables.js, ee-scalar-float.js | per world batch this frame: hidden (pickups, event-dead from the event start, stage-program draw states), shown (the hidden batches of flag static draws, MeshAnim pieces, LiveComp 'object' players) and moved (moving instances and their clones, LiveComp node deltas, teeters, attached children, magnets, break pieces); the LiveComp players and the flag cloth stepped one game tick at a time to the core's set-piece clock (the go tick, the section log, the core's trigger / timer starts, section clocks, flag words), from the ready state; the cables as screen-space lines (guard band, near / far), alive by CableLife and the owner's chunk |
 | verify/board_flex.hpp, rider_renderer.cpp morphed | board-flex.js, rider-skinning.js createBoardFlex | pv boardFlex: the board's, hands' and SpecialA's morph parts loaded from the package, configured in the core after the human's init_animation (replay_session.hpp, as main.js) and at a computer rider's first capture; each palette's tick's 27 weights; sum(w x delta) added to the source position before skinning (the shadow silhouette too) |
@@ -307,12 +319,50 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | sj-solo-1200-fx | the same run, 1200 | 2.47 / 9 | 4.8 / 21 at first light |
 | sj-solo-2700-fx | the same run, 2700 | 1.25 / 5 | the spray and both air streamers |
 | aba1-600 | Crow's Nest big air, Zoe, 600 | 1.21 / 4 | a second course (native/tools/replay-tas.mjs: the replay's pad as a TAS for browser-shot) |
+| sj-solo-190-xbox | Snow Jam, Zoe, solo, 190, `--riders xbox` both | 1.87 / 8 | the Xbox HD set, BC on both; on the rider's pixels 5.26 (5.37 with the PS2 set on both, 6.60 with the sets crossed); `--bc 0` on both: 5.16 |
+| hud-sj-solo-300 | Snow Jam, Zoe, solo, 300, `--hud` both | 2.00 / 7 | the race HUD: 67 canvas calls, all equal (arguments, transforms, alphas, every tinted image's bytes); on the HUD's 17757 pixels 1.48 / 5 (the world under them 2.15) |
+| hud-sj-ai-900 | the 5-rider run, 900 | 1.77 / 8 | the place (1ST/6 with its glow), the computer riders on the meter: 79 calls equal; HUD pixels 1.33 / 6 |
+| hud-sj-ai-60, -185, -200 | the same run, the countdown and GO! | 2.36, 2.29, 4.29 | 71, 81 and 81 calls equal (the 200 frame's mean is the world's, see below) |
+| hud-sj-solo-1200, -2700 | the solo run | 2.44, 1.11 | 66 and 68 calls equal; HUD pixels 1.52 and 1.35 |
+| hud-sj-solo-15300 | the solo run after its finish | 4.94 / 24 | the FINISH! banner and 00:04:10: 17 calls equal; the frame's difference is the world's (below) |
+| sj-ai-900-xbox | Snow Jam, 5 computer riders, 900, `--riders xbox` both | 1.76 / 8 | the opponents read their twins too; on the riders' pixels 7.05 (7.11 PS2 on both, 7.68 crossed) |
 
 The earlier milestones' shots stay in the folder for comparison.
 
 What differs is not ported yet, or not drawn the same:
-- edges: texture filtering details (three.js generates mips on the GPU; anisotropy) and the Xbox HD rider textures (the page's desktop
-  default; native uses the PS2 set).
+- the freestyle HUD (career-ui.js hud: big air, super pipe, slope style and Rival Points events, which a Single Event also uses): the
+  time limit's countdown clock (red in the last 10 s), the 3-row standings over the event's posted scores, the OPPONENT line and the
+  finish panel. They read the event the FE set up (career.js postedStandings / timeLimit, the computer riders' heat scores), so they
+  come with the FE flow; until then native draws the race HUD for those events (hud-aba1-500: the page's standings and 00:00:55, native's
+  race clock 00:00:05; every other element is the same).
+- the EA RADIO now-playing popup (audio-menu.js drawHud, now-playing.js): with the audio.
+- the key caps' vector parts (the rounded rect, its gradient and outline, the arrows) are rasterized at 4 x 4 samples, not Skia's
+  analytic coverage; their FEFONT labels go through the exact glyph path.
+- the world at two HUD frames (renderer, not HUD): just after GO! (sj-ai 200, 4.29: the snow floor's tint and the lens flare) and at the
+  finish (sj-solo 15300: native draws many light-glow sprites and other banner colours at the finish stage that the page does not).
+  Both are page frames reached in 400-tick steps; to be looked at with the renderer.
+- texture filtering at edges (documented, not pursued): see "Texture filtering edges" below.
+- tier high's MSAA and render scale: the page renders with 4 samples on tiers medium / high (main.js applyAntialias: the canvas and
+  the fog-renderer pass targets) and at the display's pixel ratio (renderScale 'full'). Native draws its 640 x 480 frame without MSAA
+  and scales it into the window. The parity shots compare at quality=low (no MSAA, the 640-wide frame), where the two agree.
+
+**Texture filtering edges** (documented only; the residual differences along texture and silhouette edges in every shot):
+- Mip contents. The page's PNG textures are DataTextures with generateMipmaps on (texture-archive.js texelTexture): three's WebGPU
+  backend builds each level on the GPU (WebGPUTexturePassUtils generateMipmaps), drawing a full-screen triangle that samples the level
+  above through a sampler with only `minFilter: linear`. Native builds the levels on the CPU as a rounded 2 x 2 box ((sum + 2) / 4).
+  - For even sizes the GPU's sample lands on the centre of the 2 x 2 block, so it is the same mean, except that the conversion of the
+    filtered float back to unorm8 is the GPU's: a mean that ends in exactly .5 (sum = 2 mod 4) may round the other way. That is at
+    most 1 / 255 on a level, but the levels feed each other.
+  - For odd sizes (and a 1-wide axis) the GPU samples at the destination texel's centre in the source's UV space, with bilinear
+    weights other than 1/4; native clamps the second column / row instead. These differ by more.
+  - It reaches the frame wherever a surface is minified (distant terrain, the riders' small textures) and most visibly on
+    alpha-tested edges (the rider's 'alph' cut-outs, the crowd, the fences), where the mip's alpha decides which texels pass.
+- Not a source of difference:
+  - anisotropy and the sampler: both sides use linear / linear / linear with maxAnisotropy 4 (main.js texSetup `anisotropy = 4`;
+    world_renderer.cpp and rider_renderer.cpp), and both run on Metal on this Mac (Dawn in Chrome, wgpu in native);
+  - the Xbox HD BC path: the page uploads bcMipChain's levels itself (no GPU generation), and native uploads the same bytes.
+- To close it: build the native mips with the same GPU pass (a full-screen triangle sampling the level above with a linear minFilter
+  sampler, as WebGPUTexturePassUtils does), instead of the CPU box.
 
 Not checked against a page frame yet: the avalanches (no backcountry page shot: a Rival Time run's start needs its rival lineup), the
 impact sprites (no grind in these runs) and the start-gate fountains (see below).
@@ -346,11 +396,14 @@ within the 8-bit rounding of each blend, so in practice this affects the normall
 
 ssx3_render_shot prints the frame's light glow count and whether the sun is in view (`glows`, `sun`), to pick ticks that show them.
 
-**Next:**
-- the rider shadow;
-- the Windows front-end build (llvm-mingw);
-- the HUD from the game's own LUI screens;
-- audio.
+**Next** (playable end to end, each module ported 1:1 from the page's):
+- the in-race HUD: done for races (above); the freestyle HUD comes with the FE flow;
+- audio through SDL3 (the music, streams, speech and SFX mix as the page does it);
+- the two renderer gaps above (sj-solo 15300's finish glows and banner colours, sj-ai 200's snow tint and lens flare), with the page
+  re-shot in small advance chunks so frame history is not a factor;
+- the FE screens and the game flow: title, Single Event select, load, intro, race, results;
+- tier high's MSAA (4 samples on the world and the fog-renderer pass targets, main.js applyAntialias) and render scale 'full' (the
+  display's pixel ratio): the native app defaults to tier high, so players see the difference.
 
 ## 8. Windows
 
@@ -474,6 +527,7 @@ container or VM here, and the user has said no downloads for Linux for now; the 
 | native/verify/replay_session.hpp | the race set up as the page does (shared by the verifier and the front end; live or replay) |
 | native/tools/browser-shot.mjs | the page's frame at a tick (visual parity; `--eval` for page diagnostics) |
 | native/tools/replay-tas.mjs | a replay file's pad as a TAS file (browser-shot plays a replay's run) |
+| native/tools/compare-canvas-log.mjs | the page's and native's UI canvas call logs compared (the HUD's call-for-call check) |
 | native/build-core-native.sh | the first prototype build script (superseded by CMake; kept while the migration agent uses it) |
 
 Third-party code: nlohmann/json (MIT, vendored in web/third_party/nlohmann, shared with the wasm build); stb (public domain or MIT,

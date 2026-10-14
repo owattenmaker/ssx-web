@@ -354,6 +354,8 @@ s.worldAiTick?.();
     // pad vibration: this step's rumble calls (core audio events 30/31) + the 0x125B18 decay, before sfx-game drains the queue (web/rumble.js)
     p.rumble.tick(core, !replaying && !p.finished && (p.ui.feScreens?.vibration?.() ?? false));
     // game audio tick: core audio events, board loops, crowd, world sounds, painters, speech (web/game-audio.js)
+    // pv mpSpeechPlace / mpRiderSpeech: an online race's place and racers for the speech (web/net/mp-game.js speechRiders)
+    const onlineSpeech = !p.aiActive && (pv('mpSpeechPlace') || pv('mpRiderSpeech')) ? (p.mpGame?.speechRiders?.() ?? null) : null;
     p.audioSafe(() =>
       p.gameAudio.gameTick({
         core,
@@ -362,7 +364,8 @@ s.worldAiTick?.();
         finished: p.finished,
         pending: p.pending,
         character: p.selectedRider?.id,
-        place: rec.place
+        place: onlineSpeech && pv('mpSpeechPlace') ? onlineSpeech.place : rec.place,
+        online: onlineSpeech && pv('mpRiderSpeech') ? onlineSpeech : null
       })
     );
     if (!replaying)

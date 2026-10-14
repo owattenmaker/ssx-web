@@ -1,3 +1,54 @@
+> **Deployed 2026-10-14 (coordinator): nisOnTicks (M6), mpSpeechPlace, mpRiderSpeech, rollingGoTick ON.** Core unchanged (core12 `83e70406…`). Cutscenes step one NIS tick per game update (0x278720 via 0x230BEC), frame-rate independent; online races play the other racers' pass / hit lines in their own voices and the PA place uses each racer's rank; backcountry starts arm the pass gate from the rolling GO (2872A8). Gate on this exact tree: cutscenes, pause-contexts, presentation, ctm-flow, ctm-event-world, ctm-stream, ctm-left, career, mp-speech, audio-sfx, game-audio, rival-start-audio, rival-mode, mp, mp-prerace, mp-pairs, ai-racers, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit) pass; test-ps2-captures 535/535 with SSX_PV=nisOnTicks on core12 (migration agent). fadesOnTicks and onlineTimeAttack stay off.
+
+> **Native: the in-race HUD, ported 1:1 and checked call for call against the page (2026-10-14, native-port agent).** See [native.md](native.md) section 7.
+> - **What's ported:** web/ui.js's race HUD, as native/frontend/race_hud.hpp, trick_hud.hpp, hud_widgets.hpp and hud_canvas.cpp:
+>   - the place, with its change and glow timers;
+>   - the clock and the speed;
+>   - the progress meter;
+>   - the boost orb, coil glows, gauge and letters;
+>   - the switch icon and the countdown;
+>   - every trick slot case, the Uber hint and the recover meter;
+>   - the GO! and MISSION SUCCESS message, the finish and time-up banner, and the reset fade;
+>   - keyboard key caps in place of the button icons.
+> - **Same timing as the page:** the per-tick state follows game-tick.js and ai-race.js:
+>   - the HUD pre-pass reads before the tick;
+>   - the meter's inputs come after the riders, through a new `Verifier::afterMid` hook that is empty by default;
+>   - GO is command 6.
+> - **How it's drawn:** on a native Canvas-2D equivalent of the page's 640 x 448 #ui canvas, stretched over the 3D frame.
+> - **Proof, call for call:** `browser-shot --canvas-log` records the page's #ui calls for one ui.draw. `ssx3_render_shot --canvas-log` writes native's, and `compare-canvas-log.mjs` compares them. Nine race frames are identical (sj-solo 300 / 1200 / 2700 / 15300 and sj-ai 60 / 185 / 200 / 900) in every argument, transform, alpha and tinted-image byte.
+> - **Two page rules found on the way:**
+>   - Blink takes translate / scale arguments as float and composes the matrix in double.
+>   - getImageData unpremultiplies in float32 and rounds to nearest even. This matches every texel of OV_1-4; the SkUnPreMultiply table misses 284.
+> - **Pixels:** on the HUD's pixels native is within 1.33-1.52 mean of the page. The world under them is 1.71-2.57. Shots: local/native-port/shots/hud-*.png.
+> - **Not yet:**
+>   - the freestyle HUD (big air, pipe and slope-style events): the standings, the time-limit clock, OPPONENT and the finish panel. It reads the FE-built event, so it comes with the FE flow.
+>   - the EA RADIO now-playing popup, which comes with the audio.
+> - **Renderer findings (not the HUD):**
+>   - sj-ai 200 (just after GO!): world mean 4.29.
+>   - sj-solo 15300: at the finish stage native draws light glows and banner colours the page doesn't.
+
+> **Deployed 2026-10-14 (coordinator): core12 + stationSplitPs2 ON (core migration B).** web/runtime core.wasm `83e70406…`, core.js `c4bcd196…` (core11 + the mp flag-8 fix + B; add-only exports _peak_run_setup, _peak_world_apply_events, _peak_world_qa_event). A peak run's station split posts at the PS2's point (230F40 state-10 leave -> 235868 -> 238510), one tick after the page's old point; time and points splits match apr-start / apj-full. Previous core 1e117b0c saved in local/core-migration/core-1e117b0c.*.bak. Gate on this exact tree: test-ps2-captures 535/535 with defaults and with stationSplitPs2 (migration agent; and deploy-staged's capture run), core-api --check, peak-mountain, peak-run, peak-world, career, core-career-cascade, stage-collect, big-challenges, ctm-flow, core-rules, rules-module, core-hook, mp-pairs, ai-racers, slopestyle-bigair, cutscenes, rival-start-audio, mp-speech, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit). Inert in the tree: nisOnTicks, fadesOnTicks, mpSpeechPlace, mpRiderSpeech, rollingGoTick (all off).
+
+> **Core migration B and M6 (2026-10-14, core-migration agent).** See [core-migration.md](core-migration.md) "B" and "M6".
+> - **B (pv coreWorldEvents / stationSplitPs2, off; core to install: local/core-migration/core12, core.wasm `83e70406…`, core.js `c4bcd196…`, built from the tree with the mp flag-8 fix):** the peak world's station decisions in the core (web/peak_world.inc peak_run_setup / peak_world_apply_events / QA peak_world_qa_event; web/race_bridge.cpp the race clock readers); stationSplitPs2 posts the split at the PS2's point (the end of the tick after the Load's, after its aging) with int(f32(C+0xC) x 1/60). The page posted it one tick early. allpeak/apr-start's score is exact to the end with the switch; the points split is confirmed by the new gate allpeak/apj-full (16275 off / 17302 on; 17303 is a missing type-0x18 popup, tracked). The comparer restarts the race clock at --peak-run as the page does (PEAK_CLOCK=0: the old start). Page check (?qa=1 ssxQA.peakEvent): off = coreWorldEvents, stationSplitPs2 the same slots one tick later.
+> - **M6 (pv nisOnTicks, off):** the NIS director on game ticks (web/cutscenes.js tick / pose, the movie's end polled in the NIS tick; web/main.js one update clock while a cutscene plays: NIS tick, then the simulation if no context holds it). Virtual-clock page runs at 60 / 30 / 144 fps: identical per tick with the switch (off: frame-rate dependent); real WebKit: the clock steps exactly 1 per tick. Hand-over T0 + D kept (PS2 Transport to-c). Round trips (test-replay, test-records-verifier, test-online-records, test-rival-page, test-ctm-event-world) pass off and on.
+
+> **Native: the Xbox HD rider textures are the default, and the texture-filtering edges are documented (2026-10-14, native-port agent).** See [native.md](native.md) section 7 ("Texture filtering edges" and the parity table).
+> - **What changed:** the native front end resolves the page's quality tier (native/frontend/quality.hpp, from web/quality.js TIER_DEFAULTS). `ssx3` defaults to `high`, a desktop's tier: the Xbox HD rider set and presentationFast off. ssx3_render_shot defaults to `low`, as browser-shot loads the page. `--riders ps2|xbox` and `--bc 0|1` mirror `?riders=` and `?bc=`.
+> - **The port:** native/frontend/bc_texels.hpp is web/bc-texels.js 1:1. The rider renderer reads the `-xbox` twin archives, falling back to the PS2 archive when a twin is missing. Where the device has texture-compression-bc, which Gpu::init now requests, it uploads BC1 / BC2 with bcMipChain's levels; otherwise it uploads decodeBC's texels. It takes each entry's own domain ('xbox' gives scale 127.5).
+> - **Proof:**
+>   - The decode and every re-encoded mip level are bit-identical to bc-texels.js over all 938 BC entries of ZOE textures / gear, ALLEGRA textures, MAC gear and PSYMON gear. This needed JS Math.round, the Kahan Math.hypot that V8 and JavaScriptCore use, and -ffp-contract=off on ssx3_render.
+>   - Shots with `--riders xbox` on both sides, with equal ?simtrace hashes:
+>     - sj-solo 190: frame 1.87 / 8. On the rider's pixels it is 5.26, against 5.37 with PS2 on both and 6.60 with the sets crossed. With `--bc 0` on both: 5.16.
+>     - sj-ai 900: frame 1.76 / 8. The opponents read their twins too.
+>   - The ctest suites pass 6 / 6.
+> - **Not ported (documented):** tier high's MSAA (4 samples) and render scale 'full'. The texture-filtering edges come from the PNG textures' mips: three generates them on the GPU with a linear-minFilter blit, while native builds them as a CPU box. The sampler and anisotropy already match. The fix, if wanted, is to build the native mips with the same GPU pass.
+
+> **WebKit QA driver: window occlusion detection off (2026-10-14, animation-regression agent).** web/webkit-driver.swift calls WKWebView `_setWindowOcclusionDetectionEnabled:` with NO. A driver window covered by other windows had reported visibilityState=hidden and stopped rAF, so the game drew no frames. Muting (_setPageMuted:) and caffeinate are unchanged. Proof (logs in local/anim-regress/wkfix/):
+> - `node test-mp-page.mjs --webkit` without MP_WK_TIMER: failed before ("player 1 loads the online race", frames 0), passes now (visibility visible, 5103 frames, two races).
+> - With MP_WK_TIMER=1 it also passes; the timer pump is no longer needed.
+> - test-frame-space.mjs (WebKit WebGPU / WebGL2) passes.
+
 > **Deployed 2026-10-14 (coordinator): rivalStartAudio ON.** Core unchanged (`1e117b0c…`). Offline backcountry rival starts now queue the rival's BC_Challenge, then the artist intro, as 2872A8 does. Also in the tree (inert): M6 nisOnTicks unified loop (off), the apj-full capture gate. Gate on this exact tree: rival-start-audio, rival-page, cutscenes, pause-contexts, records-server, records-verifier, replay, online-records pass.
 
 > **"Collectables not animating" report: not reproduced, no regression found, nothing changed (2026-10-14, animation-regression agent).** See [set-pieces.md](set-pieces.md) "Collectible LiveComps against the PS2".

@@ -187,9 +187,11 @@ export function createMpGame({
       client.leave();
       client.disconnect();
     },
-    createLobby() {
-      client.create({ name: `${rider().name}'s lobby`, course: course().code });
+    // opts (pv onlineTimeAttack's Create Lobby popup, web/ta-ui.js): {name, course, maxPlayers}; without them the current course
+    createLobby(opts = {}) {
+      client.create({ name: opts.name || `${rider().name}'s lobby`, course: opts.course || course().code, maxPlayers: opts.maxPlayers });
     },
+    defaultLobbyName: () => `${rider().name}'s lobby`,
     joinLobby(id) {
       client.join(id);
     },
@@ -902,6 +904,30 @@ export function createMpGame({
     },
     hud() {
       return racing ? (pairNet?.hud() ?? null) : null;
+    },
+    // pv mpSpeechPlace / mpRiderSpeech (web/game-audio.js gameTick online): the local racer's slot and online place, and each
+    // live remote racer's character (a cheat skin speaks with its base rider) and ghost motion / position / velocity at the tick
+    speechRiders() {
+      if (!racing || !race || !pairNet) return null;
+      const tick = pairNet.tick;
+      const riders = [];
+      for (const r of remote.racers.values()) {
+        if (r.slot === race.slot || !remote.live(r.slot, tick)) continue;
+        const words = remote.ghost(r.slot, tick);
+        if (!words) continue;
+        const f = new Float32Array(words.buffer, words.byteOffset, words.length);
+        const entry = r.info?.rider;
+        riders.push({
+          key: r,
+          slot: r.slot,
+          character: entry?.kind === 'cheat' ? entry.base || 'zoe' : entry?.id,
+          finished: finished.has(r.slot) || !!r.latest.finished,
+          motion: words[96],
+          position: [f[99], f[100], f[101]],
+          velocity: [f[87], f[88], f[89]]
+        });
+      }
+      return { slot: race.slot, place: pairNet.hud()?.place ?? 0, riders };
     },
     // Background (hidden tab) step from the worker: main.js advances the simulation and calls afterFrame(true).
     get backgroundActive() {

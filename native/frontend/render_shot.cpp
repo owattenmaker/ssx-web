@@ -3,11 +3,14 @@
 // The frame is the one the page draws right after stepping N + 2 ticks (ssxQA.advance: render alpha 0): the camera and palettes of
 // tick N over the world state of tick N + 1 (native/tools/browser-shot.mjs takes the page's). No window.
 //   ssx3_render_shot ASSETS_DIR REPLAY.ssxr OUT.png [--tick N] [--size 640x480]
-//                    [--quality low|medium|high] [--riders ps2|xbox] [--bc 0|1]
+//                    [--quality low|medium|high] [--riders ps2|xbox] [--bc 0|1] [--hud] [--canvas-log OUT.json]
+// --hud draws the race HUD over the frame (native/frontend/race_hud.hpp; browser-shot --hud keeps the page's); --canvas-log writes
+// that frame's UI canvas calls (the shape browser-shot --canvas-log records from the page).
 // The quality defaults to low, as native/tools/browser-shot.mjs loads the page (?quality=low); the app's default is high.
 #include "gpu.hpp"
 #include "image_io.hpp"
 #include "quality.hpp"
+#include "race_hud.hpp"
 #include "race_presenter.hpp"
 #include "replay_session.hpp"
 #include "world_renderer.hpp"
@@ -26,6 +29,8 @@ int main(int argc, char** argv) {
         std::string qualityTier = "low";
         std::string riderSet;
         std::string bcFlag;
+        bool withHud = false;
+        std::string canvasLog;
         for (int k = 1; k < argc; ++k) {
             const std::string a = argv[k];
             if (a == "--tick" && k + 1 < argc) {
@@ -38,6 +43,11 @@ int main(int argc, char** argv) {
                 riderSet = argv[++k];
             } else if (a == "--bc" && k + 1 < argc) {
                 bcFlag = argv[++k];
+            } else if (a == "--hud") {
+                withHud = true;
+            } else if (a == "--canvas-log" && k + 1 < argc) {
+                canvasLog = argv[++k];
+                withHud = true;
             } else {
                 positional.push_back(a);
             }
@@ -80,13 +90,25 @@ int main(int argc, char** argv) {
         replay_camera_begin(0x5d, 1);
         RacePresenter presenter(v);
         presenter.riderTextures = quality.riderTextures;
+        // the race HUD's per-tick state runs whether or not it is drawn (as on the page)
+        RaceHud hud;
+        hud.begin(v);
+        v.afterMid = [&] { hud.afterMid(v); };
         PadReader reader(v.pad);
         float input[24];
         uint32_t trace = 0;
+        bool hudLoaded = false;
+        Gpu gpu;
+        gpu.allowBC = quality.bc;
+        gpu.init();
+        hud.load(gpu, v);
+        hudLoaded = true;
         for (long t = 0; t <= tickTarget + 1; ++t) {
             reader.read(t, input);
+            hud.beforeTick();
             v.tick(input);
             presenter.afterTick();
+            hud.afterTick(v);
             if (t == tickTarget) {
                 trace = v.traceHash();
             }
@@ -94,9 +116,7 @@ int main(int argc, char** argv) {
         if (!presenter.cameraValid()) {
             throw std::runtime_error("no camera yet");
         }
-        Gpu gpu;
-        gpu.allowBC = quality.bc;
-        gpu.init();
+        (void)hudLoaded;
         WorldRenderer renderer;
         renderer.load(gpu, v.assets.root, v.code);
         presenter.loadEffects(renderer);
@@ -107,6 +127,21 @@ int main(int argc, char** argv) {
         WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
         WGPUTextureView view = wgpuTextureCreateView(target, &vd);
         renderer.render(camera, state, view, width, height, 4.0 / 3.0);
+        if (withHud) {
+            hud.canvas.logging = !canvasLog.empty();
+            hud.draw(v);
+            WGPUCommandEncoderDescriptor ed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
+            WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(gpu.device, &ed);
+            hud.canvas.encode(enc, view, width, height);
+            WGPUCommandBufferDescriptor cd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
+            WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, &cd);
+            wgpuQueueSubmit(gpu.queue, 1, &cmd);
+            wgpuCommandBufferRelease(cmd);
+            wgpuCommandEncoderRelease(enc);
+            if (!canvasLog.empty()) {
+                std::ofstream(canvasLog) << hud.canvas.log.dump();
+            }
+        }
         const auto pixels = gpu.readback(target, width, height);
         writePng(positional[2], int(width), int(height), pixels.data());
         const auto& effects = renderer.effects();

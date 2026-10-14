@@ -218,6 +218,9 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// fadesOnTicks (core-migration agent, docs/core-migration.md F; a behaviour change): the cutscene fades (the pre-fade, the fade-from
+// over the world, the script fades' painter reset) step once per game update (the view fade 2E4370 in 22E840, once per 0x2306B8),
+// not on drawn frames: web/cutscenes.js fadeTick from the game tick's end, fadeFrames on frames without an update. Off: frame time.
 // nisOnTicks (core-migration agent, docs/core-migration.md M6; a behaviour change, approved by the user): the NIS director
 // (web/cutscenes.js) steps one whole tick per game update (0x278720 via 0x230BEC: the script clock +0x28 by +0x24 = 1.0, no dt),
 // at the update's NIS point (main.js nisStart), or on whole 60 Hz ticks of frame time when no game update runs; its feeds (the held
@@ -252,6 +255,17 @@
 // (main.js -> game-audio.js rivalStart) on the first frame the race phase is 5 without the countdown 4 (the race now reaches 5
 // directly, so the old phase 3 -> 5 edge never came: no song event 0, BC_Challenge or artist intro), and only an online race counts
 // as multiplayer (0x535C11 == 2; mpGame always exists, so every offline rival start took the Radio BIG intro path). Off: as before.
+// rollingGoTick (speech-speaker agent, docs/backcountry.md): the backcountry rolling start writes the GO tick audio+0x582C (2872A8 at
+// 0x2872D0) on the first tick at phase 5 without the countdown 4, so 2A0560's 600-tick pass gate opens in rival events and online
+// backcountry races. Off: it waited for a phase 3 -> 5 edge that no longer comes (no pass speech in those races).
+// mpSpeechPlace (speech-speaker agent, docs/audio-logic.md 4.5 "Who speaks"): in an online race the speech's place is the local
+// racer's online rank (web/net/pair-net.js hud: 0x10F998's +0xEC), as 2A34D0 (PA_Rider_Postition: listener +0xEC through the
+// table 0x4830F0) and 2A1E68 (0x535C11 == 2: +0xEC -> 1/2/4/8/0x10, else 0x200; PA_Finish_Line) read it. Off: place 0 online.
+// mpRiderSpeech (speech-speaker agent, same section): the other racers of an online race are riders of web/sfx-game.js (their
+// ghost's motion, position and velocity at the tick), with the local racer at its own slot, so the human core's overtake 299E28
+// and pair events reach 2A0560 / 2A0A30: both riders' lines post (2A1820 = 2 for two humans), the bump / attack sound and the
+// target's grunt play. A pass or contact between two remote racers says nothing (neither is a local rider: 2A0560's 285D98
+// test). Their board loops stay off. Off: sfx-game knows only the local racer, as before.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -313,8 +327,9 @@ export const PV_DEFAULTS = Object.freeze({
   coreCareerCascade: true,
   coreCareerWorld: true,
   coreWorldEvents: false,
-  stationSplitPs2: false,
-  nisOnTicks: false,
+  stationSplitPs2: true,
+  nisOnTicks: true,
+  fadesOnTicks: false,
   coreCareerLodge: true,
   coreRules: true,
   coreTick: true,
@@ -322,6 +337,9 @@ export const PV_DEFAULTS = Object.freeze({
   ghostRiders: false,
   mpCourseSelect: true,
   mpPreRace: true,
+  mpSpeechPlace: true,
+  rollingGoTick: true,
+  mpRiderSpeech: true,
   rivalStartAudio: true
 });
 const overrides = new Map();

@@ -150,7 +150,9 @@ export class MultiplayerScreens {
     if (ui.screen === 'mp-lobbies') {
       const lobbies = s.lobbies;
       if (i === 0) {
-        this.session.createLobby();
+        // pv onlineTimeAttack: the Create Lobby popup (web/ta-ui.js ta-create): the mode (Race / Time Attack) and its options
+        if (this.taRow) this.ta.openCreate('race', 'mp-lobbies');
+        else this.session.createLobby();
         return;
       }
       if (i === lobbies.length + 1) {
@@ -319,6 +321,8 @@ export class MultiplayerScreens {
         this.noticeText() ||
           (this.taRow && ui.index === 0
             ? 'Time attack sessions: everyone rides the same event against the clock; the best run wins.'
+            : ui.index === this.taRow && this.taRow
+            ? 'Create a race lobby or a time attack session: pick the mode, the event and its options.'
             : ui.index === this.taRow
             ? 'Create a lobby on the current course. Share its invite link with a friend.'
             : 'Join a lobby, or refresh the list. A racing lobby seats you for its next race.')

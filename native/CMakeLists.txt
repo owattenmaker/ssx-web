@@ -169,7 +169,8 @@ if(SSX_BUILD_FRONTEND)
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/world_renderer.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/post_effects.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_fx.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_renderer.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_renderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/hud_canvas.cpp")
     target_link_libraries(ssx3_render PUBLIC ssx3_stb)
     target_compile_features(ssx3_render PUBLIC cxx_std_20)
     # the CPU-side arithmetic as JS does it (no fused multiply-add: the BC mip re-encode, the shadow fits)

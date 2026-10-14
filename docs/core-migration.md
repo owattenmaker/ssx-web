@@ -62,7 +62,7 @@ The JS that decides simulation results, beyond presentation:
 | M5e | The lodge's purchases (gear, uber tricks, songs, rewards, attributes) | coreCareerLodge | in the tree, verified |
 | M5f | The world's career events (collectibles, Big Challenge status words) | coreCareerWorld | in the tree, verified |
 | B | The peak world's station decisions (split HUD, booth / lodge door ending a Big Challenge) at the PS2's point | coreWorldEvents / stationSplitPs2 | in progress |
-| M6 | The NIS / cutscene clock on game ticks (approved by the user) | nisOnTicks | decomp |
+| M6 | The NIS / cutscene clock on game ticks (approved by the user) | nisOnTicks | in the tree, verified on the page |
 | M8 | The CTM world-state machine | | after C |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
@@ -374,6 +374,31 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   (off: through 16275). Gate allpeak/apj-full.
 - **Open (tracked):** apj-full record 17303: the PS2 posts a type-0x18 HUD message (slot 24, 2000 points; a trick-commit popup of
   11A228) the port does not, and slot 25's points differ (6000 / 4000); both switch states. Next target after M6.
+
+## M6: the NIS on game ticks (pv nisOnTicks, a behaviour change approved by the user)
+
+- Decomp (local/core-migration/decomp/nis-tick.md): one NIS tick per game update, 0x278720 via 0x230BEC (after the world-state tick
+  0x230F40, before the rider manager); the script clock +0x28 steps by +0x24 = 1.0 (no dt; seconds only where clips are sampled, 1/60);
+  a pause context with mask bit 0x08 skips it; catch-up updates (at most 12 a drawn frame) each run one. So game ticks are the
+  PS2's NIS clock, and frame time is not.
+- web/cutscenes.js: `tick()` (one whole NIS tick: the step clock +1, actors, the held rider, the section point = the previous
+  tick's eye, as 0x281100 copies the camera 0x22E840 left in the update before), `pose()` (the last tick's camera, per rendered
+  frame); a masked NIS skips the tick (the fade's own clock steps); a movie step's end is polled in the NIS tick (0x283BB8's done
+  flag) and ends the step and pops its context in that update; the director's own frames (the Transport's draw across the course
+  switch) run whole ticks.
+- web/main.js: while a cutscene plays (offline), every update runs as 0x2306B8 runs it, on the simulation's FixedStepClock: the
+  game tick (whose nisStart runs the NIS tick first) when no context holds the simulation, else the NIS tick alone (with the pad
+  sample the update consumes, pv padCarry); the cut's rider hold waiting for the first posed tick is checked per update. Frames
+  without a cutscene take the old paths unchanged.
+- Proof: local/core-migration/qa/probe-nis.mjs (the new-career opening: movie, #153 372 ticks, #163 546 ticks over the simulated
+  world) on a virtual frame clock (rAF and performance.now replaced) in headless Chrome at 60 / 30 / 144 fps: with the switch every
+  game tick's ?simtrace hash, NIS step and clock identical across the three rates (1,230+ ticks); off, the clock is fractional at 144
+  and doubled at 30 (both ticks of a frame see one clock). The real WebKit (webkit-driver, the display's own frames, ~50 Hz under
+  load): on, the clock steps exactly 1 per tick inside every step (0 exceptions, no fractions); off, 916 exceptions. The hand-over
+  stays the measured T0 + D (PS2 Transport to-c: #149 at 924, #122 at 1044 = 120 ticks): #153 -> #163 lands on its 372 ticks at
+  every rate; the 917 world ticks of WS10 equal the PS2's measured 917. WebKit's virtual clock is not reliable (its frame loop does
+  not always pick up the replaced rAF), so WebKit's 60 / 120 Hz was not emulated; the real session stands for it.
+- Next on top: F (the cutscene feeds' remaining frame-time parts), then the fades (preFade / fadeFrom still run on rAF time).
 
 ## Native core
 

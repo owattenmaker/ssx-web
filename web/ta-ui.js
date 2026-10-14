@@ -2,8 +2,12 @@
 // (FE.LUI / OV.LUI, tools/export_online_screens.py -> UI/online-screens.json, UI/online-overlays.json), played by web/lui-player.js:
 //   ta-lobby     231lobby_menu (set up at 0x1BCB58): the sessions in the channel rows, the focused one's players in the room panel,
 //                Create Room
-//   ta-create    232CreateRoomPopup (0x1BE7D8) over the lobby: Event (the Channel Name row), Room Name (the game keyboard), Time limit
-//                (the Password row), Done
+//   ta-create    the Create Lobby popup, from Online Lobbies > Create Lobby (mode Race) or the session list's Create Room (mode Time
+//                Attack): 240challenge_popup (FE.LUI; its screen name is loaded in 0x1ADDD0 at 0x1ADEB0), the PS2's game-options popup.
+//                Its Select Event row (Cross: the Single Event selector, Left / Right: the next event; Peak / Event / Course on the
+//                info strip) and its list-box rows: Mode (Race / Time Attack), Time limit (1..30 min, 6:00 by default; Time Attack
+//                only), Room Name (the game keyboard), Max riders; Submit, Cancel. The list boxes' own behaviour on the PS2 is not
+//                traced: Left / Right step a value as the other front-end option rows do (port-only screen in the PS2's clothes)
 //   ta-room      235chat_room (0x1B1F88): the session's players, the focused one's rank / best / rider / state, the message history
 //                (the event, the phase and its time left); Select rides the event, Help opens the standings, Previous leaves
 //   ta-standings 249Stats (0x1C2D18): the window's standings, ten rows a page with the slider, the event and its course
@@ -63,15 +67,30 @@ const LOBBY = {
   hidden: ['01b76bc2', '01af7754', '09fc9605', '0a0df935', '0aee82e2', '0af69e74', '06b52385', '06c44cb5', '06cd32d3', '03a143e3', '07a85645',
     '04c4c960', '06a068e5']
 };
-const CREATE = {
-  intro: 25,
-  focus: [35, 45, 55, 65],
-  title: '0c55e7c5',
-  labels: ['0b583635', '0377a3b5', '0dbf40e4'],
-  values: ['049299d5', '0f17ca35', '001f6964'],
-  done: '0cf8c105',
-  hidden: ['06cd32d3', '07a85645']
+// 240challenge_popup: no intro label (its timeline holds only the focus states 15..50); the items in order: Select Event, the five
+// list-box rows (Ranked Game, # of AI riders, Power-ups, Multipliers, Point Icons), Submit, Cancel.
+const CHALLENGE = {
+  focus: [15, 20, 25, 30, 35, 45, 50],
+  title: '0f9bbea5',
+  options: '00d43055',
+  message: '0d3cd367',
+  eventLabel: '09b785f4',
+  eventValue: '05dea614',
+  info: { peakLabel: '0802d5dc', peak: '0cf9603b', eventLabel: '059be13c', event: '0f8c81d4', courseLabel: '0936a19c', course: '08ad9075' },
+  labels: ['084bca35', '0f10bd53', '0d858e93', '0f5a90d3'],
+  values: ['022ffeb5', '0bb6fe93', '03cfeab3', '091ed993'],
+  arrows: [['09c227b1', '08867251'], ['09c227b2', '08867252'], ['09c227b3', '08867253'], ['09c227b4', '08867254']],
+  submit: '09a0cde4',
+  cancel: '089f105c',
+  // the fifth list-box row (Point Icons) and its value box, the challenged player's stats panel, the signal bars, the Cross icon
+  hidden: ['05819cf3', '0c2d9f04', '0b75c3c0', '0b8304c1', '00000078', '09c227b5', '08867255']
 };
+// the Create Lobby rows (ta-create items 1..4 on the list-box rows)
+const ROW = { mode: 1, limit: 2, name: 3, max: 4, submit: 5, cancel: 6 };
+const MODES = ['race', 'ta'];
+// an online lobby's riders (web/server/mp-server.mjs MAX_PLAYERS) and a session's (sessions.mjs maxPlayers, MP_SESSION_MAX)
+const MAX_RIDERS = { race: 6, ta: 50 };
+const PEAK_OF = { A: 1, B: 1, C: 2, D: 2, E: 3 };
 const ROOM = {
   intro: 25,
   name: '013bb775',
@@ -125,7 +144,10 @@ export class TaScreens {
     this.enterAt = 0;
     this.focusAt = 0;
     this.screen = null;
-    this.form = { event: -1, name: '', limitMin: 6 };
+    // the Create Lobby popup: mode 'race' (an online lobby) or 'ta' (a session); event: the session's rotation index (-1: Random);
+    // course: the lobby's course code; max: the riders (null: the mode's most)
+    this.form = { mode: 'ta', event: -1, course: null, name: '', limitMin: 6, max: null };
+    this.createFrom = 'ta-lobby';
     this.podiumShown = 0;
     this.voteShown = 0;
     this.watch = setInterval(() => this.follow(), 250);
@@ -218,7 +240,7 @@ export class TaScreens {
   items(screen) {
     const s = this.st;
     if (screen === 'ta-lobby') return [...this.sessions().map((x) => x.name), 'Create Room'];
-    if (screen === 'ta-create') return ['Event', 'Room Name', 'Time limit', 'Done'];
+    if (screen === 'ta-create') return ['Select Event', 'Mode', 'Time limit', 'Room Name', 'Max riders', 'Submit', 'Cancel'];
     if (screen === 'ta-room') return [...s.roster.values()].map((m) => m.name).concat(s.roster.size ? [] : ['']);
     if (screen === 'ta-standings') return (s.results?.window === s.session?.window?.id ? s.results.standings : s.standings ?? []).map((r) => r.name).concat(['']);
     if (screen === 'ta-vote') return (s.session?.candidates ?? []).map((k) => (k === RANDOM ? 'Random' : this.eventName(k)));
@@ -232,6 +254,8 @@ export class TaScreens {
       return !!x && x.players >= x.maxPlayers;
     }
     if (screen === 'ta-circuit') return i === 1;
+    // a race lobby has no time limit
+    if (screen === 'ta-create') return i === ROW.limit && this.form.mode !== 'ta';
     return false;
   }
   layout(screen, i) {
@@ -239,7 +263,11 @@ export class TaScreens {
       const k = i - this.lobbyTop();
       return i >= this.sessions().length ? [93, 318 * SY, 222, 22 * SY] : [90, (125 + 45 * Math.max(0, Math.min(3, k))) * SY, 225, 40 * SY];
     }
-    if (screen === 'ta-create') return i < 3 ? [67, (130 + 33 * i) * SY, 290, 26 * SY] : [175, 245 * SY, 310, 30 * SY];
+    if (screen === 'ta-create') {
+      // the rows' centres on the 480-line frame (Select Event, the four list-box rows, Submit, Cancel)
+      const cy = [235, 263, 288, 313, 338, 389, 417][Math.max(0, Math.min(6, i))];
+      return [83, (cy - 12) * SY, 490, 24 * SY];
+    }
     if (screen === 'ta-vote') return [this.boxX(i), BOX.y, BOX.w, BOX.h];
     if (screen === 'ta-results') return [450, 299, 126, 17];
     if (screen === 'ta-circuit') return [470, (345 + 18 * i) * SY, 110, 17 * SY];
@@ -255,6 +283,71 @@ export class TaScreens {
     this.ui.index = 0;
     this.ui.sync();
   }
+  // The Create Lobby popup: from Online Lobbies > Create Lobby (mode 'race') or the session list's Create Room (mode 'ta'). The lobby's
+  // course starts on the course loaded on the page.
+  openCreate(mode, from) {
+    this.form.mode = MODES.includes(mode) ? mode : 'race';
+    this.form.course = this.ui.course?.code ?? this.form.course;
+    this.form.max = null;
+    this.createFrom = from;
+    this.go('ta-create', 0);
+  }
+  // the race lobby's courses: one per course code (a backcountry's Jam entry shares its code), as mp-game.js cycleCourse
+  lobbyCourses() {
+    const all = this.ui.courses ?? [];
+    return all.filter((c, k) => !c.freeRide && c.ready !== false && all.findIndex((x) => x.code === c.code) === k).map((c) => c.code);
+  }
+  // the popup's event: a board key "<mode>:<COURSE>" (time attack; null = Random) or the race lobby's course code
+  createKey() {
+    if (this.form.mode === 'ta') return this.form.event >= 0 ? this.rotation()[this.form.event] ?? null : null;
+    const code = this.form.course;
+    const c = (this.ui.courses ?? []).find((x) => x.code === code && !x.rivalMode) ?? (this.ui.courses ?? []).find((x) => x.code === code);
+    const mode = c ? c.rivalMode ?? { race: 0, slopestyle: 1, superpipe: 2, bigair: 3 }[c.event] ?? 0 : 0;
+    return code ? `${mode}:${code}` : null;
+  }
+  createMax() {
+    return Math.max(2, Math.min(MAX_RIDERS[this.form.mode], this.form.max ?? MAX_RIDERS[this.form.mode]));
+  }
+  // the room name shown and sent: the typed one, else the default (the session: the Player Name; the lobby: mp-game.js's '<rider>'s lobby')
+  createName() {
+    if (this.form.name) return this.form.name;
+    if (this.form.mode === 'ta') return this.ui.feScreens?.playerName || '';
+    return this.ui.mpUI?.session?.defaultLobbyName?.() ?? '';
+  }
+  // Select Event: the Single Event selector (web/fe-event-select.js openLobby); a session takes every event with a board
+  pickEvent() {
+    const select = this.ui.eventSelect;
+    if (!select?.ready || !select.openLobby) {
+      this.step(0, 1);
+      return;
+    }
+    const ta = this.form.mode === 'ta';
+    const key = this.createKey();
+    const toPopup = () => this.go('ta-create', 0);
+    select.openLobby({
+      code: key ? key.split(':')[1] : null,
+      all: ta,
+      pick: (e) => {
+        if (ta) {
+          const k = this.rotation().indexOf(`${e.mode}:${e.code}`);
+          if (k >= 0) this.form.event = k;
+        } else this.form.course = e.code;
+        toPopup();
+      },
+      back: toPopup
+    });
+  }
+  submitCreate() {
+    const name = this.createName() || undefined;
+    const maxPlayers = this.createMax();
+    if (this.form.mode === 'ta') {
+      this.ta.create({ name, limitMs: this.form.limitMin * 60000, maxPlayers, event: this.createKey() ?? undefined });
+      return;
+    }
+    // the race lobby: the server's 'lobby' answer opens it from Online Lobbies (web/net/mp-game.js)
+    this.go('mp-lobbies', 0);
+    this.ui.mpUI?.session?.createLobby?.({ name, course: this.form.course ?? undefined, maxPlayers });
+  }
   choose(i) {
     const ui = this.ui;
     const screen = ui.screen;
@@ -262,16 +355,16 @@ export class TaScreens {
       const x = this.sessions()[i];
       if (x) {
         if (!this.disabled(screen, i)) this.ta.join(x.id);
-      } else this.go('ta-create', 0);
+      } else this.openCreate('ta', 'ta-lobby');
       return;
     }
     if (screen === 'ta-create') {
-      if (i === 1) this.nameKeyboard();
-      else if (i === 3) {
-        const keys = this.rotation();
-        const event = this.form.event >= 0 ? keys[this.form.event] : undefined;
-        this.ta.create({ name: this.form.name || undefined, limitMs: this.form.limitMin * 60000, event });
-      } else this.step(i, 1);
+      if (this.disabled(screen, i)) return;
+      if (i === 0) this.pickEvent();
+      else if (i === ROW.name) this.nameKeyboard();
+      else if (i === ROW.submit) this.submitCreate();
+      else if (i === ROW.cancel) this.back();
+      else this.step(i, 1);
       return;
     }
     if (screen === 'ta-room') {
@@ -295,7 +388,11 @@ export class TaScreens {
   back() {
     const screen = this.ui.screen;
     if (screen === 'ta-lobby') this.go('mp-lobbies', 0);
-    else if (screen === 'ta-create') this.go('ta-lobby', this.sessions().length);
+    else if (screen === 'ta-create') {
+      // back where the popup was opened: Online Lobbies on its Create Lobby row, or the session list on Create Room
+      if (this.createFrom === 'mp-lobbies') this.go('mp-lobbies', this.ui.mpUI?.taRow ?? 0);
+      else this.go('ta-lobby', this.sessions().length);
+    }
     else if (screen === 'ta-room') this.leave();
     else if (screen === 'ta-standings') this.go(this.returnTo ?? 'ta-room', 0);
     else if (screen === 'ta-vote' || screen === 'ta-results') this.go('ta-room', 0);
@@ -312,6 +409,18 @@ export class TaScreens {
     if (this.ui.screen === 'ta-create' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
       e.preventDefault();
       this.step(this.ui.index, e.code === 'ArrowLeft' ? -1 : 1);
+      return true;
+    }
+    // Up / Down pass over a greyed row (a race lobby's Time limit)
+    if (this.ui.screen === 'ta-create' && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
+      e.preventDefault();
+      if (e.repeat) return true;
+      const n = this.items('ta-create').length;
+      let i = this.ui.index;
+      do i += e.code === 'ArrowUp' ? -1 : 1;
+      while (i > 0 && i < n - 1 && this.disabled('ta-create', i));
+      this.ui.index = Math.max(0, Math.min(n - 1, i));
+      this.ui.sync();
       return true;
     }
     if (this.ui.screen === 'ta-room' && (e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
@@ -336,17 +445,28 @@ export class TaScreens {
     }
     return false;
   }
+  // Left / Right on the popup's rows (Cross on a list-box row steps it forward)
   step(i, d) {
-    if (i === 0) {
+    const f = this.form;
+    if (i === 0 && f.mode === 'ta') {
+      // Random, then the rotation's events
       const n = this.rotation().length;
-      this.form.event = ((this.form.event + 1 + d + n + 1) % (n + 1)) - 1;
-    } else if (i === 2) this.form.limitMin = Math.max(1, Math.min(30, this.form.limitMin + d));
+      f.event = ((f.event + 1 + d + n + 1) % (n + 1)) - 1;
+    } else if (i === 0) {
+      const codes = this.lobbyCourses();
+      const k = codes.indexOf(f.course);
+      if (codes.length) f.course = codes[(k + d + codes.length) % codes.length];
+    } else if (i === ROW.mode) {
+      f.mode = MODES[(MODES.indexOf(f.mode) + d + MODES.length) % MODES.length];
+      f.max = null;
+    } else if (i === ROW.limit && f.mode === 'ta') f.limitMin = Math.max(1, Math.min(30, f.limitMin + d));
+    else if (i === ROW.max) f.max = Math.max(2, Math.min(MAX_RIDERS[f.mode], this.createMax() + d));
     this.ui.sync();
   }
   nameKeyboard() {
     const fe = this.ui.feScreens;
     if (!fe?.openKeyboard) return;
-    fe.openKeyboard('record', { text: this.form.name || fe.playerName || '', done: (name) => {
+    fe.openKeyboard('record', { text: this.createName(), done: (name) => {
       this.form.name = String(name || '').trim();
       this.ui.sync();
     } });
@@ -485,7 +605,9 @@ export class TaScreens {
       b.fillStyle = '#75a9cb';
       b.fillRect(0, 0, 640, 448);
     }
-    if (screen === 'ta-lobby' || screen === 'ta-create') this.drawLobby(c, screen === 'ta-create');
+    // the Create Lobby popup over the screen it was opened from: the session list, or Online Lobbies' MCOMM frame (web/mp-ui.js)
+    if (screen === 'ta-create' && this.createFrom === 'mp-lobbies') this.ui.careerUI?.mcommFrame?.(c, b, 'Online Lobbies');
+    else if (screen === 'ta-lobby' || screen === 'ta-create') this.drawLobby(c, screen === 'ta-create');
     if (screen === 'ta-create') this.drawCreate(c);
     if (screen === 'ta-room') this.drawRoom(c);
     if (screen === 'ta-standings') this.drawStandings(c);
@@ -521,19 +643,45 @@ export class TaScreens {
     });
   }
   drawCreate(c) {
-    const keys = this.rotation();
+    const f = this.form;
+    const ta = f.mode === 'ta';
     const i = this.ui.index;
-    const labels = ['Event', 'Room Name', 'Time limit'];
-    const values = [this.form.event >= 0 ? this.eventName(keys[this.form.event]) : 'Random', this.form.name || this.ui.feScreens?.playerName || '',
-      `${this.form.limitMin}:00`];
-    const hidden = new Set(CREATE.hidden);
-    this.drawScreen(c, '232CreateRoomPopup', CREATE.intro, CREATE.focus[Math.max(0, Math.min(3, i))], (e) => {
-      if (hidden.has(e.name)) return { hidden: true };
-      if (e.name === CREATE.title) return { text: 'Create Session' };
-      const l = CREATE.labels.indexOf(e.name);
-      if (l >= 0) return { text: labels[l] };
-      const v = CREATE.values.indexOf(e.name);
-      if (v >= 0) return { text: values[v] };
+    const key = this.createKey();
+    const code = key ? key.split(':')[1] : null;
+    const eventName = ta ? (key ? this.eventName(key) : 'Random') : this.ui.mpUI?.courseName?.(code) ?? code ?? '';
+    const labels = ['Mode', 'Time limit', 'Room Name', 'Max riders'];
+    const values = [ta ? 'Time Attack' : 'Race', ta ? `${f.limitMin}:00` : '-', this.createName(), String(this.createMax())];
+    const about = ta
+      ? 'Time Attack: everyone rides the event against the clock and restarts at will; the best run counts. Then the podium and a vote for the next event.'
+      : 'Race: up to six riders race head to head. The host picks the course in the lobby and starts the race.';
+    const hidden = new Set(CHALLENGE.hidden);
+    // a list-box row's arrows only while it has a value to step (not the Room Name, not a race lobby's Time limit)
+    const noArrows = new Set([...CHALLENGE.arrows[ROW.name - 1], ...(ta ? [] : CHALLENGE.arrows[ROW.limit - 1])]);
+    const info = CHALLENGE.info;
+    const infoText = {
+      [info.peakLabel]: 'Peak',
+      [info.peak]: code ? String(PEAK_OF[code[0]] ?? '') : '-',
+      [info.eventLabel]: 'Event',
+      [info.event]: key ? this.modeName(key) : 'Random',
+      [info.courseLabel]: 'Course',
+      [info.course]: code ? this.ui.mpUI?.courseName?.(code) ?? code : '-'
+    };
+    this.drawScreen(c, '240challenge_popup', 0, CHALLENGE.focus[Math.max(0, Math.min(6, i))], (e) => {
+      if (hidden.has(e.name) || noArrows.has(e.name)) return { hidden: true };
+      if (e.name === CHALLENGE.title) return { text: 'Create Lobby' };
+      if (e.name === CHALLENGE.options) return { text: 'Set lobby options' };
+      // the description on the upper panel (where the challenged player's stats were)
+      if (e.name === CHALLENGE.message) return { text: about, props: { 1: 96, 6: 470 } };
+      if (e.name === CHALLENGE.eventLabel) return { text: 'Select Event' };
+      if (e.name === CHALLENGE.eventValue) return { text: eventName };
+      if (e.name in infoText) return { text: infoText[e.name] };
+      const l = CHALLENGE.labels.indexOf(e.name);
+      if (l >= 0) return { text: labels[l], alpha: !ta && l === ROW.limit - 1 ? 110 : undefined };
+      const v = CHALLENGE.values.indexOf(e.name);
+      // the value boxes are 80 wide on the disc (Yes / No, numbers): the names get the row's width
+      if (v >= 0) return { text: values[v], props: { 6: 180 }, alpha: !ta && v === ROW.limit - 1 ? 110 : undefined };
+      if (e.name === CHALLENGE.submit) return { text: 'Submit' };
+      if (e.name === CHALLENGE.cancel) return { text: 'Cancel' };
       return null;
     });
     const fe = this.ui.feScreens;

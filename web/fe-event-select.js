@@ -228,9 +228,11 @@ export class FeEventSelect {
   // Cross on an event calls pick(event) (its course code names the lobby's course, nothing loads), Back on Select Peak calls back().
   // The rows are the Single Event ones; the peak runs and the Jam rows of a backcountry (Rival Points: the same course as its Rival
   // Time row) are not playable, and the returning player's own Single Event selection is left as it was.
-  openLobby({ code = null, pick, back }) {
+  // all (pv onlineTimeAttack's Create Lobby popup, web/ta-ui.js): a time-attack session, whose rotation is every event with a board:
+  // the Jam rows are playable too (the peak runs still not).
+  openLobby({ code = null, pick, back, all = false }) {
     this.boards = false;
-    this.lobby = { pick, back };
+    this.lobby = { pick, back, all };
     for (const peak of SINGLE_EVENT_OPEN_PEAKS)
       for (const mode of MODES) {
         const e = this.events(peak, mode).find((x) => x.code === code && x.playable);
@@ -268,7 +270,7 @@ export class FeEventSelect {
         riderId: this.riderId,
         order: mapRowOrder(this.data?.screens?.Map, peak, mode)
       });
-      if (this.lobby) return list.map((e) => ({ ...e, playable: e.playable && e.mode < 5 }));
+      if (this.lobby) return list.map((e) => ({ ...e, playable: e.playable && e.mode < (this.lobby.all ? 6 : 5) }));
       return this.boards ? list.map((e) => ({ ...e, playable: e.mode < 6 && !!e.code })) : list;
     } // Leaderboards: an event has a board when it has a course (not the peak runs)
     // no career tables: the courses.json events of Peak 1 by kind
@@ -286,7 +288,7 @@ export class FeEventSelect {
         kind: c.event,
         entry: c,
         // pv mpCourseSelect: a lobby's choice as above
-        playable: c.ready !== false && (!this.lobby || mode < 5)
+        playable: c.ready !== false && (!this.lobby || mode < (this.lobby.all ? 6 : 5))
       };
     });
   }

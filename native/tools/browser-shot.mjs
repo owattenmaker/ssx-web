@@ -5,6 +5,7 @@
 // tick N + 1, which ssx3_render_shot --tick N draws the same way. Prints {tick, trace} (the page's ?simtrace hash of tick N).
 //   node native/tools/browser-shot.mjs PAD.tas OUT.png --tick N [--course ARA1] [--rider zoe] [--attributes 55|none] [--lineup JSON] [--eval JS]
 //        [--riders ps2|xbox] [--bc 0|1]   the page's ?riders= (the rider texture set; quality=low's default is ps2) and ?bc=
+//        [--hud] [--canvas-log OUT.json]  keep the race HUD; record one ui.draw's #ui canvas calls (ssx3_render_shot --canvas-log)
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
 import { parse, toChannels } from '../../tools/tas/pad-format.mjs';
@@ -23,6 +24,8 @@ const lineup = opt('lineup') ? JSON.parse(opt('lineup')) : null;
 const attributes = opt('attributes', 'none') === 'none' ? null : +opt('attributes');
 const riders = opt('riders');
 const bc = opt('bc');
+const canvasLog = opt('canvas-log');
+const keepHud = args.includes('--hud') || !!canvasLog;
 if (riders && !['ps2', 'xbox'].includes(riders)) throw new Error('--riders ps2|xbox');
 if (bc && !['0', '1'].includes(bc)) throw new Error('--bc 0|1');
 const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '');
@@ -56,7 +59,42 @@ try {
     const chunk = frames.slice(at, Math.min(total, at + 400)).map((f) => Array.from(toChannels(f)));
     await E(`(()=>{for(const p of ${JSON.stringify(chunk)})ssxQA.advance(1,p);return 1})()`);
   }
-  await E('(()=>{ssxQA.hud(false);return 1})()');
+  if (!keepHud) await E('(()=>{ssxQA.hud(false);return 1})()');
+  // the #ui context's calls from one ui.draw to the next (the reset fade after it included)
+  if (canvasLog) {
+    await E(`(()=>{
+      const ui = ssxQA.ui(), ctx = document.querySelector('#ui').getContext('2d');
+      const fnv = (d) => { let h = 2166136261; for (let i = 0; i < d.length; i++) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; } return h >>> 0; };
+      const nameOf = (im) => {
+        if (im instanceof HTMLImageElement) return decodeURIComponent(im.src.split('/').pop().replace(/\\.png$/, ''));
+        if (im instanceof HTMLCanvasElement) return 'canvas:' + fnv(im.getContext('2d').getImageData(0, 0, im.width, im.height).data).toString(16).padStart(8, '0');
+        return String(im);
+      };
+      const rec = (window.__canvasRec = { armed: true, on: false, log: null, list: [] });
+      const push = (op, a, img) => { if (!rec.on) return; const m = ctx.getTransform(); const e = { op, args: a, m: [m.a, m.b, m.c, m.d, m.e, m.f], alpha: ctx.globalAlpha }; if (img !== undefined) e.img = img; rec.list.push(e); };
+      const wrap = (name, fn) => { const orig = ctx[name].bind(ctx); ctx[name] = (...a) => { fn(...a); return orig(...a); }; };
+      wrap('drawImage', (im, ...a) => {
+        if (!rec.on) return;
+        const w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+        const n = a.length === 2 ? [0, 0, w, h, a[0], a[1], w, h] : a.length === 4 ? [0, 0, w, h, ...a] : a;
+        push('drawImage', n, nameOf(im));
+      });
+      wrap('fillRect', (...a) => push('fillRect', [...a, ctx.fillStyle]));
+      wrap('roundRect', (x, y, w, h, r) => push('roundRect', [x, y, w, h, r]));
+      wrap('fill', () => { if (typeof ctx.fillStyle !== 'string') push('fill', ['gradient']); });
+      wrap('stroke', () => push('stroke', [ctx.strokeStyle, ctx.lineWidth]));
+      wrap('moveTo', () => push('arrow', []));
+      const draw = ui.draw.bind(ui);
+      ui.draw = (s) => {
+        if (rec.on) { rec.on = false; rec.log = rec.list; }
+        else if (rec.armed) { rec.armed = false; rec.on = true; }
+        return draw(s);
+      };
+      return 1;
+    })()`);
+    await browser.waitFor('!!window.__canvasRec?.log', 20000);
+    fs.writeFileSync(canvasLog, JSON.stringify(await E('window.__canvasRec.log')));
+  }
   // a few frames drawn at that state
   await sleep(1500);
   const png = await browser.screenshot('#stage');

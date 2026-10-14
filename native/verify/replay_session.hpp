@@ -360,6 +360,8 @@ struct Verifier {
     bool live = false;
     // the last tick's tick_begin flags (1 rescue, 2 placement, 4 pose, 8 pose again)
     uint32_t tickFlags = 0;
+    // called in every tick after the riders' passes (manager_end_tick / tick_mid), before tick_end (the race HUD's reads)
+    std::function<void()> afterMid;
     float command14 = 0;
     Assets assets;
     json meta;
@@ -1179,6 +1181,10 @@ struct Verifier {
             manager_end_tick();
         } else {
             tick_mid();
+        }
+        // the HUD owner update's read point (web/game-tick.js rec.meter: after every rider, before tick_end)
+        if (afterMid) {
+            afterMid();
         }
         const float* e = tick_end(hasPose ? 1 : 0, hasPose ? posed[7] : 0, hasPose ? posed[9] : 0, hasPose ? posed[10] : 0, hasPose ? posed[11] : 0, live ? 0 : 1, 0, 0, 0, 1,
                                   raceInfo[2] != 0 ? 1 : 0);

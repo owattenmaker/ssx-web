@@ -1136,12 +1136,17 @@ engine?.setScaleMode('FE');
       state.listenerCm = [(camera.position.x + o[0]) * 100, -(camera.position.z + o[2]) * 100, (camera.position.y + o[1]) * 100];
     },
     // Per 60 Hz game tick (main.js simTick, after the riders and the course events).
-    gameTick({ core, ai = null, raceInfo = null, finished = false, pending = 0, character = null, running = true, place = null, winner = null } = {}) {
+    // online (pv mpRiderSpeech, web/net/mp-game.js speechRiders): {slot, riders: [{key, slot, character, finished, motion, position,
+    // velocity}]}: the local racer at its own slot and the other racers as riders without a core
+    gameTick({ core, ai = null, raceInfo = null, finished = false, pending = 0, character = null, running = true, place = null, winner = null,
+      online = null } = {}) {
       if (!sfxGame || !core) return;
       state.gameTickAt = performance.now();
       state.humanCore = core; if (character) state.character = character;
       if (place != null) state.place = place; if (winner) state.winner = winner;
-      const list = [{ core, character: state.character, slot: 0, human: true, finished, place: state.place }];
+      sfxGame.G.rollingGo = pv('rollingGoTick');
+      const list = [{ core, character: state.character, slot: online ? online.slot : 0, human: true, finished, place: state.place }];
+      if (online) for (const o of online.riders) list.push({ key: o.key, remote: o, character: o.character, slot: o.slot, human: false, finished: o.finished });
       if (ai) for (const n of ai.racers.npcs) list.push({ core: n.core, character: n.character, slot: n.slot, human: false, finished: !!n.finished });
       if (ai) { hookPairs(ai); state.relTick ??= relSnapshot(ai); }
       const hud = core._score_hud_slots ? new Float32Array(core.HEAPF32.buffer, core._score_hud_slots(), 44 * 6).slice() : null;

@@ -808,7 +808,10 @@ export function createCutscenes(host) {
   // fades in over 30 (approach fade-out in 30); gond_inair_zoe after gond_inair fades in over ~30, not its own 60.
   // 0x2E47E8 (the fade's render): at opacity >= 0.93 (gp-0x3A1C) every world painter is reset (0x2C03E8) on each drawn frame
   // (web/weather.inc weather_fade_reset; the rider reset fade runs in the core, per tick).
-  const FADE_RESET = Math.fround(0.93), fadePainterReset = (alpha) => { if (alpha >= FADE_RESET) host.core?._weather_fade_reset?.(); };
+  // pv fadesOnTicks (docs/core-migration.md F): the painters' reset at a nearly full fade runs once per game update (the view fade 2E4370
+  // in 22E840 steps once per update), from fadeTick, not from every drawn frame
+  let inFadeTick = false;
+  const FADE_RESET = Math.fround(0.93), fadePainterReset = (alpha) => { if (pv('fadesOnTicks') && !inFadeTick) return; if (alpha >= FADE_RESET) host.core?._weather_fade_reset?.(); };
   function fadeAlpha(state) {
     if (!state.seq) return state.black ? 1 : 0;
     const seq = state.seq,
@@ -1132,6 +1135,11 @@ export function createCutscenes(host) {
   function preFade({ ticks = 30, hold = 0, colour = 'black', loading = false } = {}) {
     return new Promise((resolve) => {
       const o = overlay = { t: 0, ticks, hold, colour: colour === 'white' ? '#fff' : '#000', loading, done: resolve };
+      // pv fadesOnTicks: the overlay's clock steps once per game update (fadeTick)
+      if (pv('fadesOnTicks')) {
+        o.tickDriven = true;
+        return;
+      }
       let last = performance.now();
       const step = (now) => {
         if (overlay !== o) return resolve(false);
@@ -1149,6 +1157,11 @@ export function createCutscenes(host) {
   // bars (pv transportFade): the list stop's letterbox slide-out 2EA780 over the fade's remaining time, 60 lines -> 0 (PS2 to-c-fade 1470..1502).
   function fadeFrom({ ticks = 58, colour = 'white', hud = false, bars = false } = {}) {
     const o = overlay = { t: 0, ticks, hold: 0, colour: colour === 'white' ? '#fff' : '#000', loading: false, reverse: true, hud, bars };
+    // pv fadesOnTicks: the overlay's clock steps once per game update (fadeTick)
+    if (pv('fadesOnTicks')) {
+      o.tickDriven = true;
+      return;
+    }
     let last = performance.now();
     const step = (now) => {
       if (overlay !== o) return;
@@ -1161,6 +1174,42 @@ export function createCutscenes(host) {
       requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
+  }
+  // pv fadesOnTicks (docs/core-migration.md F): one game update of the fades: the overlay's clock (a pre-fade resolves when its ticks and
+  // hold are over, a fade-from ends), then the painters' reset at the update's alpha (overlay and the playing list's script fade)
+  function fadeTick() {
+    if (!pv('fadesOnTicks')) return;
+    const o = overlay;
+    if (o?.tickDriven && !qa.frozen) {
+      o.t += 1;
+      if (o.reverse) {
+        if (o.t >= o.ticks) overlay = null;
+      } else if (o.t >= o.ticks + o.hold && o.done) {
+        o.done(true);
+        o.done = null;
+      }
+    }
+    inFadeTick = true;
+    try {
+      if (active) fadeAlpha(active);
+      else if (overlay) fadePainterReset(overlay.reverse ? 1 - overlay.t / overlay.ticks : Math.min(1, overlay.t / Math.max(1, overlay.ticks)));
+    } finally {
+      inFadeTick = false;
+    }
+  }
+  // the frames that run no game update (pv fadesOnTicks): whole 60 Hz ticks of the frame time, at most 12
+  let fadeAcc = 0;
+  function fadeFrames(dt) {
+    if (!pv('fadesOnTicks') || !overlay?.tickDriven) {
+      fadeAcc = 0;
+      return;
+    }
+    fadeAcc += dt;
+    for (let n = 0; fadeAcc >= 1 / TICK_HZ && n < 12; n++) {
+      fadeTick();
+      fadeAcc -= 1 / TICK_HZ;
+    }
+    if (fadeAcc >= 1 / TICK_HZ) fadeAcc = 0;
   }
   function drawOverlay(c, ui) {
     const o = overlay; if (!o) return;
@@ -1374,6 +1423,9 @@ export function createCutscenes(host) {
     // pv nisOnTicks: one NIS tick (main.js at the game update's NIS point) and the last tick's camera (per rendered frame)
     tick,
     pose: () => (active ? lastPose : null),
+    // pv fadesOnTicks: the fades' game update, and the frames without one
+    fadeTick,
+    fadeFrames,
     applyCamera,
     draw,
     introSteps,

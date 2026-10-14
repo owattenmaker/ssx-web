@@ -134,4 +134,11 @@ float* boost_fx_info();
 float* boost_fx_vertices(unsigned strip);
 float* rider_fx_info();
 float* rider_fx_vertices(unsigned strip);
+// the race HUD (web/game-tick.js readTrickHudSlots, main.js ui.draw state)
+float* score_hud_slots();
+const char* score_hud_text(int slot);
+float* boost_hud_info();
+float* race_result_info();
+float* rider_stance_info();
+float* race_progress_info();
 }
