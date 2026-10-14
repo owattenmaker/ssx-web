@@ -103,6 +103,11 @@ public:
     void load(Gpu& gpu, const std::string& assetsRoot, const std::string& code);
     // the frame into target (an RGBA8Unorm view of width x height); camera aspect: the stage's (4/3, widescreen Off)
     void render(const CameraView& camera, const WorldFrameState& state, WGPUTextureView target, uint32_t width, uint32_t height, double aspect);
+    // the frame's camera as three.js has it (main.js: position eye - origin, lookAt look - origin): matrixWorldInverse (column-major)
+    // and the position, scene metres (the audio listener, web/game-audio.js listener)
+    void cameraOf(const CameraView& camera, std::array<double, 16>& inverse, std::array<double, 3>& position) const;
+    // three's camera.lookAt view matrix (scene coordinates, up y) of eye looking at target
+    static std::array<double, 16> lookAt(const double eye[3], const double target[3]);
 
     // the course's light glows and sun flare (after load; either may be null)
     void attachEffects(LightGlow* glow, SunFlare* sun) {

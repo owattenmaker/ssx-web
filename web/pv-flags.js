@@ -218,6 +218,10 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// collectSlotReset (core-migration agent, docs/core-migration.md "Collectible slot"; a behaviour change): the streamed world's open
+// collection (ctx+0x2C0) as the PS2 keeps it: never freed at a location's unload, reset by 309F18 at the world-state-10 enter after a
+// crossing's Load (the loaded locations' global programs again: the first with a collection takes it). Off: freed at the unload, taken
+// at a read's completion (a crossing could leave it empty: the All Peak Jam's E collectible unpaid, apj-full 17303).
 // fadesOnTicks (core-migration agent, docs/core-migration.md F; a behaviour change): the cutscene fades (the pre-fade, the fade-from
 // over the world, the script fades' painter reset) step once per game update (the view fade 2E4370 in 22E840, once per 0x2306B8),
 // not on drawn frames: web/cutscenes.js fadeTick from the game tick's end, fadeFrames on frames without an update. Off: frame time.
@@ -266,6 +270,11 @@
 // and pair events reach 2A0560 / 2A0A30: both riders' lines post (2A1820 = 2 for two humans), the bump / attack sound and the
 // target's grunt play. A pass or contact between two remote racers says nothing (neither is a local rider: 2A0560's 285D98
 // test). Their board loops stay off. Off: sfx-game knows only the local racer, as before.
+// mpTickLock (mp animation agent, docs/multiplayer.md "Frame pacing"; needs tickLock): an online race's ~60 Hz drawn frame runs
+// exactly one tick and draws it, as offline (web/tick-lock.js; the PS2 frame loop 0x316F00 has no online branch). The server clock
+// stays the reference: past race-pace.js's 2-tick slack the frame runs one tick more or one fewer (main.js frame). Other frames keep
+// mpGame.pace. Off: online frames run the plain fixed clock, so rAF jitter near a tick boundary gives 0- and 2-tick frames (the set
+// pieces freeze a frame, then jump) and the rider is drawn 0..1 tick behind.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -330,17 +339,19 @@ export const PV_DEFAULTS = Object.freeze({
   stationSplitPs2: true,
   nisOnTicks: true,
   fadesOnTicks: false,
+  collectSlotReset: true,
   coreCareerLodge: true,
   coreRules: true,
   coreTick: true,
-  onlineTimeAttack: false,
-  ghostRiders: false,
+  onlineTimeAttack: true,
+  ghostRiders: true,
   mpCourseSelect: true,
   mpPreRace: true,
   mpSpeechPlace: true,
   rollingGoTick: true,
   mpRiderSpeech: true,
-  rivalStartAudio: true
+  rivalStartAudio: true,
+  mpTickLock: false
 });
 const overrides = new Map();
 function fromQuery() {

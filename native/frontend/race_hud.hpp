@@ -7,11 +7,12 @@
 //     the boost orb, gauge and letters, the switch icon, the countdown, the trick slots, the finish banner and the reset fade, drawn
 //     on the 640 x 448 UI canvas (hud_canvas.hpp) the stage puts over the 3D frame.
 // HUD options: Full, speed in mph (the FE Options defaults). The key caps replace the button icons while the keyboard is the device.
-// Not drawn (yet): the EA RADIO now-playing popup (web/now-playing.js, with the audio), the career / free-ride / freestyle / online
-// parts (no Single Event race draws them).
+// The EA RADIO BIG now-playing popup (now_playing.hpp, web/now-playing.js) over the rest, as the page's microtask draws it.
+// Not drawn (yet): the career / free-ride / freestyle / online parts (no Single Event race draws them).
 #include "core_api.hpp"
 #include "hud_canvas.hpp"
 #include "hud_widgets.hpp"
+#include "now_playing.hpp"
 #include "replay_session.hpp"
 #include "trick_hud.hpp"
 #include <cstring>
@@ -39,6 +40,12 @@ public:
         text_.fonts["FEFONT"] = hud::loadGlyphs(feRaw, false);
         text_.fonts["HUDFONT"] = hud::loadGlyphs(hudRaw, false);
         trick_.load(readJson("trick-hud.json"), hud::loadGlyphs(feRaw, true), hud::loadGlyphs(hudRaw, true));
+        // ui.fonts as glyphOf reads them (signed dx, dy, advance)
+        feSigned_ = hud::loadGlyphs(feRaw, true);
+        hudSigned_ = hud::loadGlyphs(hudRaw, true);
+        nowPlaying.fe = &feSigned_;
+        nowPlaying.hudFont = &hudSigned_;
+        nowPlaying.images = &images_;
         renderer_.images = &images_;
         renderer_.hud = &trick_;
         gauge_.load(readJson("boost-gauge.json"), images_);
@@ -112,9 +119,11 @@ public:
         }
     }
 
-    // one frame of the UI canvas (main.js ui.draw state + web/ui.js draw 'game')
-    void draw(const session::Verifier& v) {
+    // one frame of the UI canvas (main.js ui.draw state + web/ui.js draw 'game'); nowSeconds: the frame's clock (performance.now)
+    void draw(const session::Verifier& v, double nowSeconds) {
         canvas.begin();
+        // web/audio-menu.js drawHud: the popup's update, its draw after the rest
+        nowPlaying.frame(nowSeconds);
         auto& c = canvas;
         const float* raceInfo = v.raceInfo;
         const float* result = race_result_info();
@@ -213,9 +222,11 @@ public:
             c.fillRect(0, 0, 640, 448, {255, 255, 255});
             c.restore();
         }
+        nowPlaying.draw(c);
     }
 
     HudCanvas canvas;
+    hud::NowPlayingHud nowPlaying;
 
 private:
     struct SlotRead {
@@ -322,6 +333,8 @@ private:
     }
 
     hud::HudImages images_;
+    hud::GlyphTable feSigned_;
+    hud::GlyphTable hudSigned_;
     hud::UiText text_;
     hud::TrickHud trick_;
     hud::TrickHudRenderer renderer_;

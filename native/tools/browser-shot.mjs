@@ -6,6 +6,10 @@
 //   node native/tools/browser-shot.mjs PAD.tas OUT.png --tick N [--course ARA1] [--rider zoe] [--attributes 55|none] [--lineup JSON] [--eval JS]
 //        [--riders ps2|xbox] [--bc 0|1]   the page's ?riders= (the rider texture set; quality=low's default is ps2) and ?bc=
 //        [--hud] [--canvas-log OUT.json]  keep the race HUD; record one ui.draw's #ui canvas calls (ssx3_render_shot --canvas-log)
+//        [--audio-log OUT.json]           the director timeline and the sfx requests at tick N (?perf=1's __perfAudio; ssx3 --audio-log),
+//                                         with each request's tick (playTicks)
+//        [--chunk K] [--paced]            K ticks per page call (400); --paced: one tick per animation frame, as a live run steps
+//                                         (the frame's work between the ticks: GO, the listener, the effects' frame history)
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
 import { parse, toChannels } from '../../tools/tas/pad-format.mjs';
@@ -26,9 +30,12 @@ const riders = opt('riders');
 const bc = opt('bc');
 const canvasLog = opt('canvas-log');
 const keepHud = args.includes('--hud') || !!canvasLog;
+const audioLog = opt('audio-log');
+const chunkSize = Math.max(1, +opt('chunk', 400));
+const paced = args.includes('--paced');
 if (riders && !['ps2', 'xbox'].includes(riders)) throw new Error('--riders ps2|xbox');
 if (bc && !['0', '1'].includes(bc)) throw new Error('--bc 0|1');
-const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '');
+const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '') + (audioLog ? '&perf=1' : '');
 const { frames } = parse(fs.readFileSync(padPath, 'utf8'));
 
 const browser = await startBrowser({ width: 640, height: 480 });
@@ -45,19 +52,36 @@ try {
   await browser.goto(`${server.origin}/?qa=1&course=${course}&rider=${rider}&cutscenes=0&quality=low&simtrace=1&mute=1${query}`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   await E(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));return 1})()`);
+  // the title's Press START unlocks the audio (a user gesture; the headless profile allows autoplay)
+  if (audioLog) await E('(async()=>{const a=window.__perfAudio;await a.whenReady();a.unlock();return 1})()');
   if (attributes != null) {
     await E(`(()=>{const cu=ssxQA.ui().careerUI;cu.career.rider(cu.riderId).attributes=Array(7).fill(${attributes});cu.career.persist();return 1})()`);
   }
   await E(`(()=>{const ui=ssxQA.ui(),e=ui.courses.find(x=>x.code==='${course}'&&!x.rivalMode);
     if(${JSON.stringify(lineup)})ssxQA.aiRace().fixedNext=${JSON.stringify(lineup)};ui.startSingleEvent(e);return 1})()`);
   await browser.waitFor(`document.getElementById('stage')?.dataset.screen === 'ctm-objectives' || !!document.body.dataset.loadError`, 300000);
+  if (audioLog) await E('(()=>{window.__perfAudio.sfx.logPlays(true);return 1})()');
   await E('(()=>{ssxQA.ui().careerUI.play();return 1})()');
   await sleep(300);
   const base = await E('window.__simTrace.ticks.length');
   const total = tick + 2;
-  for (let at = 0; at < total; at += 400) {
-    const chunk = frames.slice(at, Math.min(total, at + 400)).map((f) => Array.from(toChannels(f)));
-    await E(`(()=>{for(const p of ${JSON.stringify(chunk)})ssxQA.advance(1,p);return 1})()`);
+  // the sfx log's length after each tick (playTicks)
+  // and the listener position each tick's sounds were placed with (the last listener call before it: main.js's camera)
+  if (audioLog) {
+    await E(`(()=>{window.__playCounts=[];window.__listeners=[];const a=window.__perfAudio,l=a.listener.bind(a);
+      a.listener=(cam,o)=>{window.__lastListener=cam?[cam.position.x,cam.position.y,cam.position.z]:null;return l(cam,o)};return 1})()`);
+  }
+  const after = audioLog ? 'window.__playCounts.push(window.__perfAudio.sfx.plays.length);window.__listeners.push(window.__lastListener??null);' : '';
+  const step = paced ? 'await new Promise((r)=>requestAnimationFrame(r));' : '';
+  for (let at = 0; at < total; at += chunkSize) {
+    const chunk = frames.slice(at, Math.min(total, at + chunkSize)).map((f) => Array.from(toChannels(f)));
+    await E(`(async()=>{for(const p of ${JSON.stringify(chunk)}){ssxQA.advance(1,p);${after}${step}}return 1})()`);
+  }
+  if (audioLog) {
+    const log = await E(`(()=>{const a=window.__perfAudio,c=window.__playCounts,t=[];
+      for(let k=0,i=0;k<c.length;k++)for(;i<c[k];i++)t.push(k);
+      return {timeline:a.timeline(),plays:a.sfx.plays,playTicks:t,posts:a.speechEngine?.debug?.().posts ?? [],listeners:window.__listeners,time:a.engine?.context?.currentTime ?? null}})()`);
+    fs.writeFileSync(audioLog, JSON.stringify(log));
   }
   if (!keepHud) await E('(()=>{ssxQA.hud(false);return 1})()');
   // the #ui context's calls from one ui.draw to the next (the reset fade after it included)

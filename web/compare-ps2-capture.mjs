@@ -133,6 +133,9 @@ core._animation_use_physics(1);
 const peakMode = /^PEAK\d$/.test(course) || /^MOUNTAIN/.test(course);   // PEAK1, PEAK3 (docs/peak3.md), MOUNTAIN[x] (the whole mountain, docs/peak3.md section 6)
 // pv coreWorldEvents: the core applies the station decisions (set with --peak-run below)
 let peakRunEvents = false;
+// pv collectSlotReset: the open collection as the PS2 keeps it (the WS10 enter's 309F18 after a Load, applied after race_end)
+const peakCollectRule = peakMode && pv('collectSlotReset') && !!core?._stage_collect_slot_rule && !!core?._peak_world_apply_events;
+if (peakCollectRule) core._stage_collect_slot_rule(1);
 if (!peakMode) {
 const mesh = read(course + '/collision.bin');
 core._init_world(put(mesh), mesh.length / 4);
@@ -424,7 +427,7 @@ function padFrame(c) {
   // course events (finish -> camera 0x162258) precede the camera update, as in main.js
   const finishedNow = coreTick ? f32(core._tick_progress(0, 0), 96)[73] : (core._race_end(), 0);
   // (pv coreWorldEvents: the station decisions after race_end, as web/free-ride.js tick)
-  if (peakRunEvents) core._peak_world_apply_events();
+  if (peakRunEvents || peakCollectRule) core._peak_world_apply_events();
   if (globalThis.__beforeSectionPass) { const f = globalThis.__beforeSectionPass; globalThis.__beforeSectionPass = null; f(); } // --station-hold with STATION_HOLD_EARLY
   if (pageSequence) core._fx_pass(-1);
   if (stageSnaps || peakWorld || pageSequence) { const ev = core._section_pass?.(); if (process.env.SECTION_TRACE) { const [a, b] = process.env.SECTION_TRACE.split(':').map(Number); if (globalThis.__visTickNow >= a && globalThis.__visTickNow <= b) { const p = core._set_piece_sections(), H = new Uint32Array(core.HEAPU8.buffer, p, 2); console.error('sections', globalThis.__visTickNow, 'events', ev, 'scans', H[1]); } } } phases?.push(vw()); // Peak 1: its section activation (challenge planes, fences); SECTION_TRACE=a:b (diagnostic)

@@ -170,7 +170,11 @@ if(SSX_BUILD_FRONTEND)
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/post_effects.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_fx.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_renderer.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/hud_canvas.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/hud_canvas.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/webaudio.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/audio_sfx.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/audio_pathfinder.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/game_audio.cpp")
     target_link_libraries(ssx3_render PUBLIC ssx3_stb)
     target_compile_features(ssx3_render PUBLIC cxx_std_20)
     # the CPU-side arithmetic as JS does it (no fused multiply-add: the BC mip re-encode, the shadow fits)
@@ -193,6 +197,10 @@ if(SSX_BUILD_FRONTEND)
     endif()
     add_executable(ssx3_image_compare "${CMAKE_CURRENT_SOURCE_DIR}/frontend/image_compare.cpp")
     target_link_libraries(ssx3_image_compare PRIVATE ssx3_render)
+    # the now-playing popup's state machine and layout (ctest frontend_now_playing)
+    add_executable(ssx3_now_playing_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/now_playing_test.cpp")
+    target_compile_options(ssx3_now_playing_test PRIVATE -ffp-contract=off -fno-fast-math)
+    target_link_libraries(ssx3_now_playing_test PRIVATE ssx3_render)
 endif()
 
 # ---- Parity tests: the native results against the wasm build's (native/tests/parity.mjs) ----
@@ -239,6 +247,11 @@ elseif(SSX_NODE)
     target_include_directories(ssx3_pad_input_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/frontend" "${SSX_ROOT}/web/third_party/nlohmann")
     target_compile_options(ssx3_pad_input_test PRIVATE ${SSX_CORE_FLAGS} ${SSX_QUIET})
     add_test(NAME frontend_pad_input COMMAND "${SSX_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pad-cases.mjs" --run $<TARGET_FILE:ssx3_pad_input_test>)
+    # the EA RADIO BIG popup (native/frontend/now_playing.hpp) against web/now-playing.js; skipped without the game data
+    if(TARGET ssx3_now_playing_test)
+        add_test(NAME frontend_now_playing COMMAND "${SSX_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/now-playing-cases.mjs" --run $<TARGET_FILE:ssx3_now_playing_test>)
+        set_tests_properties(frontend_now_playing PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 else()
     message(WARNING "node not found: the parity tests (they run the wasm reference) are not added")
 endif()

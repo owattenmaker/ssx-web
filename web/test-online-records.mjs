@@ -54,7 +54,10 @@ const SHOTS = process.env.SHOTS || null;   // a directory: the screens as PNGs (
 const shot = async (name) => { if (!SHOTS) return; await sleep(400); fs.mkdirSync(SHOTS, { recursive: true }); fs.writeFileSync(path.join(SHOTS, name + '.png'), Buffer.from(await browser.screenshot('#stage'), 'base64')); };
 try {
   if (!(await browser.hasWebGPU(server.origin))) { console.log('online records page check SKIPPED: no WebGPU'); process.exit(0); }
-  await browser.goto(`${server.origin}/?qa=1&course=ARA1&rider=zoe&cutscenes=0&quality=low&simtrace=1&mute=1&pv=replay,onlineRecords`);
+  // fps=60: the frame gate draws every animation frame (web/quality.js frameGate). The low tier's 'auto' drops to 30 when the frame
+  // work's median passes 13 ms (a loaded machine), and a 30 fps gate never draws while the test holds the rAF clock (below); the FE
+  // screens' flash resolves only in a drawn frame (web/fe-event-select.js draw), so the Select Event walk stalled.
+  await browser.goto(`${server.origin}/?qa=1&course=ARA1&rider=zoe&cutscenes=0&quality=low&fps=60&simtrace=1&mute=1&pv=replay,onlineRecords`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   check(!(await E('document.body.dataset.loadError || ""')), 'page load');
   await E(`(async()=>{const ui=ssxQA.ui();ui.feScreens.playerName='TESTER';await ui.careerUI.online.records.load(true);return ui.careerUI.online.records.status})()`);
@@ -62,7 +65,14 @@ try {
   // ---- a Single Event Snow Jam run to the finish ----
   await E(`(()=>{const ui=ssxQA.ui(),e=ui.courses.find(x=>x.code==='ARA1'&&!x.rivalMode);ui.startSingleEvent(e);return 1})()`);
   await browser.waitFor(`document.getElementById('stage')?.dataset.screen === 'ctm-objectives' || !!document.body.dataset.loadError`, 300000);
-  await E(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));ssxQA.ui().careerUI.play();
+  // The rAF clock hold: while window.__hold is set every animation frame gets the same timestamp, so the page's frame loop runs no
+  // game update (dt 0) while the test steps the simulation itself (ssxQA.advance, the replay's frame(1/60)). The menu walks release
+  // it: the FE screens then run on the real clock, as in a browser (the UI frame counter, web/screen-phases.js, advances only then).
+  // A hold freezes the clock at the last real timestamp handed out, so it never runs backwards.
+  const hold = (on) => E(`(()=>{window.__hold=${on ? 'true' : 'false'};return 1})()`);
+  await E(`(()=>{const raf=window.requestAnimationFrame.bind(window);let at=performance.now();window.__hold=true;
+    window.__rafCalls=0;
+    window.requestAnimationFrame=cb=>raf((ts)=>{window.__rafCalls++;if(!window.__hold)at=Math.max(at,ts);cb(at);});ssxQA.ui().careerUI.play();
     window.__pad=(t)=>{const p=new Array(24).fill(0);p[22]=1;const s=Math.sin(t/90);if(s>0.6)p[21]=0.3;else if(s<-0.6)p[20]=0.3;return p;};
     window.__run=(from,n)=>{for(let t=from;t<from+n;t++){ssxQA.advance(1,window.__pad(t));if(/results|records|award/.test(ssxQA.ui().screen))return t+1;}return -1};return 1})()`);
   await sleep(300);
@@ -70,6 +80,7 @@ try {
   // Watch Replay from the board on screen, to the finish (N ticks); the watched ticks are the trace's last N (the replay pauses at its end);
   // each compared with the live run's. Exit replay back to the board. -> the first differing tick, -1 when exact
   const watchExact = async (N, { course = null, cam = null } = {}) => {
+    await hold(true);
     await E(`(()=>{const ui=ssxQA.ui();ui.careerUI.online.board.cursor=0;ui.choose(0);return 1})()`);
     await browser.waitFor(`ssxQA.ui().screen==='replay' && ssxQA.replay().mode==='full'${course ? ` && ssxQA.ui().course?.code==='${course}'` : ''}`, 300000);
     await E(`(()=>{const r=ssxQA.replay();r.playPause();let n=0;while(r.tick<${N}&&n<${N}+50){r.frame(1/60);n++;}return r.tick})()`);
@@ -133,31 +144,53 @@ try {
     globalThis.__N = N;
   }
   // ---- the main menu's Leaderboards: the sixth row -> Select Peak / Mode / Event -> the event's board ----
-  await E(`(()=>{const ui=ssxQA.ui();ui.careerUI.online.board=null;ui.set('main');ui.index=5;ui.sync();return 1})()`);
-  await sleep(600);
+  // The menu walks run on the real clock and press real keys (keydown + keyup on window, as the keyboard sends them) through the
+  // page's own key path: the capture-phase gate (web/ui.js: only a screen's phase 5 reads input, web/screen-phases.js), then the
+  // screen's handler. A key is pressed only once its screen takes input (phase 5, the screens loaded, no flash playing), and each
+  // press is checked to have taken: nothing is retried.
+  await hold(false);
+  const state = () => E(`JSON.stringify((()=>{const ui=ssxQA.ui(),es=ui.eventSelect;return {screen:ui.screen,ready:ui.ready,
+    flash:es.flash?Math.round(es.now()-es.flash.at):null,boards:!!es.boards,index:ui.index,pending:es.pendingIndex??null,peak:es.peak,
+    phase:ui.phases.phase,uiFrame:ui.phases.frame,frameRate:window.__frameRate?.(),rafCalls:window.__rafCalls,hold:window.__hold,
+    load:ui.loading?.session?.shownPercent??null,loadError:document.body.dataset.loadError||null}})())`);
+  const takesInput = (screen) => `(()=>{const ui=ssxQA.ui();return ui.screen===${JSON.stringify(screen)}&&ui.ready&&ui.phases.accepts()&&!ui.eventSelect.flash})()`;
+  const waitInput = async (screen) => {
+    try { await browser.waitFor(takesInput(screen), 30000); }
+    catch (e) { throw new Error(`${e.message}; state ${await state()}`); }
+  };
+  const KEY = `const key=(code)=>{for(const type of ['keydown','keyup'])dispatchEvent(new KeyboardEvent(type,{code,key:code,bubbles:true,cancelable:true}));}`;
+  // Down until the cursor is on row k (an FE map screen's cursor is its pending entry row until its first frame draws)
+  const moveTo = async (screen, k) => {
+    await waitInput(screen);
+    const row = await E(`(()=>{const ui=ssxQA.ui(),es=ui.eventSelect;${KEY};const at=()=>es.owns(ui.screen)&&es.pendingIndex!=null?es.pendingIndex:ui.index;
+      for(let n=0;n<8&&at()!==${k};n++)key('ArrowDown');return at();})()`);
+    if (row !== k) throw new Error(`the cursor on ${screen} stopped on row ${row}, not ${k}; state ${await state()}`);
+  };
+  // Cross (Enter) on the focused row; took: the expression that is true once the choice took (on the FE maps, the white flash starts)
+  const accept = async (screen, took = '!!ssxQA.ui().eventSelect.flash') => {
+    await waitInput(screen);
+    const ok = await E(`(()=>{${KEY};key('Enter');return ${took};})()`);
+    if (!ok) throw new Error(`Cross on ${screen} did not take; state ${await state()}`);
+  };
+  const choose = async (screen, k, took) => {
+    await moveTo(screen, k);
+    await accept(screen, took);
+  };
+  const leaderboards = () => choose('main', 5, `ssxQA.ui().screen==='fe-peak'`);
+  await E(`(()=>{const ui=ssxQA.ui();ui.careerUI.online.board=null;ui.set('main');ui.sync();return 1})()`);
+  await waitInput('main');
   const menu = await E(`(()=>{const ui=ssxQA.ui();return {items:ui.items(),dis:ui.mainDisabled(),lui:ui.mainMenu?.model?.items?.length}})()`);
   check(menu.items[5] === 'Leaderboards' && menu.dis.length === 6 && menu.dis[5] === false && menu.lui === 6, `main menu ${JSON.stringify(menu)}`);
+  await moveTo('main', 5);
   await shot('6-main-menu');
-  await E(`(()=>{const ui=ssxQA.ui();ui.choose(5);return ui.screen})()`);
-  // On a loaded machine a choice can come before the screen takes input (its intro / phase): wait for the screen, then repeat the
-  // choice until the screen changes (a choice that only reads state, e.g. finding a row, runs once).
-  const state = () => E(`JSON.stringify((()=>{const ui=ssxQA.ui(),es=ui.eventSelect;return {screen:ui.screen,ready:ui.ready,flash:!!es.flash,boards:!!es.boards,index:ui.index,peak:es.peak}})())`);
-  const pick = async (screen, expr, { advances = true } = {}) => {
-    try { await browser.waitFor(`ssxQA.ui().screen===${JSON.stringify(screen)} && !ssxQA.ui().eventSelect.flash`, 30000); }
-    catch (e) { throw new Error(`${e.message}; state ${await state()}`); }
-    await sleep(300);
-    if (!advances) return E(expr);
-    for (let k = 0; k < 10; k++) {
-      const r = await E(expr);
-      try { await browser.waitFor(`ssxQA.ui().screen!==${JSON.stringify(screen)} || !!ssxQA.ui().eventSelect.flash`, 2000); return r; } catch {}
-    }
-    throw new Error(`the choice on ${screen} did not take; state ${await state()}`);
-  };
-  await pick('fe-peak', `(()=>{const ui=ssxQA.ui();ui.eventSelect.choose(2);return 1})()`);   // Peak 1 (rows: Peak 3, 2, 1)
-  await pick('fe-mode', `(()=>{const ui=ssxQA.ui();ui.eventSelect.choose(0);return 1})()`);   // Race
-  const row = await pick('fe-event', `(()=>{const es=ssxQA.ui().eventSelect,l=es.events(),k=l.findIndex(e=>e.code==='ARA1'&&e.mode===0);ssxQA.ui().index=k;return {k,playable:l.map(e=>e.playable)}})()`, { advances: false });
+  await accept('main', `ssxQA.ui().screen==='fe-peak'`);
+  await choose('fe-peak', 2);   // Peak 1 (rows: Peak 3, 2, 1)
+  await choose('fe-mode', 0);   // Race
+  await waitInput('fe-event');
+  const row = await E(`(()=>{const l=ssxQA.ui().eventSelect.events();return {k:l.findIndex(e=>e.code==='ARA1'&&e.mode===0),playable:l.map(e=>e.playable)}})()`);
+  await moveTo('fe-event', row.k);
   await shot('7-select-event');
-  await E(`(()=>{const ui=ssxQA.ui();ui.eventSelect.choose(${row.k});return 1})()`);
+  await accept('fe-event');
   await browser.waitFor(`ssxQA.ui().screen==='ctm-board' && ssxQA.ui().careerUI.online.board?.status==='ready'`, 20000);
   const fb = await E(`(()=>{const b=ssxQA.ui().careerUI.online.board;return {fe:b.fe,first:b.rows[0]?.name,n:b.rows.length}})()`);
   check(fb.fe && fb.first === 'OWEN' && fb.n === 6, `Leaderboards board ${JSON.stringify(fb)}`);
@@ -169,9 +202,10 @@ try {
   //      Snow Jam board, Watch Replay switches the course back under the load screen and replays the run exactly ----
   await E(`(()=>{const u=new URL(location.href);u.searchParams.set('course','BRA2');u.searchParams.delete('autostart');history.pushState({ssx3:1},'',u);dispatchEvent(new PopStateEvent('popstate',{state:{ssx3:1,screen:'main'}}));return 1})()`);
   await browser.waitFor(`ssxQA.ui().screen==='main' && ssxQA.ui().course?.code==='BRA2' && ssxQA.ui().ready`, 300000);
-  await E(`(()=>{const ui=ssxQA.ui();ui.index=5;ui.choose(5);return 1})()`);
-  await pick('fe-peak', `(()=>{ssxQA.ui().eventSelect.choose(2);return 1})()`); await pick('fe-mode', `(()=>{ssxQA.ui().eventSelect.choose(0);return 1})()`);
-  await pick('fe-event', `(()=>{ssxQA.ui().eventSelect.choose(${row.k});return 1})()`);
+  await leaderboards();
+  await choose('fe-peak', 2);
+  await choose('fe-mode', 0);
+  await choose('fe-event', row.k);
   await browser.waitFor(`ssxQA.ui().screen==='ctm-board' && ssxQA.ui().careerUI.online.board?.status==='ready'`, 20000);
   const M = globalThis.__N ?? 1200;
   const miss2 = await watchExact(M, { course: 'ARA1', cam: (cam2) => check(cam2?.[4] === 48 && cam2?.[8] > 0, `Watch Replay after a course switch: ARA1's camera triggers (not BRA2's) ${JSON.stringify(cam2)}`) });

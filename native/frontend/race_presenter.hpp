@@ -240,6 +240,11 @@ public:
         return state;
     }
 
+    // the avalanche snapshot of the current tick (the audio's rumble reads it before the draw does; null before loadEffects)
+    Avalanche* avalanche() {
+        return setPieces_ ? &setPieces_->avalanche() : nullptr;
+    }
+
 private:
     session::Verifier& v_;
     std::unique_ptr<ScreenTint> tint_;

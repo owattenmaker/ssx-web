@@ -140,6 +140,10 @@ So the rival **rides and scores its own tricks** (its own score object); there a
     race starts at phase 5), so the rolling start ran nothing; and it passed `mp: !!mpGame`, always true. On: the first
     frame at phase 5 without the countdown 4, mp = an online race (`mpGame.racing`). web/test-rival-start-audio.mjs (on: one
     start, 0x20D3 speaker 3 with masks 0x2 / 0x20 / 4, then 0x20CF, no 0x20E5; off: no start).
+  - pv rollingGoTick (web/sfx-game.js, G.rollingGo from game-audio.js): 2872A8 writes the GO tick audio+0x582C at
+    0x2872D0; sfx-game set G.sinceGo only on the dead phase 3 -> 5 edge, so the 600-tick pass gate of 2A0560 never opened in
+    rival events or online backcountry races. On: the first tick at phase 5 without the countdown (Happiness Rival Time:
+    sinceGo 4319 at the end on, -1 off).
 - Locator beam over the rival (RFX+0xB00, update 0x2E39D8, draw 0x2E3AF8; `web/rival-beam.js createRivalBeam`): an 8-vertex
   strip along the camera up from the rival's bone 5 (base alpha 0, +130 cm and +20130 cm at the colour, +20260 cm alpha 0),
   half width 85 cm along the camera right, texture 'beam' (renderer+0xFFC, white with a triangular alpha across S), colour

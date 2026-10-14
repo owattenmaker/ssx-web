@@ -507,6 +507,12 @@ export class TaScreens {
       this.podium();
       return;
     }
+    // the podium cutscene still playing when the server's podium phase is over (a slow page: with pv nisOnTicks the scene runs on
+    // game ticks, and a frame's ticks are capped, so at a low frame rate it outlasts the phase): it ends, so the page gets the vote
+    if (s.phase !== 'podium' && screen === 'cutscene' && this.labels) {
+      ui.cutscene?.stop?.();
+      return;
+    }
     if (s.phase === 'vote' && this.voteShown !== s.window.id && screen !== 'cutscene' && (inEvent || screen === 'ta-results')) {
       this.voteShown = s.window.id;
       this.go('ta-vote', 0);

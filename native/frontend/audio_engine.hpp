@@ -9,6 +9,7 @@
 #include <cmath>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -47,7 +48,18 @@ struct Mix {
     std::map<std::string, double> levels;
 };
 
-class AudioEngine {
+// what the voices and players need of the mixer (audio-engine.js's context / unlocked / live / bus): the engine, or a test's
+// direct output
+class AudioOutput {
+public:
+    virtual ~AudioOutput() = default;
+    virtual wa::Context* context() const = 0;
+    virtual bool unlocked() const = 0;
+    virtual bool live() const = 0;
+    virtual std::shared_ptr<wa::GainNode> bus(const std::string& name, int speaker = -1) = 0;
+};
+
+class AudioEngine : public AudioOutput {
 public:
     struct Options {
         std::vector<Mix> mixes;
@@ -69,14 +81,14 @@ public:
         arcadeAudio_ = o.arcadeAudio;
     }
 
-    wa::Context* context() const {
+    wa::Context* context() const override {
         return built_ ? &ctx_ : nullptr;
     }
-    bool unlocked() const {
+    bool unlocked() const override {
         return unlocked_;
     }
     // voices may start
-    bool live() const {
+    bool live() const override {
         return true;
     }
     int mixIndex() const {
@@ -97,7 +109,7 @@ public:
         return true;
     }
     // the input node of a bus (CHARACTER with a speaker: its per-speaker gain)
-    std::shared_ptr<wa::GainNode> bus(const std::string& name, int speaker = -1) {
+    std::shared_ptr<wa::GainNode> bus(const std::string& name, int speaker = -1) override {
         if (!built_) {
             return nullptr;
         }

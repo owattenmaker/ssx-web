@@ -372,8 +372,11 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
 - The points split (0x2B, 23C560): confirmed by allpeak/apj-full (All Peak Jam, 19,000 records), which posts it at record 16276
   (slot 35, points -196242 = trunc(score) - split x 100, clock 0): with SSX_PV=stationSplitPs2 the score is exact through 17302
   (off: through 16275). Gate allpeak/apj-full.
-- **Open (tracked):** apj-full record 17303: the PS2 posts a type-0x18 HUD message (slot 24, 2000 points; a trick-commit popup of
-  11A228) the port does not, and slot 25's points differ (6000 / 4000); both switch states. Next target after M6.
+- **Open (tracked):** apj-full record 17303 is a collectible pickup the port does not pay (not a trick popup): mdl_E_collecta_1003
+  (resource 14628, E, course 21) picked up in update 17302 through 121818 -> slot-2 program 57 -> builtin 39 -> 30B9A0 -> 10F338 ->
+  119EF8(kind 3, 2000): the career cash (slot 25, type 0x19: 4000 -> 6000), popups 0x18 (slot 24) and 0x31 (slot 35, arg 2000).
+  The port's open collection (ctx+0x2C0) is empty after the EBC3 -> E crossing, so 30B9A0's slot test fails
+  (local/core-migration/decomp/popup-17303.md; section "Collectible slot" below).
 
 ## M6: the NIS on game ticks (pv nisOnTicks, a behaviour change approved by the user)
 
@@ -399,6 +402,45 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   every rate; the 917 world ticks of WS10 equal the PS2's measured 917. WebKit's virtual clock is not reliable (its frame loop does
   not always pick up the replaced rAF), so WebKit's 60 / 120 Hz was not emulated; the real session stands for it.
 - Next on top: F (the cutscene feeds' remaining frame-time parts), then the fades (preFade / fadeFrom still run on rAF time).
+
+## F: the cutscene fades on game updates (pv fadesOnTicks, a behaviour change)
+
+- The PS2's view fade (2E4370 in the cameras' 22E840, after the rider manager) steps once per game update, unmasked. The page ran
+  the pre-fade, the fade-from over the world and the script fades on drawn frames, and the painters' reset at a nearly full fade
+  (weather_fade_reset at alpha >= 0.93) ran from every drawn frame's fade evaluation.
+- web/cutscenes.js `fadeTick()` (one update: the overlay's clock +1, a pre-fade resolved when its ticks and hold are over, a fade-from
+  ended; then the painters' reset at the update's alpha, the overlay's or the playing list's script fade) and `fadeFrames(dt)` (whole
+  ticks of a frame that runs no update); the drawn frames no longer reset the painters. web/main.js: fadeTick at each game tick's end
+  (the trace hook) and in the cutscene loop's NIS-only updates; fadeFrames on frames without an update.
+- Proof (probe-nis.mjs, the weather_fade_reset calls counted per game tick): with nisOnTicks + fadesOnTicks the resets land on the
+  same ticks at 60 / 30 / 144 fps (3, ticks 1..3), and every tick's trace is identical across the rates; with nisOnTicks alone they
+  follow the drawn frames (60: 4, 30: 2, 144: 10).
+
+## Collectible slot (pv collectSlotReset, off; core to install: local/core-migration/core13b)
+
+- PS2 (local/core-migration/decomp/popup-17303.md): the open collection ctx+0x2C0 is never freed at an unload (230360 -> 308FE0);
+  309F18 resets it at the world-state-10 enter after a crossing's Load (2355C0 at 0x2356B0) and at the race / event starts, running
+  the loaded locations' global programs again (30B928 opens a collection only when the slot is free, so the first loaded location
+  with one takes it). 30C4A8 per listed resource (static read, popup-17303.md 8.3): `0x30C530` lb 0x535C11; when 0 (CTM)
+  `0x30C548` 1538E8 (the career bit); 0 (not collected) -> `0x30C550` jumps to `0x30C688`, count++ only. The entity's destructor
+  vt+0xC(entity + delta, 3) (LiveComp 0x341CF0: base 34DBA8, free 317E50) and the DeadNode 3506D8 are on the dead branch only
+  (`0x30C558..0x30C5E8`, the same at `0x30C5F4..0x30C684`: 0x535C11 != 0 or the bit set). Nothing rebuilds an entity later: the
+  WS10 enter 2355C0 (`0x2355C0..0x2357F0`) calls no section pass, 103358 or 3A6800 (8.1), and the section pass builds one only at
+  an enter edge (0x103280 30A3A0 -> 30A298 slot 1, only when +0xC is empty, 8.4). So an uncollected collecta keeps the LiveComp and
+  magnet its first section enter built. Code path traced statically (no PS2 run); not confirmed in memory: no capture watches the
+  instance's +0xC across the enter, and the tick of E's first section enter and of the magnet's acquire are not in the capture.
+  The capture match (below) is consistent with it. The port freed the slot at the
+  unload and took it at a read's completion, so a crossing whose next location read first left it empty (apj-full 17303: E's
+  collecta_1003 touched, the 2000 points and popups 0x18 / 0x31 never posted).
+- web/stage_script_gameplay.inc (behind `stage_collect_slot_rule`, set by web/free-ride.js at the world start from pv collectSlotReset
+  and by web/compare-ps2-capture.mjs on --peak-run): no free at the unload; builtin 38's not-dead branch leaves the instance;
+  browser_stage_ws10_enter = peak_collect_refresh. web/peak_world.inc: builtin 68 action 2 (22D088) and the QA load event arm
+  `ws10Pending`; peak_world_apply_events' `ws10_step` runs the enter on the first pass with no row in 4 / 8 (the Load done).
+- Proof: apj-full (19,000 records, Continue to past the first station) exact through the end with stationSplitPs2 + collectSlotReset
+  (16275 without stationSplitPs2, 17302 without collectSlotReset; the gate in web/test-ps2-captures.mjs follows the switches).
+  web/test-collect-slot.mjs: Peak 1 A holds the slot across ABA1's read; off, A's unload frees it and it stays empty; with the rule
+  it stays through the unload, the WS10 enter gives it to ABA1, a built ABA1 collecta keeps its node / entity and a collected one
+  dies (fails on the pre-fix core13). Switch off: core13b scores the full test-ps2-captures as core12 (see HANDOFF).
 
 ## Native core
 

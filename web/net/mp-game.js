@@ -757,6 +757,11 @@ export function createMpGame({
       if (seconds !== dt) stats.paceTicks++;
       return seconds;
     },
+    // pv mpTickLock (main.js frame, web/net/race-pace.js createRaceLock): the server clock's ticks not yet run, null without a GO.
+    behind() {
+      if (!racing || !goLocal || !pairNet) return null;
+      return (Date.now() - goLocal) * 0.06 - pairNet.tick;
+    },
     beginTick() {
       if (!pairNet) return;
       // Shared world changes other racers made (web/shared_world.inc replays, as between the six AI cores).

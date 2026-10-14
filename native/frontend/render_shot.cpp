@@ -129,7 +129,8 @@ int main(int argc, char** argv) {
         renderer.render(camera, state, view, width, height, 4.0 / 3.0);
         if (withHud) {
             hud.canvas.logging = !canvasLog.empty();
-            hud.draw(v);
+            // (no audio here: the now-playing popup never shows)
+            hud.draw(v, 0);
             WGPUCommandEncoderDescriptor ed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
             WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(gpu.device, &ed);
             hud.canvas.encode(enc, view, width, height);

@@ -63,10 +63,8 @@ public:
         key_ = ~uint64_t(0);
     }
     // avalancheState: the core's pieces of its current tick (read once per tick: avalanche_pieces drains its released list)
+    // (any course, as the page reads it: the audio's rumble loop needs no AvaSpline follower)
     void read() {
-        if (!active_) {
-            return;
-        }
         const uint32_t* I = avalanche_info();
         const uint64_t key = uint64_t(I[2]) * 4096 + I[1];
         if (key == key_) {
@@ -74,16 +72,39 @@ public:
         }
         key_ = key;
         playing_.clear();
+        tumblers_.clear();
         const float* H = avalanche_pieces();
         size_t at = 0;
         const size_t n = size_t(H[at++]);
         for (size_t k = 0; k < n; ++k, at += 22) {
             playing_.insert(uint32_t(H[at]));
+            // the 0x2D9C00 matrix's row 3 (+96, source cm) and the scale (+176)
+            tumblers_.push_back({H[at + 16], H[at + 17], H[at + 18], H[at + 21]});
         }
         const size_t r = size_t(H[at++]);
         for (size_t k = 0; k < r; ++k) {
             released_.insert(uint32_t(H[at + k]));
         }
+        at += r;
+        // 0x29DEF0: the loop refcount, then its changes since the last call, in order
+        loop_ = H[at++] > 0;
+        const size_t t = size_t(H[at++]);
+        for (size_t k = 0; k < t; ++k) {
+            loopEvents_.push_back(H[at + k]);
+        }
+    }
+    // the audio's view of the current tick (web/avalanche-state.js avalancheState: loop, tumblers)
+    bool loop() const {
+        return loop_;
+    }
+    const std::vector<std::array<double, 4>>& tumblers() const {
+        return tumblers_;
+    }
+    // takeLoopEvents: the refcount changes since the last take
+    std::vector<double> takeLoopEvents() {
+        std::vector<double> e;
+        e.swap(loopEvents_);
+        return e;
     }
     // a follower hidden at the start: drawn while its tumbler drives it (ENTITY_DRAWN), until released
     bool hiddenPieceDrawn(uint32_t resource) const {
@@ -205,6 +226,9 @@ private:
     std::set<uint32_t> playing_;
     std::set<uint32_t> released_;
     uint64_t key_ = ~uint64_t(0);
+    std::vector<std::array<double, 4>> tumblers_;
+    bool loop_ = false;
+    std::vector<double> loopEvents_;
 };
 
 }  // namespace ssx_native

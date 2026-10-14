@@ -441,6 +441,18 @@ bound (a simulated run); only a server-side simulation of each rider would.
 | Core exports | `rider_skin_scale`, `race_world_pair_disable`, `race_world_pair_respond`, `shade_external_rider_lighting`, `fx_recording`, `fx_records`, `fx_record_size`, `fx_puppet_reset`, `fx_puppet_step`, `pickup_revoke` (+ `OriginalPairCallbacks::attackHit`, `OriginalRiderPairSystem::respondToAttack`). None changes single-player / AI behaviour (capture gates exact). |
 | Tests | `test-mp-grid.mjs` (grid spots per slot, scale and stance), `test-mp.mjs` (server end to end), `test-mp-prerace.mjs` (the pre-race protocol), `test-mp-page.mjs` (two pages; `MP_PICK`, `MP_PRERACE`), `test-remote-riders.mjs` (packets, bit-exact palettes, receiver), `test-mp-pairs.mjs` (rider vs rider over a link, attack reactions), `test-mp-fx.mjs` (effects replay), `test-mp-latency.mjs` (contacts at 50/100/200 ms vs zero latency), `test-mp-pickups.mjs` (pickup arbitration), `test-mp-plausibility.mjs` (finish checks: real runs and forgeries). |
 
+## Rider speech (pv mpRiderSpeech, pv mpSpeechPlace, 2026-10-14)
+
+The PS2's two-player mode (0x535C11 == 2) plays the other human's rider lines: 2A0560 (pass) / 2A0A30 (hit) have no game-type
+test, and their local-rider gate (vtable+0x48 = 0x140BC8, rider+0x874 ^ 1, with +0x87C) passes when one rider of the pair is a
+local human; both riders' lines post and 2A1820 is 2 (foe) for two humans. Online, `web/net/mp-game.js speechRiders()` gives
+`web/game-audio.js gameTick({online})` the local racer's slot and every live remote racer (character, a cheat skin as its base
+rider; the ghost pair view's motion [96], position [99..101], velocity [87..89] at the tick). `web/sfx-game.js` keeps them as
+riders without a core: the local core's overtake (race_world 299E28 events) and pair events then reach the pass / hit speech,
+the bump / attack sounds and the target's grunt. A pass between two remote racers says nothing. The PA lines take the online
+rank (pairNet.hud().place, 10F998's +0xEC) as 2A34D0 / 2A1E68 do in multiplayer. Their board / crash loops are not played.
+Details and the ARMSX2 evidence: [audio-logic.md](audio-logic.md) 4.5 "Who speaks".
+
 ## Known limits
 
 - Contacts use dead-reckoned ghosts with response prediction: at 200 ms a contact stays within ~30 cm of the

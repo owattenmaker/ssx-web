@@ -1500,6 +1500,18 @@ void WorldRenderer::writeFrame(const WorldFrameState& state, const double eye[3]
     wgpuQueueWriteBuffer(gpu_->queue, worldUniform_, 0, u.data(), kFrameBytes);
 }
 
+void WorldRenderer::cameraOf(const CameraView& camera, std::array<double, 16>& inverse, std::array<double, 3>& position) const {
+    const auto& c = camera.v;
+    const double eye[3] = {c[0] - origin[0], c[1] - origin[1], c[2] - origin[2]};
+    const double look[3] = {c[3] - origin[0], c[4] - origin[1], c[5] - origin[2]};
+    inverse = view(eye, look);
+    position = {eye[0], eye[1], eye[2]};
+}
+
+std::array<double, 16> WorldRenderer::lookAt(const double eye[3], const double target[3]) {
+    return view(eye, target);
+}
+
 void WorldRenderer::render(const CameraView& camera, const WorldFrameState& state, WGPUTextureView target, uint32_t width, uint32_t height, double aspect) {
     ensureTargets(width, height);
     const auto& c = camera.v;

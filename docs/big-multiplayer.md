@@ -1,6 +1,7 @@
 # Big online sessions: time attack (design, phase 1)
 
-Status (2026-10-13, big-multiplayer agent): design reviewed; **building TA-1..TA-6**, each behind a default-off switch.
+Status (2026-10-14, big-multiplayer agent): TA-1..TA-6 built, the Create Lobby popup and the online-mode recording fix added (section 11,
+last part); end to end green in Chrome + Chrome and Chrome + WebKit. Ready to turn on pv onlineTimeAttack + ghostRiders (server: MP_SESSIONS=1).
 
 **No live verification (the user's decision 2026-10-13, after the first live stress test; it replaces section 2.3's deadline rule
 and the VERIFY phase):** a small community project, so the session podium and standings rank the **uploaded bests** straight away;
@@ -158,8 +159,16 @@ LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> PO
 - **Spectating:** v1 = the standings screen and the HUD. Following another rider with the game camera needs a camera target that is not
   the local rider's core; not in v1 (open item O2).
 - **The window's attempts:** an attempt is a Single Event run of the session's course with no computer riders: the PS2 countdown
-  (3-2-1, 180 ticks; none on a backcountry rolling start), the race, the finish. Restart = the Single Event pause's Restart (PS2 menu
-  r3-pause) which re-runs startRun and a new countdown; an optional one-button restart (port-only, its own switch) can come later.
+  (3-2-1, 180 ticks; none on a backcountry rolling start), the race, the finish.
+- **Restart (the user's rule, 2026-10-13, port-only: "every restart puts you back in the starting gate with the 3-2-1"):** in a session
+  every restart starts the event as its first attempt's Continue does: career-ui play() -> startRun -> start_event, i.e. the start gate,
+  the 3-2-1 (180 ticks) and GO. A backcountry rival event (Rival Time / Rival Points) restarts at its own rolling start with its rival,
+  as the user left it ("on backcountry stuff just figure it out"; no fade or 3-2-1 overlay). No WS13 ride, no gate idle cutscene, no
+  objectives card, no course reload. The PS2 restart's audio keep (gameAudio.restartRun and the 2302A8 quit) is kept. Both ways in:
+  the results' Restart skips "Are you sure?" in a session; the pause's Restart keeps its dialog. Each restart is a new attempt
+  ('ta-end' restart, then 'ta-attempt' n + 1). After the deadline a restart is refused (ta-game attemptStart) and the page stays on the
+  results / pause. Code: web/career-ui.js restartToCard() (its `ui.timeAttack?.active` branch) and resultAction (i === 1); inert
+  outside a session. Checked: section 11, "Lobby creation, the online-mode fix and the restart rule".
 - Each attempt starts with `{t:'attempt', n}` (the server notes its start time) and ends with a finish, a Give Up, or a restart.
 
 ### 2.2 Simulation model
@@ -313,7 +322,7 @@ full state only on join / resume.
 
 | Screen | Built from | Notes |
 |---|---|---|
-| mode select | mp-ui.js `mp-lobbies` (PDA frame, FEFONT rows) | a "Time Attack" row above the lobbies, with the course, players and time left; the PS2's own online menus first (below) |
+| mode select | mp-ui.js `mp-lobbies` (PDA frame, FEFONT rows) | a "Time Attack" row above the lobbies (the session list); Create Lobby opens the Create Lobby popup (240challenge_popup: Mode Race / Time Attack and the options, section 11) |
 | session HUD | race clock `raceClock` 0x1F16C0 (attempt); freestyle clock 0x1EC3F8 (time left, red under 10 s); 3-row standings 0x17 (top 3, you) | port-only arrangement |
 | end of window | `trickHud.finishBanner(list, true)` TIME'S UP (0x21F660) | |
 | vote | the Single Event map (fe-event-select.js `fe-event`, route drawn red), votes on the INFO panel; or the PDA list | no course thumbnails exist |
@@ -595,4 +604,60 @@ a result after the session emptied (its runs are kept), and an old window's resu
 changes the archive). Page (ta-ui.js): no unverified mark (*) on the standings, no VERIFY phase line. Tests: test-mp-session (the
 podium at once, the archive queue, pulled / verified / stale marks, a late result while the next window loads and after the session
 is gone, the archive's expiry), test-session-verifier (the checks on the archived window), test-ta-page (no live queue).
+
+### Lobby creation, the online-mode fix and the restart rule (2026-10-14)
+
+**The field question** ("where's the time attack mode? Online -> Create Lobby should show those options"): the server runs MP_SESSIONS=1,
+but with pv onlineTimeAttack off the page offers nothing, and with it on, sessions were only behind the Time Attack row
+(231lobby_menu's Create Room -> 232CreateRoomPopup). Now:
+
+- **Create Lobby popup** (web/ta-ui.js `ta-create`): FE.LUI 240challenge_popup, the PS2's game-options popup (its screen name 0x4630C8
+  is loaded in 0x1ADDD0 at 0x1ADEB0). Its timeline has no intro label, only the focus states 15 (Select Event), 20 / 25 / 30 / 35 / 40
+  (the five list-box rows), 45 (Submit), 50 (Cancel). The rows used:
+
+| Row | PS2 row | Port value |
+|---|---|---|
+| Select Event | Select Event / Show MAP | the event (Time Attack: Random or a rotation event; Race: the lobby's course). Cross: the Single Event selector (fe-event-select.js openLobby, `all` for a session: the Jam rows playable too); Left / Right: the next one. Peak / Event / Course on the info strip |
+| Mode | Ranked Game | Race / Time Attack |
+| Time limit | # of AI riders | 1..30 min, 6:00 by default (Time Attack only; greyed and skipped for Race) |
+| Room Name | Power-ups | the game keyboard; default: the Player Name (session), '<rider>'s lobby' (race) |
+| Max riders | Multipliers | Race 2..6 (mp-server MAX_PLAYERS), Time Attack 2..50 (sessions.mjs maxPlayers) |
+| (hidden) | Point Icons | - |
+| Submit / Cancel | Submit / Cancel | create / back to where it was opened |
+
+  The upper panel (the challenged player's stats on the PS2) shows a line about the mode; the stats, the signal bars and the "All
+  messages will be lost" line are hidden. Online Lobbies > Create Lobby opens it in Race mode (the old one-press lobby on the page's
+  course is the default); the session list's Create Room opens it in Time Attack mode. Race mode sends the normal `create` (name,
+  course, maxPlayers: net/mp-game.js createLobby(opts)); Time Attack sends `ta-create` (name, limitMs, maxPlayers, event). Not traced:
+  the PS2 list boxes' own input (wrap, repeat); Left / Right step as the other front-end option rows do.
+- **The online-mode recording fix (a blocker):** a session reached the real way (Main > Online) runs with `ui.onlineMode = true`, and
+  main.js createRaceReplay's allowed() refused to record online, so an attempt had no replay: no upload, no standings, no podium.
+  TA-3..TA-6's tests called ta.create() without onlineMode and never saw it. allowed() now reads `(!ui.onlineMode ||
+  !!ui.timeAttack?.active)` (ui.timeAttack exists only with the switch). test-ta-page now goes through Online Lobbies with onlineMode on.
+- **Restart checks** (section 2.1's rule; local/big-multiplayer/restart-check.mjs):
+  - WebKit (the driver with window occlusion detection off): the results' Restart goes straight to 'game', no reload, the gate,
+    3-2-1, GO, the session timer under the race clock (restart-shots/webkit/results-restart-t0..t225). Synthetic keys open no pause
+    in WebKit, so the pause's Restart is checked in Chrome only.
+  - Chrome on this tree: the pause's Restart (ctm-pause -> ctm-restart -> game) and the results' Restart (-> game), no reload; both
+    restarted runs reproduce in the records verifier (14935 / 15568 ticks). Happiness Rival Time restarts at its rolling start with
+    Mac (restart-shots/chrome-4-ABC1/).
+- **End to end** (local/big-multiplayer/e2e.mjs [chrome|webkit]: a local mp-server with MP_SESSIONS=1, both switches, cutscenes on, a
+  screenshot per step in local/big-multiplayer/e2e/<pair>/):
+  - The steps: Online Lobbies -> Create Lobby (Race, then Time Attack, Snow Jam race, 2:00) -> Submit; the second page joins from the
+    Time Attack row's session list; both cards; A rides and uploads (kept); the results' Restart (gate, 3-2-1, no reload); B rides
+    (A's ghost streamed and drawn) and uploads; the timer in its last 10 s (red), then TIME'S UP.
+  - Then the podium cutscene with both Player Names and places over the steps; the session results with the medals; the vote (two
+    events + Random, map thumbnails, live counts, over the last event's results); the voted event loads on both pages.
+  - Green in Chrome + Chrome and Chrome + WebKit; both browsers gave the same run values (14762 / 15002 race ticks). Re-run green
+    with pv nisOnTicks, mpRiderSpeech and mpSpeechPlace on (the live defaults since 2026-10-14), and the restart checks above too.
+- **The podium cutscene on a slow page (fixed, ta-ui.js follow()):** with pv nisOnTicks the scene runs on game ticks and a frame's ticks
+  are capped (main.js: min(ps2FrameTime(dt), quality.maxFrameDt)), so at a low frame rate it plays slower than real time: the WebKit
+  driver page at 6 fps (a loaded machine) took 34.6 s for the 12.9 s podium (60 fps: 12.9 s; nisOnTicks off at 6 fps: 14.4 s;
+  local/big-multiplayer/podium-probe.mjs). It outlasted the server's podium + vote phases, so the page skipped the results and the vote
+  (follow() opens the vote only off the cutscene). Now a podium cutscene still playing after the podium phase is stopped
+  (cutscenes.stop()), and the page goes on to the vote. Checked with a 3 s podium phase (E2E_PODIUM_MS=3000, Chrome + Chrome): both pages
+  vote and load the next event (e2e/chrome-chrome-short-podium/).
+- **Bot dry run** (dry-run.mjs --bots 20 --window 60000: local server, the page's /mp proxy, the verifier's session lane): connect p50
+  3 ms, ping p95 2 ms, 13.7 KB/s per bot, server ghost out peak 288 KB/s, 0 dropped; podium TEST BOT 02 / 01; the archived window
+  verified 3 s after the next load. (stress.mjs warns that its recorded runs carry the core8 hash; both still reproduced.)
 

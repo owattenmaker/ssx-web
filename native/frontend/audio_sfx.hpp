@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -138,7 +139,7 @@ struct Spatial {
 
 class Sfx {
 public:
-    Sfx(AudioEngine& engine, Files& files, Timers& timers, Random& random, bool startAfterDecode = true, double evictMs = 30000)
+    Sfx(AudioOutput& engine, Files& files, Timers& timers, Random& random, bool startAfterDecode = true, double evictMs = 30000)
         : engine_(engine), files_(files), timers_(timers), random_(random), startAfterDecode_(startAfterDecode), evictMs_(evictMs) {}
 
     struct Bank {
@@ -208,7 +209,7 @@ private:
     void evictLater(const std::string& name);
     void keep(const std::string& name);
 
-    AudioEngine& engine_;
+    AudioOutput& engine_;
     Files& files_;
     Timers& timers_;
     Random& random_;

@@ -105,6 +105,8 @@ function padRateFrame(dt) {
   padRateWatch.frame(entry.raw, () => padSummary(entry), dt * 1000);
 }
 const tickLock = createTickLock();
+// pv mpTickLock: the online frame lock (web/net/race-pace.js)
+const raceLock = createRaceLock();
 import createCore from './runtime/core.js';
 import { createAiRace } from './ai-race.js';
 import { syncWorldNodes, coreHost } from './ai-racers.js';
@@ -125,6 +127,7 @@ import { collectBefore, collectNow, coreTracker } from './switch-gc.js';
 import { ps2FrameTime } from './ps2-frame-pacing.js';
 // pv tickLock: one tick per ~60 Hz drawn frame, drawn without interpolation
 import { createTickLock } from './tick-lock.js';
+import { createRaceLock } from './net/race-pace.js';
 import { organizeStaticWorld } from './static-world.js';
 import { registerGpuRestore, restoreGpuCopies, fetchBuffer, releaseWorldCopies, forgetGpuRestore } from './gpu-copies.js';
 import { abortCompiles } from './compile-abort.js';
@@ -3935,7 +3938,10 @@ function frame(ms) {
       const tickInput = (finished && !pv('padCarry')) || simHeld ? NEUTRAL_PAD : input;
       // pv tickLock (web/tick-lock.js): offline, a ~60 Hz frame runs exactly its ticks (1; 0 or 2 to pay the real-time debt) and draws
       // the newest one (alpha 1), as the PS2 draws every vblank's update; null: not a 60 Hz frame, the pacing below
-      const lockedTicks = !online && pv('tickLock') ? tickLock.frame(dt) : null;
+      let lockedTicks = !online && pv('tickLock') ? tickLock.frame(dt) : null;
+      // pv mpTickLock: an online ~60 Hz frame is locked too, with the server clock as the reference instead of tickLock's own debt (one
+      // tick, or one more / fewer to stay within a tick of the server clock: web/net/race-pace.js createRaceLock); other frames keep mpGame.pace
+      if (online && pv('tickLock') && pv('mpTickLock')) lockedTicks = raceLock.frame(dt, mpGame.behind());
       if (lockedTicks != null) simulation.pending = 0;
       gameTick.advance(
         simulation,
@@ -3961,6 +3967,7 @@ function frame(ms) {
       padCarryFeed(input, dt);
       // pv tickLock: no debt carried across a hold
       tickLock.reset();
+      raceLock.reset();
     }
     mpGame?.afterFrame();
     replayFrame(dt);

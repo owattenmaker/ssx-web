@@ -113,6 +113,8 @@ export async function createFreeRide({
   // and at each run's start (peak_run_setup).
   let coreEvents = false;
   const runSetup = () => {
+    // pv collectSlotReset (docs/core-migration.md "Collectible slot"): the open collection as the PS2 keeps it
+    core._stage_collect_slot_rule?.(pv('collectSlotReset') ? 1 : 0);
     if (!core._peak_run_setup) return;
     // pv stationSplitPs2: the split at the PS2's point (the end of the tick after the Load's) with its clock (core bit 1)
     const ps2 = pv('stationSplitPs2');

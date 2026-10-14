@@ -54,6 +54,9 @@ float* manager_begin_tick(int anchorTick, int scores);
 void manager_end_tick();
 int manager_relationships(const int32_t* spec);
 void manager_relationships_off();
+int32_t* manager_relationship_events();
+int32_t* manager_relationship_state();
+float* manager_rider(int index);
 void race_world_set_relationships(const float* m);
 // shared world nodes (web/shared_world.inc)
 void shared_world_nodes(int on);
@@ -88,6 +91,7 @@ void race_give_up();
 uint32_t game_tick();
 // read-outs
 float* rider_state();
+float height_at(float x, float y, float z);
 float* pose_physical();
 float* world_pose_bones();
 float* rider_world_state();
@@ -141,4 +145,10 @@ float* boost_hud_info();
 float* race_result_info();
 float* rider_stance_info();
 float* race_progress_info();
+// the audio (web/audio_events.inc, web/game-audio.js gameTick)
+float* audio_events();
+void audio_events_clear();
+float* audio_telemetry();
+float* audio_instance_position(uint32_t resource);
+float* terrain_contact_info();
 }

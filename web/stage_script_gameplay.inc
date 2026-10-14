@@ -193,6 +193,8 @@ RIDER_LOCAL static std::vector<uint32_t> stageCollectEvents;                  //
 void section_collectible_state(uint32_t resource,bool dead);void section_mark_dead(uint32_t resource); // web/section_gameplay.inc
 RIDER_LOCAL static bool stage_current_human=false;                            // player object of ctx+0 (rider+0x874)
 RIDER_LOCAL static uint32_t stageCollectibleAwards=0;
+// pv collectSlotReset: the PS2's rule for the open collection (browser_stage_track_teardown, builtin 38, browser_stage_ws10_enter)
+RIDER_LOCAL static bool stageCollectSlotRule=false;
 static StageInstance* stage_instance(uint32_t resource){
  auto it=std::lower_bound(stageInstances.begin(),stageInstances.end(),resource,[](const StageInstance& s,uint32_t r){return s.resource<r;});
  return it!=stageInstances.end()&&it->resource==resource?&*it:nullptr;
@@ -387,6 +389,9 @@ static StageArg stage_builtin(int index,const StageArg* args,int count){
    const uint32_t* mask=stageCollectMask;if(browser_streamed_world(setPieceLocationName)){auto row=stageCollectRows.find(uint32_t(stageCollectionTrack));mask=row==stageCollectRows.end()?nullptr:row->second.data();}
    const bool dead=stageCollectPath!=0||(mask&&((mask[index>>5]>>(index&31))&1u));
    if(dead)stage_make_node(r,6);
+   // pv collectSlotReset (local/core-migration/decomp/popup-17303.md section 8): 30C4A8's not-dead branch (1538E8 = 0 -> 0x30C688) only
+   // counts the resource; the instance and its entity are left as they are (the WS10 enter's 309F18 must not strip a built collecta)
+   else if(stageCollectSlotRule){}
    else{stageNodeState.erase(r);if(auto* st=stage_instance(r)){st->entity=StageNoEntity;st->dead=false;}if(auto* w=set_piece_instance_at(r))stage_set_flags(r,ssx::originalPickupRestoredFlags(w->flags));}
    section_collectible_state(r,dead);
   }
@@ -459,7 +464,16 @@ void browser_stage_track_setup(uint32_t track){
   const int program=stageTables->globals[st.firstGlobal+g];if(program>=0)stage_run_program(st.firstProgram+uint32_t(program),st.track,true);}
 }
 void browser_set_piece_track_teardown(uint32_t); // web/set_piece_gameplay.inc (pv peakSplines)
-void browser_stage_track_teardown(uint32_t track){if(stageCollectionTrack==int32_t(track)){stageCollection={};stageCollectionTrack=-1;}browser_mission_track_teardown(track);browser_set_piece_track_teardown(track);}
+// pv collectSlotReset (local/core-migration/decomp/popup-17303.md): the PS2 never frees the slot at an unload (230360 -> 308FE0 does not touch
+// ctx+0x2C0); it is reset only by 309F18 (the world-state-10 enter after a crossing's Load, 2355C0 at 0x2356B0, and the race / event starts),
+// which runs every loaded location's global programs again: the first location with a collection takes the slot.
+void browser_stage_track_teardown(uint32_t track){if(!stageCollectSlotRule&&stageCollectionTrack==int32_t(track)){stageCollection={};stageCollectionTrack=-1;}browser_mission_track_teardown(track);browser_set_piece_track_teardown(track);}
+extern "C" EMSCRIPTEN_KEEPALIVE void peak_collect_refresh();
+// pv collectSlotReset: 309F18 at the world-state-10 enter (web/peak_world.inc after a Load, once no row is reading)
+void browser_stage_ws10_enter(){if(stageCollectSlotRule)peak_collect_refresh();}
+bool browser_stage_collect_slot_rule(){return stageCollectSlotRule;}
+// pv collectSlotReset: the page (web/free-ride.js at the world start) and the capture comparisons turn the PS2's rule on
+extern "C" EMSCRIPTEN_KEEPALIVE void stage_collect_slot_rule(int on){stageCollectSlotRule=on!=0;}
 extern "C" EMSCRIPTEN_KEEPALIVE void set_stage_collect_row(int track,uint32_t lo,uint32_t hi){if(track>=0)stageCollectRows[uint32_t(track)]={lo,hi};}
 extern "C" EMSCRIPTEN_KEEPALIVE int stage_collect_track(){return stageCollectionTrack;}
 // The host set the collect path / rows after the run's stage reset (free ride has no event start, web/free-ride.js afterReset):

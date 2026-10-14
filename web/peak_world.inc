@@ -172,6 +172,18 @@ static void pass(){
 }
 RIDER_LOCAL extern void (*browserRaceAfterReset)();
 static void peak_after_race_reset(){using namespace peak_stream;tickRestartIn=0;crossingUnload=false;if(!active)return;update_finish_rule();if(bankLocation>=0)deliver_paths(bankLocation);}
+void browser_stage_ws10_enter();bool browser_stage_collect_slot_rule();
+namespace peak_stream{
+// pv collectSlotReset: a Load (22D088) waits for world state 10's enter (22D8D8 case 4 once no row is in 4 / 8: 231250(S, 10)), whose 2355C0
+// resets the collectible slot (309F18 at 0x2356B0)
+RIDER_LOCAL static bool ws10Pending=false;
+void ws10_step(){
+ if(!ws10Pending||!browser_stage_collect_slot_rule())return;
+ for(const auto& r:rows)if(r.state==4||r.state==8)return;
+ ws10Pending=false;
+ browser_stage_ws10_enter();
+}
+}
 void browser_peak_builtin68(int32_t mapId,int32_t action,int32_t entry){
  using namespace peak_stream;if(!active)return;
  static const int32_t modes[8]={2,3,4,5,1,1,1,0}; // 0x445E40
@@ -179,7 +191,7 @@ void browser_peak_builtin68(int32_t mapId,int32_t action,int32_t entry){
  auto c=mapIds.find(mapId);const int32_t course=c==mapIds.end()?-1:c->second;
  events.insert(events.end(),{1,course,action,mode});
  if(action==0&&course>=0)request(course,false);        // 22CEA8
- else if(action==2&&course>=0)request(course,true);    // 22D088
+ else if(action==2&&course>=0){request(course,true);ws10Pending=true;}    // 22D088 (pv collectSlotReset: the WS10 enter to come)
  else if(action==5)skySwitchAllowed=true;              // +0x1A4 (the skybox trigger)
 }
 void browser_peak_builtin67(int32_t entry,int32_t flag){if(!peak_stream::active)return;peak_stream::events.insert(peak_stream::events.end(),{3,entry,flag,0});}
@@ -284,9 +296,9 @@ void apply_events(){
 }
 // QA (?qa=1 pages, main.js ssxQA.peakEvent): one streamed-world event as the stage programs queue them ({kind, a, b, c}: kind 1 builtin
 // 68 course / action / mode), for the station decisions' page check (docs/core-migration.md "B")
-EMSCRIPTEN_KEEPALIVE void peak_world_qa_event(int kind,int a,int b,int c){if(peak_stream::active)peak_stream::events.insert(peak_stream::events.end(),{kind,a,b,c});}
+EMSCRIPTEN_KEEPALIVE void peak_world_qa_event(int kind,int a,int b,int c){if(!peak_stream::active)return;peak_stream::events.insert(peak_stream::events.end(),{kind,a,b,c});if(kind==1&&b==2&&a>=0)peak_stream::ws10Pending=true;}
 // (also called alone by a capture comparison that drives the rows itself, after the tick's race_end: web/compare-ps2-capture.mjs)
-EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
+EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active)peak_stream::ws10_step();if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
 EMSCRIPTEN_KEEPALIVE void peak_world_tick(){if(peak_stream::active)peak_stream::pass();peak_world_apply_events();}
 // pv coreWorldEvents: on (bit 0; bit 1 pv stationSplitPs2) with the run's setup (web/peak-run.js peakSetup: time challenge, the tier
 // row's five station splits; active 0 outside a peak run), at each run's start (web/free-ride.js afterReset: the split counter back to

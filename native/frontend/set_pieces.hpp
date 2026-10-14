@@ -197,6 +197,9 @@ public:
     const Avalanche& avalanche() const {
         return avalanche_;
     }
+    Avalanche& avalanche() {
+        return avalanche_;
+    }
     // web/set-pieces-renderer.js haloNodePosition: row 3 (source cm) of a JS-animated LiveComp node
     bool nodePosition(uint32_t resource, uint32_t node, float* out) {
         const auto* m = live_ ? live_->nodeMatrices(resource) : nullptr;

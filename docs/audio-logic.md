@@ -466,7 +466,14 @@ vtable+0x48 call answers is not confirmed). So a computer rider's taunt about th
   Chrome pages, Zoe host or joiner, to the finish) post only the local human's own lines (speaker 4: Wipeout_Amateur_zoe,
   Post_Object_Collision_zoe) plus PA / DJ, on core 1e117b0c; on core11 the race throws at the gate first. Online,
   web/sfx-game.js knows only the local human, so the other racers' pass / hit lines (which 2A0560 / 2A0A30 would post) are
-  missing; the online PA_Rider_Postition line passes place 0 (game-tick rec.place without aiActive). Both not fixed.
+  missing; the online PA_Rider_Postition line passes place 0 (game-tick rec.place without aiActive). Both behind switches
+  (2026-10-14): pv mpRiderSpeech (the other racers as riders without a core: web/net/mp-game.js speechRiders, their ghost
+  pair view motion [96] / position [99..101] / velocity [87..89]; the local racer at its own slot; two humans = foe) and pv
+  mpSpeechPlace (pairNet.hud().place = the online +0xEC for 2A34D0's listener place, table 0x4830F0 at 0x2A365C, and for
+  2A1E68's multiplayer branch 0x2A1E9C..0x2A1F0C: +0xEC -> 1/2/4/8/0x10, else 0x200). The PS2 rule: 2A0560 has no 0x535C11
+  test, and vtable+0x48 = 0x140BC8 returns rider+0x874 ^ 1 ("computer"): with +0x87C it lets a pass through when one rider is
+  a local human, so the PS2's two-player mode plays the other human's lines. Two Chrome pages: Pass_Foe_zoe then
+  Passed_by_Foe_mac on Mac's page when remote Zoe passes him (local/speech-speaker/mp-tap.json).
 
 | Bank | Event(s) | Function | Trigger |
 |---|---|---|---|

@@ -362,6 +362,8 @@ struct Verifier {
     uint32_t tickFlags = 0;
     // called in every tick after the riders' passes (manager_end_tick / tick_mid), before tick_end (the race HUD's reads)
     std::function<void()> afterMid;
+    // the pending trick points (web/game-tick.js s.pending: animInfo[12], tick_end's e[21]; 0 at a rescue)
+    double pending = 0;
     float command14 = 0;
     Assets assets;
     json meta;
@@ -1162,10 +1164,13 @@ struct Verifier {
         command14 = b[14];
         if (flags & 1) {
             lastRescues = b[80];
+            pending = 0;
         }
         if (flags & 4) {
             std::memcpy(posed, b + 59, sizeof posed);
             hasPose = true;
+            // animInfo[12] (web/game-tick.js: s.pending)
+            pending = b[52];
         }
         std::memcpy(state, b + 24, sizeof state);
         std::memcpy(raceInfo, b + 71, sizeof raceInfo);
@@ -1193,6 +1198,9 @@ struct Verifier {
         }
         uint32_t endFlags;
         std::memcpy(&endFlags, e + 20, 4);
+        if (endFlags & 4) {
+            pending = e[21];
+        }
         std::memset(camera, 0, sizeof camera);
         hasCamera = (endFlags & 1) != 0;
         if (hasCamera) {
