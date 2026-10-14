@@ -529,11 +529,19 @@ export class CareerScreens {
   // the new-career flag cleared at 0x236928); world state 10 comes only at the connector's Load trigger (22D088: the row turns active,
   // record 19215: WS 11 -> 10, the last lodge 20 -> 17 at 0x2356FC, the reward record cleared), and world state 4 the next tick (record
   // 19216: the visited bit 17). A transport's arrival is WS10 at once (the page answered 'transport': transportTo).
-  courseChanged(c) {
+  courseChanged(c, { coreWorldState = false } = {}) {
     const fr = this.freeRide;
     if (!fr || !this.career || c == null || c < 0 || c === fr.course) return;
     // riding into another peak (the whole mountain): the MCOMM Transport opens on the peak being ridden
     this.peak = COURSE_PEAK[c] ?? this.peak;
+    // pv coreWorldState: the career writes come with the core's world-state events (worldState below)
+    if (coreWorldState) {
+      fr.course = c;
+      this.transportTo = null;
+      this.pendingArrival = null;
+      this.loadedCourse = null;
+      return;
+    }
     // WS11: the rest waits for the Load (crossingArrived); a Load met without its Unload (a reset past it) posts first: at once
     if (this.transportTo !== c && this.loadedCourse !== c) {
       const r = this.me;
@@ -554,6 +562,20 @@ export class CareerScreens {
     this.markVisited(c);
     if (c >= 17) r.lastStation = c;
     this.career.persist();
+  }
+  // pv coreWorldState (docs/core-migration.md "M8"): one world-state change of the core's machine (web/peak_world.inc event 7, after the
+  // course change's courseChanged): WS11 enter 0x2368A0 clears the new-career flag (145CB0 at 0x236928); WS10 enter 0x2355C0 clears the
+  // reward record (158E30) and makes a station the last lodge (146E10 at 0x2356FC); WS10 exit 0x235868 sets the visited bit (145DD0).
+  worldState(e) {
+    if (!this.freeRide || !this.career || !e) return;
+    const r = this.me;
+    if (e.to === 11) r.firstRun = false;
+    else if (e.to === 10) {
+      this.career.clearRewardRecord();
+      if (e.course >= 17) r.lastStation = e.course;
+    }
+    if (e.from === 10 && e.course >= 0) this.markVisited(e.course);
+    if (e.to === 11 || e.to === 10 || e.from === 10) this.career.persist();
   }
   // The connector's Load trigger (22D088, web/free-ride.js 'arrive') after a riding crossing: world state 10 (158E30, 146E10 at a station),
   // then 4 (the visited bit).

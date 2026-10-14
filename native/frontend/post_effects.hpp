@@ -34,6 +34,7 @@ public:
     bool sunVisible() const {
         return sunVisible_;
     }
+    float sunVisibility();
 
 private:
     void ensureTargets(uint32_t w, uint32_t h, WGPUTextureView depthSample);

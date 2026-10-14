@@ -36,7 +36,8 @@ struct Gpu {
     void writeBlocks(WGPUTexture t, uint32_t w, uint32_t h, const void* blocks, uint32_t blockBytes, uint32_t mip);
     WGPUShaderModule shader(const std::string& wgsl, const char* label);
     // an RGBA8 texture's pixels (rows tightly packed)
-    std::vector<uint8_t> readback(WGPUTexture t, uint32_t w, uint32_t h);
+    // bytesPerTexel: 4 for the RGBA8 targets, 8 for an RGBA16Float one
+    std::vector<uint8_t> readback(WGPUTexture t, uint32_t w, uint32_t h, uint32_t bytesPerTexel = 4);
     // queued work done
     void wait();
 };

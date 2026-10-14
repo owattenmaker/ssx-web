@@ -37,10 +37,17 @@ const rowState = (code) => { const p = core._peak_world_rows() >> 2, H = new Int
 const held = (x) => x !== 0 && x !== 7, reading = (x) => x === 3 || x === 4 || x === 6 || x === 8 || x === 1;
 const codes = manifest.locations.map((l) => l.code);
 let checked = 0, first = null, courseMiss = 0, readSkew = 0, heldAtCross = null;
+// M8b (docs/core-migration.md "M8"): the core's world-state changes (web/peak_world.inc event 7 {to, from, course}) by record
+const coreWs = [];
 for (let i = 1; i < a.records; i++) {
   if (unloads.has(i)) core._peak_world_request(unloads.get(i), 0);
   if (loads.has(i)) core._peak_world_request(loads.get(i), 1);
   core._peak_world_tick();
+  if (core._peak_world_state) {
+    const p = core._peak_world_events() >> 2;
+    const H = new Int32Array(core.HEAPU8.buffer);
+    for (let k = 0; k < H[p]; k++) if (H[p + 1 + 4 * k] === 7) coreWs.push({ record: i, to: H[p + 2 + 4 * k], from: H[p + 3 + 4 * k], course: H[p + 4 + 4 * k] });
+  }
   for (const [n, , t] of changes.get(i) || []) ps2.set(n, t);
   for (const code of codes) {
     const w = rowState(code), p = ps2.get(code) ?? 0; checked++;
@@ -74,6 +81,15 @@ assert.equal(ws(4, 11), cross.record, 'world state 11 at the Unload');
 assert.equal(ws(11, 10), loadRecord, 'world state 10 at the Load trigger (the row turns active)');
 assert.equal(lodgeEvent.record, loadRecord, 'the last lodge at the Load (WS10 enter, 0x2356FC)');
 assert.equal(ws(10, 4), loadRecord + 1); assert.equal(visitEvent.record, loadRecord + 1, 'the visited bit at WS4, the next record');
+// M8b: the core's machine enters the same states on the same records, with the course (the career writes of web/career-ui.js
+// worldState under pv coreWorldState: the new-career flag at WS11, the last lodge at WS10's enter, the visited bit at its exit)
+if (core._peak_world_state) {
+  const at = (from, to) => coreWs.find((e) => e.from === from && e.to === to);
+  assert.deepEqual(coreWs.map((e) => [e.from, e.to]), [[4, 11], [11, 10], [10, 4]], 'the core: one crossing 4 -> 11 -> 10 -> 4');
+  assert.deepEqual([at(4, 11).record, at(11, 10).record, at(10, 4).record], [ws(4, 11), ws(11, 10), ws(10, 4)], 'the core: the PS2 records');
+  assert.ok(coreWs.every((e) => e.course === 17), 'the core: at course 17');
+  console.log(`  core world state: 4 -> 11 at ${at(4, 11).record}, 11 -> 10 at ${at(11, 10).record}, 10 -> 4 at ${at(10, 4).record} (course 17), as the PS2`);
+} else console.log('  core world state: core without peak_world_state (rebuild web/runtime)');
 console.log(`  arrival: course 17 (WS 4 -> 11) at record ${cross.record}; the Load at ${loadRecord}: WS 11 -> 10 and the last lodge 20 -> 17; WS 10 -> 4 and the visited bit at ${visitEvent.record}`);
 
 // ---- 3. position continuity ----

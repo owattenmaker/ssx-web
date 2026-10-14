@@ -457,6 +457,32 @@ const shape = (lines) => lines.map((l) => [l.text.replace(/ \(.*\)$/, ''), l.ind
       // a transport's arrival is world state 10 at once
       const w = page(); w.ui.cb.freeRide = () => 'transport'; const r2 = w.cs.career.rider('zoe'); r2.firstRun = false; r2.lastStation = 17;
       w.cs.freeRide = { course: 0 }; w.cs.goWorld(18); w.cs.courseChanged(18); assert.equal(r2.lastStation, 18, 'a transport arrives at once');
+    }
+    // pv coreWorldState (docs/core-migration.md "M8"): the same writes from the core's world-state events (web/peak_world.inc event 7,
+    // after the course change; test-mountain-ride.mjs: on the PS2's records)
+    {
+      const { cs } = page();
+      const r = cs.career.rider('zoe');
+      r.firstRun = undefined;
+      r.lastStation = 20;
+      r.visited = (1 << 3) | (1 << 14);
+      cs.freeRide = { course: 3 };
+      cs.peak = 2;
+      cs.courseChanged(17, { coreWorldState: true });
+      assert.equal(cs.freeRide.course, 17);
+      assert.equal(cs.peak, 1, 'core world state: the MCOMM follows the peak at the course change');
+      assert.equal(r.firstRun, undefined, 'core world state: nothing written at the course change itself');
+      cs.worldState({ to: 11, from: 4, course: 17 });
+      assert.equal(r.firstRun, false, 'core world state: WS11 enter clears the new-career flag');
+      assert.equal(r.lastStation, 20);
+      cs.worldState({ to: 10, from: 11, course: 17 });
+      assert.equal(r.lastStation, 17, 'core world state: WS10 enter, the last lodge');
+      assert.ok(!(r.visited & (1 << 17)), 'core world state: not visited before the WS10 exit');
+      cs.worldState({ to: 4, from: 10, course: 17 });
+      assert.ok(r.visited & (1 << 17), 'core world state: WS10 exit, the visited bit');
+      cs.worldState({ to: 11, from: 4, course: 3 });
+      cs.worldState({ to: 10, from: 11, course: 3 });
+      assert.equal(r.lastStation, 17, 'core world state: a course that is no station keeps the last lodge');
     } }
   console.log('mountainRide: the whole mountain on the desktop tier, crossings keep the career on the rider\'s location');
 }

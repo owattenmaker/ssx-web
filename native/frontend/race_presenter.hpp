@@ -240,6 +240,10 @@ public:
         return state;
     }
 
+    // the sun painter (null on a course without SUN_FLARE)
+    const SunFlare* sun() const {
+        return sun_.get();
+    }
     // the avalanche snapshot of the current tick (the audio's rumble reads it before the draw does; null before loadEffects)
     Avalanche* avalanche() {
         return setPieces_ ? &setPieces_->avalanche() : nullptr;

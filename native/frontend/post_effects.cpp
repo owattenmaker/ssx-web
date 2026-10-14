@@ -131,7 +131,8 @@ void PostEffects::init(Gpu& gpu) {
     sprites_ = gpu.buffer(16 * 31, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, nullptr, "sun sprites");
     glowDrawParams_ = gpu.buffer(16, WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst, nullptr, "glow params");
     WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
-    sunVis_ = gpu.texture(1, 1, WGPUTextureFormat_RGBA16Float, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding, 1, "sun visibility");
+    sunVis_ = gpu.texture(1, 1, WGPUTextureFormat_RGBA16Float, WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopySrc, 1,
+                         "sun visibility");
     sunVisView_ = wgpuTextureCreateView(sunVis_, &vd);
 
     // the query pipelines (group 0: params, query rows, depth)
@@ -487,6 +488,22 @@ void PostEffects::encode(WGPUCommandEncoder enc) {
     }
     wgpuRenderPassEncoderEnd(p);
     wgpuRenderPassEncoderRelease(p);
+}
+
+// QA: the sun query's result of the last frame (the red channel of the 1 x 1 half-float target), -1 when the sun was not in view
+float PostEffects::sunVisibility() {
+    if (!sunVisible_ || !sunVis_) {
+        return -1;
+    }
+    const auto b = gpu_->readback(sunVis_, 1, 1, 8);
+    const uint16_t h = uint16_t(b[0] | (b[1] << 8));
+    const int e = (h >> 10) & 31;
+    const int m = h & 1023;
+    const float sign = (h & 0x8000) ? -1.f : 1.f;
+    if (e == 0) {
+        return sign * std::ldexp(float(m), -24);
+    }
+    return sign * std::ldexp(float(m + 1024), e - 25);
 }
 
 }  // namespace ssx_native

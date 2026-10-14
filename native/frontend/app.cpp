@@ -12,7 +12,9 @@
 //        [--quality low|medium|high]                 the page's quality tier (default high, a desktop's: frontend/quality.hpp)
 //        [--riders ps2|xbox] [--bc 0|1]              the rider texture set (tier default), BC upload (default on where supported)
 //        [--mute]                                    no audio device (the audio renders silently; --hidden mutes too)
-//        [--audio-log OUT.json]                      the director timeline and the voice requests, written with the shot
+//        [--audio-log OUT.json]                      with the shot: the director timeline, the sfx requests and their ticks, the
+//                                                    speech posts and each tick's listener (a shot run then steps at 60 Hz, as
+//                                                    native/tools/browser-shot.mjs --paced steps the page)
 // Keys: web/pad-input.js Classic (WASD / arrows left stick, Space Cross, Shift Square, ...); Escape quits.
 #include "gpu.hpp"
 #include "image_io.hpp"
@@ -476,6 +478,7 @@ int main(int argc, char** argv) {
         std::vector<size_t> playCounts;
         audio::Json listenerLog = audio::Json::array();
         std::optional<std::array<double, 3>> heardFrom;
+        std::array<double, 16> heardInverse{};
         bool audioFinished = false;
         RaceHud hud;
         hud.load(gpu, v);
@@ -494,6 +497,7 @@ int main(int argc, char** argv) {
         // the frames before the first tick (the objectives screen) hear from the fallback camera already
         gameAudio->listener(&listenerInverse, listenerEye, renderer.origin);
         heardFrom = listenerEye;
+        heardInverse = listenerInverse;
         // web/input-glyphs.js: the device of the last input (a key, a pad button), else a connected pad, else the keyboard
         std::string lastDevice;
         PadReader reader(v.pad);
@@ -648,7 +652,14 @@ int main(int argc, char** argv) {
                     gameAudio->gameTick(ts);
                     if (!audioLog.empty()) {
                         playCounts.push_back(gameAudio->sfx().plays().size());
-                        listenerLog.push_back(heardFrom ? audio::Json::array({(*heardFrom)[0], (*heardFrom)[1], (*heardFrom)[2]}) : audio::Json());
+                        audio::Json heard;
+                        if (heardFrom) {
+                            heard = audio::Json::array({(*heardFrom)[0], (*heardFrom)[1], (*heardFrom)[2]});
+                            for (double m : heardInverse) {
+                                heard.push_back(m);
+                            }
+                        }
+                        listenerLog.push_back(heard);
                     }
                 }
                 ++tick;
@@ -678,6 +689,7 @@ int main(int argc, char** argv) {
                 gameAudio->listener(listenerKnown ? &listenerInverse : nullptr, listenerEye, renderer.origin);
                 if (listenerKnown) {
                     heardFrom = listenerEye;
+                    heardInverse = listenerInverse;
                 }
                 renderer.cameraOf(camera, listenerInverse, listenerEye);
                 listenerKnown = true;

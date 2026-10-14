@@ -415,8 +415,11 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
 - Proof (probe-nis.mjs, the weather_fade_reset calls counted per game tick): with nisOnTicks + fadesOnTicks the resets land on the
   same ticks at 60 / 30 / 144 fps (3, ticks 1..3), and every tick's trace is identical across the rates; with nisOnTicks alone they
   follow the drawn frames (60: 4, 30: 2, 144: 10).
+- WebKit, real frames (local/core-migration/qa/probe-fade-real.mjs, the 45 s new-career opening at the display's ~60 Hz): on, one
+  reset per update (two in a frame that ran two updates); off, one per drawn frame (none or two on some ticks). No page errors.
+  Not compared: the overlay's pixels frame by frame (the alpha is a function of the update count either way).
 
-## Collectible slot (pv collectSlotReset, off; core to install: local/core-migration/core13b)
+## Collectible slot (pv collectSlotReset, on; live core13b, core.wasm `10b686be…`)
 
 - PS2 (local/core-migration/decomp/popup-17303.md): the open collection ctx+0x2C0 is never freed at an unload (230360 -> 308FE0);
   309F18 resets it at the world-state-10 enter after a crossing's Load (2355C0 at 0x2356B0) and at the race / event starts, running

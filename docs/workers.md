@@ -211,7 +211,7 @@ catch-up tick the frame's one sample, so a key released during a stall acted fro
 - The real-time debt is kept. Past 4 ticks of debt, one frame runs 2 ticks (or 0). A 59.94 Hz display gets one extra tick about every
   70 s.
 - Any other frame (120 / 144 Hz, a missed vsync, a stall) takes the normal pacing.
-- Online races (mpGame.pace) and the replay clock are untouched.
+- Online races (mpGame.pace) and the replay clock are untouched. Online: pv mpTickLock (docs/multiplayer.md "Frame pacing").
 - Checks:
   - web/test-tick-lock.mjs: 60 Hz, 59.94 / 60.06 Hz drift, unlocked frames.
   - Chrome, Snow Jam Single Event with the neutral pad: the ?simtrace hashes are identical on and off for all 1406 ticks.

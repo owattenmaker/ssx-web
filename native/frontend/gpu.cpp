@@ -189,8 +189,8 @@ void Gpu::wait() {
     }
 }
 
-std::vector<uint8_t> Gpu::readback(WGPUTexture t, uint32_t w, uint32_t h) {
-    const uint32_t row = (w * 4 + 255) / 256 * 256;
+std::vector<uint8_t> Gpu::readback(WGPUTexture t, uint32_t w, uint32_t h, uint32_t bytesPerTexel) {
+    const uint32_t row = (w * bytesPerTexel + 255) / 256 * 256;
     WGPUBufferDescriptor d = WGPU_BUFFER_DESCRIPTOR_INIT;
     d.size = uint64_t(row) * h;
     d.usage = WGPUBufferUsage_MapRead | WGPUBufferUsage_CopyDst;
@@ -225,9 +225,9 @@ std::vector<uint8_t> Gpu::readback(WGPUTexture t, uint32_t w, uint32_t h) {
         process();
     }
     const auto* p = static_cast<const uint8_t*>(wgpuBufferGetConstMappedRange(b, 0, size_t(d.size)));
-    std::vector<uint8_t> out(size_t(w) * h * 4);
+    std::vector<uint8_t> out(size_t(w) * h * bytesPerTexel);
     for (uint32_t y = 0; y < h; ++y) {
-        std::memcpy(out.data() + size_t(y) * w * 4, p + size_t(y) * row, size_t(w) * 4);
+        std::memcpy(out.data() + size_t(y) * w * bytesPerTexel, p + size_t(y) * row, size_t(w) * bytesPerTexel);
     }
     wgpuBufferUnmap(b);
     wgpuBufferRelease(b);

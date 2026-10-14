@@ -712,3 +712,5 @@ for the boot rider; see [course-switch.md](course-switch.md) "In-world Transport
   - the collected one has the DeadNode-class entity 0x4906F0, flags 0x210340.
   The port's rest draw for a collectible with no player (peak-set-pieces.js / set-pieces-renderer.js restMesh: never started, or
   destroyed by a section leave) is the PS2's behaviour. Distant collectibles look still on both.
+- Online races step these players exactly as offline does (two-page runs, 2026-10-14). An online judder of every tick-stepped set
+  piece came from the frame clock instead: docs/multiplayer.md "Frame pacing" (pv mpTickLock).

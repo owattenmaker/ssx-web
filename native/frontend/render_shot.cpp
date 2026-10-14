@@ -145,8 +145,18 @@ int main(int argc, char** argv) {
         }
         const auto pixels = gpu.readback(target, width, height);
         writePng(positional[2], int(width), int(height), pixels.data());
-        const auto& effects = renderer.effects();
-        std::printf("{\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"glows\":%u,\"sun\":%d,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"quality\":%s,\"riderTextures\":%s,\"bc\":%d,\"out\":%s}\n",
+        auto& effects = renderer.effects();
+        // the sun painter's values (sun-flare.js state.values: elevation, azimuth, r, g, b, glow alpha, texture, flare alpha, size)
+        std::string sunValues = "null";
+        if (const SunFlare* sun = presenter.sun()) {
+            json vals = json::array();
+            for (float x : sun->values()) {
+                vals.push_back(x);
+            }
+            sunValues = vals.dump();
+        }
+        std::printf("{\"sunValues\":%s,\"sunVisibility\":%g,", sunValues.c_str(), double(effects.sunVisibility()));
+        std::printf("\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"glows\":%u,\"sun\":%d,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"quality\":%s,\"riderTextures\":%s,\"bc\":%d,\"out\":%s}\n",
                     tickTarget, trace, state.riders.size(), effects.glows(), effects.sunVisible() ? 1 : 0, camera.v[0], camera.v[1], camera.v[2], camera.v[3], camera.v[4], camera.v[5], camera.v[6], camera.v[7], camera.v[8],
                     json(quality.tier).dump().c_str(), json(quality.riderTextures).dump().c_str(), gpu.bc ? 1 : 0, json(positional[2]).dump().c_str());
         std::fflush(stdout);

@@ -46,7 +46,8 @@ RIDER_LOCAL static bool missionStatusSet=false,missionStatusDirty=false;
 RIDER_LOCAL static std::vector<int32_t> missionUiEvents;            // {kind, a, b}: see mission_ui_events()
 RIDER_LOCAL static int32_t missionRebuildIn=-1;              // ticks until the 308C60 rebuild (-1 none)
 RIDER_LOCAL static uint32_t missionTicks=0,missionProgramsRun=0,missionUnsupported=0;
-RIDER_LOCAL static bool missionSpeedBuiltin=false; // builtin 59 (3032C0) answered; web/big-challenges.js sets it from pv bcSpeed
+// builtin 59 (3032C0) answered: on by default as on the PS2 (pv bcSpeed retired on; web/big-challenges.js still sets it each tick)
+RIDER_LOCAL static bool missionSpeedBuiltin=true;
 RIDER_LOCAL static int32_t missionOfferGate=0;                      // *(*(W+0x28)): 30A868 posts offers only while 0 or >= 10
 // pv bcDecline (web/big-challenges.js -> mission_lifecycle): bit 0 the 1235F8 reset of a declined / quit challenge, bit 1 builtin 67's
 // 30B7F8 (an event gate ends a running challenge), bit 2 world state 10 enter's 309030 -> 308988 (the context reset at a Load trigger).

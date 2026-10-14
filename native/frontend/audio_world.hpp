@@ -244,7 +244,7 @@ public:
                     inst = &instances_.set(key, Instance{});
                 }
                 const int type = w.value("type", 0);
-                if (type == 1 && w.value("bank", -1) == slot::CROWD) {
+                if (type == 1 && w.contains("bank") && w["bank"].is_number() && w["bank"].get<int>() == slot::CROWD) {
                     inst->crowd = true;
                     crowd_.emitter(key, w["snd"].get<int>(), vec(e["pos"]), v);
                     continue;
@@ -259,8 +259,9 @@ public:
                     continue;
                 }
                 const double vol = std::min(std::max(std::trunc(v * 127), 0.0), 127.0);
-                int slotNo = w.value("bank", 0);
-                int sound = w.value("snd", 0);
+                // (type 3 names its bank: a string)
+                int slotNo = w.contains("bank") && w["bank"].is_number() ? w["bank"].get<int>() : 0;
+                int sound = w.contains("snd") && w["snd"].is_number() ? w["snd"].get<int>() : 0;
                 if (type == 3) {
                     // 2B4C38 named-bank gate: the first claim wins while it is in range
                     if (!namedOwner_.empty() && namedOwner_ != key && instances_.has(namedOwner_)) {

@@ -67,6 +67,15 @@ RIDER_LOCAL static int32_t currentCourse=-1,pendingCourse=-1,requests=0,passes=0
 RIDER_LOCAL static int32_t loaderRow=-1,loaderDone=-1;      // the one disc read in flight (WO+0x390/+0x394) and its completion pass
 RIDER_LOCAL static int32_t skyActive=-1,skyPending=-1;RIDER_LOCAL bool skySwitchAllowed=false; // dome, +0x1AC, +0x1A4
 RIDER_LOCAL static bool crossingPending=false;              // 22D640/22D668 phase: 22DF50 on the next pass
+// M8a (local/core-migration/decomp/ws-machine.md): the world-state block (S+0x214 current, S+0x210 / S+0x21C a pending request and
+// its arg, S+0x218 previous, S+0x208 the pushed background state) and the streamer's course-change state +0x1B4. Observed only:
+// nothing reads it yet but peak_world_state.
+RIDER_LOCAL static int32_t wsCurrent=-1;
+RIDER_LOCAL static int32_t wsPending=-1;
+RIDER_LOCAL static int32_t wsArg=0;
+RIDER_LOCAL static int32_t wsPrevious=-1;
+RIDER_LOCAL static int32_t wsBackground=-1;
+RIDER_LOCAL static int32_t courseMachine=0;
 // The Unload's game-tick restart (web/animation_bridge.cpp browser_game_tick_restart): 22DF50 requests world state 11 and the
 // background state 10; 235080 waits for the destination's NIS script read (278B98 / 278D58), then sub-states 1, 2, 3 (one
 // tick each); sub-state 3 calls 128A10 -> 1297C8 in a Conquer the Mountain time challenge (0x535C10 5, 0x535C11 0; 1289F0 in
@@ -129,6 +138,12 @@ static void request(int32_t course,bool activate){
  auto it=residency.find(course);if(it==residency.end())return;const auto& set=it->second;
  pendingCourse=course;crossingPending=true;crossingUnload=!activate;++requests;loadedFlag=activate; // +0x1C0: 1 after 22D088, 0 after 22CEA8
  if(activate)browser_lighting_default_course(course); // 22D088 -> 22E180: the peak's default rider irradiance bank (web/environment_bridge.cpp)
+ // +0x1B4 (docs/ctm-decomp-freeride.md 4): 22CEA8 sets 0 -> 1; 22D088 sets 0 / 1 -> 3, 2 -> 4
+ if(!activate){
+  if(courseMachine==0)courseMachine=1;
+ }
+ else if(courseMachine==0||courseMachine==1)courseMachine=3;
+ else if(courseMachine==2)courseMachine=4;
  for(int32_t id=0;id<50;++id){auto& r=rows[size_t(id)];if(r.name.empty()||wanted_by(set,id)||r.kind!=0)continue; // 22D598 (never skies / TRANSP)
   if(r.state==1||r.state==2||r.state==6)set_state(id,5);else if(r.state==3)set_state(id,0);}
  std::vector<int32_t> want(set.locations);if(set.sky>=0)want.push_back(set.sky);if(set.transp>=0)want.push_back(set.transp);
@@ -183,6 +198,48 @@ void ws10_step(){
  ws10Pending=false;
  browser_stage_ws10_enter();
 }
+// M8a: 231250 request (S+0x210 / S+0x21C) and 230F40's step 4 (the switch: S+0x218 = old, S+0x214 = new, the background cleared when
+// it is the new state; the exits / enters have no consumer yet)
+static void ws_request(int32_t state,int32_t arg){
+ wsPending=state;
+ wsArg=arg;
+}
+static void ws_switch(){
+ if(wsPending<0)return;
+ wsPrevious=wsCurrent;
+ wsCurrent=wsPending;
+ wsPending=-1;
+ if(wsBackground==wsCurrent)wsBackground=-1;
+ // M8b: event 7 {new state, old state, 0x535C08} for the host (web/free-ride.js 'worldState': the career writes of the exits /
+ // enters, pv coreWorldState)
+ events.insert(events.end(),{7,wsCurrent,wsPrevious,currentCourse});
+}
+// M8a: the streamer pass's course-change cases (22D8D8), then the world-state tick 230F40, at the frame's point (the comparisons call
+// it through peak_world_apply_events with rows they drive themselves)
+void ws_step(){
+ if(courseMachine==1||courseMachine==3){
+  // 22DF50: world state 11 now (231250 with now runs 230F40 at once: WS4 has no update), WS10 pushed (231278)
+  ws_request(11,0);
+  ws_switch();
+  wsBackground=10;
+  // case 3 (a Load before the Unload's pass) going on to 4 is not traced
+  courseMachine=courseMachine==1?2:4;
+ }
+ else if(courseMachine==4){
+  bool reading=false;
+  for(const auto& r:rows)reading|=r.state==4||r.state==8;
+  // case 4 (0x22DDAC): no row in 4 / 8 and 2312D8 (the pushed WS10's ready 2355B0, phase 5) -> 22DFF0: request(10). The ready is
+  // taken as given: a riding crossing has no arrival list (its pre-update phases are not modelled)
+  if(!reading){
+   ws_request(10,0);
+   courseMachine=0;
+  }
+ }
+ // 230F40 step 1: WS10's update 2357F8 -> 233AA0 requests 4 (no arrival pending, no list 1 playing: the page's arrivals are not
+ // modelled); then step 4
+ if(wsCurrent==10&&wsPending<0)ws_request(4,0);
+ ws_switch();
+}
 }
 void browser_peak_builtin68(int32_t mapId,int32_t action,int32_t entry){
  using namespace peak_stream;if(!active)return;
@@ -218,6 +275,7 @@ extern "C" {
 EMSCRIPTEN_KEEPALIVE void peak_world_manifest(const char* text){
  using namespace peak_stream;const auto p=nlohmann::json::parse(text);rows={};residency.clear();mapIds.clear();events.clear();
  loaderRow=loaderDone=-1;skyActive=skyPending=-1;skySwitchAllowed=false;crossingPending=false;currentCourse=pendingCourse=-1;passes=0;
+ wsCurrent=wsPending=wsPrevious=wsBackground=-1;wsArg=0;courseMachine=0;
  std::map<std::string,int32_t> ids;
  for(const auto& l:p.at("streaming")){const int32_t id=l.at("id");auto& r=rows.at(size_t(id));r.name=l.at("code");r.track=l.value("track",-1);r.kind=l.at("class");
   r.priority=r.kind==2?.92f:r.kind==1?.91f:.9f;r.chunk=l.at("chunk");r.duration=std::max(1,l.at("read_ticks").get<int32_t>());ids[r.name]=id;
@@ -234,6 +292,12 @@ EMSCRIPTEN_KEEPALIVE void peak_world_manifest(const char* text){
 EMSCRIPTEN_KEEPALIVE void peak_world_start(int course){
  using namespace peak_stream;request(course,true);skySwitchAllowed=true;
  for(int guard=0;guard<100000;++guard){pass();bool busy=loaderRow>=0;for(const auto& r:rows)busy|=r.state==3||r.state==4||r.state==6||r.state==8||r.state==5||r.state==7;if(!busy)break;}
+ // M8a: the load screen's world is ridden (WS4); the start's course change is done
+ courseMachine=0;
+ wsCurrent=4;
+ wsPending=-1;
+ wsPrevious=-1;
+ wsBackground=-1;
 }
 EMSCRIPTEN_KEEPALIVE void peak_world_data_ready(int track,int ready){for(auto& r:peak_stream::rows)if(r.track==track)r.data=ready!=0;}
 // One streamer pass: call once per game tick after race_end (it is the next tick's pass).
@@ -298,8 +362,21 @@ void apply_events(){
 // 68 course / action / mode), for the station decisions' page check (docs/core-migration.md "B")
 EMSCRIPTEN_KEEPALIVE void peak_world_qa_event(int kind,int a,int b,int c){if(!peak_stream::active)return;peak_stream::events.insert(peak_stream::events.end(),{kind,a,b,c});if(kind==1&&b==2&&a>=0)peak_stream::ws10Pending=true;}
 // (also called alone by a capture comparison that drives the rows itself, after the tick's race_end: web/compare-ps2-capture.mjs)
-EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active)peak_stream::ws10_step();if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
+EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active)peak_stream::ws_step();if(peak_stream::active)peak_stream::ws10_step();if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
 EMSCRIPTEN_KEEPALIVE void peak_world_tick(){if(peak_stream::active)peak_stream::pass();peak_world_apply_events();}
+// M8a QA (docs/core-migration.md "M8"): the world-state block [current S+0x214, pending S+0x210, its arg S+0x21C, previous S+0x218,
+// the pushed background S+0x208, the streamer's course-change state +0x1B4]
+EMSCRIPTEN_KEEPALIVE int32_t* peak_world_state(){
+ using namespace peak_stream;
+ RIDER_LOCAL static int32_t out[6];
+ out[0]=wsCurrent;
+ out[1]=wsPending;
+ out[2]=wsArg;
+ out[3]=wsPrevious;
+ out[4]=wsBackground;
+ out[5]=courseMachine;
+ return out;
+}
 // pv coreWorldEvents: on (bit 0; bit 1 pv stationSplitPs2) with the run's setup (web/peak-run.js peakSetup: time challenge, the tier
 // row's five station splits; active 0 outside a peak run), at each run's start (web/free-ride.js afterReset: the split counter back to
 // 0). 0: the page decides.
@@ -372,7 +449,7 @@ EMSCRIPTEN_KEEPALIVE int peak_world_request_resident(){
  for(int32_t id:it->second.locations)if(!ok(id))return 0;return ok(it->second.sky)&&ok(it->second.transp)?1:0;
 }
 // Stage requests since the last call: [count, {kind, a, b, c}...] (1 builtin 68 course/action/mode, 3 builtin 67 entry/flag,
-// 4 sky switched to location a, 5 current course 0x535C08 = a).
+// 4 sky switched to location a, 5 current course 0x535C08 = a, 7 world state a entered from b at course c: M8b).
 EMSCRIPTEN_KEEPALIVE int32_t* peak_world_events(){RIDER_LOCAL static std::vector<int32_t> out;out.assign(1,int32_t(peak_stream::events.size()/4));out.insert(out.end(),peak_stream::events.begin(),peak_stream::events.end());peak_stream::events.clear();peak_stream::applied=0;return out.data();}
 // 0x535C10 event kind seen by the stage builtins (43): 4 free ride, 5 time challenge, 6 points challenge; -1 restores the course's.
 RIDER_LOCAL extern int browserEventKind;

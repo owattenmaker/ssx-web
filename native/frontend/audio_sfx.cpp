@@ -500,10 +500,9 @@ std::shared_ptr<Voice> Sfx::play(PlayOptions o) {
     handle->sfx_ = this;
     handle->deferred_ = true;
     handle->deferredBase_ = o.volume;
-    std::weak_ptr<Voice> weak = handle;
-    timers_.post(o.delayMs, [this, weak, o]() mutable {
-        auto h = weak.lock();
-        if (!h || h->cancelled_) {
+    // the timer keeps the handle (the page's setTimeout closure): a request whose caller drops the handle still plays
+    timers_.post(o.delayMs, [this, h = handle, o]() mutable {
+        if (h->cancelled_) {
             return;
         }
         o.delayMs = 0;

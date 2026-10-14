@@ -218,6 +218,10 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// coreWorldState (core-migration agent, docs/core-migration.md "M8"): a Conquer the Mountain crossing's / transport's career writes
+// follow the core's world-state machine (web/peak_world.inc event 7: WS11 enter 0x2368A0 the new-career flag, WS10 enter 0x2355C0 the
+// reward record and the last lodge, WS10 exit 0x235868 the visited bit) instead of web/career-ui.js inferring the states from the course
+// change and the Load trigger; needs a core with peak_world_state. Off: career-ui.js courseChanged / crossingArrived decide.
 // collectSlotReset (core-migration agent, docs/core-migration.md "Collectible slot"; a behaviour change): the streamed world's open
 // collection (ctx+0x2C0) as the PS2 keeps it: never freed at a location's unload, reset by 309F18 at the world-state-10 enter after a
 // crossing's Load (the loaded locations' global programs again: the first with a collection takes it). Off: freed at the unload, taken
@@ -275,6 +279,11 @@
 // stays the reference: past race-pace.js's 2-tick slack the frame runs one tick more or one fewer (main.js frame). Other frames keep
 // mpGame.pace. Off: online frames run the plain fixed clock, so rAF jitter near a tick boundary gives 0- and 2-tick frames (the set
 // pieces freeze a frame, then jump) and the rider is drawn 0..1 tick behind.
+// feCursorRestore (online-records test agent, docs/online-records.md "Menu input"): a Select Event map screen (web/fe-event-select.js
+// fe-peak / fe-mode / fe-event) reads no input until its first drawn frame has restored its cursor (focus: the entry row). The PS2
+// state stack update 0x39ECB0 runs phase 3 (vtable +0x34, show / cursor restore) before phase 5, the only phase that reads input
+// (vtable +0x64; docs/pause-contexts.md 2). Off: a Cross in the frame between the screen change and that draw chooses the previous
+// screen's row (Leaderboards row 5 -> Select Peak chose Peak 3 with the cursor on Peak 1). The Map's own activate frame is not measured.
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -336,9 +345,10 @@ export const PV_DEFAULTS = Object.freeze({
   coreCareerCascade: true,
   coreCareerWorld: true,
   coreWorldEvents: false,
+  coreWorldState: false,
   stationSplitPs2: true,
   nisOnTicks: true,
-  fadesOnTicks: false,
+  fadesOnTicks: true,
   collectSlotReset: true,
   coreCareerLodge: true,
   coreRules: true,
@@ -351,7 +361,8 @@ export const PV_DEFAULTS = Object.freeze({
   rollingGoTick: true,
   mpRiderSpeech: true,
   rivalStartAudio: true,
-  mpTickLock: false
+  mpTickLock: true,
+  feCursorRestore: true
 });
 const overrides = new Map();
 function fromQuery() {

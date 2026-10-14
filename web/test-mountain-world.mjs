@@ -228,10 +228,24 @@ function ps2Streaming(file, label, exactReads) {
     // states: 0 absent, 3 / 4 queued, 6 / 8 reading, 1 read, 2 resident, 7 leaving
     const held = (x) => x !== 0 && x !== 7, reading = (x) => x === 3 || x === 4 || x === 6 || x === 8 || x === 1;
     let checked = 0, first = null, courseMiss = 0, readSkew = 0; const codes = manifest.locations.map((l) => l.code), boundary = new Map();
+    // M8a (docs/core-migration.md "M8"): the core's world state S+0x214 on every record up to the race finish (the streaming
+    // replay has no race session: 4 -> 5 is the race's 113DB0)
+    const wsAt = new Map();
+    for (const e of a.events) if (e.kind === 'ws') wsAt.set(e.record, e.value);
+    const finish = a.events.find((e) => e.kind === 'ws' && e.value === 5)?.record ?? a.records;
+    let psWs = start.ws;
+    let wsChecked = 0;
+    let wsFirst = null;
     for (let i = 1; i < a.records; i++) {
+      if (wsAt.has(i)) psWs = wsAt.get(i);
       if (unloads.has(i)) core._peak_world_request(unloads.get(i), 0);
       if (loads.has(i)) core._peak_world_request(loads.get(i), 1);
       core._peak_world_tick();
+      if (core._peak_world_state && i < finish) {
+        const w = new Int32Array(core.HEAPU8.buffer, core._peak_world_state(), 6)[0];
+        wsChecked++;
+        if (w !== psWs && !wsFirst) wsFirst = { record: i, web: w, ps2: psWs };
+      }
       for (const [n, , t] of changes.get(i) || []) ps2.set(n, t);
       for (const code of codes) {
         const w = rowState(code), p = ps2.get(code) ?? 0; checked++;
@@ -244,6 +258,11 @@ function ps2Streaming(file, label, exactReads) {
     }
     console.log(`PS2 streaming (${label}): ${a.records} ticks, ${unloads.size} Unload / ${loads.size} Load triggers; ${checked} row states compared, first difference ${first ? JSON.stringify(first) : 'none'}${exactReads ? '' : `, ${readSkew} read-end skews`}; course mismatches ${courseMiss}`);
     for (const [c, set] of boundary) console.log(`  after the ${c === 19 ? 'ERA5_C' : 'DRA4_A'} Unload (row ${c}): ${set}`);
+    if (core._peak_world_state) {
+      const crossings = [...wsAt.values()].filter((w) => w === 11).length;
+      console.log(`  world state: ${wsChecked} records to the finish (${crossings} crossings 4 -> 11 -> 10 -> 4), first difference ${wsFirst ? JSON.stringify(wsFirst) : 'none'}`);
+      assert.equal(wsFirst, null, `${label}: world state S+0x214 differs from the PS2`);
+    } else console.log('  world state: core without peak_world_state (rebuild web/runtime)');
     assert.equal(courseMiss, 0, `${label}: current course 0x535C08 differs from the PS2`);
     assert.equal(first, null, `${label}: a location row differs from the PS2`);
     return a;

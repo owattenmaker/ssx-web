@@ -5994,10 +5994,16 @@ async function loadCourse(next) {
         cu.transport(mode, c);
       }
     });
+    // pv coreWorldState (docs/core-migration.md "M8"): the crossing's career writes from the core's world-state events (a core with
+    // peak_world_state); else career-ui.js infers the states (courseChanged / crossingArrived)
+    const coreWorldState = () => pv('coreWorldState') && !!core?._peak_world_state;
     freeRide.on('course', (c) => {
       gameAudio.freeRideCourse?.(c, { kind: course.freeRide.kind });
       // CTM: WS11/WS10 at the new location (new-career flag, visited mask, last lodge; career-ui.js courseChanged)
-      if (course.freeRide.kind === 4) ui.careerUI?.courseChanged?.(c);
+      if (course.freeRide.kind === 4) ui.careerUI?.courseChanged?.(c, { coreWorldState: coreWorldState() });
+    });
+    freeRide.on('worldState', (e) => {
+      if (course.freeRide?.kind === 4 && coreWorldState()) ui.careerUI?.worldState?.(e);
     });
     // the "?" contact (stage builtin 100 -> 1E3510; world state 4 then opens overlay 0x22): the Message Center on the Progression/Rewards
     // FAQ 1 over the paused ride (PS2 new career, docs/audio-logic.md 9.11)
@@ -6053,7 +6059,7 @@ async function loadCourse(next) {
     });
     // a connector's Load trigger after a riding crossing (world state 10 there; career-ui.js crossingArrived)
     freeRide.on('arrive', (c) => {
-      if (course.freeRide?.kind === 4) ui.careerUI?.crossingArrived?.(c);
+      if (course.freeRide?.kind === 4 && !coreWorldState()) ui.careerUI?.crossingArrived?.(c);
     });
     // out of this peak world into the next peak's station (web/free-ride.js, career-ui.js crossWorld)
     freeRide.on('crossWorld', (dest) => {

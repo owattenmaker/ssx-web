@@ -66,10 +66,12 @@ try {
   const base = await E('window.__simTrace.ticks.length');
   const total = tick + 2;
   // the sfx log's length after each tick (playTicks)
-  // and the listener position each tick's sounds were placed with (the last listener call before it: main.js's camera)
+  // and the listener each tick's sounds were placed with (the last listener call before it: main.js's camera position, then its
+  // matrixWorldInverse)
   if (audioLog) {
     await E(`(()=>{window.__playCounts=[];window.__listeners=[];const a=window.__perfAudio,l=a.listener.bind(a);
-      a.listener=(cam,o)=>{window.__lastListener=cam?[cam.position.x,cam.position.y,cam.position.z]:null;return l(cam,o)};return 1})()`);
+      a.listener=(cam,o)=>{const r=l(cam,o);window.__lastListener=cam?[cam.position.x,cam.position.y,cam.position.z,...cam.matrixWorldInverse.elements]:null;return r};
+      return 1})()`);
   }
   const after = audioLog ? 'window.__playCounts.push(window.__perfAudio.sfx.plays.length);window.__listeners.push(window.__lastListener??null);' : '';
   const step = paced ? 'await new Promise((r)=>requestAnimationFrame(r));' : '';

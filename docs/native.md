@@ -251,8 +251,8 @@ breaks that (the hazard docs/core-migration.md M3 notes). Not investigated furth
 
 ## 7. N3: the native front end
 
-**State (2026-10-13):** the course world, sky, fog composite, ScreenTint and the skinned, lit human rider render from the exported
-assets. The core ticks at 60 Hz with the page's pacing. It runs in an SDL3 window (macOS) or headless. At the same tick and camera
+**State (2026-10-14):** the course world, sky, fog composite, ScreenTint, the skinned, lit riders and the race HUD render from the
+exported assets, and the game audio plays through SDL3. The core ticks at 60 Hz with the page's pacing. It runs in an SDL3 window (macOS) or headless. At the same tick and camera
 a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 
 **Build:** `-DSSX_BUILD_FRONTEND=ON`.
@@ -268,8 +268,13 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
   - `--quality low|medium|high` is the page's tier (default `high`, a desktop's; frontend/quality.hpp ports web/quality.js
     TIER_DEFAULTS): it sets the rider texture set and the core's presentationFast. `--riders ps2|xbox` and `--bc 0|1` are the
     page's `?riders=` and `?bc=`.
-  - Audio is never opened. The window is not focusable and the app does not activate (no Dock icon) unless `--focus`, so a run
-    never takes the user's keyboard.
+  - The game audio (frontend/game_audio.hpp, below) plays through an SDL3 audio stream. `--mute` opens no device, and `--hidden`
+    always mutes, so automated runs never make a sound: a silent device thread then renders the graph at the wall-clock rate, as a
+    device would, so the voices' ends and the music's pumps keep their timing.
+  - `--audio-log OUT.json`, written with the shot, holds the director timeline, the sfx requests with their ticks, the speech posts
+    and each tick's listener. A shot run with it steps one tick per 60 Hz frame, as browser-shot `--paced` steps the page.
+  - The window is not focusable and the app does not activate (no Dock icon) unless `--focus`, so a run never takes the user's
+    keyboard.
   - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits.
 - `ssx3_render_shot ASSETS RUN.ssxr OUT.png --tick N`: headless, no window.
   - `--quality` defaults to `low` here, as browser-shot loads the page (`?quality=low`: the PS2 rider textures, presentationFast on);
@@ -286,6 +291,11 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
   - `--riders ps2|xbox` and `--bc 0|1` pass `?riders=` and `?bc=` to the page.
   - `--hud` keeps the race HUD; `--canvas-log OUT.json` records the #ui canvas calls from one ui.draw to the next (op, arguments in
     the 9-argument drawImage form, transform, global alpha, and the image: a PNG's name or the FNV-1a of a canvas's getImageData).
+  - `--chunk K` steps K ticks per page call (default 400). `--paced` awaits an animation frame after every tick, so the page's
+    frame work runs between ticks as in live play: GO, the audio listener and the effects' frame history.
+  - `--audio-log OUT.json` loads the page with `?perf=1`, unlocks its audio (the title's Press START does that) and writes the
+    same log as `ssx3 --audio-log`. Use it with `--paced` and one chunk (`--chunk` at least the tick), because a gap between page
+    calls runs extra frames without ticks.
 - native/tools/compare-canvas-log.mjs PAGE.json NATIVE.json: the two logs compared entry by entry, numbers exactly.
 
 **What is ported** (each file names its web source):
@@ -306,6 +316,15 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/rider_shadow.hpp, world_renderer.cpp terrain, rider_renderer.cpp drawShadow | rider-shadow.js, rider-skinning.js shadowPose, world-material.js riderShadowReceiver / glintBytes | the rider shadows: the six-bone box fit (374D00, float32), the nearest six riders in view, each silhouette (the drawn palettes, the parts' painter's rank, the board 0 while grounded) into its slot of the 768 x 128 atlas, the terrain's max(Cd - T, 0) in the 30 m slab; and the terrain glint pass 38D168 (terrain-glint.json) before it |
 | frontend/set_piece_fx.hpp, particles.hpp, terrain_sparkle.hpp, avalanche.hpp, startfire.hpp | set-piece-particles.js, set-piece-particle-eval.js, fog-puffs.js, set-piece-halos.js, crowd-2d.js, terrain-sparkle.js, avalanche-state.js, avalanche-trails.js, startfire-renderer.js, impact-fx-renderer.js | the stage programs' particle sprites (the VU1 burst / trail kernels: accumulators in the VU / EE operations, the sprite arithmetic in doubles like the page), the fog puffs (0x22A270 box cull, 0x2DC190 fades, far-to-near), the HaloModifier sprites, the 2D crowd's texture frames and camera flashes, the terrain sparkle (program 4's RNG chain, the twinkle rotation, the Surface painter's density) at renderOrder 640, the avalanche pieces' visibility and trails, the impact sprites (sparks with the per-slot fade, glints, grind chunks, the fist sparkle) and the start-gate fountains, each in three's order in its pass |
 | frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
+| frontend/audio_decode.hpp | audio-decode.js | EA .pt headers, EA-XA, PS-ADPCM, PCM8, MicroTalk (UTK) streams and banks |
+| frontend/webaudio.hpp/.cpp | (Chromium's Web Audio) | AudioContext in 128-frame quanta, AudioParam automation (cancelAndHold, event pruning), gain, buffer source (linear interpolation, loops, sub-sample starts), equal-power panner, lowpass biquad, the destination; one recursive lock between the game and audio threads |
+| frontend/audio_engine.hpp | audio-engine.js | the buses, MIX.INF mixes, duck / release, sliders, FE / WORLD scale modes, the master gain and declick |
+| frontend/audio_sfx.hpp/.cpp, audio_sfx_game.hpp | sfx.js, sfx-game.js | banks, layers, envelopes, LFOs, the listener's spatial gain and pan, voice pools and stealing, delayed requests, fades, pause; the game's sounds from the cores' audio events, board loops, landings, grunts, the HUD sounds, big air, the countdown and GO |
+| frontend/audio_pathfinder.hpp/.cpp | pathfinder.js | the .mpf song graphs: the timed core (voices, commits, branch picks, loops, events, beat-synced slices) and the player (look-ahead, reconcile, levels, ramps, pause, fade, the lowpass, the loop overlay) |
+| frontend/audio_speech.hpp, audio_speech_events.hpp | audio-speech.js, audio-speech-events.js | the EA speech events, the request table and scheduler, the one voice of lines back to back, the DJ duck |
+| frontend/audio_crowd.hpp, audio_world.hpp, audio_painters.hpp | audio-crowd.js, audio-world.js, audio-painters.js, avalanche-state.js | the crowd .eam sequences, the world emitters (named banks, contacts, script sounds, the avalanche rumble, thunder), the Mix / MusicTrigger / Ambience painters |
+| frontend/game_audio.hpp/.cpp | game-audio.js, main.js (gameTick, frame audio, listener) | the director for Single Events: song choice and radio modes, the loading loop, the world load, the venue intro, GO, the finish, the DJ timers and OnIdle flags, the relationship records for the pass and hit speech, the per-frame listener (the camera the frame read, before its render moves it) and the per-tick game tick |
+| frontend/now_playing.hpp | now-playing.js, audio-menu.js drawHud | the EA RADIO BIG popup: the lines' layout, the slide and fade, drawn over the HUD (ctest frontend_now_playing: every playlist song's popup tick for tick equal) |
 | frontend/sun_flare.hpp, light_glow.hpp, post_effects.cpp, painter_tree.hpp | sun-flare.js, light-glow.js, fog-renderer.js | the Sun painter per camera tick; the 16 x 16 sun depth query and the glow plus nine lens sprites (2F4DB8 / 2F4A08 / 2F4690); each light's sprite quad and query record (2E2B00 / 2E2868 / 2EC478), drawn additively (copies) into the glow target; the composite adds glow, then sun, after the fog and before ScreenTint |
 
 **Visual parity** (local/native-port/shots: web | native | difference x 4; the ?simtrace hashes of the tick are equal in every shot):
@@ -335,7 +354,6 @@ What differs is not ported yet, or not drawn the same:
   finish panel. They read the event the FE set up (career.js postedStandings / timeLimit, the computer riders' heat scores), so they
   come with the FE flow; until then native draws the race HUD for those events (hud-aba1-500: the page's standings and 00:00:55, native's
   race clock 00:00:05; every other element is the same).
-- the EA RADIO now-playing popup (audio-menu.js drawHud, now-playing.js): with the audio.
 - the key caps' vector parts (the rounded rect, its gradient and outline, the arrows) are rasterized at 4 x 4 samples, not Skia's
   analytic coverage; their FEFONT labels go through the exact glyph path.
 - the world at two HUD frames (renderer, not HUD): just after GO! (sj-ai 200, 4.29: the snow floor's tint and the lens flare) and at the
@@ -396,9 +414,30 @@ within the 8-bit rounding of each blend, so in practice this affects the normall
 
 ssx3_render_shot prints the frame's light glow count and whether the sun is in view (`glows`, `sun`), to pick ticks that show them.
 
+**Audio parity** (ssx3 `--audio-log` against browser-shot `--audio-log --paced`, the same run to the same tick):
+
+| Run | To tick | Result |
+| --- | --- | --- |
+| sj-ai (Snow Jam, 5 computer riders) | 3000 | 154 sfx requests on both sides, equal in tick, bank slot, sound, bus, volume, distance gain and layer count, except 6 crash sounds whose variant is a `Math.random` pick (0x30 + 0..2). The listener's position and matrix are equal on every tick. The speech posts (the venue intro, the Radio BIG intro, the artist intro) are equal in event and speaker. |
+| aba1-score (Crow's Nest big air, solo) | 2000 | 93 of 98 requests equal. The others: two grunt variants (random picks), two crowd notes a tick apart (the crowd sequences run on the wall clock), and one named-bank world emitter that native starts 4 ticks earlier at volume 0 (the page waits for the bank's fetch; native reads it at once) |
+
+Earlier checks: the decoders are bit-exact on 789 bank patches, 9,806 speech lines and 11,849 music samples. The Web Audio scenarios are
+exact or within -107 dB of Chrome's render. Each of the 111 sfx sounds is within -90 dB, 30 of them exact. The pathfinder core gives
+3,478 identical segments across 45 songs.
+
+What differs:
+- the song pick and the other `Math.random` draws (crash and grunt variants, DJ lines): random on both sides.
+- the startup timing: the native first frame loads the riders' renderers (about 0.9 s, after the world-load audio), which the page
+  does under its load screen. So the lines and DJ timers after the world load start later natively. This is fixed with the load
+  screen in the FE flow.
+- the free-ride, hub, transport and post-event paths of the director (Conquer the Mountain only) are not ported. Pause (pause()) is ported,
+  but nothing calls it until the FE flow has a pause menu.
+- the avalanche rumble is ported (per tick, from the snapshot the draw shares), but no fixture yet starts an avalanche within its
+  checked ticks.
+
 **Next** (playable end to end, each module ported 1:1 from the page's):
 - the in-race HUD: done for races (above); the freestyle HUD comes with the FE flow;
-- audio through SDL3 (the music, streams, speech and SFX mix as the page does it);
+- audio through SDL3: done for Single Events (above);
 - the two renderer gaps above (sj-solo 15300's finish glows and banner colours, sj-ai 200's snow tint and lens flare), with the page
   re-shot in small advance chunks so frame history is not a factor;
 - the FE screens and the game flow: title, Single Event select, load, intro, race, results;

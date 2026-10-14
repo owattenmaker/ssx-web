@@ -528,6 +528,8 @@ export async function createFreeRide({
         listeners.course?.(a);
       } // 0x535C08 = a (22DF50)
       else if (kind === 6) listeners.faq?.(a); // stage builtin 100 (Green Base Station's "?"): the Message Center on FAQ 1
+      // M8b: the core's world state a entered from b at course c (web/peak_world.inc ws_switch; main.js 'worldState', pv coreWorldState)
+      else if (kind === 7) listeners.worldState?.({ to: a, from: b, course: c });
     }
   }
   const api = {

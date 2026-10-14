@@ -66,13 +66,14 @@ std::vector<T> readArray(const std::string& path) {
 
 // The shaders: each web/world-material.js combine on GS bytes, written as its TSL graph computes it.
 const char* kWorldShader = R"(
-// the object records (first instance): the mesh's projection x view x matrixWorld and its UVScroll translation (static records:
-// index = scroll group + 1, 0 none; moved / copied batches after them)
-struct Object { mvp: mat4x4f, scroll: vec2f, pad: vec2f };
+// the object records (first instance): the mesh's matrixWorld (float32, as three uploads it) and its UVScroll translation (static
+// records: index = scroll group + 1, 0 none; moved / copied batches after them)
+struct Object { model: mat4x4f, scroll: vec2f, pad: vec2f };
 @group(0) @binding(1) var<storage, read> objects: array<Object>;
 // the terrain's frame values: the camera (native metres, not origin-relative), the origin, the rider shadows (web/rider-shadow.js:
 // x the slot count; per slot the u, v and depth-below-feet rows over the origin-relative scene position)
-struct Frame { camera: vec4f, origin: vec4f, shadow: vec4f, rows: array<vec4f, 18> };
+// view / proj: three's cameraViewMatrix and cameraProjectionMatrix uniforms (float32)
+struct Frame { camera: vec4f, origin: vec4f, shadow: vec4f, rows: array<vec4f, 18>, view: mat4x4f, proj: mat4x4f };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(2) var shadowAtlas: texture_2d<f32>;
 @group(0) @binding(3) var clampSampler: sampler;
@@ -111,7 +112,11 @@ fn modTau(x: f32) -> f32 {
 @vertex fn vs(v: In, @builtin(instance_index) instance: u32) -> Out {
   var o: Out;
   let ob = objects[instance];
-  o.position = ob.mvp * vec4f(v.position, 1.0);
+  // three's NodeMaterial: modelViewMatrix = cameraViewMatrix x modelWorldMatrix in the shader, positionView = (mv x position).xyz,
+  // clip = cameraProjectionMatrix x positionView (each step in float32, so the rasterized edges fall where the page's do)
+  let mv = frame.view * ob.model;
+  let pv = (mv * vec4f(v.position, 1.0)).xyz;
+  o.position = frame.proj * vec4f(pv, 1.0);
   o.uv = v.uv + ob.scroll;
   o.color = v.color;
   o.lightUv = v.lightUv;
@@ -1110,15 +1115,14 @@ void WorldRenderer::collect(const Package& p, const Mat4d& vp, const Mat4d& stat
         }
         return vp[2] * w[0] + vp[6] * w[1] + vp[10] * w[2] + vp[14] * w[3];
     };
-    // a moved or copied batch: its own object record (projection x view x matrixWorld, the batch's scroll)
+    // a moved or copied batch: its own object record (its matrixWorld, the batch's scroll)
     auto record = [&](const Mat4d& model, int scroll) {
         const size_t index = objectData_.size() / kObjectFloats;
         if (index >= kObjects) {
             throw std::runtime_error("world object records exhausted");
         }
-        const Mat4d mvp = multiply(vp, model);
         for (int k = 0; k < 16; ++k) {
-            objectData_.push_back(float(mvp[size_t(k)]));
+            objectData_.push_back(float(model[size_t(k)]));
         }
         const float* base = objectData_.data() + size_t(scroll) * kObjectFloats;
         const float su = base[16];
@@ -1497,6 +1501,10 @@ void WorldRenderer::writeFrame(const WorldFrameState& state, const double eye[3]
             std::memcpy(u.data() + 12 + (k * 3 + r) * 4, rows[r].data(), 16);
         }
     }
+    for (int k = 0; k < 16; ++k) {
+        u[84 + size_t(k)] = float(V[size_t(k)]);
+        u[100 + size_t(k)] = float(P[size_t(k)]);
+    }
     wgpuQueueWriteBuffer(gpu_->queue, worldUniform_, 0, u.data(), kFrameBytes);
 }
 
@@ -1524,8 +1532,9 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
     const Mat4 P = perspective(fovY, aspect, near, far);
     const Mat4 V = view(eye, look);
     // world meshes sit at -origin; the sky at the eye (sky.position = camera.position + origin, its meshes at -origin)
-    const Mat4 worldMvp = multiply(P, multiply(V, translate(-origin[0], -origin[1], -origin[2])));
-    const Mat4 skyMvp = multiply(P, multiply(V, translate(eye[0], eye[1], eye[2])));
+    // the static records' matrixWorld: the world at -origin; the sky's meshes at -origin in the sky group at eye + origin
+    const Mat4 worldMvp = translate(-origin[0], -origin[1], -origin[2]);
+    const Mat4 skyMvp = translate((eye[0] + origin[0]) - origin[0], (eye[1] + origin[1]) - origin[1], (eye[2] + origin[2]) - origin[2]);
     float wf[16];
     float sf[16];
     for (int k = 0; k < 16; ++k) {
@@ -1580,8 +1589,13 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         }
     }
     {
-        const std::vector<float> zero(kFrameBytes / 4, 0.f);
-        wgpuQueueWriteBuffer(gpu_->queue, skyUniform_, 0, zero.data(), kFrameBytes);
+        // the sky: no shadows, the same camera
+        std::vector<float> skyFrame(kFrameBytes / 4, 0.f);
+        for (int k = 0; k < 16; ++k) {
+            skyFrame[84 + size_t(k)] = float(V[size_t(k)]);
+            skyFrame[100 + size_t(k)] = float(P[size_t(k)]);
+        }
+        wgpuQueueWriteBuffer(gpu_->queue, skyUniform_, 0, skyFrame.data(), kFrameBytes);
     }
     const auto& tn = state.tint;
     const float params[20] = {float(near), float(far), state.fogSlope, state.fogOffset,

@@ -116,6 +116,9 @@ public:
     const PostEffects& effects() const {
         return post_;
     }
+    PostEffects& effects() {
+        return post_;
+    }
 
     std::array<double, 3> origin{};
 
@@ -252,7 +255,7 @@ private:
     WGPUBindGroupLayout cableLayout_ = nullptr;
     WGPUBuffer cableUniform_ = nullptr;
     WGPUBindGroup cableGroup_ = nullptr;
-    static constexpr uint64_t kFrameBytes = 336;
+    static constexpr uint64_t kFrameBytes = 464;
     Texture shadowAtlas_;
     Texture shadowDepth_;
     Texture glintGrey_;

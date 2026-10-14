@@ -349,6 +349,11 @@ export class FeEventSelect {
       }
     };
   }
+  // pv feCursorRestore: until the screen's first drawn frame has restored its cursor (focus), it reads no input. The PS2 runs a
+  // screen's phase 3 (0x39ECB0: vtable +0x34, show / cursor restore) before phase 5, the only phase that reads input (vtable +0x64).
+  restoring() {
+    return pv('feCursorRestore') && this.pendingIndex != null;
+  }
   remember() {
     if (this.lobby) return;
     saveSelection({ peak: this.peak, mode: this.mode, event: this.eventKey });
@@ -360,6 +365,7 @@ export class FeEventSelect {
     const codes = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Space', 'Escape', 'ShiftLeft', 'ShiftRight'];
     if (codes.includes(e.code)) e.preventDefault();
     if (this.flash) return true;
+    if (this.restoring()) return true;
     if (e.repeat && !['ArrowUp', 'ArrowDown'].includes(e.code)) return true;
     if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
       this.move(e.code === 'ArrowUp' ? -1 : 1);
@@ -394,6 +400,7 @@ export class FeEventSelect {
     const ui = this.ui,
       s = ui.screen;
     if (!ui.ready || this.flash) return;
+    if (this.restoring()) return;
     ui.index = i;
     this.focusAt = this.now();
     if (s === 'fe-peak') {
@@ -454,6 +461,7 @@ export class FeEventSelect {
   back() {
     const s = this.ui.screen;
     if (this.flash) return;
+    if (this.restoring()) return;
     if (s === 'fe-event' && this.info) {
       this.info = false;
       return;

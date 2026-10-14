@@ -45,6 +45,75 @@ Scratch core: `local/mp-freeze/core`; verified local runtime core SHA-256 begins
 `main-D9E5OnW8.js` serves the verified core; `/mp/status` is healthy. Existing tabs must reload.
 Browser and deployment logs and screenshots: `local/mp-freeze/` (private).
 
+## Frame pacing: "collectables not animating" online (pv mpTickLock, off; 2026-10-14)
+
+Field report: in a normal online race "collectables not animating" and "other animations feeling off".
+
+**The stage world steps as offline.** Two pages through a local mp server (`local/mp-anim/mp-probe.mjs`, sampler.js), ARA1:
+- Configurations: Chrome + Chrome and Chrome + WebKit; mpPreRace on and off; both rounds of a lobby; the race course loaded through
+  the lobby's course switch (pages on BRA2, lobby ARA1).
+- Recorded per drawn frame and compared with an offline Single Event (presentationSeed 0x182200): the set-piece clock
+  (set_piece_info()[1]), every LiveComp player and its time, flags, UV scroll, pickup visibility and magnets.
+- Result: the same players start at the same race ticks (lights, gate doors, trickboost, speedboost, snow crumbs, timers), and every
+  pickup player advances exactly 1/60 s per tick, online and offline. In a Single Event the collectas are DeadNodes, hidden in both
+  modes (docs/ctm-events-in-world.md 6.3).
+
+**The difference is the frame clock.**
+- Since 2026-10-04, offline frames on a ~60 Hz display run exactly one tick and draw it (pv tickLock, docs/workers.md). Online frames
+  never did: main.js gates the lock with `!online`, so they run the fixed clock plus `mpGame.pace`.
+- Near a tick boundary, rAF jitter then alternates 0- and 2-tick frames. The set pieces step on ticks without interpolation, so the
+  spinning pickups, flags and lights freeze for a frame and then jump. The rider and the camera are drawn 0..1 tick behind
+  (renderAlpha).
+- How often depends on where the GO falls between two vsyncs, so some races look fine and others judder.
+- Measured:
+  - Chrome pairs with ±2 ms rAF jitter, rounds 2-4: 3-46 % of frames ran 0 or 2 ticks.
+  - Real WebKit (webkit-driver): 21-46 %.
+  - The same races offline: 0 %.
+  - Vsync-exact headless Chrome shows none, which is why the steady harness runs looked identical.
+- PS2: the frame loop 0x316F00 (0x316F00-0x317328) runs one game update per vblank pad sample and has no online branch. It has no
+  gp-relative loads; its only `lui`s are the float constants 10.0 and 1.0. The disc's online mode (two-player challenges) steps the
+  world as offline does.
+
+**pv mpTickLock (web/net/race-pace.js `createRaceLock`, main.js frame, `mpGame.behind()`):**
+- Which frames lock: once it and the 2 frames before it were ~60 Hz frames (tickLock's 0.75..1.25 tick bounds). A frame that locks
+  runs one tick and draws it (alpha 1).
+- Unlocked frames keep `mpGame.pace` with its 12-tick catch-up: a 120 / 144 Hz display, a lone 2-vsync frame, a missed vsync, the
+  first frames after a stall.
+- The server clock is the reference instead of tickLock's own debt:
+  - one tick more when the race tick would end more than 1 tick behind it;
+  - one tick fewer only past 2 ticks ahead, where `paceSeconds` slows down too.
+  - So no locked tick runs later against the server clock than today's, and no frame holds a pad sample where today's would not.
+- `test-mp-tick-lock.mjs` (in test:all) replays the frame loop against today's path. Each case is a 4-minute race at 5 GO phases:
+  60 Hz ±2 ms, offset jumps of 20 ms, 200 ms stalls every 10 s, 59.94 / 60.06 Hz, 120 Hz.
+
+| | today (fixed clock + pace) | mpTickLock |
+|---|---|---|
+| 0/2-tick frames at 60 Hz, ±2 ms, GO phase near a tick edge | ~7000 of 14400 | 1-2 (start) |
+| pad-to-tick mean / p99 at those phases | 12.3 / 32 ms | 8.5 / 18 ms |
+| pad-to-tick at mid phases | 8.4 / 18 ms | the same |
+| drawn state behind the newest tick | 0.25-0.75 tick | 0 |
+| max behind the server clock (60 Hz with offset jumps) | 2.2 ticks | 1.4 ticks |
+| 200 ms stall | caught up (12-tick frames) | the same, then relocks |
+| 120 Hz | | frame for frame identical to today |
+
+**Page runs with the switch** (`PAGE_PV=mpTickLock`, logs and JSON in local/mp-anim/):
+- Chrome pair, ±2 ms jitter, 4 rounds: rounds 2-4 have every frame at 1 tick. Drift from the server clock: p99 0.1-0.9 ticks.
+- Chrome pair, 200 ms stall every 10 s: 12- and 11-tick catch-up frames, then 1 tick a frame. Drift ends at 0.4.
+- Chrome + real WebKit: the WebKit page had 2.7 % of frames at 0/2 ticks against 21-46 % off. The rest are missed vsyncs on a loaded
+  machine, which stay unlocked.
+- Not measured: a real 120 Hz display. There every frame keeps today's pacing, as offline tickLock does.
+- Time attack attempts are offline runs (`mpGame.simulating()` false): offline tickLock already applies there and mpTickLock does not
+  touch them.
+- Gates passed with the switch: test-mp-page (Chrome + Chrome, Chrome + WebKit, and the pre-race flow), test-ta-page (with and without
+  ghostRiders), test-records-verifier, test-replay, test-rival-page, test-online-records. test-mp, mp-prerace, mp-latency, mp-pairs,
+  mp-pickups, mp-grid, ai-racers, tick-lock and frame-clock pass too; those don't run the page frame.
+
+**Other online-only animation differences** (by design, unchanged):
+- The remote riders are drawn 6 ticks behind, blended between packets (presentation only), with their effects from puppet cores.
+- Remote racers say nothing unless mpRiderSpeech is on.
+- The crowd, flags and particles run on the same set-piece clock as offline, so their only difference online was the frame pacing
+  above.
+
 ## Run it
 
 Development / LAN:

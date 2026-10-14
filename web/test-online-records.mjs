@@ -146,24 +146,26 @@ try {
   // ---- the main menu's Leaderboards: the sixth row -> Select Peak / Mode / Event -> the event's board ----
   // The menu walks run on the real clock and press real keys (keydown + keyup on window, as the keyboard sends them) through the
   // page's own key path: the capture-phase gate (web/ui.js: only a screen's phase 5 reads input, web/screen-phases.js), then the
-  // screen's handler. A key is pressed only once its screen takes input (phase 5, the screens loaded, no flash playing), and each
-  // press is checked to have taken: nothing is retried.
+  // screen's handler. A key is pressed only once its screen takes input, and each press is checked to have taken: nothing is retried.
+  // Takes input: phase 5, the screens loaded, no flash playing, and on the Select Event maps the cursor restored. The PS2 restores a
+  // screen's cursor in phase 3, before phase 5 reads input (0x39ECB0, docs/pause-contexts.md 2); the port restores it in the screen's
+  // first drawn frame (web/fe-event-select.js focus), and a Cross before that chose the previous screen's row (Peak 3 for Peak 1).
   await hold(false);
   const state = () => E(`JSON.stringify((()=>{const ui=ssxQA.ui(),es=ui.eventSelect;return {screen:ui.screen,ready:ui.ready,
     flash:es.flash?Math.round(es.now()-es.flash.at):null,boards:!!es.boards,index:ui.index,pending:es.pendingIndex??null,peak:es.peak,
     phase:ui.phases.phase,uiFrame:ui.phases.frame,frameRate:window.__frameRate?.(),rafCalls:window.__rafCalls,hold:window.__hold,
     load:ui.loading?.session?.shownPercent??null,loadError:document.body.dataset.loadError||null}})())`);
-  const takesInput = (screen) => `(()=>{const ui=ssxQA.ui();return ui.screen===${JSON.stringify(screen)}&&ui.ready&&ui.phases.accepts()&&!ui.eventSelect.flash})()`;
+  const takesInput = (screen) => `(()=>{const ui=ssxQA.ui(),es=ui.eventSelect;return ui.screen===${JSON.stringify(screen)}&&ui.ready&&ui.phases.accepts()
+    &&!es.flash&&(!es.owns(ui.screen)||es.pendingIndex==null)})()`;
   const waitInput = async (screen) => {
     try { await browser.waitFor(takesInput(screen), 30000); }
     catch (e) { throw new Error(`${e.message}; state ${await state()}`); }
   };
   const KEY = `const key=(code)=>{for(const type of ['keydown','keyup'])dispatchEvent(new KeyboardEvent(type,{code,key:code,bubbles:true,cancelable:true}));}`;
-  // Down until the cursor is on row k (an FE map screen's cursor is its pending entry row until its first frame draws)
+  // Down until the cursor is on row k
   const moveTo = async (screen, k) => {
     await waitInput(screen);
-    const row = await E(`(()=>{const ui=ssxQA.ui(),es=ui.eventSelect;${KEY};const at=()=>es.owns(ui.screen)&&es.pendingIndex!=null?es.pendingIndex:ui.index;
-      for(let n=0;n<8&&at()!==${k};n++)key('ArrowDown');return at();})()`);
+    const row = await E(`(()=>{const ui=ssxQA.ui();${KEY};for(let n=0;n<8&&ui.index!==${k};n++)key('ArrowDown');return ui.index;})()`);
     if (row !== k) throw new Error(`the cursor on ${screen} stopped on row ${row}, not ${k}; state ${await state()}`);
   };
   // Cross (Enter) on the focused row; took: the expression that is true once the choice took (on the FE maps, the white flash starts)
@@ -192,8 +194,8 @@ try {
   await shot('7-select-event');
   await accept('fe-event');
   await browser.waitFor(`ssxQA.ui().screen==='ctm-board' && ssxQA.ui().careerUI.online.board?.status==='ready'`, 20000);
-  const fb = await E(`(()=>{const b=ssxQA.ui().careerUI.online.board;return {fe:b.fe,first:b.rows[0]?.name,n:b.rows.length}})()`);
-  check(fb.fe && fb.first === 'OWEN' && fb.n === 6, `Leaderboards board ${JSON.stringify(fb)}`);
+  const fb = await E(`(()=>{const b=ssxQA.ui().careerUI.online.board;return {key:b.key,fe:b.fe,first:b.rows[0]?.name,n:b.rows.length}})()`);
+  check(fb.key === '0:ARA1' && fb.fe && fb.first === 'OWEN' && fb.n === 6, `Leaderboards board ${JSON.stringify(fb)}`);
   await shot('8-leaderboards-board');
   await E(`(()=>{ssxQA.ui().careerUI.back();return 1})()`);
   await browser.waitFor(`ssxQA.ui().screen==='fe-event'`, 10000);
@@ -207,6 +209,8 @@ try {
   await choose('fe-mode', 0);
   await choose('fe-event', row.k);
   await browser.waitFor(`ssxQA.ui().screen==='ctm-board' && ssxQA.ui().careerUI.online.board?.status==='ready'`, 20000);
+  const fb2 = await E('ssxQA.ui().careerUI.online.board.key');
+  check(fb2 === '0:ARA1', `Leaderboards from Metro-City opens Snow Jam's board (${fb2})`);
   const M = globalThis.__N ?? 1200;
   const miss2 = await watchExact(M, { course: 'ARA1', cam: (cam2) => check(cam2?.[4] === 48 && cam2?.[8] > 0, `Watch Replay after a course switch: ARA1's camera triggers (not BRA2's) ${JSON.stringify(cam2)}`) });
   check(miss2 === -1, `Watch Replay after a course switch leaves the live run at tick ${miss2} of ${M}`);
