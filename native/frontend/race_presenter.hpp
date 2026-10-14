@@ -23,6 +23,11 @@ namespace ssx_native {
 class RacePresenter {
 public:
     explicit RacePresenter(session::Verifier& v) : v_(v) {
+        // web/terrain-refinement.js (main.js: course.root's terrain-render.json, none on a free-ride world); the plan steps from the first
+        // tick, the meshes reach the world renderer at the frames (renderer.terrainCommit)
+        if (v.assets.exists(v.courseRoot() + "terrain-render.json") && !session::truthy(session::at(v.course, "freeRide"))) {
+            refinement_ = std::make_unique<terrain::Refinement>(terrain::loadPatches(nlohmann::json::parse(v.assets.text(v.courseRoot() + "terrain-render.json"))));
+        }
         if (v.assets.exists(v.courseRoot() + "screen-tint.json")) {
             tint_ = std::make_unique<ScreenTint>(nlohmann::json::parse(v.assets.text(v.courseRoot() + "screen-tint.json")));
         }
@@ -91,7 +96,20 @@ public:
             std::memcpy(cameraCur_, v_.camera, sizeof cameraCur_);
             cameraValid_ = true;
         }
+        // web/game-tick.js present: terrainRefinement.update(state 0..2, the contact patch, rec.clock)
+        if (refinement_) {
+            refinement_->update({double(v_.state[0]), double(v_.state[1]), double(v_.state[2])}, int64_t(terrain_contact_info()[0]), clock_);
+        }
+        clock_ += 1.0 / 60;
     }
+    // ssx3_render_shot: the set pieces stepped to the core's clock between the ticks, as the page's frames do
+    void stepSetPieces() {
+        if (setPieces_) {
+            setPieces_->update();
+        }
+    }
+    // ssx3_render_shot: commit the refined terrain in the shot's frame
+    bool flushTerrain = false;
     bool cameraValid() const {
         return cameraValid_;
     }
@@ -118,6 +136,7 @@ public:
     // the light glows (course.lightGlow, default /assets/LIGHT_GLOW/; none when course.lightGlowCount is 0 or the package has no
     // lights) at the world's origin, and the sun, attached to the renderer
     void loadEffects(WorldRenderer& renderer) {
+        renderer_ = &renderer;
         const auto& count = session::at(v_.course, "lightGlowCount");
         const std::string glowDir = v_.assetPath(session::str(session::at(v_.course, "lightGlow"), "/assets/LIGHT_GLOW/"));
         if (!glow_ && !(count.is_number() && count.get<double>() == 0) && v_.assets.exists(glowDir + "light-glow.json")) {
@@ -163,6 +182,18 @@ public:
     }
     // the frame at render alpha a (0: the previous tick's camera and palettes, 1: the newest)
     WorldFrameState frame(double alpha, CameraView& camera) {
+        // main.js frame: terrainRefinement.commit() of a worker reply (it arrives after the frame that posted the plan; a shot commits
+        // what the page's later frames would)
+        if (refinement_ && refinement_->pending() && renderer_) {
+            if (terrainPosted_ || flushTerrain) {
+                if (auto built = refinement_->take()) {
+                    renderer_->terrainCommit(*built);
+                }
+                terrainPosted_ = false;
+            } else {
+                terrainPosted_ = true;
+            }
+        }
         WorldFrameState state;
         const float* fog = fog_palette_info();
         state.fogEnabled = fog[0] != 0;
@@ -254,6 +285,11 @@ private:
     std::unique_ptr<ScreenTint> tint_;
     std::unique_ptr<UvScrollSet> scroll_;
     std::unique_ptr<SunFlare> sun_;
+    WorldRenderer* renderer_ = nullptr;
+    std::unique_ptr<terrain::Refinement> refinement_;
+    bool terrainPosted_ = false;
+    // web/game-tick.js s.clock: the run's game clock (+1/60 a tick) the refinement's 0.1 s gate reads
+    double clock_ = 0;
     std::unique_ptr<Startfire> startfire_;
     std::vector<double> startfireParticles_;
     std::unique_ptr<SetPieces> setPieces_;

@@ -1,3 +1,48 @@
+> **Deployed 2026-10-14 (coordinator): core15 + coreWorldState + frameGateRecover ON.** web/runtime core.wasm `e66ce287…`, core.js `9778efae…` (M8a world-state machine, C mission default, M8b event 7). Career crossing / transport writes come from the core's world-state events (PS2 ticks: visited bit at the WS10 exit; transport writes at WS10 once the destination is in). The low tier's frame gate recovers to 60 below 11 ms median (and probes 60 with back-off). Previous core13b saved in local/core-migration/core13b-live.*.bak. Gate: test-ps2-captures 535/535 defaults and -collectSlotReset (migration agent; identical to core13b) plus deploy-staged's run; core-api, ctm-flow, ctm-event-world, ctm-stream, ctm-left, mountain-ride, mountain-world, career, new-game, save-store, collect-slot, stage-collect, peak-run, peak-world, peak2/3-world, big-challenges, core-career-cascade, mp-pairs, ai-racers, ta-page, records-server, records-verifier, replay, rival-page, online-records, mp-page, frame-gate, frame-clock, tick-lock, mp-tick-lock, loading-screen pass.
+
+> **test-online-records is deterministic; Select Event cursor-restore fix (feCursorRestore, now on); frameGateRecover ready to flip (off) (2026-10-14, online-records test agent).** See [online-records.md](online-records.md) "Menu input" and section 3, and [sim-performance.md](sim-performance.md) "frameGateRecover".
+> - **Cause of the flake (test only):**
+>   - The test pins every rAF timestamp so the frame loop runs no update while the test steps the simulation.
+>   - On a loaded machine the low tier's 'auto' frame gate (web/quality.js frameGate) dropped to 30, and a 30 fps gate never draws on a frozen timestamp (ms - lastDrawn stays 0).
+>   - The FE flash resolves only in a drawn frame (fe-event-select.js draw), so the walk stalled with the flash on: the fe-peak / fe-mode waits. That matches the 2026-10-08 loop failure.
+>   - Forced repro (a 16 ms wait in ui.draw): frameRate 30, the draws stuck at 293 while the rAF callbacks went from 1426 to 8994, the flash 1813 frames old.
+>   - Under the frozen clock the UI frame counter (screen-phases) never advanced either; the test only passed because it called eventSelect.choose() and skipped the phase gate.
+>   - Without the fix: 8/8 passes at the time (the flake needs a busy stretch); the loop log shows the failure once in 74 runs.
+> - **Test fix (web/test-online-records.mjs):**
+>   - `fps=60`.
+>   - The clock is held only while the test steps the simulation (`hold()`).
+>   - The menu walks run on the real clock with real keydown / keyup events, pressed only when the screen takes input (phase 5, loaded, no flash, cursor restored) and checked to take, with no retries.
+>   - Both Leaderboards walks check the board key.
+>   - **Proof:** 10/10 consecutive passes at nice -n 5, some alongside other browser runs (11 counting the try before). It also passes with PAGE_PV=mpTickLock, PAGE_PV=feCursorRestore and PAGE_PV=frameGateRecover.
+>   - Round trips: test-replay, records-server and records-verifier pass.
+> - **Game bug found (pv feCursorRestore, live since the coordinator's flip):**
+>   - On Select Peak / Mode / Event, a Cross between the screen change and its first draw chose the previous screen's row. In the test, Leaderboards opened Peak 3's ERA5 board with the cursor on Peak 1.
+>   - The PS2 rule: 0x39ECB0 runs phase 3 (vtable +0x34, cursor restore, 0x39EE50) before phase 5, the only input phase (+0x64, 0x39EE7C).
+>   - Fix: fe-event-select.js `restoring()` makes key / choose / back dead until the restore.
+>   - Checks: web/test-fe-cursor-restore.mjs (in test:all); test-rival-page and test-peak2-events pass with it on.
+>   - The Single Event Map's own activate frame is not measured.
+> - **frameGateRecover (off, ready to flip):**
+>   - Off, the auto gate returns to 60 only below 7 ms, so a page at 7..13 ms stays at 30 after one spike: Chrome and WebKit races measured stuck for 40 s.
+>   - On: back to 60 under 11 ms (the 13 ms drop is kept), and a one-window probe of 60 after 10 s at 30, the wait doubling to 80 s after each failed probe.
+>   - web/test-frame-gate.mjs (in test:all): 7 / 9 / 12 ms recover, and a 15 ms device stays at 30 with probes only (10/20/40/80/80 s, under 2% of the time at 60).
+>   - Chrome page (about 10.3 ms of work): off, 30 for 60 s; on, back at 10 s and held.
+>   - WebKit follows the rule, but the driver page ran at 6 rAF/s under load, so a WebKit page able to hold 60 was not measured.
+>   - Round trips on; test-frame-clock and test-tick-lock pass. QA: `window.__frameWork()`.
+> - **Changed:**
+>   - web/test-online-records.mjs;
+>   - web/fe-event-select.js (restoring);
+>   - web/quality.js (frameGate recover, median QA);
+>   - web/main.js (the gate's recover option, `__frameWork`);
+>   - web/pv-flags.js (feCursorRestore, frameGateRecover);
+>   - new web/test-fe-cursor-restore.mjs and web/test-frame-gate.mjs, both in package.json test:all.
+>   - Scratch: local/online-records-flake/ (probe.mjs, page-gate.mjs, gate-recover.mjs, the run logs).
+
+> **Core migration M8a / M8b + C: the CTM world-state machine in the core; core to install: local/core-migration/core15 (2026-10-14, core-migration agent).** See [core-migration.md](core-migration.md) "M8"; decomp local/core-migration/decomp/ws-machine.md.
+> - **core15** (core.wasm `e66ce287…`, core.js `9778efae…`): web/peak_world.inc ws_step (the block S+0x214 / 0x210 / 0x21C / 0x218 / 0x208 and the streamer's +0x1B4 at the 230F40 point; QA export peak_world_state; event 7 {to, from, course} per switch), web/mission_gameplay.inc builtin 59 answered by default (C).
+> - **pv coreWorldState (off; a behaviour change):** web/career-ui.js worldState makes a crossing's / transport's career writes from event 7 (WS11 enter the new-career flag, WS10 enter the reward record and last lodge, WS10 exit the visited bit); web/free-ride.js 'worldState', web/main.js wiring (guarded on the export).
+> - **Proof:** web/test-mountain-world.mjs: S+0x214 on every record to the finish, All Peak Race 108,002 records / 8 crossings and Peak 2 Race 68,402 / 6, no difference. web/test-mountain-ride.mjs: the core's 4 -> 11 -> 10 -> 4 on fr-dra4a's records 14732 / 19215 / 19216. web/test-ctm-flow.mjs: the writes per event. Full test-ps2-captures on core15 (defaults and -collectSlotReset): 535 each, identical to core13b's but for the replay-return heap readout (+0.01 MB). Round trips on core15: test-replay, test-records-verifier, test-online-records, test-ctm-event-world, test-ctm-stream pass (the last two also with coreWorldState). Page probe (local/core-migration/qa/probe-ws.mjs, riding crossing and transport): the same career on and off; on writes on the PS2's ticks (the visited bit one tick later, a transport's at its WS10).
+> - **Not modelled yet:** the race's 4 -> 5 -> 7, WS14 / 15, the event states (M8c); WS10's ready (2312D8) and +0x1B4 case 3 -> 4 are not traced.
+
 > **Deployed 2026-10-14 (coordinator): mpTickLock + feCursorRestore ON.** Core unchanged (core13b `10b686be…`). Online races lock one tick per ~60 Hz frame against the server clock (no more 0/2-tick frames that froze and jumped the pickups, flags and lights); Select Event screens ignore input until the cursor restore (0x39ECB0 phase 3 before phase 5). Gate on this exact tree: mp-tick-lock, tick-lock, frame-clock, mp, mp-prerace, mp-latency, mp-pairs, mp-pickups, mp-grid, mp-speech, ai-racers, ta-page, mp-session, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit), core-api, fe-cursor-restore, fe-screens, ctm-flow, ctm-event-world, mountain-ride, mountain-world, career, peak2-events pass. Inert: coreWorldState (off; needs a core with peak_world_state).
 
 > **"Collectables not animating" in online races: the frame clock, not the stage world; fixed behind pv mpTickLock (off, ready to flip) (2026-10-14, mp animation agent).** See [multiplayer.md](multiplayer.md) "Frame pacing".

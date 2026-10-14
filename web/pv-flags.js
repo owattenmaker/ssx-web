@@ -218,7 +218,8 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
-// coreWorldState (core-migration agent, docs/core-migration.md "M8"): a Conquer the Mountain crossing's / transport's career writes
+// coreWorldState (core-migration agent, docs/core-migration.md "M8"; a behaviour change: the writes on the PS2's ticks, the visited bit at
+// the WS10 exit one tick after the Load, a transport's at its WS10): a Conquer the Mountain crossing's / transport's career writes
 // follow the core's world-state machine (web/peak_world.inc event 7: WS11 enter 0x2368A0 the new-career flag, WS10 enter 0x2355C0 the
 // reward record and the last lodge, WS10 exit 0x235868 the visited bit) instead of web/career-ui.js inferring the states from the course
 // change and the Load trigger; needs a core with peak_world_state. Off: career-ui.js courseChanged / crossingArrived decide.
@@ -284,6 +285,10 @@
 // state stack update 0x39ECB0 runs phase 3 (vtable +0x34, show / cursor restore) before phase 5, the only phase that reads input
 // (vtable +0x64; docs/pause-contexts.md 2). Off: a Cross in the frame between the screen change and that draw chooses the previous
 // screen's row (Leaderboards row 5 -> Select Peak chose Peak 3 with the cursor on Peak 1). The Map's own activate frame is not measured.
+// frameGateRecover (online-records test agent, docs/sim-performance.md "frameGateRecover"; a port rule, the PS2 has no frame gate): the
+// low tier's 'auto' frame gate (web/quality.js frameGate) returns from 30 to 60 when the median frame work is under 11 ms (it drops
+// above 13), and at 30 it probes 60 for one 45-frame window after 10 s, the wait doubling to 80 s after each probe that fails. Off: back
+// to 60 only under 7 ms, so a page whose work settles at 7..13 ms after one spike stays at 30 (Chrome and WebKit races, measured).
 export const PV_DEFAULTS = Object.freeze({
   speechRange: false,
   flyover: false,
@@ -345,7 +350,7 @@ export const PV_DEFAULTS = Object.freeze({
   coreCareerCascade: true,
   coreCareerWorld: true,
   coreWorldEvents: false,
-  coreWorldState: false,
+  coreWorldState: true,
   stationSplitPs2: true,
   nisOnTicks: true,
   fadesOnTicks: true,
@@ -362,7 +367,8 @@ export const PV_DEFAULTS = Object.freeze({
   mpRiderSpeech: true,
   rivalStartAudio: true,
   mpTickLock: true,
-  feCursorRestore: true
+  feCursorRestore: true,
+  frameGateRecover: true
 });
 const overrides = new Map();
 function fromQuery() {

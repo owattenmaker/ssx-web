@@ -103,6 +103,9 @@ int main(int argc, char** argv) {
         gpu.init();
         hud.load(gpu, v);
         hudLoaded = true;
+        WorldRenderer renderer;
+        renderer.load(gpu, v.assets.root, v.code);
+        presenter.loadEffects(renderer);
         for (long t = 0; t <= tickTarget + 1; ++t) {
             reader.read(t, input);
             hud.beforeTick();
@@ -112,14 +115,17 @@ int main(int argc, char** argv) {
             if (t == tickTarget) {
                 trace = v.traceHash();
             }
+            // browser-shot's page frames between its 400-tick steps: the set pieces follow the core's clock (at most 3600 ticks a frame)
+            if ((t + 1) % 400 == 0) {
+                presenter.stepSetPieces();
+            }
         }
         if (!presenter.cameraValid()) {
             throw std::runtime_error("no camera yet");
         }
         (void)hudLoaded;
-        WorldRenderer renderer;
-        renderer.load(gpu, v.assets.root, v.code);
-        presenter.loadEffects(renderer);
+        // the page's frames after the last step have committed the refined terrain
+        presenter.flushTerrain = true;
         presenter.loadRiders(gpu);
         CameraView camera;
         WorldFrameState state = presenter.frame(0, camera);

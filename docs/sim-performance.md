@@ -487,6 +487,36 @@ per tick; cutscenes, menus and the loading screen are time-based. What changes o
 frames (rider / computer riders / camera motion at 120 fps) and the time-based animation sampling. Chrome with uncapped rAF: busy
 main thread 894 -> 547 ms/s. Safari keeps rAF at 60 by default (no change there).
 
+### frameGateRecover (web/quality.js frameGate recover; off)
+
+A port rule (the PS2 has no frame gate).
+
+- **The problem:** the low tier's 'auto' gate drops from 60 to 30 when a 45-frame window's median work goes above 13 ms. Off, it comes
+  back only below 7 ms. A frame at 30 runs two ticks, so it reads higher than the same page at 60. A page whose work settles at
+  7..13 ms after one spike therefore stays at 30 for good.
+  - Node model: steady work of 7, 9 or 12 ms never returns; 6.9 ms returns after about 1.7 s.
+  - Real pages: a Snow Jam race with a 16 ms spike, then +6 ms of steady work, stayed at 30 for 40 s in both Chrome and WebKit.
+- **With the switch on:**
+  - At 30, a median under 11 ms goes back to 60. The 13 ms drop is kept, so the two thresholds cannot flap: work at 60 is at most work
+    at 30.
+  - At 30, the gate also probes 60 for one window after 10 s. A probe that reads above 13 ms returns to 30, and the next one waits
+    twice as long (10, 20, 40, 80 s, then every 80 s). A probe that holds resets the wait. The probe is what lifts a page that fits at
+    60 but reads above 11 ms at 30 (two ticks a frame).
+  - A frozen rAF clock (a test's hold) never starts a probe.
+  - It adds no input latency: the gate only decides which animation frames draw, and the ticks stay 60 a second.
+- **Checks:**
+  - web/test-frame-gate.mjs (unit): 7 / 9 / 10.9 / 12 ms recover, with exactly one drop and one recovery. The two-tick page recovers
+    through the probe. A true 15 ms device stays at 30: only the probes leave it, with waits of 10/20/40/80/80 s and under 2% of the
+    time at 60. A 13.5 ms device has probes only. With the switch off the rule is unchanged.
+  - Chrome page (local/online-records-flake/page-gate.mjs, load average 20-29): steady +3 ms, about 10.3 ms of work at 60 and 12.7 at
+    30. Off: 30 for the whole 60 s. On: the probe at 10 s holds 60 for the remaining 50 s. Steady +12 ms (about 20 ms of work): one
+    probe, back to 30, stays there.
+  - WebKit (webkit-driver): the same rule is seen (probe at 10 s, back to 30 when the window reads above 13 ms). But the driver's page
+    ran at 6 rAF a second on this loaded machine, so a 45-frame window took 8-15 s. No 60-capable WebKit case was measured.
+  - Round trips with the switch on: test-replay, records-server, records-verifier, online-records and rival-page pass, and so do
+    test-frame-gate, frame-clock, tick-lock, mp-tick-lock and touch-controls.
+  - QA: `window.__frameWork()` gives the gate's last window median.
+
 ### setPieceSkip (web/peak-set-pieces.js) and skipEmpty (web/snow-renderer.js, impact-fx-renderer.js, startfire-renderer.js)
 
 setPieceSkip: only the UV-scroll groups' representatives tick (734 -> 23 instances in Peak 1; 20000 ticks with random section

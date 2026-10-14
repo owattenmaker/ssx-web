@@ -31,6 +31,8 @@ struct RiderFxFrame {
     // 9 floats per vertex in the core's layout (cm, Z up; uv; rgba)
     std::vector<float> ribbon;
     std::vector<float> roof;
+    // web/board-trail.js update: the ribbon and roof are re-read only when trail_info's serial changed (the last upload stays drawn)
+    std::optional<float> trailSerial;
     std::vector<float> wake;
     // boost_fx_info / boost_fx_vertices (the human's): the palette texture and three ribbons
     int boostTexture = 57;

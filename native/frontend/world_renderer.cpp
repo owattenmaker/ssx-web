@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 
 namespace ssx_native {
@@ -938,18 +939,22 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
             const size_t first = patch["baseline_vertex_start"].get<size_t>();
             auto g2 = glintOf.find(patch["resource"].get<long long>());
             const float glint = g2 == glintOf.end() ? 0.f : g2->second;
+            terrainLight_[patch["resource"].get<int64_t>()] = {map0, sx, map2, sy, glint};
             for (size_t v = first; v < first + 81 && v < count; ++v) {
                 lightUv[v * 3] = float(map0 + double(vertices[v * 10 + 8]) * sx);
                 lightUv[v * 3 + 1] = float(map2 + double(vertices[v * 10 + 9]) * sy);
                 lightUv[v * 3 + 2] = glint;
             }
         }
+        terrainPatches_ = terrain::loadPatches(render);
+        worldIndices_ = indices;
+        worldIndicesLive_ = indices;
     }
     p.vertices = gpu_->buffer(vertices.size() * 4, WGPUBufferUsage_Vertex, vertices.data(), "vertices");
     p.colors = gpu_->buffer(colors.size() * 4, WGPUBufferUsage_Vertex, colors.data(), "colors");
     p.lightUv = gpu_->buffer(lightUv.size() * 4, WGPUBufferUsage_Vertex, lightUv.data(), "light uv");
     p.vertexAlpha = gpu_->buffer(alpha.size() * 4, WGPUBufferUsage_Vertex, alpha.data(), "vertex alpha");
-    p.indices = gpu_->buffer(indices.size() * 4, WGPUBufferUsage_Index, indices.data(), "indices");
+    p.indices = gpu_->buffer(indices.size() * 4, WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst, indices.data(), "indices");
     std::map<std::string, WGPUBindGroup> groups;
     const json& textures = d["textures"];
     size_t index = 0;
@@ -1029,6 +1034,51 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
         }
     }
     if (world) {
+        // web/terrain-overlays.js createTerrainOverlays: each terrain batch's triangles by the patch whose 81 baseline vertices they use
+        // (a triangle across two patches, or a patch over two materials, and the page's refinement does not start)
+        struct Range {
+            uint32_t start;
+            uint32_t end;
+            int index;
+        };
+        std::vector<Range> ranges;
+        for (size_t i = 0; i < terrainPatches_.size(); ++i) {
+            ranges.push_back({terrainPatches_[i].baselineVertexStart, terrainPatches_[i].baselineVertexStart + 81, int(i)});
+        }
+        std::sort(ranges.begin(), ranges.end(), [](const Range& a, const Range& b) { return a.start < b.start; });
+        auto find = [&](uint32_t vertex) -> const Range* {
+            auto it = std::upper_bound(ranges.begin(), ranges.end(), vertex, [](uint32_t v, const Range& r) { return v < r.start; });
+            if (it == ranges.begin()) {
+                return nullptr;
+            }
+            --it;
+            return vertex < it->end ? &*it : nullptr;
+        };
+        bool ok = !terrainPatches_.empty();
+        for (const auto& d : p.opaque) {
+            if (!ok || d.kind != 0) {
+                continue;
+            }
+            for (uint32_t o = d.first; o + 2 < d.first + d.count && o + 2 < indices.size(); o += 3) {
+                const Range* r = find(indices[o]);
+                if (!r || indices[o + 1] < r->start || indices[o + 1] >= r->end || indices[o + 2] < r->start || indices[o + 2] >= r->end) {
+                    ok = false;
+                    break;
+                }
+                TerrainRef& ref = terrainRefs_[r->index];
+                if (ref.draw && ref.draw->material != d.material) {
+                    ok = false;
+                    break;
+                }
+                ref.draw = &d;
+                ref.offsets.push_back(o);
+            }
+        }
+        if (!ok || terrainRefs_.size() != terrainPatches_.size()) {
+            std::fprintf(stderr, "Terrain refinement: the coarse terrain does not map onto its patches\n");
+            terrainRefs_.clear();
+            terrainPatches_.clear();
+        }
         // the flag meshes draw with their source batch's material (the first draw: a blended source's pass, not its fringe)
         batchDraw_.clear();
         for (const auto* list : {&p.opaque, &p.transparent}) {
@@ -1274,6 +1324,138 @@ void WorldRenderer::collectFlags(const WorldFrameState& state, const Mat4d& vp) 
         item.id = 2000000 + order;
         const bool transparent = g.draw.kind >= 4;
         (transparent ? worldTransparent_ : worldOpaque_).push_back(item);
+    }
+    sortItems(worldOpaque_, worldTransparent_);
+}
+
+// web/terrain-overlays.js commit: every replacement mesh built first, then the coarse triangles of the patches that changed state
+// degenerated (vertex a three times) or restored; an unchanged patch keeps its mesh
+void WorldRenderer::terrainCommit(const std::vector<terrain::Built>& items) {
+    std::set<int> before;
+    for (const auto& [index, a] : terrainActive_) {
+        before.insert(index);
+    }
+    std::map<int, TerrainActive> next;
+    for (const auto& b : items) {
+        auto ref = terrainRefs_.find(b.item.index);
+        if (ref == terrainRefs_.end() || !b.mesh) {
+            continue;
+        }
+        const std::string key = std::to_string(b.item.resolution) + ":" + std::to_string(b.item.edges[0]) + ":" + std::to_string(b.item.edges[1]) + ":" +
+                                std::to_string(b.item.edges[2]) + ":" + std::to_string(b.item.edges[3]);
+        auto prev = terrainActive_.find(b.item.index);
+        if (prev != terrainActive_.end() && prev->second.key == key) {
+            next.emplace(b.item.index, std::move(prev->second));
+            terrainActive_.erase(prev);
+            continue;
+        }
+        const terrain::Mesh& m = *b.mesh;
+        const size_t n = m.vertices.size() / 10;
+        TerrainActive a;
+        a.key = key;
+        a.package = std::make_unique<Package>();
+        Package& p = *a.package;
+        p.vertices = gpu_->buffer(std::max<size_t>(m.vertices.size() * 4, 16), WGPUBufferUsage_Vertex, m.vertices.data(), "refined terrain");
+        p.colors = gpu_->buffer(std::max<size_t>(m.colors.size() * 4, 16), WGPUBufferUsage_Vertex, m.colors.data(), "refined terrain colours");
+        // world-material.js prepareTerrainGeometry: the patch's light page map over the installed uv1, its glint
+        std::vector<float> light(n * 3, 0.f);
+        auto lt = terrainLight_.find(b.item.resource);
+        for (size_t v = 0; v < n && lt != terrainLight_.end(); ++v) {
+            light[v * 3] = float(lt->second.map0 + double(m.vertices[v * 10 + 8]) * lt->second.sx);
+            light[v * 3 + 1] = float(lt->second.map2 + double(m.vertices[v * 10 + 9]) * lt->second.sy);
+            light[v * 3 + 2] = lt->second.glint;
+        }
+        p.lightUv = gpu_->buffer(std::max<size_t>(light.size() * 4, 16), WGPUBufferUsage_Vertex, light.data(), "refined terrain light uv");
+        const std::vector<float> one(std::max<size_t>(n, 4), 1.f);
+        p.vertexAlpha = gpu_->buffer(one.size() * 4, WGPUBufferUsage_Vertex, one.data(), "refined terrain vertex alpha");
+        p.indices = gpu_->buffer(std::max<size_t>(m.indices.size() * 4, 16), WGPUBufferUsage_Index, m.indices.data(), "refined terrain indices");
+        a.draw = *ref->second.draw;
+        a.draw.first = 0;
+        a.draw.count = uint32_t(m.indices.size());
+        a.draw.chunk = -1;
+        a.draw.defaultHidden = false;
+        // geometry.computeBoundingSphere: the box centre of the positions
+        double lo[3] = {1e300, 1e300, 1e300};
+        double hi[3] = {-1e300, -1e300, -1e300};
+        for (size_t v = 0; v < n; ++v) {
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], double(m.vertices[v * 10 + size_t(k)]));
+                hi[k] = std::max(hi[k], double(m.vertices[v * 10 + size_t(k)]));
+            }
+        }
+        for (int k = 0; k < 3; ++k) {
+            a.draw.centre[size_t(k)] = (lo[k] + hi[k]) * 0.5;
+        }
+        // added to the scene after the batch meshes, in commit order
+        a.id = 3000000 + terrainSerial_++;
+        next.emplace(b.item.index, std::move(a));
+    }
+    // the patches that change state (in the list before and not now, or the reverse): their coarse triangles degenerated (refined) or as
+    // authored (coarse again)
+    std::set<int> changed;
+    for (int index : before) {
+        if (!next.count(index)) {
+            changed.insert(index);
+        }
+    }
+    for (const auto& [index, a] : next) {
+        if (!before.count(index)) {
+            changed.insert(index);
+        }
+    }
+    std::set<uint32_t> dirty;
+    for (int index : changed) {
+        const bool refined = next.count(index) > 0;
+        for (uint32_t o : terrainRefs_[index].offsets) {
+            const uint32_t a = worldIndices_[o];
+            worldIndicesLive_[o] = a;
+            worldIndicesLive_[o + 1] = refined ? a : worldIndices_[o + 1];
+            worldIndicesLive_[o + 2] = refined ? a : worldIndices_[o + 2];
+            dirty.insert(o);
+        }
+    }
+    // the dirty triangles' index ranges, merged, uploaded
+    for (auto it = dirty.begin(); it != dirty.end();) {
+        const uint32_t start = *it;
+        uint32_t end = start + 3;
+        ++it;
+        while (it != dirty.end() && *it <= end) {
+            end = std::max(end, *it + 3);
+            ++it;
+        }
+        wgpuQueueWriteBuffer(gpu_->queue, world_.indices, uint64_t(start) * 4, worldIndicesLive_.data() + start, size_t(end - start) * 4);
+    }
+    // the replaced and dropped meshes let go
+    for (auto& [index, a] : terrainActive_) {
+        if (a.package) {
+            for (WGPUBuffer buf : {a.package->vertices, a.package->colors, a.package->lightUv, a.package->vertexAlpha, a.package->indices}) {
+                if (buf) {
+                    wgpuBufferRelease(buf);
+                }
+            }
+        }
+    }
+    terrainActive_ = std::move(next);
+}
+
+// the refined patches in the opaque list (static records: the world's matrix)
+void WorldRenderer::collectTerrain(const Mat4d& vp) {
+    if (terrainActive_.empty()) {
+        return;
+    }
+    const Mat4 model = translate(-origin[0], -origin[1], -origin[2]);
+    for (const auto& [index, a] : terrainActive_) {
+        Item item;
+        item.draw = &a.draw;
+        item.package = a.package.get();
+        item.object = 0;
+        double w[4];
+        for (int r = 0; r < 4; ++r) {
+            w[r] = model[size_t(r)] * a.draw.centre[0] + model[size_t(4 + r)] * a.draw.centre[1] + model[size_t(8 + r)] * a.draw.centre[2] + model[size_t(12 + r)];
+        }
+        item.z = vp[2] * w[0] + vp[6] * w[1] + vp[10] * w[2] + vp[14] * w[3];
+        item.id = a.id;
+        worldOpaque_.push_back(item);
     }
     sortItems(worldOpaque_, worldTransparent_);
 }
@@ -1555,6 +1737,7 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         const Mat4 vp = multiply(P, V);
         collect(world_, vp, translate(-origin[0], -origin[1], -origin[2]), state, true, worldOpaque_, worldTransparent_);
         collectFlags(state, vp);
+        collectTerrain(vp);
         // the cables: the camera's view and projection, near / far, the target's size (three's viewportSize)
         float cu[36];
         for (int k = 0; k < 16; ++k) {

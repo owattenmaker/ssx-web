@@ -191,6 +191,20 @@ forger can still claim just above it (0.9 x the world record beats every human) 
   memory about 2.8 GB summed over its processes (shared pages counted in each, so an upper bound); the page load before the first
   run of a batch about 30-60 s.
 
+### Menu input (pv feCursorRestore, on since 2026-10-14)
+
+- **The rule (PS2):** the state stack update 0x39ECB0 takes the phase from state +0x1C bits 8..13 (0x39ED14..0x39ED44, jump table
+  0x493FC0). Phase 3 calls the screen's vtable +0x34 (show / cursor restore, 0x39EE50) before phase 5, and phase 5 is the only phase
+  that calls +0x64, the input (0x39EE7C; docs/pause-contexts.md 2). So no press can meet a cursor that has not been restored.
+- **The port's bug:** the Select Event maps (web/fe-event-select.js fe-peak / fe-mode / fe-event) restore the cursor in their first
+  drawn frame (`focus()` applies `pendingIndex`). A Cross in the frame between the screen change and that draw chose with the previous
+  screen's `ui.index`. Found by test-online-records: Main > Leaderboards (row 5), then a Cross on Select Peak, opened Peak 3's ERA5
+  board with the cursor drawn on Peak 1.
+- **The fix:** with the switch on, the selector's key / choose / back read nothing while `pendingIndex` is set (`restoring()`).
+  web/test-fe-cursor-restore.mjs checks both states.
+- **Not measured:** the Single Event Map's own intro activate frame on the PS2. The port's lock for these screens stays 0 apart from
+  the cursor restore.
+
 ### Not done / open
 
 - Runs in-world (pv eventInWorld, off today) and the peak runs are not submittable (their replays need the streamed world's
@@ -216,6 +230,17 @@ forger can still claim just above it (0.9 x the world record beats every human) 
   the board, the page run's own Replay greyed; the main menu's sixth row, the Select Event maps, the board over the front end; Watch
   Replay from Metro-City (a course switch) exact for 1200 ticks; a viewer on Psymon watching Zoe's run exact for 600 ticks, Psymon back
   after; the server gone: the cached boards, then 'offline'. `SHOTS=dir` saves the screens.
+  - **How it drives the page (2026-10-14, the flake fix):**
+    - The page loads with `fps=60`.
+    - While the test steps the simulation itself (`ssxQA.advance`, the replay's `frame(1/60)`), it holds the rAF clock (`hold(true)`):
+      every animation frame gets one timestamp, so the frame loop runs no update.
+    - The menu walks run on the real clock and press real keydown / keyup events through the page's key path.
+    - A key is pressed only when its screen takes input: `ui.phases.accepts()`, the screens loaded, no flash, the cursor restored.
+    - Each press is checked to have taken, with no retries, and both Leaderboards walks check the opened board's key.
+  - **The old flake:** under the held clock the low tier's 'auto' frame gate dropped to 30 after a busy stretch, and a 30 fps gate
+    never draws on a frozen timestamp. The FE flash resolves only in a drawn frame, so the walk stalled at the fe-peak / fe-mode
+    flash. Forced repro: a 16 ms wait in ui.draw gives frameRate 30; the draws stayed at 293 while the rAF callbacks went from 1426
+    to 8994.
 - WebKit (web/webkit-driver.mjs, scratch script `web/.online-records-webkit.mjs`): the same run, upload, board, Watch Replay (2000
   ticks exact), Exit, the main menu and the Leaderboards board; screens checked by eye against the Chrome ones.
 - Full npm test 208/208 with `SSX_PV=onlineRecords` (2026-09-30). Without it: 206/208, the two failures from other agents' edits in progress at the time (test-mountain-world: a SyntaxError mid-edit, passes again; test-world-warm: pv worldWarm retired while the test still passes `-worldWarm`), unrelated to this feature. With no board loaded (no server) the records screen and decision are exactly the PS2's (test-ctm-left covers both switch states and the online no-upload case).

@@ -125,14 +125,24 @@ export function bufferSize(scale, cssW, cssH, band = 1, dpr = 1) {
 // 'auto' (low tier): starts at 60 and measures the main-thread work of each drawn frame (gate.done(ms), sim ticks +
 // render): a median above 13 ms over 45 frames goes to 30 (steady two ticks per frame instead of uneven 1/2-tick
 // frames), a median below 7 ms at 30 goes back to 60.
+// recover (pv frameGateRecover; a port rule, the PS2 has no such gate): at 30 a median below 11 ms goes back to 60 (hysteresis against
+// the 13 ms drop), and every 10 s at 30 the gate probes 60 for one 45-frame window. A frame at 30 runs two ticks, so its work reads
+// higher than the same page at 60: the probe measures 60 itself. A probe that measures above 13 ms returns to 30 and the next waits
+// twice as long (10, 20, 40, 80 s, then every 80 s); one that holds resets the wait. Off: a page whose work settles between 7 and 13 ms
+// stays at 30 after one spike.
 // refreshCap (pv refreshCap): on a display faster than 60 Hz (120 / 144 / 165 / 240 Hz; Safari keeps rAF at 60 by default, Chrome and
 // Firefox do not) a 60 fps gate draws every n-th animation frame, n = floor(display Hz / 60 + 0.1) (120 -> every 2nd, 144 -> every 2nd =
 // 72 fps, 90 Hz -> every frame): the game ticks at 60 Hz, so the frames in between drew the same ticks again, interpolated. The display
 // rate is the median of the last 30 animation-frame intervals (all of them, drawn or not); a busy page whose frames already run at 60
 // measures 16.7 ms and draws every frame. A skipped animation frame runs nothing (no ticks, no input read): the ticks run in the drawn
 // frames, still 60 per second.
-export function frameGate(fps, { refreshCap = false } = {}) {
+const GATE_DROP_MS = 13, GATE_RECOVER_MS = 11, GATE_PROBE_FIRST_MS = 10000, GATE_PROBE_MAX_MS = 80000;
+export function frameGate(fps, { refreshCap = false, recover = false } = {}) {
   let lastDrawn = -Infinity, rate = fps === 'auto' ? 60 : fps, lastRaf = -1, refresh = 1000 / 60, every = 1, filled = 0;
+  // recover: the last animation-frame time, when the gate went to 30, the wait before the next probe, a probe window running
+  let lastMs = 0, slowSince = 0, probeWait = GATE_PROBE_FIRST_MS, probing = false;
+  // QA: the last window's median work (ms)
+  let lastMedian = null;
   const intervals = new Float64Array(30);
   const measure = (ms) => {
     if (lastRaf >= 0) {
@@ -151,16 +161,41 @@ export function frameGate(fps, { refreshCap = false } = {}) {
   };
   const work = [], gate = (ms) => {
     if (refreshCap) measure(ms);
+    lastMs = ms;
+    // recover: probe 60 for one window
+    if (recover && fps === 'auto' && rate === 30 && ms - slowSince >= probeWait) {
+      rate = 60;
+      probing = true;
+      work.length = 0;
+    }
     if (rate >= 60) { if (!refreshCap || every <= 1) { lastDrawn = ms; return true; } if (ms - lastDrawn < every * refresh - refresh / 2) return false; lastDrawn = ms; return true; }
     if (ms - lastDrawn < 1000 / rate - 4) return false; lastDrawn = ms; return true; };
   gate.done = (ms) => {
     if (fps !== 'auto') return;
     work.push(ms); if (work.length < 45) return;
     const m = work.sort((a, b) => a - b)[work.length >> 1]; work.length = 0;
-    if (rate === 60 && m > 13) rate = 30; else if (rate === 30 && m < 7) rate = 60;
+    lastMedian = m;
+    if (!recover) {
+      if (rate === 60 && m > GATE_DROP_MS) rate = 30; else if (rate === 30 && m < 7) rate = 60;
+      return;
+    }
+    if (rate === 60 && m > GATE_DROP_MS) {
+      rate = 30;
+      slowSince = lastMs;
+      // a failed probe: the next waits twice as long
+      probeWait = probing ? Math.min(GATE_PROBE_MAX_MS, probeWait * 2) : GATE_PROBE_FIRST_MS;
+      probing = false;
+    } else if (rate === 60) {
+      probing = false;
+      probeWait = GATE_PROBE_FIRST_MS;
+    } else if (m < GATE_RECOVER_MS) {
+      rate = 60;
+      probeWait = GATE_PROBE_FIRST_MS;
+    }
   };
   Object.defineProperty(gate, 'rate', { get: () => rate });
   Object.defineProperty(gate, 'display', { get: () => ({ refresh, every }) }); // QA
+  Object.defineProperty(gate, 'median', { get: () => lastMedian }); // QA
   return gate;
 }
 

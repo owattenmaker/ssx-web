@@ -7,6 +7,7 @@
 // - web/fog-renderer.js: the sky pass, the world pass over it, the CLUT fog composite on the world depth.
 // All colour work is on GS bytes in RGBA8Unorm targets (pv encodedBlend: no sRGB, output = the bytes).
 #include "gpu.hpp"
+#include "terrain_refinement.hpp"
 #include "json.hpp"
 #include "post_effects.hpp"
 #include "rider_fx.hpp"
@@ -106,7 +107,13 @@ public:
     // the frame's camera as three.js has it (main.js: position eye - origin, lookAt look - origin): matrixWorldInverse (column-major)
     // and the position, scene metres (the audio listener, web/game-audio.js listener)
     void cameraOf(const CameraView& camera, std::array<double, 16>& inverse, std::array<double, 3>& position) const;
-    // three's camera.lookAt view matrix (scene coordinates, up y) of eye looking at target
+    // web/terrain-overlays.js commit: the refined patches swapped in for their coarse triangles (an empty list restores the course);
+    // the patches whose coarse triangles are mapped (terrain-render.json)
+    void terrainCommit(const std::vector<terrain::Built>& items);
+    const std::vector<terrain::Patch>& terrainPatches() const {
+        return terrainPatches_;
+    }
+        // three's camera.lookAt view matrix (scene coordinates, up y) of eye looking at target
     static std::array<double, 16> lookAt(const double eye[3], const double target[3]);
 
     // the course's light glows and sun flare (after load; either may be null)
@@ -246,6 +253,30 @@ private:
     int crowdFrame_ = -1;
     // the batch index -> its draws (a flag mesh takes its source batch's)
     std::map<size_t, const Draw*> batchDraw_;
+    // web/terrain-overlays.js: the course's indices as authored, each patch's coarse triangles (index offsets) and material, the light
+    // page map of each patch, the refined meshes drawn now
+    std::vector<uint32_t> worldIndices_;
+    std::vector<uint32_t> worldIndicesLive_;
+    std::vector<terrain::Patch> terrainPatches_;
+    struct TerrainRef {
+        const Draw* draw = nullptr;
+        std::vector<uint32_t> offsets;
+    };
+    std::map<int, TerrainRef> terrainRefs_;
+    struct TerrainLight {
+        double map0 = 0, sx = 0, map2 = 0, sy = 0;
+        float glint = 0;
+    };
+    std::map<int64_t, TerrainLight> terrainLight_;
+    struct TerrainActive {
+        std::string key;
+        std::unique_ptr<Package> package;
+        Draw draw;
+        size_t id = 0;
+    };
+    std::map<int, TerrainActive> terrainActive_;
+    size_t terrainSerial_ = 0;
+    void collectTerrain(const Mat4d& vp);
     struct CableGpu {
         WGPUBuffer own = nullptr, other = nullptr, corner = nullptr, indices = nullptr;
         uint32_t count = 0;

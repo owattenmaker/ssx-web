@@ -6434,9 +6434,10 @@ async function init() {
   });
   {
     // 30 fps presentation on request (web/quality.js): the 60 Hz game clock runs two ticks per drawn frame
-    let drawNow = frameGate(quality.fps, { refreshCap: pv('refreshCap') });
+    // pv frameGateRecover: the auto gate's return to 60 (web/quality.js)
+    let drawNow = frameGate(quality.fps, { refreshCap: pv('refreshCap'), recover: pv('frameGateRecover') });
     onQualityChange((q) => {
-      drawNow = frameGate(q.fps, { refreshCap: pv('refreshCap') });
+      drawNow = frameGate(q.fps, { refreshCap: pv('refreshCap'), recover: pv('frameGateRecover') });
       layoutStage();
       applyAntialias();
       fogRenderer?.setSoftness?.(q.ps2Output);
@@ -6455,6 +6456,8 @@ async function init() {
       }
     });
     window.__frameRate = () => drawNow.rate;
+    // QA: the frame gate's last 45-frame median work (ms)
+    window.__frameWork = () => drawNow.median;
   }
   // FE preview models compile before they show (web/fe-preview.js)
   ui.characterSelect.preview3d.compile = (g) => {

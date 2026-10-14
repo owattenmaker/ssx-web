@@ -286,15 +286,18 @@ void RiderFxFrame::read(bool boostRibbons) {
     const float* world = rider_world_state();
     position = {world[0], world[1], world[2]};
     const float* ti = trail_info();
-    const size_t ribbonCount = size_t(ti[0]);
-    const size_t roofCount = size_t(ti[1]);
-    if (ribbonCount > kTrailCapacity || roofCount > kTrailCapacity) {
-        throw std::runtime_error("Original trail exceeded source ring capacity");
+    if (!trailSerial || ti[2] != *trailSerial) {
+        trailSerial = ti[2];
+        const size_t ribbonCount = size_t(ti[0]);
+        const size_t roofCount = size_t(ti[1]);
+        if (ribbonCount > kTrailCapacity || roofCount > kTrailCapacity) {
+            throw std::runtime_error("Original trail exceeded source ring capacity");
+        }
+        const float* r = trail_ribbon();
+        ribbon.assign(r, r + ribbonCount * 9);
+        const float* f = trail_roof();
+        roof.assign(f, f + roofCount * 9);
     }
-    const float* r = trail_ribbon();
-    ribbon.assign(r, r + ribbonCount * 9);
-    const float* f = trail_roof();
-    roof.assign(f, f + roofCount * 9);
     const float* wi = wake_info();
     const size_t wakeCount = size_t(wi[11]);
     if (wakeCount > kWakeCapacity) {

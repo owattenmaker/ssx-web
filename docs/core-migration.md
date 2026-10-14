@@ -61,10 +61,14 @@ The JS that decides simulation results, beyond presentation:
 | M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | coreCareerCascade | in the tree, verified |
 | M5e | The lodge's purchases (gear, uber tricks, songs, rewards, attributes) | coreCareerLodge | in the tree, verified |
 | M5f | The world's career events (collectibles, Big Challenge status words) | coreCareerWorld | in the tree, verified |
-| B | The peak world's station decisions (split HUD, booth / lodge door ending a Big Challenge) at the PS2's point | coreWorldEvents / stationSplitPs2 | in progress |
-| M6 | The NIS / cutscene clock on game ticks (approved by the user) | nisOnTicks | in the tree, verified on the page |
-| M8 | The CTM world-state machine | | after C |
-| M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
+| B | The peak world's station decisions (split HUD, booth / lodge door ending a Big Challenge) at the PS2's point | coreWorldEvents / stationSplitPs2 | core12, verified (stationSplitPs2 on) |
+| M6 | The NIS / cutscene clock on game ticks (approved by the user) | nisOnTicks | on, verified on the page |
+| F | The cutscene fades on game updates | fadesOnTicks | on, verified on the page |
+| Slot | The collectible slot's PS2 reset (309F18 at the WS10 enter) | collectSlotReset | core13b, on |
+| C | The mission constants (builtin 59 answered by default) | | core15 (with M8) |
+| M8a / b | The CTM world-state machine: the riding world's states 4 / 11 / 10 (M8a); the crossing's career writes from it (M8b) | coreWorldState | core15, verified |
+| M8c.. | WS14 / 15 (stations, lodge, map, transport), the race's 5 / 7 / 12 / 13, WS1 / 2 / 3 as host inputs | | next |
+| N | The cutscene feeds (section point, nis_hold actors, the NIS board root) in the core | | after M8 |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
 
 The core API a native front end needs afterwards: load (the existing init_* documents); session (event_setup -> the lineup and
@@ -444,6 +448,31 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   web/test-collect-slot.mjs: Peak 1 A holds the slot across ABA1's read; off, A's unload frees it and it stays empty; with the rule
   it stays through the unload, the WS10 enter gives it to ABA1, a built ABA1 collecta keeps its node / entity and a collected one
   dies (fails on the pre-fix core13). Switch off: core13b scores the full test-ps2-captures as core12 (see HANDOFF).
+
+## M8: the CTM world-state machine in the core (M8a observed; M8b pv coreWorldState, off)
+
+- Decomp: local/core-migration/decomp/ws-machine.md (from docs/ctm-decomp-world-states.md, station-split.md, ctm-decomp-freeride.md 4):
+  the block S+0x214 current, S+0x210 / S+0x21C a pending request and its arg, S+0x218 previous, S+0x208 the pushed state; 230F40 runs
+  the current update, the background, then a pending request's exit / switch / enter in one call; the streamer's course-change state
+  +0x1B4 (22CEA8 0 -> 1; 22D088 0 / 1 -> 3, 2 -> 4; case 1 = 22DF50: WS11 now and WS10 pushed; case 4 (0x22DDAC): no row in 4 / 8 and
+  the pushed WS10 ready -> request 10); WS10's update 2357F8 -> 233AA0 requests 4.
+- M8a (web/peak_world.inc ws_step, at the 230F40 point in peak_world_apply_events; QA export peak_world_state): the riding world's
+  states 4 / 11 / 10. Not traced: case 3 going on to 4; WS10's ready (2312D8) is taken as given (a riding crossing has no arrival
+  list). Not modelled yet: the race's 4 -> 5 -> 7, WS14 / 15 and the event states.
+  - C rides along: missionSpeedBuiltin (builtin 59) is on by default (bcSpeed was retired on).
+  - Proof: web/test-mountain-world.mjs's PS2 streaming replay compares S+0x214 on every record up to the race finish: All Peak Race
+    108,002 records (8 crossings), Peak 2 Race 68,402 (6), no difference; apj-full, p2r-part1, apr-finish (scratch replay) too.
+    Full test-ps2-captures: identical to core13b (defaults and -collectSlotReset).
+- M8b: the core posts event 7 {new state, old state, course} at each switch (peak_world_events); with pv coreWorldState web/career-ui.js
+  worldState makes the crossing's career writes from them: WS11 enter 0x2368A0 the new-career flag (145CB0 at 0x236928), WS10 enter
+  0x2355C0 the reward record (158E30) and a station's last lodge (146E10 at 0x2356FC), WS10 exit 0x235868 the visited bit (145DD0);
+  courseChanged keeps the course / peak, crossingArrived is not used.
+  - Proof: web/test-mountain-ride.mjs (the core's 4 -> 11 / 11 -> 10 / 10 -> 4 at the PS2's fr-dra4a records 14732 / 19215 / 19216,
+    course 17); web/test-ctm-flow.mjs (the writes per event); the page (local/core-migration/qa/probe-ws.mjs, a new career's crossing
+    into Green Base Station emulated with the core requests and their builtin 68 events): the same career on and off; the one
+    difference is the visited bit one tick later with the switch (at the WS10 exit, the PS2's record) than off (at the Load). A
+    transport (career-ui goWorld(17) on the page): the same career on and off; off writes all at the course change, on at the WS10
+    enter / exit once the destination's rows are in (as the PS2's WS10 waits for them).
 
 ## Native core
 
