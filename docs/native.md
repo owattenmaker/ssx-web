@@ -273,16 +273,41 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
     device would, so the voices' ends and the music's pumps keep their timing.
   - `--audio-log OUT.json`, written with the shot, holds the director timeline, the sfx requests with their ticks, the speech posts
     and each tick's listener. A shot run with it steps one tick per 60 Hz frame, as browser-shot `--paced` steps the page.
+  - The event load runs under the load screen (frontend/loading_screen.hpp): the course, the rider, the audio's world banks, the
+    lineup, the world's GPU resources, the effects and the HUD load on a loader thread while the main thread draws the screen at
+    60 Hz. Its stages feed the meter (`course`, `rider`, `lineup`, `warm`). When the load is done the screen shows 100%, holds 12 frames
+    and fades out, then the race starts (the audio's world load and run start). `--load-shot OUT.png` writes the screen's 120th
+    frame.
   - The window is not focusable and the app does not activate (no Dock icon) unless `--focus`, so a run never takes the user's
     keyboard.
-  - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits.
+  - A Single Event race ends in its results (frontend/single_event.hpp, below): on the core's results tick (tick_results' show,
+    finish + 408) a new top-5 time opens "Top 5 Record Times" (61toptimes), else "Single Event Results" (43final_standings). The
+    live ticks stop at finish + 409 and the screens stay up over the stopped world. The menus read the keys and the pad as the page's
+    do (frontend/menu_input.hpp). Next event and Quit leave the app for now (no event select or title yet). Restart does nothing yet:
+    it waits for the 87yndialog and world state 13's restart. Replay is greyed, as the page greys it without a replay. Freestyle
+    events still end at the live stop.
+  - The records table is saved in the user's app data folder (SDL_GetPrefPath "ssx3/native", save.json: `{version, records}` as
+    the page's save keeps them). `--save PATH` names another file. Hidden and shot runs keep no save unless `--save` is given.
+  - QA: `--results-log OUT.json` writes the standings and the outcome when the results open. With the shot, `--canvas-log
+    OUT.json` writes that frame's UI canvas calls and `--ui-clock F` fixes the results panels' timeline frame.
+  - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits during the race and is Triangle (back)
+    on the results.
 - `ssx3_render_shot ASSETS RUN.ssxr OUT.png --tick N`: headless, no window.
+  - The set pieces step to the core's clock every 400 ticks, as the page's frames between browser-shot's steps do (one step is at
+    most 3600 ticks, so a single late frame would skip the sections). The refined terrain is committed in the shot's frame. The print
+    also gives the sun painter's values and the sun query's visibility.
   - `--quality` defaults to `low` here, as browser-shot loads the page (`?quality=low`: the PS2 rider textures, presentationFast on);
     `--riders` and `--bc` as in `ssx3`. The printed line names the tier, the rider set and whether BC blocks were uploaded.
   - `--hud` draws the race HUD over the frame; `--canvas-log OUT.json` also writes that frame's UI canvas calls.
   - It draws the frame the page draws right after `ssxQA.advance` stepped N + 2 ticks (render alpha 0): the camera and rider
     palette of tick N over the world state of tick N + 1.
   - It prints the ?simtrace hash of tick N, so the page and native states can be checked equal before the pictures are compared.
+- `ssx3_ui_shot ASSETS OUT.png --screen loading [--frame F] [--percent P] [--black B] [--hint-counter N] [--device keyboard|gamepad]
+  [--keyboard Classic|Simple] [--canvas-log OUT.json]`: a front-end screen at a fixed state on the UI canvas over black.
+  native/tools/ui-shot.mjs draws the page's at the same state (its update() fixed, the hint counter and keyboard mode in storage) and
+  records the same canvas log. `--screen single [--ticks T] [--rider R] [--keys K1,K2,...]` is a Snow Jam race's results for fixed
+  QA standings (the human finishing at T ticks and five computer riders) on fresh records, then the menu keys once the screen takes
+  input. The page side goes through careerUI.finish with `?pv=-onlineRecords`.
 - `ssx3_image_compare WEB.png NATIVE.png OUT.png`: web | native | difference x 4 side by side, plus the mean / 95th percentile.
 - native/tools/browser-shot.mjs: the page's frame at the same tick.
   - It plays the run's TAS pad in a Single Event (as tools/tas/page-run.mjs does) in headless Chrome, muted, widescreen Off, with
@@ -296,6 +321,10 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
   - `--audio-log OUT.json` loads the page with `?perf=1`, unlocks its audio (the title's Press START does that) and writes the
     same log as `ssx3 --audio-log`. Use it with `--paced` and one chunk (`--chunk` at least the tick), because a gap between page
     calls runs extra frames without ticks.
+  - `--pv LIST` passes `?pv=` (`-onlineRecords`: the PS2's local records table, as native keeps). `--ui-clock F` fixes the results
+    panels' timeline frame. `--no-replay` greys Replay, as native has no full replay yet.
+  - Past the pad's last frame the run holds that frame, as a replay's pad stream (and the native reader) keeps its last values. So
+    a run can go on to its results.
 - native/tools/compare-canvas-log.mjs PAGE.json NATIVE.json: the two logs compared entry by entry, numbers exactly.
 
 **What is ported** (each file names its web source):
@@ -316,6 +345,9 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/rider_shadow.hpp, world_renderer.cpp terrain, rider_renderer.cpp drawShadow | rider-shadow.js, rider-skinning.js shadowPose, world-material.js riderShadowReceiver / glintBytes | the rider shadows: the six-bone box fit (374D00, float32), the nearest six riders in view, each silhouette (the drawn palettes, the parts' painter's rank, the board 0 while grounded) into its slot of the 768 x 128 atlas, the terrain's max(Cd - T, 0) in the 30 m slab; and the terrain glint pass 38D168 (terrain-glint.json) before it |
 | frontend/set_piece_fx.hpp, particles.hpp, terrain_sparkle.hpp, avalanche.hpp, startfire.hpp | set-piece-particles.js, set-piece-particle-eval.js, fog-puffs.js, set-piece-halos.js, crowd-2d.js, terrain-sparkle.js, avalanche-state.js, avalanche-trails.js, startfire-renderer.js, impact-fx-renderer.js | the stage programs' particle sprites (the VU1 burst / trail kernels: accumulators in the VU / EE operations, the sprite arithmetic in doubles like the page), the fog puffs (0x22A270 box cull, 0x2DC190 fades, far-to-near), the HaloModifier sprites, the 2D crowd's texture frames and camera flashes, the terrain sparkle (program 4's RNG chain, the twinkle rotation, the Surface painter's density) at renderOrder 640, the avalanche pieces' visibility and trails, the impact sprites (sparks with the per-slot fade, glints, grind chunks, the fist sparkle) and the start-gate fountains, each in three's order in its pass |
 | frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
+| frontend/loading_screen.hpp, hud_canvas.cpp fillPolygon / rotated drawImage, hud_widgets.hpp multiplyRegion | loading-screen.js, load-meter.js | the event load screen: GL.LUI 110ctrl_load from LOADING/loading.json (frame-0 properties, timeline events, linear animation tracks, layers), the sprites (tinted copies of a page region: bilinear inside the source rect, multiply, destination-in), the gouraud quads as solid or two-stop linear-gradient fills, the rotated snowflakes, the LUI text (FEFONT x 0.79), the keyboard panel (Classic / Simple rows, key caps) or the DualShock picture, the load hint (0x245950's rotation), the percentage of the load meter (work stages by their typical time, creeping between reports, never backwards) and the fades. ssx3_ui_shot against ui-shot.mjs: every canvas call equal (748, 442 and 656 calls at three states); pixels within 0.28 to 0.67 mean |
+| frontend/career_data.hpp, single_event.hpp, menu_input.hpp | career.js (raceResult, heatRecord, addRecord, completeEvent, records), career-ui.js (finish, drawResults, drawRecords, resultItems, items / disabled / key / choose / back of ctm-records and ctm-results), locale.js, race-time.mjs, menu-rules.js, screen-phases.js, gamepad-menus.js | a Single Event race's results: the times, ranks and medal through the core's result kernel (engine/career_rules.hpp), the top-5 entry and the saved table (the PS2's local one: the page's pv onlineRecords boards are not in native), the two screens' rows, messages and menus (wrapping, skipping greyed items, the 31-frame intro lock, Single Event focus on Restart) and the menus' pad history and key repeat. sj-ai to its results tick: the page's outcome, screen and focus, 290 canvas calls equal but one; ssx3_ui_shot `--screen single` against ui-shot.mjs in 6 states with key presses: canvas calls equal but one (the cut canvas's ±1) |
+| frontend/terrain_refinement.hpp, world_renderer.cpp terrainCommit | terrain-refinement.js, terrain-detail.js, terrain-mesh.js, terrain-worker-core.js, terrain-overlays.js | the near-rider terrain: every 0.1 s of the game clock (or a new contact patch) the plan of up to 8 patches within 30 m (2 m hysteresis, the contact patch first) at 32 x 32 with their neighbours' edges matched, each patch's bicubic mesh from its polynomial (JS's evaluation order, Math.hypot), committed on the frame after (the page's worker reply): the coarse triangles of the patches that change degenerated or restored in the course's index buffer, the refined meshes drawn with their patch's material and light-page map |
 | frontend/audio_decode.hpp | audio-decode.js | EA .pt headers, EA-XA, PS-ADPCM, PCM8, MicroTalk (UTK) streams and banks |
 | frontend/webaudio.hpp/.cpp | (Chromium's Web Audio) | AudioContext in 128-frame quanta, AudioParam automation (cancelAndHold, event pruning), gain, buffer source (linear interpolation, loops, sub-sample starts), equal-power panner, lowpass biquad, the destination; one recursive lock between the game and audio threads |
 | frontend/audio_engine.hpp | audio-engine.js | the buses, MIX.INF mixes, duck / release, sliders, FE / WORLD scale modes, the master gain and declick |
@@ -343,7 +375,10 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | hud-sj-ai-900 | the 5-rider run, 900 | 1.77 / 8 | the place (1ST/6 with its glow), the computer riders on the meter: 79 calls equal; HUD pixels 1.33 / 6 |
 | hud-sj-ai-60, -185, -200 | the same run, the countdown and GO! | 2.36, 2.29, 4.29 | 71, 81 and 81 calls equal (the 200 frame's mean is the world's, see below) |
 | hud-sj-solo-1200, -2700 | the solo run | 2.44, 1.11 | 66 and 68 calls equal; HUD pixels 1.52 and 1.35 |
-| hud-sj-solo-15300 | the solo run after its finish | 4.94 / 24 | the FINISH! banner and 00:04:10: 17 calls equal; the frame's difference is the world's (below) |
+| hud-sj-solo-15300 | the solo run after its finish | 4.94 / 24 | the FINISH! banner and 00:04:10: 17 calls equal (the world under it is not the page's: see "Next", the 15300 note) |
+| sj-solo-190, -300, -1200, -2700-terrain | the solo run (`--lineup` the replay's solo lineup), with the near-rider terrain refinement | 1.59, 1.21, 1.71, 0.91 | before it 1.88, 2.00, 2.47, 1.25 |
+| sj-solo-14700, -15050, -15150-finish | the run's end, the trace hashes equal | 1.25, 1.01, 1.73 | before: 2.55, 4.70, 4.19 (the coarse terrain hid the board trail after the finish; ssx3_render_shot stepped the set pieces once, so the finish area's flags never started) |
+| sj-ai-200, -900-terrain | the 5-rider run with the refinement | 3.04, 1.07 | before: 4.29, 1.76 (200: the sun query, see above) |
 | sj-ai-900-xbox | Snow Jam, 5 computer riders, 900, `--riders xbox` both | 1.76 / 8 | the opponents read their twins too; on the riders' pixels 7.05 (7.11 PS2 on both, 7.68 crossed) |
 
 The earlier milestones' shots stay in the folder for comparison.
@@ -356,9 +391,13 @@ What differs is not ported yet, or not drawn the same:
   race clock 00:00:05; every other element is the same).
 - the key caps' vector parts (the rounded rect, its gradient and outline, the arrows) are rasterized at 4 x 4 samples, not Skia's
   analytic coverage; their FEFONT labels go through the exact glyph path.
-- the world at two HUD frames (renderer, not HUD): just after GO! (sj-ai 200, 4.29: the snow floor's tint and the lens flare) and at the
-  finish (sj-solo 15300: native draws many light-glow sprites and other banner colours at the finish stage that the page does not).
-  Both are page frames reached in 400-tick steps; to be looked at with the renderer.
+- the sun's glow and lens flare just after GO! (sj-ai 200, 3.04): GPU raster precision on a near-horizontal edge. The sun's 16 x 16
+  depth query (2EC478) sits on a roof edge that is almost horizontal. Over x 493..536 native rasterizes that edge one row lower than the
+  page does, so 3 rows of the query are open instead of 4 (visibility 0.1875 against about 0.25), and the glow and its nine lens sprites
+  (scaled by the visibility) come out at 0.75 of the page's. The camera matrices agree to about 1e-15, the painter's values are equal,
+  and the world vertex stage runs three's float32 steps (view x matrixWorld in the shader, then the projection). What is left is the
+  last bits of the GPU's vertex arithmetic (Dawn's and wgpu's Metal shader builds), which a near-horizontal edge turns into a whole
+  row. Not pursued.
 - texture filtering at edges (documented, not pursued): see "Texture filtering edges" below.
 - tier high's MSAA and render scale: the page renders with 4 samples on tiers medium / high (main.js applyAntialias: the canvas and
   the fog-renderer pass targets) and at the display's pixel ratio (renderScale 'full'). Native draws its 640 x 480 frame without MSAA
@@ -427,6 +466,12 @@ exact or within -107 dB of Chrome's render. Each of the 111 sfx sounds is within
 
 What differs:
 - the song pick and the other `Math.random` draws (crash and grunt variants, DJ lines): random on both sides.
+  - **To follow (pv sfxPs2Rng / crowdSeqPs2, [audio-logic.md](audio-logic.md) 5.6):** the page now takes the crash sound, the
+    human's grunt and the crowd picks from the core's presentation stream (`visual_rng_words`, BXrand 0x3177F0 = 0x317A08). It
+    uses the PS2 formulas (web/sfx-ps2-rng.js) and the dispatchers' gates. The draws come after every rider's physics and before
+    121818: web/game-tick.js calls tick_input, race_begin, tick_rider, then gameAudio.riderPass, then tick_progress. With the same
+    point and rules, native's picks equal the page's. A reaction posts all its crowd notes in its own tick, at
+    10 x 94 / 93.75 ms a sequence tick, on the audio clock. Compare the post tick and the delay, not the note's start tick.
 - the startup timing: the native first frame loads the riders' renderers (about 0.9 s, after the world-load audio), which the page
   does under its load screen. So the lines and DJ timers after the world load start later natively. This is fixed with the load
   screen in the FE flow.
@@ -438,9 +483,15 @@ What differs:
 **Next** (playable end to end, each module ported 1:1 from the page's):
 - the in-race HUD: done for races (above); the freestyle HUD comes with the FE flow;
 - audio through SDL3: done for Single Events (above);
-- the two renderer gaps above (sj-solo 15300's finish glows and banner colours, sj-ai 200's snow tint and lens flare), with the page
-  re-shot in small advance chunks so frame history is not a factor;
-- the FE screens and the game flow: title, Single Event select, load, intro, race, results;
+- the two renderer gaps (re-shot with `--paced`): sj-solo 15300 was not a valid comparison (the run's pad ends at 15199 and the page
+  stops ticking at its results, and the page ran the 5-rider default lineup: the solo fixture needs `--lineup` with the replay's
+  `enabled: false` lineup). At valid ticks the finish frames now agree (below); sj-ai 200 is written up above;
+- the FE screens and the game flow: the load screen and a race's results are done (above). Next:
+  - the auto replay behind the results (web/replay.js 'auto': startRun on the start snapshot, the recorded pad with the replay
+    camera). It is the results frames' main difference now: the page replays the run behind the panel, native shows the stopped
+    finish camera (local/native-port/shots/fe-sj-ai-results);
+  - Restart (the 87yndialog over the pause PDA, then world state 13), the results' audio, and the freestyle results;
+  - then the title, the Single Event select, the objectives card and the intro;
 - tier high's MSAA (4 samples on the world and the fog-renderer pass targets, main.js applyAntialias) and render scale 'full' (the
   display's pixel ratio): the native app defaults to tier high, so players see the difference.
 

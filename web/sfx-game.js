@@ -4,6 +4,8 @@
 // web/audio-world.js.
 import { SLOT, CURVES, curve, surfaceClass, boardFamily, rndRange } from './sfx.js';
 import { CHAR_ID, charId, peakMask, EV } from './audio-speech.js';
+import { pv } from './pv-flags.js';
+import { crashVariant, gruntVariant } from './sfx-ps2-rng.js';
 
 export const AE = Object.freeze({ TAKEOFF: 1, LANDING: 2, CRASH: 3, CRASH_LOOP: 4, CRASH_AIR: 5, CRASH_GRUNT: 6, CRASH_EXIT: 7, CRASH_METER: 8,
   BOOST: 9, FILL_RESET: 10, GRAB: 11, UBER_DENIED: 12, HANDPLANT: 13, COMBO: 14, NAMED_TRICK: 15, TRICK_SPEECH: 16, WHOOH: 17, SOFT: 18,
@@ -21,12 +23,24 @@ export function relationOf(m, a, b) {
   const k = m.kinds[a]?.[b]; return k === 0 ? 0 : k === 1 ? 1 : 2;
 }
 
-export function createSfxGame({ engine, sfx, speech, crowd, world, music, random = Math.random, animationEvents = null }) {
+// presentation (pv sfxPs2Rng): web/sfx-ps2-rng.js presentationStream over the human core, the stream the PS2's audio picks draw from.
+export function createSfxGame({ engine, sfx, speech, crowd, world, music, random = Math.random, animationEvents = null, presentation = null }) {
   const riders = new Map(); // core -> rider state
   const G = { courseIndex: 0, bigAirEvent: false, halfPipeEvent: false, backcountry: false, zoneActive: () => false, running: false, paused: false,
     countdown: 0, goPhase: null, timedOut: false, finished: false, points: { last: 0, voice: null }, hud: { prev: null, uberVoice: null },
     fill: { prev: 0, bend: 0x1000, tricky: 0 }, air: { flag: 0, T: 0, start: 0, end: 0, voice: null, gain: 0, loopsOn: false }, listener: null, clipEvents: animationEvents };
   const human = () => [...riders.values()].find((r) => r.human);
+  // pv sfxPs2Rng: the audio picks on the presentation stream (web/sfx-ps2-rng.js). riderPass() draws the rider pass's picks after every
+  // rider's physics (r.pre: event index -> [{kind, value}]); the dispatchers take them in their order (pre: the running event's), and
+  // draw any other pick when it runs.
+  const ps2Rng = () => pv('sfxPs2Rng') && !!presentation?.available();
+  let pre = null;
+  function draw(kind) {
+    const k = pre ? pre.findIndex((d) => d.kind === kind) : -1;
+    if (k >= 0) return pre.splice(k, 1)[0].value;
+    return presentation.draw();
+  }
+  const drawer = (kind) => (ps2Rng() ? () => draw(kind) : undefined);
 
   // remote (pv mpRiderSpeech): an online racer without a core (key = its web/net/remote-riders.js record); its telemetry comes
   // from the ghost (remoteTelemetry), it has no events of its own and no board loops
@@ -42,7 +56,8 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     return r;
   }
   const pos = (r) => [r.t[12], r.t[13], r.t[14]];
-  const inRange = (r) => { const s = sfx.spatial(pos(r), 100); return s.d === undefined || s.d < 100; }; // 288B40: 100 m gate
+  const inRangeAt = (t) => { const s = sfx.spatial([t[12], t[13], t[14]], 100); return s.d === undefined || s.d < 100; }; // 288B40: 100 m gate
+  const inRange = (r) => inRangeAt(r.t);
   const speechRider = (r) => ({ id: r.id, human: r.human, listener: r.human, upright: r.t[4] !== 2 && !r.finished, inRange: inRange(r) });
   const peak = () => peakMask(G.courseIndex);
   const play = (o) => sfx.play(o);
@@ -101,7 +116,25 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
   }
 
   // ---- grunts (29F660) ----
+  // pv sfxPs2Rng: 29F660's gates in its order: the CHARACTER bus on (29F0A0), not a replay (288AE0), not finished (+0x470), no grunt
+  // still playing (295028(audio, tag 3, obj 0): one grunt at a time, any rider's); then the human's bank 0xE draws (kinds 0 / 1).
+  const gruntOpen = (r) => engine.busGain('CHARACTER') > 0 && !G.replay && !r.finished && !G.gruntVoice?.playing();
+  function gruntPs2(r, kind) {
+    if (!gruntOpen(r)) return;
+    const speed = Math.hypot(r.t[19], r.t[20], r.t[21]);
+    const vol = Math.min(Math.max(Math.trunc(curve(CURVES.grunt_445910, speed)), 0), 127); // 290C40
+    let slot, sound;
+    if (r.human) {
+      slot = SLOT.GRUNT;
+      sound = kind === 2 ? ((r.grunt = (r.grunt + 1) % 6) + 5) % 6 : gruntVariant(kind, draw('grunt'));
+    } else {
+      slot = SLOT.GRUNT_AI;
+      sound = gruntIndex(r.character) * 2 + (kind === 1 ? 1 : 0);
+    }
+    r.gruntVoice = G.gruntVoice = play({ slot, sound, bus: 'CHARACTER', speaker: r.id, volume: vol, position: pos(r), tag: 'grunt', owner: r });
+  }
   function grunt(r, kind) {
+    if (ps2Rng()) return gruntPs2(r, kind);
     if (!(engine.busGain('CHARACTER') > 0) || r.finished) return;
     const speed = Math.hypot(r.t[19], r.t[20], r.t[21]);
     const vol = Math.min(Math.max(Math.trunc(curve(CURVES.grunt_445910, speed)), 0), 127); // 290C40
@@ -123,7 +156,20 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     r.gruntVoice = play({ slot, sound, bus: 'CHARACTER', speaker: r.id, volume: vol, position: pos(r), tag: 'grunt', owner: r });
   }
   // ---- crash (10EB30 -> 296310 / 29F660 / 2961F0) ----
+  // 296310's draw (pv sfxPs2Rng): the range gate is for a computer rider (vtable +0x48), the local human skips it (+0x87C); no
+  // draw on surface 2 / 3.
+  const crashDraws = (r, t, surface) => {
+    const s = surface ?? t[5];
+    return (r.human || inRangeAt(t)) && s !== 2 && s !== 3;
+  };
   function crashSound(r, surface) { // 296310
+    if (ps2Rng()) {
+      if (!r.human && !inRange(r)) return;
+      const s = surface ?? r.t[5];
+      if (s === 2 || s === 3) play({ slot: SLOT.LAND, sound: 9, bus: 'UI', volume: 127, position: pos(r), tag: 'crash', owner: r });
+      else play({ slot: SLOT.MAIN, sound: crashVariant(draw('crash')), bus: 'UI', volume: 127, position: pos(r), tag: 'crash', owner: r });
+      return;
+    }
     if (!inRange(r)) return;
     const s = surface ?? r.t[5];
     if (s === 2 || s === 3) play({ slot: SLOT.LAND, sound: 9, bus: 'UI', volume: 127, position: pos(r), tag: 'crash', owner: r });
@@ -163,9 +209,10 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     if (r.human && T > 2) crowd.arm();
     if (T >= 4 && !G.backcountry) speech.bigAir(speechRider(r), peak());
   }
+  const trickLevel = (value) => (value < 0.25 ? 0 : value < 0.65 ? 1 : 2); // 2A73A8 (2948D0)
   function landing(r, value, impact, kind) {
     if (r.human) { // crowd (focus rider)
-      if (value <= 0) crowd.cancel(); else crowd.trick(value < 0.25 ? 0 : value < 0.65 ? 1 : 2);
+      if (value <= 0) crowd.cancel(); else crowd.trick(trickLevel(value), drawer('crowd'));
     }
     if (!inRange(r)) return;
     r.landVoice?.stop(0);
@@ -188,7 +235,7 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       case AE.LANDING: r.retry = false; landing(r, a, b, c); break;
       case AE.CRASH:
         crashSound(r, b); grunt(r, 0);
-        if (r.human) { const f = Math.abs(a); if (f <= 0) crowd.cancel(); else crowd.fall(f < 0.25 ? 0 : f < 0.65 ? 1 : 2); music.resetIntensity(); } // 2961F0, 28F108
+        if (r.human) { const f = Math.abs(a); if (f <= 0) crowd.cancel(); else crowd.fall(trickLevel(f), drawer('crowd')); music.resetIntensity(); } // 2961F0, 28F108
         break;
       case AE.CRASH_LOOP:
         if (b === 0) crashLoop(r, a === 0x19 || a === 0x1d ? 0x33 : 0x34);
@@ -393,7 +440,59 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     const c = r.core; if (!c._audio_events) return;
     const q = f32(c, c._audio_events(), 1 + 64 * 5); const n = q[0] | 0; const ev = q.slice(1, 1 + n * 5); c._audio_events_clear();
     r.prevT.set(r.t); r.prevValid = !!r.hasT; r.hasT = true; r.t.set(f32(c, c._audio_telemetry(), TELEMETRY));
-    for (let i = 0; i < n; i++) dispatch(r, ev[5 * i], ev[5 * i + 1], ev[5 * i + 2], ev[5 * i + 3], ev[5 * i + 4]);
+    for (let i = 0; i < n; i++) {
+      pre = r.pre?.get(i) ?? null;
+      dispatch(r, ev[5 * i], ev[5 * i + 1], ev[5 * i + 2], ev[5 * i + 3], ev[5 * i + 4]);
+    }
+    pre = null;
+    r.pre = null;
+    r.preSeen = 0;
+  }
+  // pv sfxPs2Rng: the picks of the events the riders' physics queued (296310 crash, 29F660 grunt, 2A6648 / 2A64A0 crowd), drawn as
+  // the PS2 draws them inside the rider pass: riders in slot order, each one's events in order, each event's dispatchers in order.
+  // The gates are the dispatchers' own, read now (the listener, the bus, the playing grunt, the crowd's emitters and lists).
+  // list: [{core}] (the human core and the computer riders' cores)
+  function riderPass(list) {
+    if (!ps2Rng()) return;
+    let gruntStarted = false;
+    // (riders known from an earlier tick; a new one's first events draw when they run)
+    const order = list.map((x) => riders.get(x.core)).filter((r) => r && !r.remote && r.core?._audio_events).sort((a, b) => a.slot - b.slot);
+    for (const r of order) {
+      const c = r.core;
+      const q = f32(c, c._audio_events(), 1 + 64 * 5);
+      const n = q[0] | 0;
+      const t = f32(c, c._audio_telemetry(), TELEMETRY);
+      r.pre ??= new Map();
+      // (a queue not drained since: its earlier events are drawn already)
+      for (let i = r.preSeen ?? 0; i < n; i++) {
+        const type = q[1 + 5 * i], a = q[2 + 5 * i], b = q[3 + 5 * i];
+        const kinds = [];
+        const gruntCheck = (kind, g = r) => {
+          if (gruntStarted || !gruntOpen(g)) return;
+          gruntStarted = true;
+          if (g.human && kind !== 2) kinds.push('grunt');
+        };
+        const crowdCheck = (kind, value) => {
+          if (r.human && value > 0 && crowd.reacts?.(kind, trickLevel(value))) kinds.push('crowd');
+        };
+        if (type === AE.CRASH) {
+          if (crashDraws(r, t, b)) kinds.push('crash');
+          gruntCheck(0);
+          crowdCheck('fall', Math.abs(a));
+        } else if (type === AE.CRASH_LOOP && b !== 0) {
+          if (crashDraws(r, t)) kinds.push('crash');
+        } else if (type === AE.CRASH_GRUNT) gruntCheck(a);
+        else if (type === AE.SOFT) gruntCheck(2);
+        else if (type === AE.LANDING) crowdCheck('trick', a);
+        else if (type === AE.PAIR) {
+          // 2A0A30 (pair(): the target's grunt after the gates)
+          const B = coreOfSlot(q[4 + 5 * i]), A = coreOfSlot(q[5 + 5 * i]);
+          if (A && B && (A.human || B.human) && engine.busGain('CHARACTER') > 0 && B.t[4] !== 2 && A.t[4] !== 2) gruntCheck(0, B);
+        }
+        if (kinds.length) r.pre.set(i, kinds.map((kind) => ({ kind, value: presentation.draw() })));
+      }
+      r.preSeen = n;
+    }
   }
 
   const api = {
@@ -517,7 +616,7 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
       });
       if (finished && !G.finished) {
         // 286EA0 (focus rider)
-        crowd.trick(2);
+        crowd.trick(2, drawer('crowd'));
         stopCrashLoops(h);
         G.hud.uberVoice?.stop(0.25);
         stopLoops(h); // the rider loops fall silent after the finish (rider+0x470)
@@ -552,6 +651,7 @@ export function createSfxGame({ engine, sfx, speech, crowd, world, music, random
     // 29C420 / 29C7B0 callbacks are driven from tick(); these expose the dispatchers for tests.
     dispatch,
     rider,
+    riderPass,
     riders: () => [...riders.values()],
     debug() {
       return {

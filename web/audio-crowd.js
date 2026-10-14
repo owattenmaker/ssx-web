@@ -3,6 +3,15 @@
 // Addresses: instance ctor 2A4D68, per-frame 2A4E88, reactions 2A64A0 (trick) / 2A6648 (fall), anticipation
 // 2A67F0 / 2A6808 / 290FD0, stop 2A6848, loop bend 2A68B0, emitters 2A7678 / 2A7340 / 2A72D8, MIDI 3B9A00.
 
+import { pv } from './pv-flags.js';
+import { listPick } from './sfx-ps2-rng.js';
+
+// pv crowdSeqPs2: one sequence tick of the EA audio thread (3C19A8): 3B5540(94) runs the 100 Hz service 3B55F0 100 times per 94
+// IOP wakeups (SIF command 1 -> 3C1578 -> the thread's semaphore), one wakeup per 512 samples at 48 kHz; the .eam player 3B96B8 is
+// one of its callbacks. ARMSX2 (local/sfx-rng/zoe-rng): 1.6638 service ticks per game tick = 99.73 Hz. The audio clock, not the
+// game's ticks: a slow frame on the PS2 does not slow the crowd.
+export const CROWD_TICK_MS = (10 * 94) / 93.75;
+
 // ---- .eam (MIDx): [wait][status][d1]([d2]); wait = ticks after the record; 1 tick = 10 ms (3B96B8 at 100 Hz) ----
 export function parseMidx(buf) {
   const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -33,10 +42,27 @@ export function crowdConfig(inf) {
     attack: g[`ATTACK${d}`] ?? 1, decay: g[`DECAY${d}`] ?? 4, maxBend: g[`MAXBEND${d}`] ?? 32 }));
 }
 
-export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5 }) {
+// draw (pv sfxPs2Rng): a presentation-stream draw (web/sfx-ps2-rng.js) for the picks without an event of their own (anticipation),
+// or null for `random`.
+export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5, draw = null }) {
   const sequences = new Map(); // file -> promise events
-  const seq = (file) => { if (!sequences.has(file)) sequences.set(file, bytes(`banks/${file}`).then(parseMidx)); return sequences.get(file); };
-  const pick = (list) => list[Math.floor(random() * list.length) % list.length]; // 2A4CA0
+  const loaded = new Map(); // file -> events (pv crowdSeqPs2: read with the bank, as the PS2 holds them)
+  const seq = (file) => {
+    if (!sequences.has(file)) sequences.set(file, bytes(`banks/${file}`).then(parseMidx).then((events) => { loaded.set(file, events); return events; }));
+    return sequences.get(file);
+  };
+  // 2A4CA0: list[BXrand % n] with a presentation draw (pv sfxPs2Rng), else Math.random
+  const pick = (list, take = null) => {
+    const v = (take ?? draw)?.() ?? null;
+    return v != null ? listPick(list, v) : list[Math.floor(random() * list.length) % list.length];
+  };
+  // pv crowdSeqPs2: every reaction sequence of CROWD.INF, read when the first crowd emitter registers (Crowd.bnk's load)
+  let preloaded = false;
+  function preload() {
+    if (preloaded || !pv('crowdSeqPs2')) return;
+    preloaded = true;
+    for (const rec of config) for (const f of [...rec.trick, ...rec.fall, ...rec.anticipate]) seq(f).catch(() => null);
+  }
   // Instance (0x190 bytes): emitters {pos, weight, group}, groups by patch {patch, voice, refs}, reaction.
   const inst = { emitters: new Map(), groups: new Map(), loudness: 0, centroid: [0, 0, 0], reaction: null, anticipation: 0, level: 0, T: 0 };
 
@@ -50,7 +76,10 @@ export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5
   function playSequence(file) {
     const r = { voices: [], cancelled: false, done: false, started: performance.now() };
     const volume = inst.loudness, position = [...inst.centroid];
-    seq(file).then((events) => {
+    // pv crowdSeqPs2: a read sequence posts its notes now (this tick), at the audio thread's tick length
+    const ps2 = pv('crowdSeqPs2');
+    const tickMs = ps2 ? CROWD_TICK_MS : 10;
+    const post = (events) => {
       if (r.cancelled) return;
       const chan = Array.from({ length: 16 }, () => ({ program: 0, volume: 127 }));
       let last = 0;
@@ -60,13 +89,15 @@ export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5
         else if (e.type === 'control' && e.controller === 7) c.volume = e.value & 0x7f;
         else if (e.type === 'noteOn') {
           const vol = (c.volume * volume) >> 7; // CC7 x sequence volume >> 7
-          const v = sfx.play({ slot: bank, sound: c.program, bus: 'UI', volume: vol, position, posStatic: true, note: e.note, velocity: e.velocity, delayMs: e.tick * 10 });
+          const v = sfx.play({ slot: bank, sound: c.program, bus: 'UI', volume: vol, position, posStatic: true, note: e.note, velocity: e.velocity, delayMs: e.tick * tickMs });
           if (v) r.voices.push(v);
         }
         last = Math.max(last, e.tick);
       }
-      r.lengthMs = last * 10; // the sequence (and its handle) lives until the note-offs (~20 s)
-    });
+      r.lengthMs = last * tickMs; // the sequence (and its handle) lives until the note-offs (~20 s)
+    };
+    if (ps2 && loaded.has(file)) post(loaded.get(file));
+    else seq(file).then(post);
     return r;
   }
   function reactionPlaying() {
@@ -75,12 +106,13 @@ export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5
     return performance.now() - r.started < r.lengthMs;
   }
   // 2A64A0 / 2A6648: trick / fall reaction of level L (0..2).
-  function react(kind, L) {
+  // take: the reaction's draw (pv sfxPs2Rng: its event's presentation draw, web/sfx-game.js)
+  function react(kind, L, take = null) {
     stopReaction();
     if (!inst.emitters.size) return;
     const rec = config[L]; inst.level = L; inst.T = rec.attack + rec.decay;
     const list = kind === 'trick' ? rec.trick : rec.fall; if (!list.length) return;
-    inst.reaction = playSequence(pick(list));
+    inst.reaction = playSequence(pick(list, take));
   }
 
   // 2A5D08 / 2A5CD8 / 2A62F0: emitter registration (world sound emitters resolving to bank 5).
@@ -88,6 +120,7 @@ export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5
     let e = inst.emitters.get(key);
     if (!e) {
       e = { patch, position, weight: 0 }; inst.emitters.set(key, e);
+      preload();
       let g = inst.groups.get(patch); if (!g) { g = { patch, voice: null, refs: 0, position: [...position], weight: 0 }; inst.groups.set(patch, g); }
       g.refs++;
     }
@@ -120,8 +153,10 @@ export function createCrowd({ sfx, bytes, config, random = Math.random, bank = 5
 
   return {
     emitter, removeEmitter,
-    trick(L) { react('trick', L); },   // 2A73A8
-    fall(L) { react('fall', L); },     // 2A73D8
+    trick(L, take) { react('trick', L, take); },   // 2A73A8
+    fall(L, take) { react('fall', L, take); },     // 2A73D8
+    // the reaction would pick from a list (2A64A0 / 2A6648: emitters registered (+0xD4), a list for the level): a 2A4CA0 draw
+    reacts(kind, L) { return inst.emitters.size > 0 && (config[L]?.[kind]?.length ?? 0) > 0; },
     arm() { if (inst.anticipation === 0) inst.anticipation = 1; },            // 2A7408
     cancel() { if (inst.anticipation === 2) stopReaction(); inst.anticipation = 0; }, // 2A7438
     // Per frame (2A4E88). level(): 290FD0 (0..2, 3 = none).

@@ -10,6 +10,10 @@
 //                                         with each request's tick (playTicks)
 //        [--chunk K] [--paced]            K ticks per page call (400); --paced: one tick per animation frame, as a live run steps
 //                                         (the frame's work between the ticks: GO, the listener, the effects' frame history)
+//        [--pv LIST]                      the page's ?pv= switches (e.g. -onlineRecords: the PS2's local records table, as native keeps)
+//        [--ui-clock F] [--no-replay]     the results panels' timeline frame fixed at F (careerUI.resultsLui.clock); Replay greyed
+//                                         (native has no full replay yet)
+// Past the pad's last frame the run holds it (a replay's pad stream keeps its last values, as the native reader does).
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
 import { parse, toChannels } from '../../tools/tas/pad-format.mjs';
@@ -33,9 +37,12 @@ const keepHud = args.includes('--hud') || !!canvasLog;
 const audioLog = opt('audio-log');
 const chunkSize = Math.max(1, +opt('chunk', 400));
 const paced = args.includes('--paced');
+const pvList = opt('pv');
+const uiClock = opt('ui-clock');
+const noReplay = args.includes('--no-replay');
 if (riders && !['ps2', 'xbox'].includes(riders)) throw new Error('--riders ps2|xbox');
 if (bc && !['0', '1'].includes(bc)) throw new Error('--bc 0|1');
-const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '') + (audioLog ? '&perf=1' : '');
+const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '') + (audioLog ? '&perf=1' : '') + (pvList ? `&pv=${encodeURIComponent(pvList)}` : '');
 const { frames } = parse(fs.readFileSync(padPath, 'utf8'));
 
 const browser = await startBrowser({ width: 640, height: 480 });
@@ -62,6 +69,8 @@ try {
   await browser.waitFor(`document.getElementById('stage')?.dataset.screen === 'ctm-objectives' || !!document.body.dataset.loadError`, 300000);
   if (audioLog) await E('(()=>{window.__perfAudio.sfx.logPlays(true);return 1})()');
   await E('(()=>{ssxQA.ui().careerUI.play();return 1})()');
+  if (noReplay) await E('(()=>{ssxQA.ui().cb.replayAvailable=()=>false;return 1})()');
+  if (uiClock != null) await E(`(()=>{const rl=ssxQA.ui().careerUI.resultsLui;if(rl)rl.clock=()=>${+uiClock};return 1})()`);
   await sleep(300);
   const base = await E('window.__simTrace.ticks.length');
   const total = tick + 2;
@@ -76,7 +85,8 @@ try {
   const after = audioLog ? 'window.__playCounts.push(window.__perfAudio.sfx.plays.length);window.__listeners.push(window.__lastListener??null);' : '';
   const step = paced ? 'await new Promise((r)=>requestAnimationFrame(r));' : '';
   for (let at = 0; at < total; at += chunkSize) {
-    const chunk = frames.slice(at, Math.min(total, at + chunkSize)).map((f) => Array.from(toChannels(f)));
+    const chunk = [];
+    for (let i = at; i < Math.min(total, at + chunkSize); i++) chunk.push(Array.from(toChannels(frames[Math.min(i, frames.length - 1)])));
     await E(`(async()=>{for(const p of ${JSON.stringify(chunk)}){ssxQA.advance(1,p);${after}${step}}return 1})()`);
   }
   if (audioLog) {

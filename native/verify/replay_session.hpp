@@ -1128,6 +1128,7 @@ struct Verifier {
     float crossAge = 0;
     float worldState[396] = {};
     bool running = true;
+    bool resultsShow = false;
     struct Finish {
         bool seen = false;
         int32_t score = 0;
@@ -1206,6 +1207,11 @@ struct Verifier {
         if (hasCamera) {
             std::memcpy(camera, e + 1, sizeof camera);
         }
+        // a replay's camera (web/replay_camera.inc, tick_end [10..19]: the pose and its cut id)
+        hasReplayCamera = (endFlags & 2) != 0;
+        if (hasReplayCamera) {
+            std::memcpy(replayCamera, e + 10, sizeof replayCamera);
+        }
         if (endFlags & 8) {
             finished = true;
             postFinishTicks = 0;
@@ -1222,6 +1228,8 @@ struct Verifier {
         resultsPending = io[0] != 0;
         crossHeld = io[1];
         crossAge = io[2];
+        // the results show this tick (web/game-tick.js rec.results: ui.showResults)
+        resultsShow = io[3] != 0;
         if (finished) {
             postFinishTicks = io[4];
         }
@@ -1232,6 +1240,17 @@ struct Verifier {
     }
     float camera[9] = {};
     bool hasCamera = false;
+    float replayCamera[10] = {};
+    bool hasReplayCamera = false;
+    // web/replay.js rewind -> main.js startRun(R): the run again from its start snapshot R on the same cores, as a replay
+    void replayRestart(const json& R) {
+        meta["snapshot"] = R;
+        live = false;
+        finished = false;
+        resultsPending = false;
+        resultsShow = false;
+        startRun();
+    }
     // QA: tools/tas/page-run.mjs dump.json's row of this tick (the human's state, the shared RNG, each computer rider's state, the
     // visual RNG, the posed frame, animation_info, boost_info, the score object's hash), floats written to round-trip
     void dumpRow(std::string& out) {

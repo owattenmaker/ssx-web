@@ -28,6 +28,7 @@
 import { rngNext, coreHost } from '../ai-racers.js';
 import { placeGlowStep } from '../race-place-hud.js';
 import { DELAY_TICKS } from './remote-riders.js';
+import { pv } from '../pv-flags.js';
 
 export const RANK_DELAY = DELAY_TICKS;
 
@@ -45,11 +46,17 @@ export function contactStream(seed, tick, a, b, target) {
   return w;
 }
 
+// pv mpKnockouts: a victim's notice of an attacked crash, sent in an attack packet (web/net/rider-packet.js ATTACK) with this amount:
+// sender = victim, so clients without the switch drop it (they take attacks only from their attacker)
+export const KNOCKOUT_NOTICE = -1;
 export function createPairNet({ core, remote, slot, count, pairInputs = [], seed = 0, sendAttack = () => {}, predictResponse = true }) {
   if (!core?._race_world_pairs || !core._race_world_pair_respond) throw new Error('core lacks the online pair exports (web/build-core.sh)');
   if (!(count >= 1 && count <= 6) || !(slot >= 0 && slot < count)) throw new Error(`online pair world: slot ${slot} of ${count}`);
   const buffer = core._malloc(36 * 4);
-  const counts = { checks: 0, separations: 0, impulses: 0, attacks: 0, reactions: 0, sentAttacks: 0, receivedAttacks: 0, ghostTranslations: 0, ghostImpulses: 0, streamDraws: 0 };
+  const counts = { checks: 0, separations: 0, impulses: 0, attacks: 0, reactions: 0, sentAttacks: 0, receivedAttacks: 0, ghostTranslations: 0, ghostImpulses: 0, streamDraws: 0, knockouts: 0 };
+  // pv mpKnockouts (docs/core-migration.md "M7"): the attacker's knockout of a crash attack on a remote rider
+  const knockouts = pv('mpKnockouts') && !!core._pair_knockout;
+  let knockoutsPending = 0;
   // Contact streams of the running dispatch: keyed by (key tick, pair, target); `other` = the pair's remote slot,
   // `viewed` = the rider whose response is being computed (107E70 views its target right before drawing).
   let streams = new Map(), keyTick = 0, other = -1, viewed = -1;
@@ -64,6 +71,12 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
   const history = []; // this rider's [x, y, z, remaining] after each tick (index = tick)
   let lastRankInputs = null, rankState = null, nextRankPass = 0, rankPasses = 0, tick = 0, worldState = null, pending = [], place = -1, placeTimer = -1, glowTimer = -1, disabledMask = 0;
   const rng = () => new Uint32Array(core.HEAPU8.buffer, core._animation_rng_words(), 6);
+  // pv coreContactStream (docs/core-migration.md "M7"): the streams made and drawn in the core (web/contact_stream.inc)
+  const coreStream = pv('coreContactStream') && !!core._contact_stream_begin;
+  const begin = () => {
+    streams = new Map();
+    if (coreStream) core._contact_stream_begin(seed >>> 0, keyTick >>> 0);
+  };
   // Original world reset (npc-riders.json layout): records a->b enabled for every pair of racers, all human.
   {
     const init = [count, 0, 1];
@@ -96,15 +109,31 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
     },
     // A reaction of this rider: its draws (the soft reaction's 0x108388 motion draws, a crash entry's) come from the
     // contact stream, loaded into the core's game RNG for the call and taken back after.
-    react(s, kind, animation, attack, eventPtr) {
+    react(s, kind, animation, attack, eventPtr, attacker) {
       const log = s === slot ? reactions.own : reactions.predicted;
       log.push({ tick: keyTick, slot: s, other: s === slot ? other : slot, kind, animation, attack: !!attack });
       if (log.length > 64) log.shift();
       if (s !== slot) return;
+      // pv mpKnockouts: 107E70's crash path after an attack (0x108304 -> 10E468 at 0x10830C) credits the ATTACKER (119400: +0x128,
+      // popup 0x2C for 1.5 s, 10E098(attacker, 1.0, 2)), with no multiplayer test (0x535C11) on the way. This rider is the victim and
+      // the attacker a remote rider: the victim's client knows the crash (the attacker's prediction can repeat a hit inside the packet
+      // delay), so it tells the attacker's client, which credits it at its next pair pass.
+      if (knockouts && kind === 2 && attack && attacker !== slot && attacker >= 0 && attacker < count) {
+        counts.sentKnockouts = (counts.sentKnockouts ?? 0) + 1;
+        sendAttack({ victim: slot, attacker, tick: keyTick, direction: [0, 0, 0], amount: KNOCKOUT_NOTICE });
+      }
+      if (coreStream) {
+        core._contact_stream_react(slot, other, kind, animation, attack, eventPtr);
+        return;
+      }
       const words = rng(), saved = words.slice(), w = stream(slot);
       words.set(w); try { core._pair_react(kind, animation, attack, eventPtr); } finally { const after = rng(); w.set(after); after.set(saved); }
     },
-    random() { counts.streamDraws++; return rngNext(stream(viewed === slot ? slot : other)); },
+    random() {
+      counts.streamDraws++;
+      if (coreStream) return core._contact_stream_random(slot, other, viewed === slot ? slot : other) >>> 0;
+      return rngNext(stream(viewed === slot ? slot : other));
+    },
     attack(victim, attacker, x, y, z, amount) {
       if (attacker !== slot || victim === slot) return;
       counts.sentAttacks++; sendAttack({ victim, attacker, tick, direction: [x, y, z], amount });
@@ -113,14 +142,19 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
   core.riderHost = coreHost(core, {
     // 0x107888 inside the local rider's 121750: first the attacks other clients found on this rider, then its own pass.
     pairs() {
+      // pv mpKnockouts: the knockouts remote victims reported, credited at this pair pass (10E468's 119400 on this rider's score)
+      for (; knockoutsPending > 0; knockoutsPending--) {
+        counts.knockouts++;
+        core._pair_knockout();
+      }
       for (const e of pending.splice(0)) {
         if (tick - e.tick > 30 || e.attacker >= count || e.attacker === slot) continue;
         // The attacker's client drew its prediction of this response from the stream of (attack tick, pair, victim).
-        keyTick = e.tick; other = e.attacker; streams = new Map();
+        keyTick = e.tick; other = e.attacker; begin();
         const out = f32(core, core._race_world_pair_respond(slot, e.attacker, e.direction[0], e.direction[1], e.direction[2], e.amount), 5);
         counts.impulses += out[2]; counts.reactions += out[4]; counts.receivedAttacks++;
       }
-      keyTick = tick; streams = new Map();
+      keyTick = tick; begin();
       const out = f32(core, core._race_world_pairs(tick, slot), 5);
       counts.checks += out[0]; counts.separations += out[1]; counts.impulses += out[2]; counts.attacks += out[3]; counts.reactions += out[4];
     },
@@ -135,6 +169,10 @@ export function createPairNet({ core, remote, slot, count, pairInputs = [], seed
     get rankInputs() { return lastRankInputs; }, // QA: the last ranking pass's [x, y, z, remaining] per slot
     // An attack event from another client ({victim, attacker, tick, direction, amount}).
     receiveAttack(e) { if (e.victim === slot) pending.push(e); },
+    // pv mpKnockouts: a remote victim's attacked crash by this rider (KNOCKOUT_NOTICE)
+    receiveKnockout(e) {
+      if (knockouts && e.attacker === slot && e.victim !== slot) knockoutsPending++;
+    },
     // 0x10F560 on the tick-start state (call before the local rider's pad_tick).
     beginTick() {
       const own = f32(core, core._rider_world_state(), 3), progress = f32(core, core._race_progress_info(), 1);

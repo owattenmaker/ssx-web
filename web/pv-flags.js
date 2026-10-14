@@ -218,6 +218,13 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// mpKnockouts (core-migration agent, docs/core-migration.md "M7"; a fix, a behaviour change): an online crash attack counts the attacker's
+// knockout (107E70 -> 10E468 -> 119400: +0x128, popup 0x2C, the meter award 10E098 category 2), as offline and in the PS2's 2-player mode
+// (no 0x535C11 test); the attacker's client credits it when its prediction of the remote victim's reaction is the attacked crash.
+// Off: online knockouts are never counted (the reaction's attacker argument was dropped).
+// coreContactStream (core-migration agent, docs/core-migration.md "M7"): an online race's contact random streams (web/net/pair-net.js
+// contactStream: the race seed, the contact tick, the pair and the reacting rider) made and drawn in the core (web/contact_stream.inc),
+// the reaction's game-RNG swap there too; needs a core with contact_stream_begin. Off: web/net/pair-net.js.
 // coreWorldState (core-migration agent, docs/core-migration.md "M8"; a behaviour change: the writes on the PS2's ticks, the visited bit at
 // the WS10 exit one tick after the Load, a transport's at its WS10): a Conquer the Mountain crossing's / transport's career writes
 // follow the core's world-state machine (web/peak_world.inc event 7: WS11 enter 0x2368A0 the new-career flag, WS10 enter 0x2355C0 the
@@ -289,7 +296,17 @@
 // low tier's 'auto' frame gate (web/quality.js frameGate) returns from 30 to 60 when the median frame work is under 11 ms (it drops
 // above 13), and at 30 it probes 60 for one 45-frame window after 10 s, the wait doubling to 80 s after each probe that fails. Off: back
 // to 60 only under 7 ms, so a page whose work settles at 7..13 ms after one spike stays at 30 (Chrome and WebKit races, measured).
+// sfxPs2Rng (sfx RNG agent, docs/audio-logic.md 5.6): the crash sound, human grunt and crowd reaction picks draw from the PS2's
+// presentation generator 0x4FF018 (2ADF60 / 2A4CA0 -> BXrand 0x3177F0), the human core's visual_rng_words, with the PS2 formulas
+// (web/sfx-ps2-rng.js) and gates (296310: no range gate for the human; 29F660: replay, finished, one grunt at a time, then the
+// draw). The draws of the rider pass come after every rider's physics and before 121818 (web/game-tick.js splits tick_begin), as on
+// the PS2; the rest at the tick's audio. Off: Math.random, and the visual stream misses these draws (visual-rng-order.md G5).
+// crowdSeqPs2 (sfx RNG agent, docs/audio-logic.md 5.6): the crowd .eam sequences are read with Crowd.bnk and a reaction posts its
+// notes in its own tick, one sequence tick = 10 ms x 94 / 93.75 (3B5540: 100 service ticks per 94 IOP wakeups at 48000 / 512 Hz).
+// Off: the notes post when the sequence's fetch resolves (a tick or more late) at 10 ms a tick.
 export const PV_DEFAULTS = Object.freeze({
+  sfxPs2Rng: false,
+  crowdSeqPs2: false,
   speechRange: false,
   flyover: false,
   lazyCourse: true,
@@ -351,6 +368,8 @@ export const PV_DEFAULTS = Object.freeze({
   coreCareerWorld: true,
   coreWorldEvents: false,
   coreWorldState: true,
+  coreContactStream: false,
+  mpKnockouts: true,
   stationSplitPs2: true,
   nisOnTicks: true,
   fadesOnTicks: true,

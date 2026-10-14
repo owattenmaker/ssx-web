@@ -15,6 +15,7 @@
 #include "gpu.hpp"
 #include "json.hpp"
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -80,6 +81,14 @@ public:
     // and the arrow triangle (#f0f5f8) at the current transform
     void keyCapBox(double x, double y, double w, double h, double radius, double lineWidth);
     void keyCapArrow();
+    // beginPath, a closed polygon (user space), fill with paint(ux, uy) -> straight RGBA 0..1 (a solid colour or a gradient's)
+    using Paint = std::function<std::array<double, 4>(double, double)>;
+    // paintKey: the paint's identity (its colours and stops); with it a repeated fill reuses its raster
+    void fillPolygon(const std::vector<std::array<double, 2>>& points, const Paint& paint, bool gradient, const std::string& paintKey = "");
+    // several closed paths filled as one (nonzero)
+    void fillPolygons(const std::vector<std::vector<std::array<double, 2>>>& paths, const Paint& paint, bool gradient, const std::string& paintKey = "");
+    // a closed path stroked (lineWidth, a solid colour)
+    void strokePolygon(const std::vector<std::array<double, 2>>& points, const std::array<double, 4>& colour, double lineWidth, const std::string& paintKey = "");
 
     // a frame: cleared, the calls, then encode
     void begin();
@@ -112,6 +121,10 @@ private:
         float colour[4];
         // the image's size, mode (0 image, 1 fill)
         float info[4];
+        // a rotated image: the canvas-to-user inverse (a b c d), (e f, 1, the user size of a device pixel), the user-space rect
+        float inv[4];
+        float affine[4];
+        float rect[4];
     };
     struct Batch {
         int image = -1;
@@ -131,6 +144,10 @@ private:
     std::vector<Batch> batches_;
     // the per-frame shape images (key caps): reused by content
     std::map<std::string, int> shapes_;
+    void rasterPaths(const std::vector<std::vector<std::array<double, 2>>>& paths, const Paint& paint, const std::string& paintKey,
+                     const std::function<bool(double, double)>& inside, double pad);
+    // fillPolygon rasters by their inputs
+    std::map<std::string, int> fills_;
 
     WGPUTexture target_ = nullptr;
     WGPUTextureView targetView_ = nullptr;

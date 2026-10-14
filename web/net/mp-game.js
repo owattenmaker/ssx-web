@@ -20,7 +20,7 @@ import { createMpClient, sessionToken } from './mp-client.js';
 import { createRemoteRiders, DELAY_TICKS } from './remote-riders.js';
 import { captureState, encodeState, encodeAttack, encodeWorld, decodeFrame, drainFx, ATTACK, STATE, WORLD } from './rider-packet.js';
 import { createRemoteFx } from './remote-fx.js';
-import { createPairNet, DEFAULT_PAIR } from './pair-net.js';
+import { createPairNet, DEFAULT_PAIR, KNOCKOUT_NOTICE } from './pair-net.js';
 import { createPickupArbiter } from './pickup-arbiter.js';
 import { paceSeconds } from './race-pace.js';
 import { createOpponentRiders } from '../opponent-riders.js';
@@ -465,6 +465,8 @@ export function createMpGame({
         stats.receivedAttacks++;
         pairNet?.receiveAttack(e);
       }
+      // pv mpKnockouts (web/net/pair-net.js KNOCKOUT_NOTICE): the victim's notice of an attacked crash
+      else if (e && e.slot === e.victim && e.amount === KNOCKOUT_NOTICE) pairNet?.receiveKnockout?.(e);
       return;
     }
     if (frame[1] === STATE) {

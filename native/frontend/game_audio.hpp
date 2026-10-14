@@ -132,6 +132,9 @@ public:
     void prepare(const std::string& courseCode, const std::string& character, bool warm = true);
     void worldLoaded(int courseIndex, bool singleEvent, const std::string& courseCode, const std::string& character, int rounds = 1);
     void runStart(int courseIndex, bool singleEvent, const std::string& courseCode, const std::string& character);
+    // web/game-audio.js replayRewind: a replay starts or loops (web/replay.js) with the game sound state of a run start, without the
+    // music; 288AE0 stays set
+    void replayRewind();
     void go(std::optional<bool> medalRun = std::nullopt);
     void finish(bool runsLeft, int place, bool timedOut, const std::string& winner = "");
     void podium(std::optional<int> place = std::nullopt, const std::string& winner = "");

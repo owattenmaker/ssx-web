@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { createTestRider, json } from './net/test-core.mjs';
 import { createRemoteRiders } from './net/remote-riders.js';
-import { createPairNet } from './net/pair-net.js';
+import { createPairNet, contactStream } from './net/pair-net.js';
+import { pv } from './pv-flags.js';
 import { captureState, encodeState, encodeAttack, decodeFrame, ATTACK } from './net/rider-packet.js';
 
 const LATENCY = 6; // ticks one way
@@ -80,5 +81,25 @@ const predicted = clients[1].net.reactions.predicted.filter((r) => r.attack), ac
 const same = predicted.filter((p) => actual.some((a) => a.tick === p.tick && a.kind === p.kind && a.animation === p.animation)).length;
 console.log(`attack reactions: B predicted ${JSON.stringify(predicted.map((r) => [r.tick, r.kind, r.animation]))}, A applied ${JSON.stringify(actual.map((r) => [r.tick, r.kind, r.animation]))}`);
 assert.ok(actual.length > 0 && same === predicted.length, 'the victim reacts exactly as the attacker predicted');
+// pv coreContactStream (docs/core-migration.md "M7"): the core makes the same streams as web/net/pair-net.js contactStream
+{
+  const core = clients[0].rider.core;
+  if (core._contact_stream_test) {
+    let n = 0;
+    for (const seed of [0, 1, 4242, 0x12345678, 0xffffffff]) {
+      for (const tick of [0, 1, 600, 123456]) {
+        for (let a = 0; a < 6; a++) {
+          for (let b = 0; b < 6; b++) {
+            const target = (a + b) % 6;
+            const words = Array.from(new Uint32Array(core.HEAPU8.buffer, core._contact_stream_test(seed, tick, a, b, target), 6));
+            assert.deepEqual(words, Array.from(contactStream(seed, tick, a, b, target)), `contact stream ${seed} ${tick} ${a} ${b} ${target}`);
+            n++;
+          }
+        }
+      }
+    }
+    console.log(`contact streams: the core's equal pair-net.js's on ${n} keys; this run's streams in the core: ${pv('coreContactStream')}`);
+  } else console.log('contact streams: core without contact_stream_test (rebuild web/runtime)');
+}
 for (const c of clients) c.net.dispose();
 console.log('online rider pairs: contact from both sides, attack events and victim responses, ranking OK');

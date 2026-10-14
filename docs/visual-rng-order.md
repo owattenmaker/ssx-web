@@ -325,6 +325,9 @@ The shared stream is the human core's `snowParticleRandom` (web/animation_bridge
         not be re-armed from the stream.
    6. **Camera** (`_step_camera_head`, already at the right place).
 5. **G5: audio (0x2ADF60 rand15, 0x2A4CA0) uses Math.random** in web/game-audio.js, sfx-game.js and audio-crowd.js.
+   - 2026-10-14, pv sfxPs2Rng ([audio-logic.md](audio-logic.md) 5.6): the crash sound, the human's grunt and the crowd picks draw
+     from the human core's stream after every rider's physics (web/game-tick.js between tick_rider and tick_progress). ARMSX2 era-rng
+     with the words synced at the record point: the PS2's own value for all 10 draws.
    - PS2 draws happen in the rider-manager passes (step 4). They are rare (33 in 12440 ticks) but shift everything
      after them.
    - A fix needs the audio triggers inside the core tick, or a two-phase exchange.

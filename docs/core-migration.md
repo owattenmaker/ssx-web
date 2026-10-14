@@ -67,9 +67,12 @@ The JS that decides simulation results, beyond presentation:
 | Slot | The collectible slot's PS2 reset (309F18 at the WS10 enter) | collectSlotReset | core13b, on |
 | C | The mission constants (builtin 59 answered by default) | | core15 (with M8) |
 | M8a / b | The CTM world-state machine: the riding world's states 4 / 11 / 10 (M8a); the crossing's career writes from it (M8b) | coreWorldState | core15, verified |
-| M8c.. | WS14 / 15 (stations, lodge, map, transport), the race's 5 / 7 / 12 / 13, WS1 / 2 / 3 as host inputs | | next |
+| M8c-1 | The race's 4 -> 5 (EndRace) and 5 -> 7 (the results shown) in the core | | in the tree (core16), with the next install |
+| M8c-2 / 3 | The host-input states (card, heats, podium, WS14 / 15 results): the native host's spec is ws-machine.md section 3; the host request export and the few decision rules come only when a native front end needs them | | deferred (coordinator) |
 | N | The cutscene feeds (section point, nis_hold actors, the NIS board root) in the core | | after M8 |
-| M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
+| M7-1 | The online contact random stream in the core | coreContactStream | in the tree (core17), verified |
+| KO | Online knockouts counted (a fix) | mpKnockouts | in the tree (JS only), verified on two pages |
+| M7-2.. | Pickup arbitration + shared-world replication, the grid spot, the ranking pipeline, the ghost state and pair host; pacing stays a host contract | | next |
 
 The core API a native front end needs afterwards: load (the existing init_* documents); session (event_setup -> the lineup and
 packages to load, event_start, restart, give_up, camera view, input map); tick(pad[24]) -> one record (state, pose, camera, race
@@ -473,6 +476,41 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
     difference is the visited bit one tick later with the switch (at the WS10 exit, the PS2's record) than off (at the Load). A
     transport (career-ui goWorld(17) on the page): the same career on and off; off writes all at the course change, on at the WS10
     enter / exit once the destination's rows are in (as the PS2's WS10 waits for them).
+
+- M8c-1 (core16): web/game_tick.cpp tick_results requests world state 5 at EndRace (113DB0: 12A250 race over) and 7 when the
+  results show (WS5's update 233CD8 -> 231320); a course event's 230F40 point is tick_input's start (browser_world_state_frame), a
+  streamed world's stays in peak_world_tick. Check (local/core-migration/m8/ws-results.mjs): WS5 -> WS7 in 407 ticks after a finish,
+  287 after TIME'S UP, as the PS2 captures (apr-finish / p2r-finish, apr-full / p2r-full). Not modelled: WS3 -> 4 at GO (its order
+  against the race clock is not traced), a podium's 12 (a host input).
+- M8c-2 / 3 deferred (coordinator, 2026-10-14): the remaining states are driven by UI choices and cut ends that web/career-ui.js
+  interleaves with the page's own world handling (an in-world transport, a world reload, a ride across a world switch: no PS2
+  counterpart). local/core-migration/decomp/ws-machine.md section 3 is the native host's spec (every 231250 request, its PS2 site,
+  its trigger, where the port decides it). A host request export (231250 from a UI site) and the few decision rules (the map's
+  destination -> 15 / heli / prompt, the lodge prompt Yes / No -> 6 / 4, the booth Back -> 15, the post-event map's Back ignored) as
+  pure functions come only when a native front end needs them.
+## M7: the multiplayer rules (port-only netcode; transport stays in JS)
+
+- Survey (2026-10-14): the rules that change the local core today are the online pair host (web/net/pair-net.js, web/net/mp-game.js),
+  the ghost prediction (web/net/remote-riders.js), the ranking pipeline, the shared-world replication, the pickup arbitration
+  (web/net/pickup-arbiter.js), the contact random stream and the grid spot (web/net/grid-seed.js); the pacing (web/net/race-pace.js)
+  stays a host frame-loop contract. Order: the contact stream, the knockout fix, pickups + world replication, the grid spot, the
+  ranking, then the ghost state and the pair host.
+- M7-1 (pv coreContactStream, core17): web/contact_stream.inc makes pair-net.js's contact streams (the race seed, the contact tick,
+  the pair, the reacting rider: a murmur finaliser chain into six words of 0x317810's layout), per dispatch key tick
+  (contact_stream_begin), and runs the local reaction with the game RNG swapped for its stream (contact_stream_react) and the pair
+  host's draws (contact_stream_random). Proof: the core's words equal contactStream's on 720 keys (web/test-mp-pairs.mjs);
+  test-mp-pairs, test-mp-latency and test-remote-riders byte-identical with the switch on and off; test-mp-page on core17 (Chrome +
+  Chrome, Chrome + WebKit).
+- Knockouts (pv mpKnockouts, a fix): online crash attacks never counted the attacker's KO (pair-net.js dropped the reaction's attacker
+  argument). PS2 (dis.pkl): 107E70's crash path after an attack (0x108304) calls 10E468 at 0x10830C, whose 119400 adds 1 to the
+  attacker's +0x128 and posts popup 0x2C (1.5 s); 10E098(attacker, 1.0, 2) awards the meter; no 0x535C11 test on the way, so the PS2's
+  2-player mode counts it as offline. Online the victim's client knows its crash: it sends a notice (an attack packet with amount
+  KNOCKOUT_NOTICE = -1 and sender = victim, which the server relays and older clients drop), and the attacker's client runs
+  pair_knockout at its next pair pass. The attacker's own prediction is not used: inside the packet delay it can repeat a hit the
+  victim does not take (3 predicted crashes against 2 real ones). Proof: web/test-mp-knockouts.mjs (two cores: 2 knockouts for 2
+  attacked crashes with the switch, 0 without); two real pages (local/core-migration/m7/mp-ko.mjs, page 1 held beside page 0 and
+  charging punches): off, the victim 2 attacked bails and the attacker 0 KOs; on (Chrome + Chrome and Chrome + WebKit) 1 attacked
+  bail and 1 KO; test-mp-page passes with it.
 
 ## Native core
 

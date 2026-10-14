@@ -14,6 +14,7 @@ import { createCrowd, crowdConfig } from './audio-crowd.js';
 import { createWorldAudio } from './audio-world.js';
 import { queryAudioPainters } from './audio-painters.js';
 import { createSfxGame, gruntIndex, relationOf } from './sfx-game.js';
+import { presentationStream } from './sfx-ps2-rng.js';
 import { pv } from './pv-flags.js';
 import { avalancheState, takeLoopEvents } from './avalanche-state.js';
 
@@ -143,12 +144,15 @@ export function createGameAudio({ fetchJson = (p) => fetch(p).then((r) => { if (
       onLines: (banks, speaker) => { if (speaker === 0xa || speaker === 0xb) tl('line', banks.join('+')); } });
     speech.init().catch((e) => console.warn('Speech events unavailable', e));
     speech.onIdle = onIdle;
-    crowd = createCrowd({ sfx, bytes, config: crowdConfig(catalog.crowdInf ?? []) });
+    // pv sfxPs2Rng: the audio picks draw from the human core's presentation stream 0x4FF018 (web/sfx-ps2-rng.js)
+    const presentation = presentationStream(() => state.humanCore);
+    const crowdDraw = () => (pv('sfxPs2Rng') ? presentation.draw() : null);
+    crowd = createCrowd({ sfx, bytes, config: crowdConfig(catalog.crowdInf ?? []), draw: crowdDraw });
     world = createWorldAudio({ sfx, crowd, json, onSpecial: () => { // 2B6550 -> 2A34D0(audio, 0, 1, lst): listener rider's place
       if (!(state.course < 5 || eventKind(state.course) === 0)) return;
       if (speech.free) speech.riderPosition({ id: charId(state.character) }, state.place, true);
     } });
-    sfxGame = createSfxGame({ engine, sfx, speech, crowd, world, music: musicAdapter, animationEvents: clipEvent });
+    sfxGame = createSfxGame({ engine, sfx, speech, crowd, world, music: musicAdapter, animationEvents: clipEvent, presentation });
     sfxGame.G.instancePosition = instancePosition;
     sfxGame.G.zoneActive = () => state.trigger.zone !== 0; // 28D898
     sfxGame.G.relation = (a, b) => relFrom(state.relTick, a, b);          // overtakes: records at the tick-start ranking
@@ -1134,6 +1138,14 @@ engine?.setScaleMode('FE');
       camera.updateMatrixWorld?.(); sfx.setListener(camera, origin);
       const o = origin ? [origin.x, origin.y, origin.z] : [0, 0, 0];
       state.listenerCm = [(camera.position.x + o[0]) * 100, -(camera.position.z + o[2]) * 100, (camera.position.y + o[1]) * 100];
+    },
+    // pv sfxPs2Rng: the rider pass's audio picks, after every rider's physics and before 121818 (web/game-tick.js simulate)
+    riderPass({ core, ai = null } = {}) {
+      if (!sfxGame || !core || !pv('sfxPs2Rng')) return;
+      state.humanCore = core;
+      const list = [{ core }];
+      if (ai) for (const n of ai.racers.npcs) list.push({ core: n.core });
+      sfxGame.riderPass(list);
     },
     // Per 60 Hz game tick (main.js simTick, after the riders and the course events).
     // online (pv mpRiderSpeech, web/net/mp-game.js speechRiders): {slot, riders: [{key, slot, character, finished, motion, position,

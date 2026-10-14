@@ -872,6 +872,15 @@ void GameAudio::worldLoaded(int courseIndex, bool singleEvent, const std::string
     }
 }
 
+void GameAudio::replayRewind() {
+    const auto f = courseFlags(state_.course);
+    sfxGame_->start(state_.course, f.bigAir, f.halfPipe, f.backcountry, eventKind(state_.course));
+    state_.replay = true;
+    speech_->replay = true;
+    sfxGame_->G.replay = true;
+    relationsReset();
+}
+
 void GameAudio::runStart(int courseIndex, bool singleEvent, const std::string& courseCode, const std::string& character) {
     if (state_.restarting) {
         state_.restarting = false;

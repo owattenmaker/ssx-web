@@ -924,6 +924,7 @@ const bool softLanding=browserSoftActive; /*control 3 (12E778) touching down: 11
 #include "attack_gameplay.inc"
 #include "boardpress_gameplay.inc"
 #include "npc_gameplay.inc"
+#include "contact_stream.inc" // M7: the online contact random stream (web/net/pair-net.js, pv coreContactStream)
 #include "finish_gameplay.inc"
 #include "score_gameplay.inc"
 #include "weather.inc" // camera Weather painter, snowfall layers, camera splash, lightning (docs/weather.md)

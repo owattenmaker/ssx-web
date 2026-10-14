@@ -157,6 +157,52 @@ const rngTrace = process.env.RNG_TRACE ? process.env.RNG_TRACE.split(':').map(Nu
 // 0x4ff018:0x18 (and 0x4a3afc:4).
 // (PAGE_SEQUENCE: the page's one visual stream, web/ai-race.js createAiRacers sharedVisual)
 const sharedVisual = args.includes('--shared-visual') || pageSequence;
+// AUDIO_DRAWS=1 (pv sfxPs2Rng, web/sfx-ps2-rng.js; docs/audio-logic.md 5.6): the audio picks the PS2 draws on the visual stream inside
+// the rider pass (296310 crash sound, 29F660 grunt, 2A64A0 crowd pick), taken after every rider's physics as web/game-tick.js takes
+// them. The gates the comparer cannot see are open: the human's crash sounds (not on surface 2 / 3), its grunts of kinds 0 / 1 (one a
+// tick; AUDIO_GRUNT_TICKS=n: one per n ticks, the voice's length), a crowd pick for its landings with a trick value; the computer
+// riders' crash sounds only with AUDIO_DRAWS_AI=1 (the PS2's 100 m listener gate). The audio queues are emptied after each tick.
+// VISUAL_SYNC=1: the PS2's 0x4FF018 words at every record point (the pad read, after race_begin); VISUAL_TICKS=1: the ticks whose
+// visual draw count (record point to record point) differs from the PS2's.
+const audioDraws = process.env.AUDIO_DRAWS === '1';
+const audioDrawLog = [];
+let audioGruntUntil = -1;
+function audioRiderPass() {
+  if (!audioDraws || !human._visual_rng_words) return;
+  const words = new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6);
+  const tickNow = globalThis.__compareTick;
+  const cores = [[0, human], ...racers.npcs.map((n) => [n.slot, n.core])].sort((a, b) => a[0] - b[0]);
+  for (const [slot, c] of cores) {
+    if (!c._audio_events) continue;
+    const q = f32(c, c._audio_events(), 1 + 64 * 5);
+    const n = q[0] | 0;
+    const isHuman = c === human;
+    const crashOn = isHuman || process.env.AUDIO_DRAWS_AI === '1';
+    const surface = f32(c, c._audio_telemetry(), 24)[5];
+    const take = (kind, event) => {
+      // (VISUAL_SYNC: the web's draws since the record point, before this one)
+      const before = globalThis.__visSynced ? drawsBetween(globalThis.__visSynced, Array.from(words)) : null;
+      const value = rngNext(words);
+      audioDrawLog.push({ tick: tickNow, slot, kind, event, value, before });
+    };
+    const gruntOk = () => {
+      if (!isHuman || tickNow < audioGruntUntil) return false;
+      audioGruntUntil = tickNow + Math.max(1, +(process.env.AUDIO_GRUNT_TICKS ?? 1));
+      return true;
+    };
+    for (let i = 0; i < n; i++) {
+      const type = q[1 + 5 * i], a = q[2 + 5 * i], b = q[3 + 5 * i];
+      if (type === 3) {
+        if (crashOn && b !== 2 && b !== 3) take('crash', type);
+        if (gruntOk()) take('grunt', type);
+      } else if (type === 4 && b !== 0) {
+        if (crashOn && surface !== 2 && surface !== 3) take('crash', type);
+      } else if (type === 6 && a !== 2) {
+        if (gruntOk()) take('grunt', type);
+      } else if (type === 2 && isHuman && a > 0) take('crowd', type);
+    }
+  }
+}
 // --replay-return (pv eventReturnInWorld (b), the ctm-events/c0a-ret3 gate): the in-world results' auto replay as the page runs it
 // (web/event-snapshot.js): the countdown snapshot at the start, the results-time snapshot at the live stop, then the replay (the
 // countdown snapshot back and REPLAY_TICKS of the recorded run, default 600) before the Transport restores the results time.
@@ -265,6 +311,17 @@ function humanTick(pad) {
   if (process.env.PAD_TICKS) { const [a, b] = process.env.PAD_TICKS.split(':').map(Number), t = globalThis.__compareTick; if (t >= a && t <= b) console.error('padtick', t, BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // (diagnostic: a tick range's pads and commands)
   if (process.env.PAD_TRACE && globalThis.__padTrace > 0) { globalThis.__padTrace--; console.error('pad', BUTTONS.filter((_, k) => pad[k]).join('+') || '-', 'out', o.map((x) => +x.toFixed(3)).join(',')); } // PAD_TRACE (diagnostic): the return's first ticks
   globalThis.__compareStage = 'race_begin'; human._race_begin();
+  // VISUAL_SYNC: the PS2 record point is the pad read, after group 1 (race_begin); VISUAL_TICKS: the draws since the last record point
+  if (process.env.VISUAL_SYNC && globalThis.__visRecord && human._visual_rng_words) {
+    const w = new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6), ps2w = globalThis.__visRecord;
+    if (process.env.VISUAL_TICKS && globalThis.__visSynced) {
+      const from = globalThis.__visSynced, web = drawsBetween(from, Array.from(w)), ps2 = drawsBetween(from, ps2w);
+      if (web !== ps2) console.error('visual tick', globalThis.__visRecordTick - 1, 'web', web, 'ps2', ps2);
+      globalThis.__visTickDiffs = (globalThis.__visTickDiffs ?? 0) + (web !== ps2 ? 1 : 0);
+    }
+    w.set(ps2w);
+    globalThis.__visSynced = ps2w;
+  }
   if (pageSequence && pageRescues === null) pageRescues = f32(human, human._rider_state(), 16)[13];
   if (coreTick) {
     globalThis.__compareStage = 'tick_rider';
@@ -280,6 +337,7 @@ function humanTick(pad) {
     const tweak = pageSequence && !pv('padTweak') ? o[7] : o[12];
     globalThis.__compareStage = 'animation_tick'; human._animation_tick(state[7], o[10], o[11], state[9], state[8], o[6], o[8], tweak, o[7], 0, state[15], o[13]);
   }
+  audioRiderPass();
   const pose = f32(human, human._pose_physical(), 12);
   globalThis.__compareStage = 'race_end';
   if (coreTick) humanFinishedNow = f32(human, human._tick_progress(0, 0), 96)[73];
@@ -296,6 +354,7 @@ const REPLAY_WORLD_EXPORTS = ['_stage_world_info', '_stage_builtin_counts', '_st
 function replayWorldDump() { const out = {}; for (const f of REPLAY_WORLD_EXPORTS) { if (typeof human[f] !== 'function') continue; try { const p = human[f](); if (!p) continue; out[f] = Array.from(new Uint32Array(human.HEAPU8.buffer, p, 512)); } catch (e) { out[f] = String(e.message).slice(0, 40); } } return out; }
 function tick(pad, record = null) { if (globalThis.__rep?.recording) globalThis.__rep.list.push({ pad: Float32Array.from(pad), record }); tickDraws = []; pendingWorld = record && worldDraws ? record.rng.log.filter((e) => WORLD_DRAW_CALLERS.has(e.ra)).map((e) => ({ slot: e.rider ? (e.rider.slot < 0 ? 0 : e.rider.slot + 1) : null })) : null;
   globalThis.__compareStage = 'begin'; racers.beginTick(); humanTick(pad); globalThis.__compareStage = 'end'; racers.endTick();
+  if (audioDraws) for (const c of [human, ...racers.npcs.map((n) => n.core)]) c._audio_events_clear?.();
   if (globalThis.__rep) { const rep = globalThis.__rep, st = [human, ...racers.npcs.map((n) => n.core)].flatMap((c) => Array.from(f32(c, c._reference_motion(), 6))).concat(Array.from(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6)).map((w) => w | 0));
     if (rep.recording) rep.live.push(st); else if (rep.replaying) { const k = rep.at++, l = rep.live[k]; if (!rep.first && l && st.some((v, j) => Math.fround(v) !== Math.fround(l[j]))) { const j = st.findIndex((v, jj) => Math.fround(v) !== Math.fround(l[jj])); const prev = k > 0 ? rep.live[k - 1].slice(36).map((w) => w >>> 0) : rep.rng, u = (a) => a.slice(36).map((w) => w >>> 0); rep.first = { tick: k, field: j < 36 ? `rider ${Math.floor(j / 6)} ${['x', 'y', 'z', 'vx', 'vy', 'vz'][j % 6]}` : `rng ${j - 36}`, live: l[j], rerun: st[j], liveDraws: drawsBetween(prev, u(l)), rerunDraws: drawsBetween(prev, u(st)) }; } } }
   if (sharedVisual && globalThis.__pendingCameraHead) { human._step_camera_head(...globalThis.__pendingCameraHead); globalThis.__pendingCameraHead = null; } // cameras after every rider pass (0x230D7C)
@@ -452,6 +511,9 @@ for (let i = 0; i + 1 < records.length && i < limit && !(globalThis.__coastOnly 
     if (lcgWatch >= 0 && !visualFirst.lcg) { const ps2l = dv.getUint32(at + lcgWatch, true), webl = new Uint32Array(human.HEAPU8.buffer, human._visual_lcg_word(), 1)[0]; if (ps2l !== webl) visualFirst.lcg = { tick: records[i].tick, web: webl.toString(16), ps2: ps2l.toString(16) }; }
     if (process.env.VISUAL_SPAN_AI && globalThis.__visPrev) { const [a, b2] = process.env.VISUAL_SPAN_AI.split(':').map(Number); if (records[i].tick - 1 >= a && records[i].tick - 1 <= b2) console.error('vspan', records[i].tick - 1, 'web', drawsBetween(globalThis.__visPrev[0], webw), 'ps2', drawsBetween(globalThis.__visPrev[1], ps2w)); }
     globalThis.__visPrev = [webw, ps2w];
+    // (VISUAL_SYNC: the record's words, copied in at the record point after the next race_begin, humanTick)
+    globalThis.__visRecord = ps2w;
+    globalThis.__visRecordTick = records[i].tick;
   }
   if (ctmPlan) { // --ctm-full: the human alone until the countdown's tick 0, then the six riders (web/ctm-in-world-setup.mjs, as the page)
     if (heat && i >= heat.S - 1 && i < heat.C2) { // --ws13: the results, Next heat, WS13 and WS1 arg 3 (the semi's countdown at C2)
@@ -808,6 +870,8 @@ if (stageWorld) { // stage world activity (web/stage_world.inc): LiveComp starts
     ps2: stageCompare, starts, firstSlots: slots.filter((x, i, a) => i === 0 || a[i - 1][1] !== x[1] || a[i - 1][2] !== x[2]).slice(0, 80) };
 }
 if (sharedVisual) summary.visual = visualFirst;
+if (audioDraws) summary.audioDraws = audioDrawLog;
+if (process.env.VISUAL_TICKS) summary.visualTickDiffs = globalThis.__visTickDiffs ?? 0;
 if (weatherWatch) summary.weather = weatherStats;
 if (tickHook?.summary) Object.assign(summary, await tickHook.summary());
 // Avalanches (web/avalanche_gameplay.inc) per core, human first: [definitions, triggers, ticks, active slots, piece entities].

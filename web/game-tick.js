@@ -73,6 +73,13 @@ const NO_STICKS = [0, 0, 0];
 const f32 = (core, ptr, n) => new Float32Array(core.HEAPF32.buffer, ptr, n);
 const trickNames = new TextDecoder();
 
+// pv sfxPs2Rng: the audio picks the PS2 draws inside the rider pass (296310 crash, 29F660 grunt, the crowd's 2A4CA0) on the presentation
+// stream, after every rider's physics (the human's tick_rider runs the computer riders' stage 1) and before any 121818 (web/game-audio.js).
+function riderPassAudio(s, core) {
+  if (!pv('sfxPs2Rng') || !s.gameAudio?.riderPass) return;
+  s.audioSafe(() => s.gameAudio.riderPass({ core, ai: s.aiActive ? s.aiRace : null }));
+}
+
 // The 60 Hz game tick (docs/workers.md "Game tick"):
 //   simulate(input): every core call of one tick, in the original order (main.js simTick until 2026-09-26); returns
 //     the tick record for present() (null: the streamed world waits for its data, 2306B8).
@@ -113,6 +120,7 @@ export function createGameTick(host, { trace = null } = {}) {
       s.pending = s.animInfo[12];
       if (s.animInfo[13] > 0) { s.score += s.animInfo[13]; s.trickUntil = s.clock + 2; }
     }
+    riderPassAudio(s, core);
     // course events (rider finish 0x125108 -> camera 0x162258) precede the camera update
     s.raceInfo = f32(core, core._race_end(), 8).slice();
     // Stage builtin 34 (a Metro-City phone booth / water tower, boothTeleport, web/stage_teleport.inc) placed the rider inside
@@ -197,7 +205,16 @@ s.worldAiTick?.();
     const known = teleports.has(core);
     const ready = s.animationReady ? 1 : 0;
     const count = known ? teleports.get(core) : 0;
-    const begin = core._tick_begin(s.padPtr, s.lastRescues, s.lastResetPlacement, ready, s.boneCount, known ? 1 : 0, count, pv('padTweak') ? 1 : 0);
+    const tweakWord = pv('padTweak') ? 1 : 0;
+    let begin;
+    // pv sfxPs2Rng: tick_begin as its four parts (the same calls), with the rider pass's audio picks between the riders' physics and 121818
+    if (pv('sfxPs2Rng') && core._tick_input && core._tick_rider && core._tick_progress) {
+      const record = core._tick_input(s.padPtr);
+      core._race_begin();
+      core._tick_rider(record, s.lastRescues, s.lastResetPlacement, ready, s.boneCount, tweakWord);
+      riderPassAudio(s, core);
+      begin = core._tick_progress(known ? 1 : 0, count);
+    } else begin = core._tick_begin(s.padPtr, s.lastRescues, s.lastResetPlacement, ready, s.boneCount, known ? 1 : 0, count, tweakWord);
     const b = f32(core, begin, 96);
     const words = new Uint32Array(b.buffer, b.byteOffset, 96);
     const flags = words[79];

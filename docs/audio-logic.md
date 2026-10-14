@@ -584,9 +584,9 @@ the IRX; the board curves below are hard-coded. CROWD.INF CROWDPATCH1-6 is also 
 | Dispatcher | Caller | Sound | Bus | Level |
 |---|---|---|---|---|
 | `296088` | instance contact `105398` | watrig.adl record via `2B5F60` | 7 | `290C10(0, |v|)` 33..127 |
-| `296310` | crash entry `10EB30`, ragdoll `12D4E8` | 0x30 + rand(3); LAND 9 on surface 2/3 | 5 | 127 |
+| `296310` | crash entry `10EB30`, ragdoll `12D4E8` | 0x30 + rand15 x 3 / 0x7FFF on the presentation stream (5.6); LAND 9 on surface 2/3 | 5 | 127 |
 | `296868` / `296E80` | crash control `12CD20` (phase 0), `12D4E8` (phase 1), on entering the slide phase 2 | loops 0x33 / 0x34 by crash clip class (handles rider+0x774/+0x778; a running loop is not restarted) | 5 | vol curve 0x482DA0 (127); stopped (0.75 s, `296E20`/`297438`) by **both exits of phase 2** (`12D160`: -> 3 get-up, -> 1 air), reset, finish, pause (`29ED18`); ARMSX2: loops end 45 ticks after the get-up |
-| `29F660` | crash, pair hits | GRNT grunt (bank 0xE rotating 3..5 / random 0..1; AI bank by character) | 4 | `290C40` |
+| `29F660` | crash, pair hits | GRNT grunt (bank 0xE: kind 0 random 3..5, kind 1 random 0..2, kind 2 the 0..5 counter; AI bank by character; draws and gates in 5.6) | 4 | `290C40` |
 | `298488` / `298138` / `2989A8` | rider pair: soft `10E228` / crash `10E2E8` -> 298488, soft attack `10E3A8` / crash attack `10E468` -> 298138 (107E70 picks by 108388 soft / 10EB30 crash and the attack flag); obstacle `13F488` | 0x36 / 0x5A / 0x36 | 5 | bump `290C10(1, \|v_a + v_b\|)` (the two velocities are added, `vadd`), others 127; repeat tags 7 / 5 / 6 |
 | `29E970` / `29E590` | crash recovery meter `12CB68` | 0x60 / 0x5F | 9 | |
 
@@ -607,6 +607,87 @@ ids 41-43), not the .eam.
   contacts (`296088`, bus 7); stage-script sounds `2974A0` one-shot / `297950` loop / `297EB8` stop (id 1-99
   Mtn.bnk, 100-149 slot 8, 150-199 slot 9, >= 200 TRANSPORT; bus 5); location ambience `29D290` (bank 9 snd 0,
   faded over 5.03 s on location change); tWPIGD_Speech painter data exists but no query is ever created.
+
+### 5.6 Random picks on the presentation stream; the crowd's clock (2026-10-14; pv sfxPs2Rng, crowdSeqPs2)
+
+**Which generator.** `2ADF60` (rand15) is three instructions around `jal 0x3177F0` (BXrand), and BXrand is `0x317A08` on the
+six words at `0x4FF018` (`lui 0x50; addiu -0xFE8`). That is the presentation stream the world effects draw from (snow and grind
+emitters, the camera splash, lightning, the crowd flashes, flags, the camera shake; [visual-rng-order.md](visual-rng-order.md)).
+It is not the game RNG `0x4FF030`. The crowd's `2A4CA0` calls BXrand directly. The simulation never reads the presentation
+stream: compare-ai-capture on the event-race pad with all five computer riders gives the same result with and without the
+audio draws (human, every rider, score, ranks, pair records and the game RNG exact on all 2204 ticks).
+
+**The picks.**
+
+| Dispatcher | Draw | Pick | When there is no draw |
+|---|---|---|---|
+| `296310` crash sound | rand15 | `0x30 + (r & 0x7FFF) * 3 / 0x7FFF` (divu at `0x29646C`; r = 0x7FFF gives 0x33) | surface 2 / 3 (LAND 9); a computer or remote rider beyond 100 m (`288B40`). The local human (+0x87C) has no range gate. |
+| `29F660` grunt | rand15 | kind 1: `(r & 0x7FFF) * 3 / 0x7FFF`; kind 0: that + 3; kind 2: the counter audio+0x5734 (no draw) | Before the draw, in this order: bus 4 at 0 (`29F0A0`), a replay (`288AE0`), finished (+0x470 >= 0), a grunt still playing (`295028(audio, 3, 0)`: tag 3 with obj 0, so one grunt at a time for every rider; `295628` pushes it after the play). Only the human's bank 0xE draws (`29F620`): a computer rider's grunt is its character's pair (`29F378`). |
+| `2A4CA0` crowd list | BXrand | `list[r % n]` | n = 0 (the fall lists are empty: 2A6648 picks nothing). Callers: the trick reaction `2A64A0`, the fall reaction `2A6648` (each after 2A6848 and the emitter count +0xD4), anticipation `2A5AE8` (in the per-frame `2A4E88`). |
+
+Other 2ADF60 users, not on the port's stream yet: the speech EaRng seed `2B0CE0` (audio init), the song pick `28D484`, hub chatter
+`2A2E50`, `2A476C`, the playlist `2B24BC` / `2B2500` and `2B63D0`. They run in the front end or at loads, where the port has no core
+stream; the session model of 0x4FF018 is web/lineup.js.
+
+**When.** Crash entry `10EB30` calls `296310`, then `29F660(kind 0)`, then `2961F0` (the fall: `2A73D8` -> `2A6648`). The crash
+control `12CD20` / `12D4E8` calls give the kind-1 grunts and the air-phase crash sounds, the pair hits `2A0A30` the kind-0 grunts, and
+the landing `2948D0` gives the trick reaction. All of them run inside the rider pass of the game update, after group 1 and before
+any rider's `121818`, FX passes, flags, splash, lightning, crowd flashes and camera.
+
+ARMSX2 (local/sfx-rng/, hooks on 0x3177F0 with the six words, 296310, 29F660, 2961F0, 2A64A0, 2A6648, 2948D0, 3B94B0):
+
+- zoe-rng (the speech agent's Snow Jam race script, five computer riders, 5205 ticks): 29672 draws, the chain unbroken, 20 from
+  2ADF60. Each one gives the crash or grunt variant the PS2 then played (web/test-sfx-ps2-rng.mjs keeps them). There is one crowd
+  pick (the trick reaction at 491).
+- era-rng (the event-race pad, `--ai-state`, 2205 ticks): every audio draw is the first draw after the record point, which is the
+  pad read after group 1. compare-ai-capture with `AUDIO_DRAWS=1 VISUAL_SYNC=1` takes the PS2's own value for all 10 draws of its
+  events:
+  - 491 crowd;
+  - 898 crash and grunt;
+  - 938 air crash;
+  - 966 grunt;
+  - 1259 computer air crash;
+  - 1340 crash and grunt;
+  - 1354 air crash;
+  - 1411 grunt.
+- The grunt gate: grunts called while another rider's grunt plays do not play (zoe-rng 461 after 435, 522 after 497, the pair-hit
+  run 2880..2999).
+
+**Port (pv sfxPs2Rng).**
+- web/sfx-ps2-rng.js holds the generator and the formulas.
+- web/game-tick.js calls tick_begin as its four parts (tick_input, race_begin, tick_rider, tick_progress; the same calls) and, between
+  tick_rider and tick_progress, calls gameAudio.riderPass. The human's tick_rider also runs the computer riders' stage 1, so at this
+  point every rider's physics is done.
+- sfx-game riderPass reads every rider's queued events in slot order and draws each event's picks from the human core's
+  visual_rng_words, in the dispatchers' order with their gates. The tick's dispatch then plays them. An event the pass did not see
+  (one posted in 121750 / 121818) draws when it runs, and the anticipation and finish cheers draw in the tick's audio, which is the
+  per-frame 285BF8's place before the next update.
+- Remote online racers have no core and no events, and draw nothing from the local stream. A pair hit's grunt for a remote target is
+  a computer-bank grunt, with no draw. The PS2's two local humans would each draw.
+
+**Known gaps.**
+- The computer riders' crash entry posts no AE_CRASH (engine/riding.hpp: the NPC crash notify), so their ground-crash sounds
+  (zoe-rng 435, 461, 736 ...) and those draws are missing. Their air-phase crash sounds (AE_CRASH_LOOP) are there.
+- The core's own visual stream is not exact yet in the comparers: 1973 of 2204 ticks of era-rng draw a different count than the PS2,
+  even with the words synced at every record (the snow emitters during the countdown, ...). So the end-to-end alignment of the later
+  FX and flag draws cannot be shown on a capture yet. Per tick, the audio draws now make the count the PS2's on the ticks they occur.
+
+**The crowd's clock.**
+- The `.eam` player `3B96B8` is a callback of the 100 Hz service `3B55F0`. `3B5540(94)` runs that service 100 times per 94 wakeups of
+  the EA audio thread `3C19A8`.
+- The thread waits on its semaphore (+0x1AA4 of 0x50AD00, `423DE0`). The SIF command-1 handler `3C1578` signals it; it is registered
+  at `0x3C20C8` (sceSifAddCmdHandler): one message from the IOP per audio buffer.
+- ARMSX2 measured 1.6638 service ticks per game tick, 99.73 Hz, which is 48000 / 512 x 100 / 94. So one sequence tick is 10.0267 ms
+  of audio time, not a game tick.
+- The crowd runs on the IOP's audio clock and does not depend on the game's frame rate: a slow game frame does not slow it. The page's
+  wall-clock timers are the right model.
+- pv crowdSeqPs2:
+  - every CROWD.INF sequence is read when the first crowd emitter registers;
+  - a reaction posts all its notes in its own call, so the post tick is deterministic, where the page used to wait for the .eam
+    fetch;
+  - one sequence tick is `CROWD_TICK_MS` = 10 x 94 / 93.75 ms.
+- A note's start stays on the audio clock. A paced run, which is not real time, cannot give tick-equal start ticks, and neither can
+  the PS2's own audio thread. Compare the post tick and the delay instead.
 
 ## 6. Browser implementation plan (biggest audible win first; done, see section 9)
 

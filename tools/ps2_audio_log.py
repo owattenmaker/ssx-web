@@ -26,7 +26,10 @@ import struct, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-CODE, COUNT, RING, N = 0xF0000, 0xF1000, 0xF2000, 512
+# PS2_AUDIO_LOG_ARENA="CODE,COUNT,RING,N" (e.g. 0x80000,0x80F00,0x94000,64): another arena, for build --ai-state (its record ring
+# fills 0xA0000..0xF8000); the code, the count word and the ring must lie in zero memory of the baseline. N: a power of two.
+_arena = __import__('os').environ.get('PS2_AUDIO_LOG_ARENA')
+CODE, COUNT, RING, N = tuple(int(x, 0) for x in _arena.split(',')) if _arena else (0xF0000, 0xF1000, 0xF2000, 512)
 V0, V1, T6, T7, T8, T9, GP, RA = 2, 3, 14, 15, 24, 25, 28, 31
 ARGS = [4, 5, 6, 7, 8, 9, 10]      # a0..a3, t0..t2
 HOOKS = {
@@ -45,9 +48,14 @@ HOOKS = {
     0x29B7E0: (13, 'monster_speech', None),
 }
 # PS2_AUDIO_LOG_EXTRA="1EA930:hud_update,1EC3F8:hud_draw": extra entry hooks (call order studies; tags from 40).
+# An optional third field picks extra words:
+#   rng   t0, t1, t2, x0, x1, x2 = the presentation generator 0x4FF018 words 0..5 before the call (BXrand 0x3177F0 callers)
+#   midi  x0 = the 100 Hz audio service count *(0x50A8E8 + 0x180), x1 / x2 = sequence player a0's +0 (clock) / +4 (position)
+#         (players at 0x50A120, 0x70 bytes; 3B94B0 / 3B96B8)
 import os
 for k, item in enumerate(filter(None, os.environ.get('PS2_AUDIO_LOG_EXTRA', '').split(','))):
-    addr, name = item.split(':'); HOOKS[int(addr, 16)] = (40 + k, name, None)
+    addr, name, *kind = item.split(':')
+    HOOKS[int(addr, 16)] = (40 + k, name, kind[0] if kind else None)
 TAGS = {tag: name for tag, name, _ in HOOKS.values()}
 
 
@@ -73,6 +81,17 @@ def assemble(memory):
             a.lw(T7, 8, 4); a.addu(T7, T7, T9); a.lw(T7, 0, T7); a.sw(T7, 52, T6)
         elif extra == 'voice':
             a.lw(T7, 0x5FDC, 4); a.sw(T7, 44, T6)
+        elif extra == 'rng':
+            a.li(T7, 0x4FF018)
+            for k, off in enumerate((24, 28, 32, 44, 48, 52)):
+                a.lw(T8, 4 * k, T7); a.sw(T8, off, T6)
+        elif extra == 'midi':
+            a.li(T7, 0x50A8E8); a.lw(T8, 0x180, T7); a.sw(T8, 44, T6)
+            # player a0: 0x50A120 + a0 * 0x70 (0x40 + 0x20 + 0x10)
+            a.sll(T7, 4, 6); a.sll(T8, 4, 5); a.addu(T7, T7, T8); a.sll(T8, 4, 4); a.addu(T7, T7, T8)
+            a.li(T8, 0x50A120); a.addu(T7, T7, T8)
+            a.lw(T8, 0, T7); a.sw(T8, 48, T6)
+            a.lw(T8, 4, T7); a.sw(T8, 52, T6)
         a.addiu(V1, V1, 1); a.sw(V1, 0, V0)
         a.emit(struct.unpack_from('<I', memory, addr)[0]); a.emit(struct.unpack_from('<I', memory, addr + 4)[0])
         a.j(addr + 8); a.nop()
@@ -81,13 +100,14 @@ def assemble(memory):
 
 def patches(memory):
     """ps2_capture.py patch records: the arena code, a zeroed count and one jump per hooked entry."""
-    if any(memory[CODE:0x100000]): raise ValueError('0xF0000 arena not free')
+    if any(memory[CODE:CODE + 0x1000]) or any(memory[COUNT:COUNT + 4]) or any(memory[RING:RING + 64 * N]): raise ValueError('audio log arena not free')
     for addr in HOOKS:   # the two relocated instructions must not be branches/jumps
         for w in struct.unpack_from('<2I', memory, addr):
             op = w >> 26
             if op in (1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23) or (op == 0 and (w & 0x3F) in (8, 9)): raise ValueError(f'hook {addr:#x}: control transfer in prologue')
     code, entries = assemble(memory)
     j = lambda target: struct.pack('<2I', (2 << 26) | (target >> 2), 0)
+    if CODE <= COUNT < CODE + len(code) or CODE <= RING < CODE + len(code): raise ValueError('audio log code overlaps its count / ring')
     out = [dict(address=hex(CODE), expected='00' * len(code), replacement=code.hex())]
     for addr, e in entries.items():
         out.append(dict(address=hex(addr), expected=memory[addr:addr + 8].hex(), replacement=j(e).hex()))

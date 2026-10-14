@@ -19,6 +19,11 @@ struct Quad {
   clampRect: vec4f,
   colour: vec4f,
   info: vec4f,
+  // a rotated image (affine.z = 1): the device bounds in dst, the canvas-to-user inverse (inv: a b c d, affine.xy: e f), the
+  // destination rect in user space, the user-space size of a device pixel (affine.w)
+  inv: vec4f,
+  affine: vec4f,
+  rect: vec4f,
 };
 @group(0) @binding(0) var<storage, read> quads: array<Quad>;
 @group(1) @binding(0) var image: texture_2d<f32>;
@@ -41,6 +46,16 @@ struct Out {
 @fragment fn fs(i: Out) -> @location(0) vec4f {
   let q = quads[i.index];
   let p = i.position.xy;
+  if (q.affine.z > 0.5) {
+    let l = vec2f(q.inv.x * p.x + q.inv.z * p.y + q.affine.x, q.inv.y * p.x + q.inv.w * p.y + q.affine.y);
+    let k = q.affine.w;
+    let ax = clamp((min(l.x - q.rect.x, q.rect.z - l.x)) / k + 0.5, 0.0, 1.0);
+    let ay = clamp((min(l.y - q.rect.y, q.rect.w - l.y)) / k + 0.5, 0.0, 1.0);
+    let lt = (l - q.rect.xy) / (q.rect.zw - q.rect.xy);
+    let lt2 = clamp(mix(q.uv.xy, q.uv.zw, lt), q.clampRect.xy, q.clampRect.zw);
+    let ls = textureSampleLevel(image, linearSampler, lt2 / q.info.xy, 0.0);
+    return ls * (q.colour.a * ax * ay);
+  }
   let cx = clamp(min(p.x + 0.5, q.dst.z) - max(p.x - 0.5, q.dst.x), 0.0, 1.0);
   let cy = clamp(min(p.y + 0.5, q.dst.w) - max(p.y - 0.5, q.dst.y), 0.0, 1.0);
   let coverage = cx * cy;
@@ -399,7 +414,52 @@ void HudCanvas::drawImage(int image, double sx, double sy, double sw, double sh,
     }
     const Matrix& m = state_.m;
     if (m.b != 0 || m.c != 0) {
-        // the HUD draws images under scale and translate only
+        // a rotated draw (the load screen's spinning snowflakes): the quad over the corners' device bounds, sampled through the inverse
+        const double det = m.a * m.d - m.b * m.c;
+        if (det == 0) {
+            return;
+        }
+        double bx0 = 1e30, by0 = 1e30, bx1 = -1e30, by1 = -1e30;
+        for (int k = 0; k < 4; ++k) {
+            const double ux = (k & 1) ? dx + dw : dx;
+            const double uy = (k & 2) ? dy + dh : dy;
+            const double px = m.a * ux + m.c * uy + m.e;
+            const double py = m.b * ux + m.d * uy + m.f;
+            bx0 = std::min(bx0, px);
+            by0 = std::min(by0, py);
+            bx1 = std::max(bx1, px);
+            by1 = std::max(by1, py);
+        }
+        Quad q{};
+        q.dst[0] = float(bx0);
+        q.dst[1] = float(by0);
+        q.dst[2] = float(bx1);
+        q.dst[3] = float(by1);
+        q.uv[0] = float(sx);
+        q.uv[1] = float(sy);
+        q.uv[2] = float(sx + sw);
+        q.uv[3] = float(sy + sh);
+        q.clamp[0] = float(sw >= 1 ? sx + 0.5 : sx + sw * 0.5);
+        q.clamp[1] = float(sh >= 1 ? sy + 0.5 : sy + sh * 0.5);
+        q.clamp[2] = float(sw >= 1 ? sx + sw - 0.5 : sx + sw * 0.5);
+        q.clamp[3] = float(sh >= 1 ? sy + sh - 0.5 : sy + sh * 0.5);
+        q.colour[0] = q.colour[1] = q.colour[2] = 1;
+        q.colour[3] = float(state_.alpha);
+        q.info[0] = float(im.width);
+        q.info[1] = float(im.height);
+        q.inv[0] = float(m.d / det);
+        q.inv[1] = float(-m.b / det);
+        q.inv[2] = float(-m.c / det);
+        q.inv[3] = float(m.a / det);
+        q.affine[0] = float((m.c * m.f - m.d * m.e) / det);
+        q.affine[1] = float((m.b * m.e - m.a * m.f) / det);
+        q.affine[2] = 1;
+        q.affine[3] = float(1 / std::sqrt(std::abs(det)));
+        q.rect[0] = float(dx);
+        q.rect[1] = float(dy);
+        q.rect[2] = float(dx + dw);
+        q.rect[3] = float(dy + dh);
+        push(q, image);
         return;
     }
     double x0 = m.a * dx + m.e;
@@ -499,9 +559,12 @@ void HudCanvas::fillRect(double x, double y, double w, double h, std::array<uint
 }
 
 int HudCanvas::shapeImage(const std::vector<uint8_t>& premul, int w, int h) {
-    // the key caps repeat frame after frame: one image per distinct raster
-    std::string key(reinterpret_cast<const char*>(premul.data()), premul.size());
-    key += std::to_string(w) + "x" + std::to_string(h);
+    // the key caps repeat frame after frame: one image per distinct raster (keyed by its FNV-1a 64 and size)
+    uint64_t hash = 1469598103934665603ull;
+    for (uint8_t b : premul) {
+        hash = (hash ^ b) * 1099511628211ull;
+    }
+    const std::string key = std::to_string(hash) + ":" + std::to_string(w) + "x" + std::to_string(h);
     auto it = shapes_.find(key);
     if (it != shapes_.end()) {
         return it->second;
@@ -551,6 +614,63 @@ std::vector<uint8_t> rasterize(const double inv[6], int x0, int y0, int w, int h
     return out;
 }
 
+// the same with an RGBA paint (straight alpha), each sample premultiplied: a gradient with translucent stops
+template <class Inside, class Paint>
+std::vector<uint8_t> rasterizeRgba(const double inv[6], int x0, int y0, int w, int h, Inside inside, Paint paint) {
+    std::vector<uint8_t> out(size_t(w) * h * 4, 0);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            // a pixel whose corners are all inside a convex fill: covered, its paint at the centre (a linear gradient's mean)
+            {
+                bool all = true;
+                for (int k = 0; k < 4 && all; ++k) {
+                    const double px = x0 + x + (k & 1);
+                    const double py = y0 + y + (k >> 1);
+                    all = inside(inv[0] * px + inv[2] * py + inv[4], inv[1] * px + inv[3] * py + inv[5]);
+                }
+                if (all) {
+                    const double px = x0 + x + 0.5;
+                    const double py = y0 + y + 0.5;
+                    const std::array<double, 4> c = paint(inv[0] * px + inv[2] * py + inv[4], inv[1] * px + inv[3] * py + inv[5]);
+                    const size_t o = (size_t(y) * w + x) * 4;
+                    for (int k = 0; k < 3; ++k) {
+                        out[o + size_t(k)] = uint8_t(std::lround(std::clamp(c[size_t(k)] * c[3], 0.0, 1.0) * 255));
+                    }
+                    out[o + 3] = uint8_t(std::lround(std::clamp(c[3], 0.0, 1.0) * 255));
+                    continue;
+                }
+            }
+            double acc[4] = {0, 0, 0, 0};
+            bool any = false;
+            for (int sy = 0; sy < 4; ++sy) {
+                for (int sx = 0; sx < 4; ++sx) {
+                    const double px = x0 + x + (sx + 0.5) / 4;
+                    const double py = y0 + y + (sy + 0.5) / 4;
+                    const double ux = inv[0] * px + inv[2] * py + inv[4];
+                    const double uy = inv[1] * px + inv[3] * py + inv[5];
+                    if (!inside(ux, uy)) {
+                        continue;
+                    }
+                    any = true;
+                    const std::array<double, 4> c = paint(ux, uy);
+                    acc[0] += c[0] * c[3];
+                    acc[1] += c[1] * c[3];
+                    acc[2] += c[2] * c[3];
+                    acc[3] += c[3];
+                }
+            }
+            if (!any) {
+                continue;
+            }
+            const size_t o = (size_t(y) * w + x) * 4;
+            for (int k = 0; k < 4; ++k) {
+                out[o + size_t(k)] = uint8_t(std::lround(std::clamp(acc[k] / 16, 0.0, 1.0) * 255));
+            }
+        }
+    }
+    return out;
+}
+
 // the signed distance to a rounded rect (negative inside)
 double roundRectDistance(double ux, double uy, double x, double y, double w, double h, double r) {
     const double cx = x + w / 2;
@@ -568,7 +688,8 @@ double roundRectDistance(double ux, double uy, double x, double y, double w, dou
 void HudCanvas::keyCapBox(double x, double y, double w, double h, double radius, double lineWidth) {
     logCall("roundRect", {x, y, w, h, radius});
     logCall("fill", {std::string("gradient")});
-    logCall("stroke", {std::string("#eef3f6"), lineWidth});
+    // (the canvas reads lineWidth back as a float)
+    logCall("stroke", {std::string("#eef3f6"), double(float(lineWidth))});
     if (!(state_.alpha > 0)) {
         return;
     }
@@ -685,6 +806,168 @@ void HudCanvas::keyCapArrow() {
     q.info[0] = float(iw);
     q.info[1] = float(ih);
     push(q, k);
+}
+
+void HudCanvas::fillPolygon(const std::vector<std::array<double, 2>>& points, const Paint& paint, bool gradient, const std::string& paintKey) {
+    fillPolygons({points}, paint, gradient, paintKey);
+}
+
+void HudCanvas::fillPolygons(const std::vector<std::vector<std::array<double, 2>>>& paths, const Paint& paint, bool gradient, const std::string& paintKey) {
+    // beginPath, per path moveTo / lineTo .. closePath, one fill, nonzero (the canvas log records each moveTo as 'arrow' and a
+    // gradient fill)
+    for (size_t i = 0; i < paths.size(); ++i) {
+        logCall("arrow", {});
+    }
+    if (gradient) {
+        logCall("fill", {std::string("gradient")});
+    }
+    rasterPaths(paths, paint, paintKey, [&](double ux, double uy) {
+        int wind = 0;
+        for (const auto& points : paths) {
+            for (size_t i = 0; i < points.size(); ++i) {
+                const auto& a = points[i];
+                const auto& b = points[(i + 1) % points.size()];
+                if (a[1] <= uy) {
+                    if (b[1] > uy && (b[0] - a[0]) * (uy - a[1]) - (ux - a[0]) * (b[1] - a[1]) > 0) {
+                        ++wind;
+                    }
+                } else if (b[1] <= uy && (b[0] - a[0]) * (uy - a[1]) - (ux - a[0]) * (b[1] - a[1]) < 0) {
+                    --wind;
+                }
+            }
+        }
+        return wind != 0;
+    }, 0);
+}
+
+void HudCanvas::strokePolygon(const std::vector<std::array<double, 2>>& points, const std::array<double, 4>& colour, double lineWidth, const std::string& paintKey) {
+    logCall("arrow", {});
+    char style[64];
+    const int r = int(std::lround(colour[0] * 255));
+    const int g = int(std::lround(colour[1] * 255));
+    const int b = int(std::lround(colour[2] * 255));
+    if (colour[3] >= 1) {
+        std::snprintf(style, sizeof style, "#%02x%02x%02x", r, g, b);
+    } else {
+        // the serialisation's alpha: the byte as at most three decimals
+        char alpha[16];
+        std::snprintf(alpha, sizeof alpha, "%.3f", std::round(colour[3] * 255) / 255);
+        std::string a = alpha;
+        while (!a.empty() && a.back() == '0') {
+            a.pop_back();
+        }
+        if (!a.empty() && a.back() == '.') {
+            a.pop_back();
+        }
+        std::snprintf(style, sizeof style, "rgba(%d, %d, %d, %s)", r, g, b, a.c_str());
+    }
+    logCall("stroke", {std::string(style), double(float(lineWidth))});
+    const double half = lineWidth / 2;
+    auto dist = [&](double ux, double uy) {
+        double best = 1e300;
+        for (size_t i = 0; i < points.size(); ++i) {
+            const auto& a = points[i];
+            const auto& bb = points[(i + 1) % points.size()];
+            const double dx = bb[0] - a[0];
+            const double dy = bb[1] - a[1];
+            const double l2 = dx * dx + dy * dy;
+            const double t = l2 > 0 ? std::clamp(((ux - a[0]) * dx + (uy - a[1]) * dy) / l2, 0.0, 1.0) : 0;
+            const double px = a[0] + dx * t - ux;
+            const double py = a[1] + dy * t - uy;
+            best = std::min(best, px * px + py * py);
+        }
+        return std::sqrt(best);
+    };
+    rasterPaths({points}, [colour](double, double) { return colour; }, paintKey.empty() ? std::string() : "stroke" + paintKey + std::to_string(lineWidth),
+                [&](double ux, double uy) { return dist(ux, uy) <= half; }, half);
+}
+
+void HudCanvas::rasterPaths(const std::vector<std::vector<std::array<double, 2>>>& paths, const Paint& paint, const std::string& paintKey,
+                            const std::function<bool(double, double)>& inside, double pad) {
+    if (!(state_.alpha > 0) || paths.empty()) {
+        return;
+    }
+    const Matrix& m = state_.m;
+    const double det = m.a * m.d - m.b * m.c;
+    if (det == 0) {
+        return;
+    }
+    const double inv[6] = {m.d / det, -m.b / det, -m.c / det, m.a / det, (m.c * m.f - m.d * m.e) / det, (m.b * m.e - m.a * m.f) / det};
+    double bx0 = 1e30, by0 = 1e30, bx1 = -1e30, by1 = -1e30;
+    for (const auto& points : paths) {
+        for (const auto& p : points) {
+            for (int k = 0; k < 4; ++k) {
+                const double ux = p[0] + ((k & 1) ? pad : -pad);
+                const double uy = p[1] + ((k & 2) ? pad : -pad);
+                const double px = m.a * ux + m.c * uy + m.e;
+                const double py = m.b * ux + m.d * uy + m.f;
+                bx0 = std::min(bx0, px);
+                by0 = std::min(by0, py);
+                bx1 = std::max(bx1, px);
+                by1 = std::max(by1, py);
+            }
+        }
+    }
+    // (clipped to the canvas)
+    bx0 = std::max(bx0, -1.0);
+    by0 = std::max(by0, -1.0);
+    bx1 = std::min(bx1, 641.0);
+    by1 = std::min(by1, 449.0);
+    const int ix0 = int(std::floor(bx0)) - 1;
+    const int iy0 = int(std::floor(by0)) - 1;
+    const int iw = int(std::ceil(bx1)) + 1 - ix0;
+    const int ih = int(std::ceil(by1)) + 1 - iy0;
+    if (iw <= 0 || ih <= 0) {
+        return;
+    }
+    // a fill drawn before with the same paths, transform and paint: its raster again (the screens' shapes frame after frame)
+    std::string key;
+    if (!paintKey.empty()) {
+        char buf[64];
+        key = paintKey;
+        for (double v : {m.a, m.b, m.c, m.d, m.e, m.f}) {
+            std::snprintf(buf, sizeof buf, ";%.17g", v);
+            key += buf;
+        }
+        for (const auto& points : paths) {
+            key += "|";
+            for (const auto& p : points) {
+                std::snprintf(buf, sizeof buf, ";%.17g,%.17g", p[0], p[1]);
+                key += buf;
+            }
+        }
+    }
+    auto pushRaster = [&](int k) {
+        Quad q{};
+        q.dst[0] = float(ix0);
+        q.dst[1] = float(iy0);
+        q.dst[2] = float(ix0 + iw);
+        q.dst[3] = float(iy0 + ih);
+        q.uv[2] = float(iw);
+        q.uv[3] = float(ih);
+        q.clamp[0] = 0.5f;
+        q.clamp[1] = 0.5f;
+        q.clamp[2] = float(iw) - 0.5f;
+        q.clamp[3] = float(ih) - 0.5f;
+        q.colour[0] = q.colour[1] = q.colour[2] = 1;
+        q.colour[3] = float(state_.alpha);
+        q.info[0] = float(iw);
+        q.info[1] = float(ih);
+        push(q, k);
+    };
+    if (!key.empty()) {
+        auto it = fills_.find(key);
+        if (it != fills_.end()) {
+            pushRaster(it->second);
+            return;
+        }
+    }
+    const auto raster = rasterizeRgba(inv, ix0, iy0, iw, ih, inside, paint);
+    const int k = shapeImage(raster, iw, ih);
+    if (!key.empty()) {
+        fills_[key] = k;
+    }
+    pushRaster(k);
 }
 
 void HudCanvas::begin() {

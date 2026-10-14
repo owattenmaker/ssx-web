@@ -211,8 +211,8 @@ static void ws_switch(){
  wsPending=-1;
  if(wsBackground==wsCurrent)wsBackground=-1;
  // M8b: event 7 {new state, old state, 0x535C08} for the host (web/free-ride.js 'worldState': the career writes of the exits /
- // enters, pv coreWorldState)
- events.insert(events.end(),{7,wsCurrent,wsPrevious,currentCourse});
+ // enters, pv coreWorldState); a course event has no streamed world to drain them
+ if(active)events.insert(events.end(),{7,wsCurrent,wsPrevious,currentCourse});
 }
 // M8a: the streamer pass's course-change cases (22D8D8), then the world-state tick 230F40, at the frame's point (the comparisons call
 // it through peak_world_apply_events with rows they drive themselves)
@@ -364,6 +364,21 @@ EMSCRIPTEN_KEEPALIVE void peak_world_qa_event(int kind,int a,int b,int c){if(!pe
 // (also called alone by a capture comparison that drives the rows itself, after the tick's race_end: web/compare-ps2-capture.mjs)
 EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active)peak_stream::ws_step();if(peak_stream::active)peak_stream::ws10_step();if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
 EMSCRIPTEN_KEEPALIVE void peak_world_tick(){if(peak_stream::active)peak_stream::pass();peak_world_apply_events();}
+// M8c (local/core-migration/decomp/ws-machine.md 3): a request from outside the streamer (231250: the race's 113DB0, WS5's update;
+// later the host's UI sites), applied at the next 230F40 (now: at once)
+void browser_world_state_request(int32_t state,int32_t arg,bool now){
+ using namespace peak_stream;
+ ws_request(state,arg);
+ if(now)ws_switch();
+}
+// M8c: 230F40 in a course event (no streamed world: web/game_tick.cpp tick_input, the update's start); a streamed world's runs in
+// peak_world_apply_events
+void browser_world_state_frame(){
+ using namespace peak_stream;
+ if(active)return;
+ ws_switch();
+}
+int32_t browser_world_state(){return peak_stream::wsCurrent;}
 // M8a QA (docs/core-migration.md "M8"): the world-state block [current S+0x214, pending S+0x210, its arg S+0x21C, previous S+0x218,
 // the pushed background S+0x208, the streamer's course-change state +0x1B4]
 EMSCRIPTEN_KEEPALIVE int32_t* peak_world_state(){

@@ -90,6 +90,81 @@ public:
             return canvas->addCanvas(im.width, im.height, std::move(out));
         });
     }
+    // a canvas of ceil(sw) x ceil(sh) with drawImage(im, sx, sy, sw, sh, 0, 0, sw, sh): bilinear, kept half a texel inside the source
+    // rect (web/lui-player.js cut, web/loading-screen.js tinted's first draw)
+    int cutRegion(const std::string& name, double sx, double sy, double sw, double sh) {
+        char key[160];
+        std::snprintf(key, sizeof key, "c:%s:%.17g,%.17g,%.17g,%.17g", name.c_str(), sx, sy, sw, sh);
+        return cached(key, [&] {
+            const HudImage& im = canvas->image(png(name));
+            const int w = std::max(1, int(std::ceil(sw)));
+            const int h = std::max(1, int(std::ceil(sh)));
+            return canvas->addCanvas(w, h, cutPixels(im, sx, sy, sw, sh, w, h));
+        });
+    }
+    // the cut's tinted copy: drawImage(cut), 'multiply' fillRect(rgb), 'destination-in' drawImage(cut) (web/lui-player.js tinted)
+    int multiplyCut(const std::string& name, double sx, double sy, double sw, double sh, std::array<uint8_t, 3> rgb) {
+        char key[180];
+        std::snprintf(key, sizeof key, "mc:%s:%.17g,%.17g,%.17g,%.17g:%d,%d,%d", name.c_str(), sx, sy, sw, sh, rgb[0], rgb[1], rgb[2]);
+        return cached(key, [&] {
+            const HudImage& cut = canvas->image(cutRegion(name, sx, sy, sw, sh));
+            return canvas->addCanvas(cut.width, cut.height, multiplied(cut.premul, rgb));
+        });
+    }
+    // web/loading-screen.js tinted: the page region drawn into its own canvas, then multiply and destination-in
+    int multiplyRegion(const std::string& name, double sx, double sy, double sw, double sh, std::array<uint8_t, 3> rgb) {
+        char key[180];
+        std::snprintf(key, sizeof key, "r:%s:%.17g,%.17g,%.17g,%.17g:%d,%d,%d", name.c_str(), sx, sy, sw, sh, rgb[0], rgb[1], rgb[2]);
+        return cached(key, [&] {
+            const HudImage& im = canvas->image(png(name));
+            const int w = int(std::ceil(sw));
+            const int h = int(std::ceil(sh));
+            return canvas->addCanvas(w, h, multiplied(cutPixels(im, sx, sy, sw, sh, w, h), rgb));
+        });
+    }
+    static std::vector<uint8_t> cutPixels(const HudImage& im, double sx, double sy, double sw, double sh, int w, int h) {
+        std::vector<uint8_t> copy(size_t(w) * h * 4, 0);
+        auto texel = [&](int x, int y, int k) {
+            x = std::clamp(x, 0, im.width - 1);
+            y = std::clamp(y, 0, im.height - 1);
+            return double(im.premul[(size_t(y) * im.width + x) * 4 + size_t(k)]);
+        };
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                if (x >= sw || y >= sh) {
+                    continue;
+                }
+                const double u = std::clamp(sx + x + 0.5, sx + 0.5, sx + sw - 0.5) - 0.5;
+                const double v = std::clamp(sy + y + 0.5, sy + 0.5, sy + sh - 0.5) - 0.5;
+                const int x0 = int(std::floor(u));
+                const int y0 = int(std::floor(v));
+                // bilinear with 4-bit sub-texel weights, rounded (Chrome's half-texel cuts differ from it by 1 on a few texels: its filter
+                // runs in float32 from the inverse matrix, so the half-way weights are not exact)
+                const int fx = int(std::floor((u - x0) * 16));
+                const int fy = int(std::floor((v - y0) * 16));
+                for (int k = 0; k < 4; ++k) {
+                    const int value = int(texel(x0, y0, k)) * (16 - fx) * (16 - fy) + int(texel(x0 + 1, y0, k)) * fx * (16 - fy) +
+                                      int(texel(x0, y0 + 1, k)) * (16 - fx) * fy + int(texel(x0 + 1, y0 + 1, k)) * fx * fy;
+                    copy[(size_t(y) * w + x) * 4 + size_t(k)] = uint8_t(std::clamp((value + 128) >> 8, 0, 255));
+                }
+            }
+        }
+        return copy;
+    }
+    static std::vector<uint8_t> multiplied(const std::vector<uint8_t>& premul, std::array<uint8_t, 3> rgb) {
+        std::vector<uint8_t> out(premul.size());
+        for (size_t i = 0; i < out.size(); i += 4) {
+            const double da = premul[i + 3] / 255.0;
+            for (int k = 0; k < 3; ++k) {
+                const double s = rgb[size_t(k)] / 255.0;
+                const double d = premul[i + size_t(k)] / 255.0;
+                const uint8_t first = unorm(s * (1 - da) + s * d);
+                out[i + size_t(k)] = unorm(first / 255.0 * da);
+            }
+            out[i + 3] = premul[i + 3];
+        }
+        return out;
+    }
     // drawImage(im); 'source-in', fillRect(colour) (web/ui.js text tints)
     int sourceIn(const std::string& name, std::array<uint8_t, 3> rgb) {
         const std::string key = "s:" + name + ":" + std::to_string(rgb[0]) + "," + std::to_string(rgb[1]) + "," + std::to_string(rgb[2]);

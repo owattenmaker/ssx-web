@@ -1,3 +1,52 @@
+> **Deployed 2026-10-14 (coordinator): mpKnockouts ON.** Core unchanged (core15 `e66ce287…`). Online knockouts are credited: the victim's client sends the attacked-crash notice (ATTACK, amount -1, sender = victim) and the attacker's client runs pair_knockout (10E468 -> 119400: +0x128, popup 0x2C), as the PS2 counts them in 2-player. Gate on this exact tree: core-api, mp-knockouts, mp, mp-pairs, mp-latency, remote-riders, mp-speech, mp-tick-lock, mp-prerace, ai-racers, audio-sfx, game-audio, ta-page, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit) pass. Inert: coreContactStream (needs core17), sfxPs2Rng, crowdSeqPs2 (off).
+
+> **Native Single Event results (2026-10-14, native-port agent).** See [native.md](native.md) section 7.
+> - **Ported:** a race's results, ported from career.js raceResult / heatRecord / addRecord / completeEvent and career-ui.js finish / drawResults / drawRecords and its menus. The new files:
+>   - native/frontend/single_event.hpp (the results and the two screens' menus);
+>   - native/frontend/career_data.hpp (career.json, Locale, raceTime);
+>   - native/frontend/menu_input.hpp (gamepad-menus.js: the PS2 pad history, the key repeat).
+>
+>   The outcome comes from engine/career_rules.hpp (the page's pv coreCareerResults kernel).
+> - **The app:** the results open on tick_results' show tick (Verifier.resultsShow), and the live ticks stop at finish + 409 under them. The records are saved in the app data folder; hidden and shot runs keep no save.
+> - **Parity:**
+>   - sj-ai to tick 14640 against browser-shot: the same outcome, screen and focus; 290 canvas calls equal but one (the cut canvas's known ±1).
+>   - ssx3_ui_shot `--screen single` against ui-shot.mjs: 6 states with key presses (top time, Continue, loss, Records, back, Up Up); canvas calls equal but that one.
+> - **Records:** native keeps the PS2's local records table (the page's onlineRecords-off path). The coordinator says no /mp/records network code until online is asked for in native.
+> - **Not yet:**
+>   - the page's auto replay behind the results (native shows the stopped finish camera; next);
+>   - Restart (the 87yndialog, world state 13);
+>   - Next event and Quit exit the app until the select and title exist;
+>   - the results audio;
+>   - the freestyle results.
+> - **QA tools:**
+>   - browser-shot: `--pv`, `--ui-clock`, `--no-replay`, and the pad held past its end;
+>   - ssx3: `--save`, `--ui-clock`, `--canvas-log`, `--results-log`.
+> - **Changed:**
+>   - native/frontend/{single_event.hpp, career_data.hpp, menu_input.hpp (new), app.cpp, ui_shot.cpp};
+>   - native/verify/replay_session.hpp (resultsShow);
+>   - native/tools/{browser-shot.mjs, ui-shot.mjs};
+>   - native/CMakeLists.txt (ssx3_ui_shot includes engine/).
+
+> **Native load screen (2026-10-14, native-port agent).** See [native.md](native.md) section 7.
+> - **Ported 1:1:** web/loading-screen.js and load-meter.js, in new native/frontend/loading_screen.hpp. That covers GL.LUI 110ctrl_load from LOADING/loading.json, the tinted sprite regions, the gouraud/gradient quads, the rotated snowflakes, the keyboard panel or the DualShock picture, the hint rotation, the meter's percentage and the fades.
+> - **HudCanvas additions:** polygon fills with solid or linear-gradient paint (rasters cached by their inputs) and rotated image draws.
+> - **Parity:** the new ssx3_ui_shot is checked against native/tools/ui-shot.mjs. Every canvas call is equal at three states (748, 442 and 656 calls); the pixel mean is 0.28 to 0.67.
+> - **The app** now loads the event on a loader thread under the animated load screen (stages course / rider / lineup / warm). The race starts after 100% and the fade. `--load-shot` writes the 120th frame.
+> - **Known:** the app's own load is slow on this machine (about 20 s, render_shot's equivalent load is about 7 s). The old sequential app took as long, so the thread is not the cause. Still to look into.
+> - **Changed:** native/frontend/{loading_screen.hpp, ui_shot.cpp (new), app.cpp, hud_canvas.*, hud_widgets.hpp}, native/tools/ui-shot.mjs (new), native/CMakeLists.txt (ssx3_ui_shot).
+
+> **Native renderer gaps settled; terrain refinement ported (2026-10-14, native-port agent).** See [native.md](native.md) section 7.
+> - **sj-solo 15300 was not a valid comparison.** The run's pad ends at 15199 and the page stops ticking at its results. browser-shot also needs `--lineup` with the replay's solo lineup (`enabled: false`); without it the page races the 5-rider default lineup. With the solo lineup the trace hashes agree to 15150.
+> - **Ported: the near-rider terrain refinement.** New native/frontend/terrain_refinement.hpp, plus WorldRenderer::terrainCommit and collectTerrain. It ports web/terrain-refinement.js, terrain-detail.js, terrain-mesh.js, terrain-worker-core.js and terrain-overlays.js: the 0.1 s plan, the bicubic patch meshes, and the swap that degenerates the coarse triangles. Without it the coarse terrain hid the board trail after the finish.
+> - **Results.** Every shot moved closer to the page:
+>   - sj-solo 190 / 300 / 1200 / 2700: 1.59 / 1.21 / 1.71 / 0.91 (before 1.88 / 2.00 / 2.47 / 1.25);
+>   - sj-ai 900: 1.07 (before 1.76);
+>   - finish 15050 / 15150: 1.01 / 1.73 (before 4.70 / 4.19).
+> - **The "banner colours" were a ssx3_render_shot harness bug.** It stepped the set pieces once at the shot (at most 3600 ticks a step), so the finish area's flags never activated. It now steps them every 400 ticks, as browser-shot's page frames do. The app was not affected.
+> - **sj-ai 200 (sun glow and lens flare at 0.75): written up as GPU raster precision.** A near-horizontal roof edge in the sun's 16 x 16 depth query rasterizes one row lower natively (visibility 0.1875 against about 0.25). The camera matrices agree to about 1e-15 and the painter values are equal. The world vertex stage now runs three's float32 steps (view x matrixWorld, then the projection).
+> - **QA tools:** render_shot prints the sun painter's values and the query visibility. Gpu::readback takes a bytes-per-texel argument. Scratch tools are in local/native-port/tools (multi-shot.mjs: several ticks in one page run; shot-toggle.mjs: an effect off).
+> - **Tests:** full ctest passes 7/7, including the 17 replay fixtures (before these renderer changes, which touch no core code).
+
 > **Deployed 2026-10-14 (coordinator): core15 + coreWorldState + frameGateRecover ON.** web/runtime core.wasm `e66ce287…`, core.js `9778efae…` (M8a world-state machine, C mission default, M8b event 7). Career crossing / transport writes come from the core's world-state events (PS2 ticks: visited bit at the WS10 exit; transport writes at WS10 once the destination is in). The low tier's frame gate recovers to 60 below 11 ms median (and probes 60 with back-off). Previous core13b saved in local/core-migration/core13b-live.*.bak. Gate: test-ps2-captures 535/535 defaults and -collectSlotReset (migration agent; identical to core13b) plus deploy-staged's run; core-api, ctm-flow, ctm-event-world, ctm-stream, ctm-left, mountain-ride, mountain-world, career, new-game, save-store, collect-slot, stage-collect, peak-run, peak-world, peak2/3-world, big-challenges, core-career-cascade, mp-pairs, ai-racers, ta-page, records-server, records-verifier, replay, rival-page, online-records, mp-page, frame-gate, frame-clock, tick-lock, mp-tick-lock, loading-screen pass.
 
 > **test-online-records is deterministic; Select Event cursor-restore fix (feCursorRestore, now on); frameGateRecover ready to flip (off) (2026-10-14, online-records test agent).** See [online-records.md](online-records.md) "Menu input" and section 3, and [sim-performance.md](sim-performance.md) "frameGateRecover".

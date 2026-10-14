@@ -11,7 +11,13 @@
 //        [--at X,Y]                                  the window's position
 //        [--quality low|medium|high]                 the page's quality tier (default high, a desktop's: frontend/quality.hpp)
 //        [--riders ps2|xbox] [--bc 0|1]              the rider texture set (tier default), BC upload (default on where supported)
+//        [--load-shot OUT.png]                       the load screen's 120th frame (QA)
 //        [--mute]                                    no audio device (the audio renders silently; --hidden mutes too)
+//        [--save PATH]                               the save (the records table); default the user's app data folder, none in
+//                                                    hidden or shot runs
+//        [--ui-clock F] [--canvas-log OUT.json]      with the shot: the results panels' timeline frame fixed at F; the shot frame's
+//                                                    UI canvas calls (native/tools/browser-shot.mjs --canvas-log)
+//        [--results-log OUT.json]                    the race's standings and the Single Event outcome when the results show
 //        [--audio-log OUT.json]                      with the shot: the director timeline, the sfx requests and their ticks, the
 //                                                    speech posts and each tick's listener (a shot run then steps at 60 Hz, as
 //                                                    native/tools/browser-shot.mjs --paced steps the page)
@@ -26,13 +32,21 @@
 #include "race_hud.hpp"
 #include "race_presenter.hpp"
 #include "world_renderer.hpp"
+#include "loading_screen.hpp"
+#include "menu_input.hpp"
+#include "single_event.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_metal.h>
+#if defined(__APPLE__)
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 #include <atomic>
 #include <thread>
 #include <cstdio>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 
@@ -165,11 +179,17 @@ int main(int argc, char** argv) {
     bool hidden = false;
     bool mute = false;
     std::string audioLog;
+    // QA: the load screen's 120th frame written as a PNG
+    std::string loadShot;
     bool focus = false;
     std::string windowAt;
     std::string qualityTier = "high";
     std::string riderSet;
     std::string bcFlag;
+    std::string savePath;
+    double uiClock = -1;
+    std::string canvasLog;
+    std::string resultsLog;
     for (int k = 1; k < argc; ++k) {
         const std::string a = argv[k];
         auto next = [&] { return k + 1 < argc ? std::string(argv[++k]) : std::string(); };
@@ -185,6 +205,8 @@ int main(int argc, char** argv) {
             shotPath = next();
         } else if (a == "--shot-tick") {
             shotTick = std::stol(next());
+        } else if (a == "--load-shot") {
+            loadShot = next();
         } else if (a == "--audio-log") {
             audioLog = next();
         } else if (a == "--mute") {
@@ -201,6 +223,14 @@ int main(int argc, char** argv) {
             riderSet = next();
         } else if (a == "--bc") {
             bcFlag = next();
+        } else if (a == "--save") {
+            savePath = next();
+        } else if (a == "--ui-clock") {
+            uiClock = std::stod(next());
+        } else if (a == "--canvas-log") {
+            canvasLog = next();
+        } else if (a == "--results-log") {
+            resultsLog = next();
         } else {
             assets = a;
         }
@@ -257,21 +287,6 @@ int main(int argc, char** argv) {
             v.meta = liveMeta(course, riderId);
             v.live = true;
         }
-        v.begin();
-        v.loadCourse();
-        v.loadRider();
-        v.prepare();
-        const json& attributes = at(v.meta["rider"], "attributes");
-        if (attributes.is_array() && attributes.size() == 7) {
-            int32_t raw[7];
-            for (size_t k = 0; k < 7; ++k) {
-                raw[k] = jsInt(attributes[k]);
-            }
-            set_rider_attributes(raw, 0);
-        }
-        v.presentationFast = quality.presentationFast;
-        v.presentationFlags();
-        v.startRun();
         // automated (hidden) runs never play sound on the user's machine
         if (hidden) {
             mute = true;
@@ -342,7 +357,6 @@ int main(int argc, char** argv) {
         configure();
 
         WorldRenderer renderer;
-        renderer.load(gpu, assets, v.code);
         // the frame: 640 x 480 (the PS2's 4:3 frame), shown scaled into the window
         const uint32_t fw = 640;
         const uint32_t fh = 480;
@@ -384,12 +398,46 @@ int main(int argc, char** argv) {
         bd.entryCount = 2;
         bd.entries = be;
         WGPUBindGroup blitGroup = wgpuDeviceCreateBindGroup(gpu.device, &bd);
+        // the 4:3 frame letterboxed into the window
+        auto present = [&] {
+            WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
+            wgpuSurfaceGetCurrentTexture(surface, &st);
+            if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
+                configure();
+                return;
+            }
+            WGPUTextureView sv0 = wgpuTextureCreateView(st.texture, nullptr);
+            WGPUCommandEncoderDescriptor ed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
+            WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(gpu.device, &ed);
+            WGPURenderPassColorAttachment ca = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+            ca.view = sv0;
+            ca.loadOp = WGPULoadOp_Clear;
+            ca.storeOp = WGPUStoreOp_Store;
+            ca.clearValue = {0, 0, 0, 1};
+            WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+            rd.colorAttachmentCount = 1;
+            rd.colorAttachments = &ca;
+            WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+            const double scale = std::min(double(pw) / fw, double(ph) / fh);
+            const float vw = float(fw * scale);
+            const float vh = float(fh * scale);
+            wgpuRenderPassEncoderSetViewport(pass, (float(pw) - vw) / 2, (float(ph) - vh) / 2, vw, vh, 0, 1);
+            wgpuRenderPassEncoderSetPipeline(pass, blitPipeline);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, blitGroup, 0, nullptr);
+            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(pass);
+            WGPUCommandBufferDescriptor cd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
+            WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, &cd);
+            wgpuQueueSubmit(gpu.queue, 1, &cmd);
+            wgpuSurfacePresent(surface);
+            wgpuCommandBufferRelease(cmd);
+            wgpuRenderPassEncoderRelease(pass);
+            wgpuCommandEncoderRelease(enc);
+            wgpuTextureViewRelease(sv0);
+            wgpuTextureRelease(st.texture);
+        };
 
-        RacePresenter presenter(v);
-        presenter.riderTextures = quality.riderTextures;
-        presenter.loadEffects(renderer);
-        // the race HUD (native/frontend/race_hud.hpp) on the UI canvas over the frame
-        // the game audio (web/game-audio.js natively): the event load, the world up, the run started
+        // the game audio (web/game-audio.js natively): opened before the load, its loading loop playing under the load screen
         audio::GameAudio::Options ao;
         ao.root = assets + "/AUDIO";
         ao.muted = mute;
@@ -397,8 +445,6 @@ int main(int argc, char** argv) {
         if (!audioLog.empty()) {
             gameAudio->sfx().logPlays(true);
         }
-        const std::string riderName = str(at(v.entry, "id"), riderId);
-        const int courseIndex = audio::courseIndexOf(v.code);
         // a fresh profile's rider record (web/audio-menu.js riderMusic: no playlist, the global radio mode); the FE flow's profile replaces it
         gameAudio->riderMusic = [&gameAudio]() -> std::optional<audio::GameAudio::RiderMusic> {
             audio::GameAudio::RiderMusic m;
@@ -406,7 +452,6 @@ int main(int argc, char** argv) {
             m.playlist.assign(35, false);
             return m;
         };
-        gameAudio->loadingStart(v.code, riderName);
         SDL_AudioStream* audioStream = nullptr;
         if (!mute) {
             if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
@@ -436,6 +481,292 @@ int main(int argc, char** argv) {
         if (!audioStream) {
             silentDevice.start(gameAudio->context());
         }
+
+        // the event load under the load screen (web/ui.js loadEvent, web/loading-screen.js): the course, the rider, the world's GPU
+        // resources, the effects, the HUD and the audio's banks on a loader thread while the screen animates; the core is the loader's
+        // until it is done
+        std::optional<RacePresenter> presenterSlot;
+        RaceHud hud;
+        std::string riderName = riderId;
+        int courseIndex = -1;
+        // the front end's canvas, images and fonts (the load screen, then the results)
+        HudCanvas feCanvas;
+        feCanvas.init(gpu);
+        hud::HudImages uiImages;
+        uiImages.canvas = &feCanvas;
+        uiImages.dir = assets + "/UI";
+        hud::UiText uiText;
+        uiText.images = &uiImages;
+        auto readJson = [&](const std::string& path) { return nlohmann::json::parse(readFile(assets + "/" + path)); };
+        uiText.fonts["FEFONT"] = hud::loadGlyphs(readJson("UI/FEFONT-glyphs.json"), false);
+        uiText.fonts["HUDFONT"] = hud::loadGlyphs(readJson("UI/HUDFONT-glyphs.json"), false);
+        {
+            hud::HudImages loadPages;
+            loadPages.canvas = &feCanvas;
+            loadPages.dir = assets + "/LOADING";
+            fe::LoadingScreen loading;
+            loading.text = &uiText;
+            loading.pages = &loadPages;
+            loading.keyboardMode = "Classic";
+            const bool screenAvailable = loading.load(readJson("LOADING/loading.json"));
+            auto nowMs = [] { return double(SDL_GetTicksNS()) / 1e6; };
+            if (screenAvailable) {
+                loading.open(nowMs());
+                // ui.js loadEvent: cb.loadStages (the course here, the rider, the lineup, the warm-up)
+                loading.plan({"course", "rider", "lineup", "warm"}, nowMs());
+            }
+            // the loader's stage reports, taken by the screen on the main thread
+            std::mutex reportsMutex;
+            std::vector<std::pair<std::string, bool>> reports;
+            auto report = [&](const std::string& id, bool done) {
+                std::lock_guard<std::mutex> lock(reportsMutex);
+                reports.push_back({id, done});
+            };
+            std::atomic<bool> loaded{false};
+            std::exception_ptr failure;
+            std::thread loader([&] {
+#if defined(__APPLE__)
+                // the load is what the player waits for: the main thread's quality of service, not a background thread's
+                pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+                try {
+                    report("course", false);
+                    v.begin();
+                    v.loadCourse();
+                    report("course", true);
+                    report("rider", false);
+                    v.loadRider();
+                    riderName = str(at(v.entry, "id"), riderId);
+                    courseIndex = audio::courseIndexOf(v.code);
+                    // the load screen opens: the FE song fades, the world banks load, the loading loop starts (game-audio.js loadingStart)
+                    gameAudio->loadingStart(v.code, riderName);
+                    report("rider", true);
+                    report("lineup", false);
+                    v.prepare();
+                    const json& attributes = at(v.meta["rider"], "attributes");
+                    if (attributes.is_array() && attributes.size() == 7) {
+                        int32_t raw[7];
+                        for (size_t k = 0; k < 7; ++k) {
+                            raw[k] = jsInt(attributes[k]);
+                        }
+                        set_rider_attributes(raw, 0);
+                    }
+                    v.presentationFast = quality.presentationFast;
+                    v.presentationFlags();
+                    v.startRun();
+                    report("lineup", true);
+                    report("warm", false);
+                    renderer.load(gpu, assets, v.code);
+                    presenterSlot.emplace(v);
+                    presenterSlot->riderTextures = quality.riderTextures;
+                    presenterSlot->loadEffects(renderer);
+                    hud.load(gpu, v);
+                    report("warm", true);
+                } catch (...) {
+                    failure = std::current_exception();
+                }
+                loaded = true;
+            });
+            bool joined = false;
+            bool screenDone = !screenAvailable;
+            uint64_t lastFrameNs = 0;
+            int loadFrames = 0;
+            while (!screenDone || !joined) {
+                SDL_Event e;
+                while (SDL_PollEvent(&e)) {
+                    if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+                        configure();
+                    }
+                }
+                if (loaded && !joined) {
+                    loader.join();
+                    joined = true;
+                    if (failure) {
+                        std::rethrow_exception(failure);
+                    }
+                    // the work has settled: 100%, the 12 frames and the fade, then the race (ui.js loadEvent's next)
+                    if (screenAvailable) {
+                        loading.finish([&screenDone] { screenDone = true; });
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(reportsMutex);
+                    for (const auto& [id, done] : reports) {
+                        if (done) {
+                            loading.done(id, nowMs());
+                        } else {
+                            loading.begin(id, nowMs());
+                        }
+                    }
+                    reports.clear();
+                }
+                if (!screenAvailable) {
+                    SDL_Delay(5);
+                    continue;
+                }
+                // one 60 Hz frame of the screen
+                const uint64_t frameNs = SDL_GetTicksNS();
+                if (lastFrameNs && frameNs - lastFrameNs < 1000000000ull / 60) {
+                    SDL_DelayPrecise(1000000000ull / 60 - (frameNs - lastFrameNs));
+                }
+                lastFrameNs = SDL_GetTicksNS();
+                feCanvas.begin();
+                loading.gamepad = false;
+                loading.draw(feCanvas, nowMs());
+                WGPUCommandEncoderDescriptor led = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
+                WGPUCommandEncoder lenc = wgpuDeviceCreateCommandEncoder(gpu.device, &led);
+                feCanvas.encode(lenc, frameView, fw, fh);
+                WGPUCommandBufferDescriptor lcd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
+                WGPUCommandBuffer lcmd = wgpuCommandEncoderFinish(lenc, &lcd);
+                wgpuQueueSubmit(gpu.queue, 1, &lcmd);
+                wgpuCommandBufferRelease(lcmd);
+                wgpuCommandEncoderRelease(lenc);
+                if (!loadShot.empty() && ++loadFrames == 120) {
+                    const auto pixels = gpu.readback(frameTex, fw, fh);
+                    writePng(loadShot, int(fw), int(fh), pixels.data());
+                }
+                if (!hidden) {
+                    present();
+                } else {
+                    gpu.wait();
+                }
+            }
+        }
+        RacePresenter& presenter = *presenterSlot;
+        // a Single Event's results (web/career-ui.js finish: ctm-records on a new top time, then ctm-results), over the stopped world
+        fe::CareerData career;
+        bool careerReady = false;
+        try {
+            careerReady = career.load(readJson("CAREER/career.json"));
+        } catch (const std::exception&) {
+            careerReady = false;
+        }
+        // the save (the records table): the user's app data folder in a live run; hidden and shot runs keep none unless --save names one
+        if (savePath.empty() && !hidden && shotPath.empty()) {
+            if (char* pref = SDL_GetPrefPath("ssx3", "native")) {
+                savePath = std::string(pref) + "save.json";
+                SDL_free(pref);
+            }
+        }
+        json saveDoc = json::object();
+        fe::RecordsStore records;
+        if (careerReady) {
+            records.reset(career.rules["records"]);
+            if (!savePath.empty()) {
+                try {
+                    saveDoc = json::parse(readFile(savePath));
+                    if (!saveDoc.is_object() || !records.restore(saveDoc.value("records", json()))) {
+                        records.reset(career.rules["records"]);
+                    }
+                } catch (const std::exception&) {
+                    saveDoc = json::object();
+                }
+            }
+        }
+        auto persist = [&] {
+            if (savePath.empty()) {
+                return;
+            }
+            saveDoc["version"] = 2;
+            saveDoc["records"] = records.toJson();
+            std::ofstream(savePath) << saveDoc.dump();
+        };
+        fe::ResultsLui resultsLui;
+        bool resultsReady = false;
+        if (careerReady) {
+            try {
+                resultsReady = resultsLui.load(readJson("UI/results-screens.json"), uiImages, uiText);
+            } catch (const std::exception&) {
+                resultsReady = false;
+            }
+        }
+        fe::SingleEventScreens screens;
+        screens.data = &career;
+        screens.records = &records;
+        const int eventCourse = careerReady ? career.courseOf(v.code) : -1;
+        const int eventMode = careerReady ? career.standardMode(eventCourse) : -1;
+        // web/ai-race.js DISPLAY, then the roster's names (riders.json)
+        std::map<std::string, std::string> displayNames = {{"psymon", "Psymon"}, {"allegra", "Allegra"}, {"moby", "Moby"}, {"griff", "Griff"},
+                                                           {"luther", "Luther"}, {"zoe", "Zoe"}, {"mac", "Mac"}, {"sam", "Sam"}};
+        std::map<std::string, std::string> rosterNames;
+        try {
+            for (const auto& r : readJson("riders.json")) {
+                rosterNames.emplace(r.value("id", ""), r.value("name", ""));
+                displayNames.emplace(r.value("id", ""), r.value("name", ""));
+            }
+        } catch (const std::exception&) {
+        }
+        // the menus' keys off the race (web/gamepad-menus.js) and whether the live ticks still run (web/game-tick.js s.running)
+        fe::MenuInput menuInput;
+        bool live = true;
+        // web/career-ui.js finish for a race: the standings as the results tick left them (web/ai-race.js standings), the human's
+        // finish (race_result_info [1], DNF when timed out) and race ticks (main.js lastState.raceTicks, race_result_info [4])
+        auto openResults = [&](long atTick) {
+            const float* info = race_result_info();
+            const double ticks = info[1];
+            const double raceTicks = info[4];
+            const bool dnf = race_timed_out() != 0;
+            std::vector<fe::RaceStanding> standings;
+            fe::RaceStanding h;
+            h.human = true;
+            h.name = rosterNames.count(riderName) && !rosterNames[riderName].empty() ? rosterNames[riderName] : "Sam";
+            if (v.aiActive) {
+                const json& docRiders = v.aiDoc["riders"];
+                auto originOf = [&](int slot) {
+                    const int k = slot == 0 ? 0 : slot - 1;
+                    return size_t(k) < docRiders.size() ? at(docRiders[size_t(k)], "progress_origin").get<double>() : 0.0;
+                };
+                const float* p = race_progress_info();
+                h.remaining = p[0];
+                h.finished = p[3] >= 0;
+                h.finishTicks = p[4];
+                h.origin = originOf(0);
+                standings.push_back(h);
+                for (const auto& n : v.npcs) {
+                    fe::RaceStanding r;
+                    v.inNpc(n, [&] {
+                        const float* q = race_progress_info();
+                        r.remaining = q[0];
+                        r.finished = q[3] >= 0;
+                        r.finishTicks = q[4];
+                    });
+                    const std::string character = str(at(n.record, "character"));
+                    r.name = displayNames.count(character) && !displayNames[character].empty() ? displayNames[character] : character;
+                    r.place = n.slot;
+                    r.origin = originOf(n.slot);
+                    standings.push_back(r);
+                }
+            } else {
+                standings.push_back(h);
+            }
+            fe::RaceStanding& hs = standings[0];
+            hs.dnf = dnf;
+            if (!dnf) {
+                hs.finished = true;
+                hs.finishTicks = ticks;
+            }
+            const fe::RaceOutcome outcome = fe::singleEventRace(career, records, eventCourse, fe::riderCharacter(riderName), standings, raceTicks);
+            persist();
+            screens.open(outcome);
+            if (!resultsLog.empty()) {
+                json log;
+                json rows = json::array();
+                for (size_t k = 0; k < standings.size(); ++k) {
+                    const auto& s = standings[k];
+                    rows.push_back({{"human", s.human}, {"name", s.name}, {"finished", s.finished}, {"finishTicks", s.finishTicks}, {"remaining", s.remaining},
+                                    {"place", s.place}, {"origin", s.origin}, {"dnf", s.dnf}, {"time", outcome.times[k]}, {"rank", outcome.rank[k]}});
+                }
+                log["tick"] = atTick;
+                log["ticks"] = ticks;
+                log["raceTicks"] = raceTicks;
+                log["rows"] = rows;
+                log["place"] = outcome.place;
+                log["medal"] = outcome.medal;
+                log["record"] = outcome.record;
+                log["topTime"] = screens.topTime();
+                std::ofstream(resultsLog) << log.dump();
+            }
+        };
         float audioPhase = -1;
         std::set<const void*> npcFinished;
         // the camera of the last frame drawn (the audio listener)
@@ -480,8 +811,6 @@ int main(int argc, char** argv) {
         std::optional<std::array<double, 3>> heardFrom;
         std::array<double, 16> heardInverse{};
         bool audioFinished = false;
-        RaceHud hud;
-        hud.load(gpu, v);
         hud.begin(v);
         v.afterMid = [&] { hud.afterMid(v); };
         // the EA RADIO BIG popup (web/audio-menu.js subscribe: not while the race music is off)
@@ -510,18 +839,40 @@ int main(int argc, char** argv) {
         uint64_t last = SDL_GetTicksNS();
         uint64_t pacedAt = 0;
         bool running = true;
+        // a results menu's choice: Next event and Quit leave (the event select and the title are the FE flow still to come); Restart
+        // waits for the 87yndialog and world state 13's restart, Replay for the full replay (greyed without it)
+        auto act = [&](fe::SingleEventScreens::Action a) {
+            using Action = fe::SingleEventScreens::Action;
+            if (a == Action::NextEvent || a == Action::Quit) {
+                running = false;
+            }
+        };
+        auto menuUp = [&] { return screens.screen() != fe::SingleEventScreens::Screen::None; };
+        auto menuKey = [&](const std::string& code, bool repeat) {
+            if (!code.empty()) {
+                act(screens.key(code, repeat));
+            }
+        };
         while (running) {
             SDL_Event e;
+            const double nowMs = double(SDL_GetTicksNS()) / 1e6;
             while (SDL_PollEvent(&e)) {
                 if (e.type == SDL_EVENT_QUIT) {
                     running = false;
                 } else if (e.type == SDL_EVENT_KEY_DOWN) {
-                    if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    const std::string code = e.key.scancode == SDL_SCANCODE_ESCAPE ? std::string("Escape") : codeOf(e.key.scancode);
+                    if (menuUp()) {
+                        // the menus read the key (Escape: Triangle, back)
+                        menuInput.keyDown(code, e.key.repeat, nowMs, true);
+                        menuKey(code, e.key.repeat);
+                    } else if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
                         running = false;
                     }
                     keys.insert(codeOf(e.key.scancode));
                     lastDevice = "keyboard";
                 } else if (e.type == SDL_EVENT_KEY_UP) {
+                    const std::string code = e.key.scancode == SDL_SCANCODE_ESCAPE ? std::string("Escape") : codeOf(e.key.scancode);
+                    menuInput.keyUp(code);
                     keys.erase(codeOf(e.key.scancode));
                 } else if (e.type == SDL_EVENT_GAMEPAD_ADDED && !gamepad) {
                     gamepad = SDL_OpenGamepad(e.gdevice.which);
@@ -531,6 +882,9 @@ int main(int argc, char** argv) {
                     configure();
                 }
             }
+            // the pad's menu keys (the UI frame counter's passes first) and the held arrows' repeats
+            menuInput.step(padOf(gamepad), nowMs, menuUp(), [&] { screens.frame(); }, [&](const std::string& code) { menuKey(code, false); });
+            menuInput.keyRepeats(nowMs, menuUp(), [&](const std::string& code) { menuKey(code, false); });
             const uint64_t now = SDL_GetTicksNS();
             const double dt = double(now - last) / 1e9;
             last = now;
@@ -557,7 +911,7 @@ int main(int argc, char** argv) {
                 ticks = clock.advance(std::min(ps2FrameTime(dt), 0.25));
                 alpha = clock.alpha();
             }
-            for (int k = 0; k < ticks; ++k) {
+            for (int k = 0; k < ticks && live; ++k) {
                 float pad[24];
                 if (!watchFile.empty()) {
                     reader.read(tick, pad);
@@ -662,9 +1016,17 @@ int main(int argc, char** argv) {
                         listenerLog.push_back(heard);
                     }
                 }
+                // the results this tick (web/game-tick.js present: ui.showResults -> careerUI.finish)
+                if (v.resultsShow && resultsReady && eventMode == 0 && !menuUp()) {
+                    openResults(tick);
+                }
                 ++tick;
+                // the live ticks end (finish + 409); the results stay up over the stopped world, else the run is over
                 if (!v.running) {
-                    running = false;
+                    live = false;
+                    if (!menuUp()) {
+                        running = false;
+                    }
                 }
             }
             if (!presenter.cameraValid()) {
@@ -695,11 +1057,23 @@ int main(int argc, char** argv) {
                 listenerKnown = true;
             }
             hud.keyboard = lastDevice.empty() ? gamepad == nullptr : lastDevice == "keyboard";
-            hud.draw(v, double(SDL_GetTicksNS()) / 1e9);
+            // the shot frame's UI canvas calls (--canvas-log)
+            const bool logFrame = !canvasLog.empty() && !shotPath.empty() && tick > shotTick;
+            // ui.draw: a results screen draws alone (no race HUD), else the HUD
+            HudCanvas& uiCanvas = menuUp() ? feCanvas : hud.canvas;
+            if (menuUp()) {
+                feCanvas.begin();
+                feCanvas.logging = logFrame;
+                resultsLui.setKeyboard(hud.keyboard);
+                screens.draw(feCanvas, resultsLui, double(SDL_GetTicksNS()) / 1e9 * 60, uiClock);
+            } else {
+                hud.canvas.logging = logFrame;
+                hud.draw(v, double(SDL_GetTicksNS()) / 1e9);
+            }
             {
                 WGPUCommandEncoderDescriptor hed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
                 WGPUCommandEncoder henc = wgpuDeviceCreateCommandEncoder(gpu.device, &hed);
-                hud.canvas.encode(henc, frameView, fw, fh);
+                uiCanvas.encode(henc, frameView, fw, fh);
                 WGPUCommandBufferDescriptor hcd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
                 WGPUCommandBuffer hcmd = wgpuCommandEncoderFinish(henc, &hcd);
                 wgpuQueueSubmit(gpu.queue, 1, &hcmd);
@@ -710,6 +1084,9 @@ int main(int argc, char** argv) {
                 const auto pixels = gpu.readback(frameTex, fw, fh);
                 writePng(shotPath, int(fw), int(fh), pixels.data());
                 std::printf("{\"tick\":%ld,\"out\":%s}\n", tick - 1, json(shotPath).dump().c_str());
+                if (logFrame) {
+                    std::ofstream(canvasLog) << uiCanvas.log.dump();
+                }
                 if (!audioLog.empty()) {
                     audio::Json log;
                     log["timeline"] = gameAudio->timeline();
@@ -733,41 +1110,7 @@ int main(int argc, char** argv) {
                 gpu.wait();
                 continue;
             }
-            WGPUSurfaceTexture st = WGPU_SURFACE_TEXTURE_INIT;
-            wgpuSurfaceGetCurrentTexture(surface, &st);
-            if (st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && st.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) {
-                configure();
-                continue;
-            }
-            WGPUTextureView sv0 = wgpuTextureCreateView(st.texture, nullptr);
-            WGPUCommandEncoderDescriptor ed = WGPU_COMMAND_ENCODER_DESCRIPTOR_INIT;
-            WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(gpu.device, &ed);
-            WGPURenderPassColorAttachment ca = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
-            ca.view = sv0;
-            ca.loadOp = WGPULoadOp_Clear;
-            ca.storeOp = WGPUStoreOp_Store;
-            ca.clearValue = {0, 0, 0, 1};
-            WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
-            rd.colorAttachmentCount = 1;
-            rd.colorAttachments = &ca;
-            WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rd);
-            const double scale = std::min(double(pw) / fw, double(ph) / fh);
-            const float vw = float(fw * scale);
-            const float vh = float(fh * scale);
-            wgpuRenderPassEncoderSetViewport(pass, (float(pw) - vw) / 2, (float(ph) - vh) / 2, vw, vh, 0, 1);
-            wgpuRenderPassEncoderSetPipeline(pass, blitPipeline);
-            wgpuRenderPassEncoderSetBindGroup(pass, 0, blitGroup, 0, nullptr);
-            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
-            wgpuRenderPassEncoderEnd(pass);
-            WGPUCommandBufferDescriptor cd = WGPU_COMMAND_BUFFER_DESCRIPTOR_INIT;
-            WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(enc, &cd);
-            wgpuQueueSubmit(gpu.queue, 1, &cmd);
-            wgpuSurfacePresent(surface);
-            wgpuCommandBufferRelease(cmd);
-            wgpuRenderPassEncoderRelease(pass);
-            wgpuCommandEncoderRelease(enc);
-            wgpuTextureViewRelease(sv0);
-            wgpuTextureRelease(st.texture);
+            present();
         }
         std::fflush(stdout);
         std::_Exit(0);

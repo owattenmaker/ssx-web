@@ -91,8 +91,14 @@ void setRecordFlags(uint32_t flags) {
 }
 }  // namespace
 
+// web/peak_world.inc (M8c): the world-state requests and the course event's 230F40
+extern "C" void browser_world_state_request(int32_t state, int32_t arg, bool now);
+extern "C" void browser_world_state_frame();
+
 // One consumed pad sample: the provider 0x127998 and the controller's command words (pad_tick). Starts a new record.
 extern "C" EMSCRIPTEN_KEEPALIVE float* tick_input(const float* pad) {
+    // M8c: the update's 230F40 (a course event; a streamed world's ran in peak_world_tick)
+    browser_world_state_frame();
     float* out = tickRecord();
     std::memset(out, 0, 96 * sizeof(float));
     std::memcpy(out, pad_tick(pad), 24 * sizeof(float));
@@ -238,6 +244,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tick_results(float* io) {
     constexpr int kPostFinish = 409;
     constexpr int kSkipFrom = 228;
     bool pending = io[1] != 0;
+    const bool wasPending = pending;
     const bool finished = io[2] != 0;
     double post = io[3];
     int held = int(io[4]);
@@ -268,6 +275,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tick_results(float* io) {
         post += 1;
         const double stopAt = io[9] >= 0 ? io[9] : kPostFinish;
         stop = post >= stopAt;
+    }
+    // M8c (local/core-migration/decomp/ws-machine.md 3): EndRace is 113DB0's request of world state 5 (12A250 race over); the results
+    // shown are WS5's update 233CD8 advancing (231320) to 7. A podium's 12 first is the host's (not yet modelled).
+    if (truthy(io[0]) && !wasPending) {
+        browser_world_state_request(5, 0, false);
+    }
+    if (show) {
+        browser_world_state_request(7, 0, false);
     }
     io[0] = pending ? 1 : 0;
     io[1] = float(held);
