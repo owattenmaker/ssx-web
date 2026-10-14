@@ -492,21 +492,19 @@ void RiderRenderer::drawOpaque(WGPURenderPassEncoder pass) {
     }
 }
 
-void RiderRenderer::drawTransparent(WGPURenderPassEncoder pass) {
+void RiderRenderer::drawTransparent(WGPURenderPassEncoder pass, int side) {
     wgpuRenderPassEncoderSetBindGroup(pass, 0, frame_, 0, nullptr);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertices_, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetIndexBuffer(pass, indices_, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-    // the high pass then the low pass of each blended batch (one mesh, two material groups), each back faces then front
+    // the high pass then the low pass of each blended batch (one mesh, two material groups)
     for (const auto& b : batches_) {
         if (!b.blended) {
             continue;
         }
         wgpuRenderPassEncoderSetBindGroup(pass, 1, b.material, 0, nullptr);
         for (int kind = 1; kind <= 2; ++kind) {
-            for (int side = 0; side < 2; ++side) {
-                wgpuRenderPassEncoderSetPipeline(pass, pipelines_[kind][side]);
-                wgpuRenderPassEncoderDrawIndexed(pass, b.count, 1, b.first, 0, 0);
-            }
+            wgpuRenderPassEncoderSetPipeline(pass, pipelines_[kind][side]);
+            wgpuRenderPassEncoderDrawIndexed(pass, b.count, 1, b.first, 0, 0);
         }
     }
 }

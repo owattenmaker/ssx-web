@@ -108,6 +108,17 @@ export async function createFreeRide({
   const pathBanks = new Map(); // location id -> paths.json
   let splitCounter = 0,
     split = null; // peak runs
+  // pv coreWorldEvents (docs/core-migration.md "B"): the core makes the station decisions (the split, a booth / lodge door ending a
+  // Big Challenge) at the end of peak_world_tick; the page keeps the cutscenes, prompts and maps. Set with the core at the world start
+  // and at each run's start (peak_run_setup).
+  let coreEvents = false;
+  const runSetup = () => {
+    if (!core._peak_run_setup) return;
+    coreEvents = pv('coreWorldEvents');
+    const st = coreEvents && eventKind !== FREE_RIDE_KIND ? peakSetup() : null;
+    const s = st?.splits ?? [];
+    core._peak_run_setup(coreEvents ? 1 : 0, st ? 1 : 0, st?.time ? 1 : 0, s[0] ?? 0, s[1] ?? 0, s[2] ?? 0, s[3] ?? 0, s[4] ?? 0);
+  };
   let setPieces = null; // stage world of the resident locations (web/peak-set-pieces.js)
   const flagsApplied = new Set();
   const manifestRoot = manifestUrl.replace(/[^/]*$/, ''); // /assets/PEAK1/ (the whole mountain's locations live in the per-peak folders)
@@ -474,7 +485,7 @@ export async function createFreeRide({
           station = { action: b, course: here >= 17 && here <= 21 ? here : a };
         // world state 14's enter 236250 ends a running Big Challenge (0x23626C: 30B7F8) and holds the riders (113B10(C, 3))
         // while the cut plays: main.js pauses the ride from 'stationCut'
-        core._mission_world_session?.(0);
+        if (!coreEvents) core._mission_world_session?.(0);
         listeners.stationCut?.(station);
         playCutscene({
           kind: b === 4 ? 'lodge-walkin' : 'transport-booth',
@@ -484,15 +495,17 @@ export async function createFreeRide({
         }).then(() => listeners.station?.(station));
       } // state 14 enter 236250: the cut, then the prompt / map
       else if (kind === 1 && b === 2 && a >= 17 && a <= 21 && eventKind !== FREE_RIDE_KIND && peakSetup()) {
-        // 22D088 into a station: 235868 -> 238510 split
-        const setup = peakSetup(),
-          s = peakSplitFn(setup, splitCounter, splitInputs());
-        splitCounter = s.counter;
-        // 1195A8 / 1195D8: the split is a 5 s HUD message of the rider's score object (0x2A time / 0x2B points), drawn by the
-        // trick HUD like the PS2's "CHECKPOINT" (web/trick-hud.js split); the old text under the clock stays as a fallback
-        if (s.shown) {
-          if (core._score_hud_post) core._score_hud_post(setup.time ? 0x2a : 0x2b, s.value, 5);
-          else split = { ...s, until: performance.now() + 5000 };
+        // 22D088 into a station: 235868 -> 238510 split (pv coreWorldEvents: the core posted it)
+        if (!coreEvents) {
+          const setup = peakSetup(),
+            s = peakSplitFn(setup, splitCounter, splitInputs());
+          splitCounter = s.counter;
+          // 1195A8 / 1195D8: the split is a 5 s HUD message of the rider's score object (0x2A time / 0x2B points), drawn by the
+          // trick HUD like the PS2's "CHECKPOINT" (web/trick-hud.js split); the old text under the clock stays as a fallback
+          if (s.shown) {
+            if (core._score_hud_post) core._score_hud_post(setup.time ? 0x2a : 0x2b, s.value, 5);
+            else split = { ...s, until: performance.now() + 5000 };
+          }
         }
         listeners.residency?.({ course: a, action: b, mode: c });
       }
@@ -721,6 +734,7 @@ export async function createFreeRide({
         await step();
       }
       core._peak_world_start(course);
+      runSetup();
       // The stage world (particles, LiveComp, flags, UV scroll, instance states) of every location, one core stage context.
       setPieces = await createPeakSetPieces({ core, parent: group, root: manifestRoot + 'SETPIECES/', origin }).catch((e) => {
         console.warn('Peak 1 set pieces unavailable', e);
@@ -755,6 +769,7 @@ export async function createFreeRide({
         splitCounter = 0;
         split = null;
       }
+      runSetup();
     },
     // Peak runs: the station split shown for 5 s (web/peak-run.js peakSplit) and its counter (handler+8).
     split: () => split,
@@ -770,6 +785,8 @@ export async function createFreeRide({
       core._lighting_streamed_off?.();
       core._stage_load_flags?.(0);
       core._peak_world_stop();
+      if (coreEvents) core._peak_run_setup(0, 0, 0, 0, 0, 0, 0, 0);
+      coreEvents = false;
       started = false;
       for (const s of render.values())
         if (s.group) {

@@ -11,6 +11,8 @@
 //  - the career save: the 88 status words (character block +0x118 + 4*index: bit0 locked follow-on, bit1 new, bit2 failed,
 //    bit3 completed, bit4 available) per rider, and the completion cash (10F2D8 -> 119EF8(score, 4, cash));
 //  - challenge music (29D6E0 events 33/34/38 by the challenge type, 29D8E0 / 29DBB0 event 39) through web/game-audio.js.
+// pv coreCareerWorld (docs/core-migration.md M5f)
+import { worldKernel, FAILED } from './career-kernel.js';
 import { format } from './locale.js';
 import { pv } from './pv-flags.js';
 import { CTX } from './pause-contexts.js';
@@ -45,6 +47,14 @@ export function setStatusWord(career, riderId, index, word) { const w = statusWo
 // A status word from the core (1540F0 / 154160 ...). 307308 -> 10F2D8 -> 159B08: a completed challenge that brings its peak a
 // new Big Challenge medal can complete the Freeride goal (web/career.js exploreGoal: the goal award, the next peak's pass).
 export function challengeStatus(career, riderId, index, word, rows = table) {
+  // pv coreCareerWorld (docs/core-migration.md M5f): in the career kernel, which has this table (undefined: the JS)
+  if (rows === table && table) {
+    const k = worldKernel(career, 'challenge', { id: riderId, index, word });
+    if (k !== undefined && k !== FAILED) {
+      if (k) career.persist();
+      return;
+    }
+  }
   const x = rows?.[index], peak = x && x.course >= 0 && career.courses?.[x.course] ? career.peakOf(x.course) : 0;
   const before = peak && career.challengeMedal ? career.challengeMedal(riderId, peak) : null;
   setStatusWord(career, riderId, index, word);

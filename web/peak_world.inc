@@ -225,7 +225,45 @@ EMSCRIPTEN_KEEPALIVE void peak_world_start(int course){
 }
 EMSCRIPTEN_KEEPALIVE void peak_world_data_ready(int track,int ready){for(auto& r:peak_stream::rows)if(r.track==track)r.data=ready!=0;}
 // One streamer pass: call once per game tick after race_end (it is the next tick's pass).
-EMSCRIPTEN_KEEPALIVE void peak_world_tick(){if(peak_stream::active)peak_stream::pass();}
+// pv coreWorldEvents (docs/core-migration.md "B"): the station decisions web/free-ride.js drainEvents made after this pass, made here at
+// the same point when the page turned them on (peak_run_setup): a booth / lodge door (builtin 68 actions 3 / 4) ends a running Big
+// Challenge (236250 -> 0x23626C: 30B7F8, mission_world_session 0); a peak run's Load trigger into a station (22D088 -> 235868 ->
+// 238510, courses 17..21) shows the next split of the tier row for 5 s (23B5F8 / 23C560: HUD 0x2A time = int(f32(raceTicks) x
+// 0.016666668) - split, 0x2B points = score - split x 100; a zero split shows nothing; the counter advances either way). The
+// events stay queued for the page's UI (peak_world_events).
+extern "C" void mission_world_session(int phase);
+extern "C" int score_hud_post(int type,int value,float duration);
+extern "C" float* score_hud_slots();
+extern "C" float browser_race_info_clock();
+namespace peak_stream{
+RIDER_LOCAL static bool coreEvents=false;RIDER_LOCAL static bool runActive=false;RIDER_LOCAL static bool runTime=false;
+RIDER_LOCAL static std::array<int32_t,5> runSplits{};RIDER_LOCAL static int32_t splitCounter=0;RIDER_LOCAL static size_t applied=0;
+void apply_events(){
+ for(;applied+4<=events.size();applied+=4){
+  const int32_t kind=events[applied],a=events[applied+1],b=events[applied+2];
+  if(kind!=1)continue;
+  if(b==3||b==4){mission_world_session(0);continue;}
+  if(!(b==2&&a>=17&&a<=21&&eventKind!=4&&runActive))continue;
+  const int32_t split=splitCounter<5?runSplits[size_t(splitCounter)]:0;
+  splitCounter++;
+  if(!split)continue;
+  // the page's inputs: Math.round(raceInfo[0] x 60) race ticks (JS rounding: the nearest integer, halves up), the HUD total (float
+  // of score object +0x198)
+  const double clock=double(browser_race_info_clock())*60;
+  const double floor=std::floor(clock);
+  const double raceTicks=clock-floor>=0.5?floor+1:floor;
+  const double score=double(score_hud_slots()[44*6]);
+  const double value=runTime?std::trunc(double(float(raceTicks*0.01666666753590107)))-split:std::trunc(score)-double(split)*100;
+  score_hud_post(runTime?0x2a:0x2b,int(value),5);
+ }
+}
+}
+// (also called alone by a capture comparison that drives the rows itself, after the tick's race_end: web/compare-ps2-capture.mjs)
+EMSCRIPTEN_KEEPALIVE void peak_world_apply_events(){if(peak_stream::active&&peak_stream::coreEvents)peak_stream::apply_events();}
+EMSCRIPTEN_KEEPALIVE void peak_world_tick(){if(peak_stream::active)peak_stream::pass();peak_world_apply_events();}
+// pv coreWorldEvents: on (1) with the run's setup (web/peak-run.js peakSetup: time challenge, the tier row's five station splits;
+// active 0 outside a peak run), at each run's start (web/free-ride.js afterReset: the split counter back to 0). 0: the page decides.
+EMSCRIPTEN_KEEPALIVE void peak_run_setup(int on,int active,int time,int s0,int s1,int s2,int s3,int s4){using namespace peak_stream;coreEvents=on!=0;runActive=active!=0;runTime=time!=0;runSplits={s0,s1,s2,s3,s4};splitCounter=0;}
 EMSCRIPTEN_KEEPALIVE int peak_world_course(){return peak_stream::currentCourse;}
 // +0x1D0 == 0 (a row still in 4/8 after a Load trigger): 2306B8 skips the gameplay part of the frame until it is in.
 EMSCRIPTEN_KEEPALIVE int peak_world_blocking(){for(const auto& r:peak_stream::rows)if(r.state==4||r.state==8)return 1;return 0;}
@@ -295,7 +333,7 @@ EMSCRIPTEN_KEEPALIVE int peak_world_request_resident(){
 }
 // Stage requests since the last call: [count, {kind, a, b, c}...] (1 builtin 68 course/action/mode, 3 builtin 67 entry/flag,
 // 4 sky switched to location a, 5 current course 0x535C08 = a).
-EMSCRIPTEN_KEEPALIVE int32_t* peak_world_events(){RIDER_LOCAL static std::vector<int32_t> out;out.assign(1,int32_t(peak_stream::events.size()/4));out.insert(out.end(),peak_stream::events.begin(),peak_stream::events.end());peak_stream::events.clear();return out.data();}
+EMSCRIPTEN_KEEPALIVE int32_t* peak_world_events(){RIDER_LOCAL static std::vector<int32_t> out;out.assign(1,int32_t(peak_stream::events.size()/4));out.insert(out.end(),peak_stream::events.begin(),peak_stream::events.end());peak_stream::events.clear();peak_stream::applied=0;return out.data();}
 // 0x535C10 event kind seen by the stage builtins (43): 4 free ride, 5 time challenge, 6 points challenge; -1 restores the course's.
 RIDER_LOCAL extern int browserEventKind;
 EMSCRIPTEN_KEEPALIVE void peak_world_event_kind(int kind){browserEventKind=kind;peak_stream::eventKind=kind;}

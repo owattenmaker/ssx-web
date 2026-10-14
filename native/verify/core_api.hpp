@@ -120,4 +120,17 @@ float* camera_render_view();
 float* rider_lighting_gpu_coefficients();
 float* environment_lighting_info();
 float* reset_info();
+// the rider effects (web/board-trail.js, wake-renderer.js, snow-renderer.js), built when read
+float* trail_info();
+float* trail_ribbon();
+float* trail_roof();
+float* wake_info();
+float* wake_vertices();
+float* snow_info();
+float* snow_particles(unsigned emitter);
+float* snow_flipbook_info();
+float* boost_fx_info();
+float* boost_fx_vertices(unsigned strip);
+float* rider_fx_info();
+float* rider_fx_vertices(unsigned strip);
 }

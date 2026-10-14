@@ -289,29 +289,46 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/pad_input.hpp | pad-input.js | the 24 channels, bit for bit (ctest frontend_pad_input) |
 | frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
 | frontend/uv_scroll.hpp | uv-scroll.js, set-pieces-renderer.js | the scroller 0x35F7D0 in the EE scalar arithmetic (chop MUL / ADD / SUB with the guard bit, DIV.S nearest), the scroll groups by first appearance, the set-piece clock (set_piece_info, the slot-1 section enters, the ready state's phases); drawn as the first instance indexing a storage buffer |
+| frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
 | frontend/sun_flare.hpp, light_glow.hpp, post_effects.cpp, painter_tree.hpp | sun-flare.js, light-glow.js, fog-renderer.js | the Sun painter per camera tick; the 16 x 16 sun depth query and the glow plus nine lens sprites (2F4DB8 / 2F4A08 / 2F4690); each light's sprite quad and query record (2E2B00 / 2E2868 / 2EC478), drawn additively (copies) into the glow target; the composite adds glow, then sun, after the fog and before ScreenTint |
 
 **Visual parity** (local/native-port/shots: web | native | difference x 4; the ?simtrace hashes of the tick are equal in every shot):
 
 | Shot | Run, tick | Mean / p95 | Notes |
 | --- | --- | --- | --- |
-| sj-solo-1200-uvscroll | Snow Jam, Zoe, solo, 1200 | 4.53 / 19 | the chevron fence scrolls in step (it was 4.8 / 21 before UV scroll) |
-| sj-solo-300-glow-sun | the same run, 300 | 5.70 / 27 | 10 light glows and the sun in view: the halos, the sun glow and its lens ring match |
-| sj-ai-900-sun | Snow Jam, Zoe, 5 computer riders, 900 | 6.91 / 40 | 6 riders; 23.3 / 135 before the sun flare |
-| sj-solo-2700 | solo, 2700 | 3.12 / 17 | 7 glows |
+| sj-solo-1200-fx | Snow Jam, Zoe, solo, 1200 | 2.54 / 9 | the trail and the kicker's streamer beam match (4.8 / 21 at first light, 4.53 with UV scroll) |
+| sj-solo-300-fx | the same run, 300 | 4.90 / 23 | 10 light glows and the sun; the trail behind the rider |
+| sj-ai-900-fx | Snow Jam, Zoe, 5 computer riders, 900 | 6.32 / 38 | 6 riders; the spray and the streamer under the jump match (23.3 / 135 at first, 6.91 with the sun) |
+| sj-solo-2700-fx | solo, 2700 | 1.26 / 5 | the spray and both air streamers |
 
-The geometry, the camera, the riders' poses and lighting, the fog / tint, UV scroll, the glows and the sun match. What differs is not
-ported yet:
-- the board trails and the snow spray / snow cloud (the largest remaining area in every shot);
+The earlier milestones' shots (sj-solo-1200-uvscroll, sj-solo-300-glow-sun, sj-ai-900-sun, sj-solo-2700) stay for comparison.
+
+The geometry, the camera, the riders' poses and lighting, the fog / tint, UV scroll, the glows, the sun and the rider effects match. What
+differs is not ported yet:
 - the moving set pieces: the gondola and its cable, the banners (MeshAnim / LiveComp), pickups;
-- the rider shadow;
+- the snow cloud over the Snow Jam pipe (sj-ai 900, top right): set-piece particles or fog puffs, the next milestone's;
+- the rider shadow (the terrain under each rider is about 18 / 255 brighter than the page's);
+- the start-gate fire and the impact sparks (web/startfire-renderer.js, impact-fx-renderer.js), the light halos of set pieces;
 - the Xbox HD rider textures (the page's desktop default; native uses the PS2 set);
 - texture filtering details (three.js generates mips on the GPU; anisotropy).
+
+**Known difference: tied strip order.** Two strip effects with the same renderOrder (two riders' wakes, the aura faces, the boost
+ribbons) are ordered by the depth of each geometry's bounding sphere centre. three computes that centre once, on the mesh's first
+projection, from the whole position attribute (its capacity, zeros and stale vertices included), and keeps it. On the page that first
+projection is not deterministic, so native cannot take it from "the same frame":
+- it is the first encoded-pass render (web/snow-composite.js, only when some effect is populated) after the mesh exists and is visible;
+- which frames the page draws depends on wall-clock pacing (display rate, tick-lock debt, dropped frames), not on the tick;
+- the loading warm-up draws real frames through the encoded pass, and the warm-up is sliced by pipeline build time;
+- native/tools/browser-shot.mjs steps the run in chunks of 400 ticks (ssxQA.advance) with page frames only between the chunks.
+
+Natively the centre comes from the first frame that draws the mesh with the pass populated: the first such tick in the window
+(`ssx3`, one frame a tick under tick-lock) and the shot's only frame in ssx3_render_shot. Only overlapping strips with tied
+renderOrder can blend in another order. Additive strips (boost ribbons, aura faces, streamers) give the same bytes in either order
+within the 8-bit rounding of each blend, so in practice this affects the normally blended wakes of two riders that overlap on screen.
 
 ssx3_render_shot prints the frame's light glow count and whether the sun is in view (`glows`, `sun`), to pick ticks that show them.
 
 **Next:**
-- the board trail, the snow and wake particles;
 - the remaining set pieces (moving instances, LiveComp, MeshAnim, the cable, pickups, flags);
 - the rider shadow;
 - the Windows front-end build (llvm-mingw);

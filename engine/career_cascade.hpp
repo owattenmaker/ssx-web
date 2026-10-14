@@ -2,7 +2,8 @@
 // The career's award cascade and messages (docs/core-migration.md M5d, pv coreCareerCascade), in the rules module: web/career.js
 // complete1591E8 / earn159818 / exploreGoal1599A0 / grant159CD0 with the goal predicates, the gear inventory (web/lodge.js
 // GearInventory) and the reward record, and web/career-messages.js's hooks (eventComplete, postAward, earnings, notify) with
-// MessageInbox / MessageRules, and the lodge's purchases (M5e, pv coreCareerLodge). It works on the career save as the page has it (an ordered JSON document: the page's key order is
+// MessageInbox / MessageRules, the lodge's purchases (M5e, pv coreCareerLodge) and the world's career events (M5f, pv coreCareerWorld:
+// markCollected, challengeStatus). It works on the career save as the page has it (an ordered JSON document: the page's key order is
 // kept, so the save blob stays byte-identical), and draws from the session's presentation generator (engine/presentation_rules.hpp,
 // the rules module's). Same results as the JS bit for bit (web/test-core-career-cascade.mjs, the career-session differential).
 #include "presentation_rules.hpp"
@@ -928,6 +929,71 @@ struct Cascade {
         r["attributes"][unsigned(index)] = number(v + 5);
         return true;
     }
+    // ---- the world's career events (M5f, pv coreCareerWorld: web/career.js markCollected, web/big-challenges.js challengeStatus) ----
+    // markCollected (30C3E0 -> 153B00, 119EF8 kind 3, 1599A0): the collect bit, the award's cash (with the earnings notices, as the
+    // messages' earnCash hook), the explore goal when the peak's collectible medal changed
+    bool markCollected(const std::string& id, int course, int index, double amount) {
+        if (!(index >= 0 && index < 64)) {
+            return false;
+        }
+        json& r = rider(id);
+        json& collected = orMake(r, "collected", json::object());
+        json& m = orMake(collected, std::to_string(course).c_str(), json::array({0, 0}));
+        const int peak = course >= 0 && unsigned(course) < data.courses.size() ? peakOf(course) : 0;
+        const int before = peak ? collectMedal(id, peak) : kNone;
+        const unsigned w = unsigned(index >> 5);
+        m[w] = number(double(uint32_t(rules::jsToInt32(num(m[w])) | int32_t(1u << unsigned(index & 31)))));
+        if (amount > 0) {
+            earningsMessages(id, amount);
+            earn159818(id, amount);
+        }
+        if (peak && collectMedal(id, peak) != before) {
+            exploreGoal(id, peak, json("collect"));
+        }
+        return true;
+    }
+    // challengeStatus (1540F0 ..., 307308 -> 10F2D8 -> 159B08): the status word, then the explore goal when the peak's Big Challenge
+    // medal changed. Returns whether the word was stored (the page persists then).
+    bool challengeStatus(const std::string& id, int index, double word) {
+        const json& rows = data.challengeRows;
+        const json* x = rows.is_array() && index >= 0 && unsigned(index) < rows.size() ? &rows[unsigned(index)] : nullptr;
+        int peak = 0;
+        if (x) {
+            const double course = num((*x)["course"], NAN);
+            if (course >= 0 && course < double(data.courses.size())) {
+                peak = peakOf(int(course));
+            }
+        }
+        const int before = peak ? challengeMedal(id, peak) : kNone;
+        json& r = rider(id);
+        bool stored = false;
+        if (rows.is_array()) {
+            if (!r.contains("bigChallenges") || !r["bigChallenges"].is_array() || r["bigChallenges"].size() != rows.size()) {
+                json w = json::array();
+                for (const auto& row : rows) {
+                    const uint32_t flags = rules::jsToUint32(num(row["flags"]));
+                    w.push_back(((flags >> 16) & 1) | 2 | (((flags >> 24) & 1) << 4));
+                }
+                r["bigChallenges"] = w;
+            }
+            json& w = r["bigChallenges"];
+            if (index >= 0 && unsigned(index) < w.size()) {
+                w[unsigned(index)] = number(double(rules::jsToUint32(word)));
+                stored = true;
+            }
+        } else if (r.contains("bigChallenges") && r["bigChallenges"].is_array()) {
+            json& w = r["bigChallenges"];
+            if (index >= 0 && unsigned(index) < w.size()) {
+                w[unsigned(index)] = number(double(rules::jsToUint32(word)));
+                stored = true;
+            }
+        }
+        if (peak && challengeMedal(id, peak) != before) {
+            exploreGoal(id, peak, json("challenge"));
+            stored = true;
+        }
+        return stored;
+    }
     // ---- the cascade ----
     std::vector<json> grantAward(const std::string& id, int award);
     std::vector<json> grant159CD0(const std::string& id, int award);
@@ -1522,6 +1588,10 @@ inline json kernel(const Data& data, rules::PresentationGenerator& presentation,
         result = json(c.exploreGoal(id, int(num(in["peak"])), in.contains("kind") ? in["kind"] : json(nullptr)));
     } else if (op == "grant") {
         result = json(c.grantAward(id, int(num(in["award"]))));
+    } else if (op == "collect") {
+        result = c.markCollected(id, int(num(in["course"])), int(num(in["index"], -1)), num(in["amount"]));
+    } else if (op == "challenge") {
+        result = c.challengeStatus(id, int(num(in["index"], -1)), num(in["word"]));
     } else if (op == "buyGear") {
         result = c.buyGear(id, int(num(in["item"])), num(in["lodgePeak"], NAN));
     } else if (op == "equipGear") {

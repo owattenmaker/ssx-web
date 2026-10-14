@@ -209,6 +209,12 @@
 // (engine/career_rules.hpp through rules_eval: web/career.js raceResult / freestyleResult / completeEvent's medal / addRecord's entry,
 // web/peak-run.js peakResult); the page applies the outputs to its records. Needs coreRules and a core (the course core, or the
 // rules module with rulesModule) that has the kernel; off, or without it: the JS versions.
+// coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
+// peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
+// where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// coreCareerWorld (core-migration agent, docs/core-migration.md M5f): the world's career events in the career kernel (web/career.js
+// markCollected: the collect bit, its cash, the explore goal; web/big-challenges.js challengeStatus: the status word, the explore goal).
+// Needs coreCareerCascade (it draws through the cascade); off, or without it: the JS versions.
 // coreCareerLodge (core-migration agent, docs/core-migration.md M5e): the lodge's purchases in the rules module (web/career.js buyGear /
 // equipGear / buyUber / selectUber / buySong / buyReward / buyAttributePoint / buyAttribute through engine/career_cascade.hpp); the
 // page persists after them as before. Needs rulesModule; off, or without it: the JS versions.
@@ -288,6 +294,8 @@ export const PV_DEFAULTS = Object.freeze({
   rulesModule: true,
   coreCareerResults: true,
   coreCareerCascade: true,
+  coreCareerWorld: true,
+  coreWorldEvents: false,
   coreCareerLodge: true,
   coreRules: true,
   coreTick: true,

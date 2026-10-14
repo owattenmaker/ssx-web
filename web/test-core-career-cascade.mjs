@@ -29,9 +29,9 @@ if (process.env.CASCADE_ROLE !== 'run') {
   }
   let calls = 0;
   for (const seed of [1, 77]) {
-    const off = run(seed, 'rulesModule');
+    const off = run(seed, 'rulesModule,-coreCareerCascade,-coreCareerLodge,-coreCareerWorld');
     for (const [name, failAt] of [['on', ''], ['fallback', '25']]) {
-      const on = run(seed, 'rulesModule,coreCareerCascade,coreCareerLodge', failAt);
+      const on = run(seed, 'rulesModule,coreCareerCascade,coreCareerLodge,coreCareerWorld', failAt);
       for (const k of ['results', 'next', 'save']) {
         if (JSON.stringify(on[k]) !== JSON.stringify(off[k])) {
           const a = JSON.stringify(off[k]);
@@ -54,7 +54,7 @@ const { Career, MODE, RIDER_CHARACTER } = await import('./career.js');
 const { CareerMessages } = await import('./career-messages.js');
 const lineup = await import('./lineup.js');
 const { loadRulesModule, rulesModule } = await import('./rules-module.js');
-const { setBigChallengeTable } = await import('./big-challenges.js');
+const { setBigChallengeTable, challengeStatus } = await import('./big-challenges.js');
 const read = (p) => JSON.parse(fs.readFileSync(new URL(p, import.meta.url)));
 const data = read('./public/assets/CAREER/career.json');
 const shop = read('./public/assets/CAREER/shop.json');
@@ -175,6 +175,12 @@ for (let e = 0; e < EVENTS; e++) {
     results.push(['explore', JSON.stringify(career.exploreGoal(id, 1 + (rand() % 3), rand() % 2 ? 'challenge' : null))]);
   }
   if (rand() % 23 === 0) results.push(['grant', JSON.stringify(career.grantAward(id, rand() % 32))]);
+  // the world's events (M5f): a collect with cash, a Big Challenge's status word (bit 3: completed)
+  if (rand() % 4 === 0) results.push(['collect', career.markCollected(id, pick(courses), (rand() >>> 16) % 70 - 3, (rand() >>> 16) % 3 ? 0 : 250)]);
+  if (rand() % 4 === 0) {
+    const i = (rand() >>> 16) % (rows.length + 2) - 1;
+    challengeStatus(career, id, i, ((rand() >>> 16) & 0x1f) | ((rand() >>> 16) % 2 ? 8 : 0));
+  }
   if (rand() % 29 === 0) career.monster(id).medals[rand() % 8] = 1 + (rand() % 4);
   if (rand() % 41 === 0) career.rider(id).best['x:' + (rand() % 3)] = (rand() % 1000) / 7;
   // the lodge (M5e): every purchase and selection, by turns

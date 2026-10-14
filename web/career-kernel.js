@@ -114,6 +114,15 @@ export function lodgeModule(career, needsShop) {
   const m = rulesModule();
   return m && typeof m._career_kernel === 'function' ? m : null;
 }
+// pv coreCareerWorld (docs/core-migration.md M5f): the world's career events (markCollected, challengeStatus) in the kernel; they draw
+// through the cascade, so they go with it (cascadeModule). Integer indexes only (the JS's bit arithmetic on others stays in the JS).
+export function worldKernel(career, op, args) {
+  if (!pv('coreCareerWorld')) return undefined;
+  for (const k of ['course', 'index']) if (k in args && !Number.isInteger(args[k])) return undefined;
+  if ('amount' in args && typeof args.amount !== 'number') return undefined;
+  if ('word' in args && typeof args.word !== 'number') return undefined;
+  return cascadeKernel(career, op, args);
+}
 // One kernel call. args: the op's fields (web/rules_module.cpp career_kernel). Returns the kernel's output or undefined.
 export function cascadeKernel(career, op, args, module = cascadeModule(career)) {
   const m = module;

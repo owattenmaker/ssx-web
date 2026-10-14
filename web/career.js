@@ -15,7 +15,7 @@ import {buildRosterFrom,freestyleRoster,freestyleSlots,nextRosterSeed,nextWord,s
 // pv coreRules (docs/core-migration.md slice M1): the pure rules below run in the core when it is there (undefined: the JS version runs)
 import * as coreRules from './core-rules.js';
 // pv coreCareerCascade (docs/core-migration.md M5d): the award cascade and its messages in the rules module
-import { cascadeKernel, lodgeModule, FAILED } from './career-kernel.js';
+import { cascadeKernel, lodgeModule, worldKernel, FAILED } from './career-kernel.js';
 import {bigChallengeRows} from './big-challenges.js'; // Big Challenge table 0x43EE10 (1544D0 counts a peak's completed challenges)
 
 export const MODE={RACE:0,SLOPESTYLE:1,HALFPIPE:2,BIGAIR:3,RIVAL_TIME:4,RIVAL_POINTS:5};
@@ -189,6 +189,12 @@ export class Career {
     return n;
   }
   markCollected(id, course, index, amount = 0) {
+    // pv coreCareerWorld (docs/core-migration.md M5f): in the career kernel (undefined: the JS)
+    const k = worldKernel(this, 'collect', { id, course, index, amount });
+    if (k !== undefined && k !== FAILED) {
+      if (k) this.persist();
+      return k;
+    }
     if (!(index >= 0 && index < 64)) return false;
     const r = this.rider(id);
     r.collected ??= {};

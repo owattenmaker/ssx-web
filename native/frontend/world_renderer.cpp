@@ -35,10 +35,10 @@ std::vector<T> readArray(const std::string& path) {
 
 // The shaders: each web/world-material.js combine on GS bytes, written as its TSL graph computes it.
 const char* kWorldShader = R"(
-struct Frame { mvp: mat4x4f };
-@group(0) @binding(0) var<uniform> frame: Frame;
-// UVScroll: the texture translation of each scroll group (index 0 none; a scrolled batch draws with first instance = group + 1)
-@group(0) @binding(1) var<storage, read> scroll: array<vec2f>;
+// the object records (first instance): the mesh's projection x view x matrixWorld and its UVScroll translation (static records:
+// index = scroll group + 1, 0 none; moved / copied batches after them)
+struct Object { mvp: mat4x4f, scroll: vec2f, pad: vec2f };
+@group(0) @binding(1) var<storage, read> objects: array<Object>;
 @group(1) @binding(0) var mapTex: texture_2d<f32>;
 @group(1) @binding(1) var mapSampler: sampler;
 @group(1) @binding(2) var atlasTex: texture_2d<f32>;
@@ -62,8 +62,9 @@ struct Out {
 };
 @vertex fn vs(v: In, @builtin(instance_index) instance: u32) -> Out {
   var o: Out;
-  o.position = frame.mvp * vec4f(v.position, 1.0);
-  o.uv = v.uv + scroll[instance];
+  let ob = objects[instance];
+  o.position = ob.mvp * vec4f(v.position, 1.0);
+  o.uv = v.uv + ob.scroll;
   o.color = v.color;
   o.lightUv = v.lightUv;
   o.vertexAlpha = v.vertexAlpha;
@@ -129,6 +130,8 @@ struct Params {
 @group(0) @binding(2) var depthTex: texture_depth_2d;
 @group(0) @binding(3) var paletteTex: texture_2d<f32>;
 @group(0) @binding(4) var skyTex: texture_2d<f32>;
+// the fogged world with the rider effects (the fog pass binds a stand-in here)
+@group(0) @binding(5) var foggedTex: texture_2d<f32>;
 // post_effects.hpp: the light glow target, the sun sprites (a header, then ten sprites of three rows: centre / half / alpha, uv, rgb),
 // the sun textures, the sun's visibility
 struct Sprite { place: vec4f, uv: vec4f, rgb: vec4f };
@@ -189,6 +192,12 @@ fn sunAdd(frag: vec2f, size: vec2f) -> vec3f {
   let blended = clamp(floor((source - fogBytes) * alpha / 128.0) + fogBytes, vec3f(0.0), vec3f(255.0));
   var out = source;
   if (originalZ < 65535.0) { out = mix(source, blended, params.enabled); }
+  return vec4f(out / 255.0, 1.0);
+}
+// after the encoded pass (rider effects drawn onto the fogged world, web/snow-composite.js)
+@fragment fn finish(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  let xy = vec2i(p.xy);
+  var out = round(textureLoad(foggedTex, xy, 0).rgb * 255.0);
   // web/fog-renderer.js: the light glow halos (priority 7), then the sun glow and lens flare (priority 8), then ScreenTint
   out = min(out + textureLoad(glowTex, xy, 0).rgb, vec3f(255.0));
   if (sprites.header.x > 0.5) {
@@ -534,21 +543,21 @@ void WorldRenderer::buildPipelines() {
     }
 
     // the composite
-    WGPUBindGroupLayoutEntry ce[5];
-    for (int k = 0; k < 5; ++k) {
+    WGPUBindGroupLayoutEntry ce[6];
+    for (int k = 0; k < 6; ++k) {
         ce[k] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
         ce[k].binding = uint32_t(k);
         ce[k].visibility = WGPUShaderStage_Fragment;
     }
     ce[0].buffer.type = WGPUBufferBindingType_Uniform;
-    for (int k : {1, 3, 4}) {
+    for (int k : {1, 3, 4, 5}) {
         ce[k].texture.sampleType = WGPUTextureSampleType_UnfilterableFloat;
         ce[k].texture.viewDimension = WGPUTextureViewDimension_2D;
     }
     ce[2].texture.sampleType = WGPUTextureSampleType_Depth;
     ce[2].texture.viewDimension = WGPUTextureViewDimension_2D;
     WGPUBindGroupLayoutDescriptor cd = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
-    cd.entryCount = 5;
+    cd.entryCount = 6;
     cd.entries = ce;
     compositeLayout_ = wgpuDeviceCreateBindGroupLayout(d, &cd);
     // group 1: the glow and sun (post_effects.hpp)
@@ -574,7 +583,7 @@ void WorldRenderer::buildPipelines() {
     kpl.bindGroupLayoutCount = 1;
     kpl.bindGroupLayouts = &copyLayout_;
     WGPUPipelineLayout copyPipelineLayout = wgpuDeviceCreatePipelineLayout(d, &kpl);
-    for (int which = 0; which < 2; ++which) {
+    for (int which = 0; which < 3; ++which) {
         WGPURenderPipelineDescriptor pd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
         pd.layout = which == 0 ? copyPipelineLayout : compositeLayout;
         const WGPUShaderModule module = which == 0 ? copy : cm;
@@ -586,7 +595,7 @@ void WorldRenderer::buildPipelines() {
         ct.writeMask = WGPUColorWriteMask_All;
         WGPUFragmentState fs = WGPU_FRAGMENT_STATE_INIT;
         fs.module = module;
-        fs.entryPoint = sv(which == 0 ? "copySky" : "fog");
+        fs.entryPoint = sv(which == 0 ? "copySky" : (which == 1 ? "fog" : "finish"));
         fs.targetCount = 1;
         fs.targets = &ct;
         pd.fragment = &fs;
@@ -601,13 +610,14 @@ void WorldRenderer::buildPipelines() {
         if (which == 0) {
             copySky_ = wgpuDeviceCreateRenderPipeline(d, &pd);
         } else {
-            composite_ = wgpuDeviceCreateRenderPipeline(d, &pd);
+            (which == 1 ? fog_ : composite_) = wgpuDeviceCreateRenderPipeline(d, &pd);
         }
     }
     worldUniform_ = gpu_->buffer(64, WGPUBufferUsage_Uniform, nullptr, "world frame");
     skyUniform_ = gpu_->buffer(64, WGPUBufferUsage_Uniform, nullptr, "sky frame");
     compositeUniform_ = gpu_->buffer(80, WGPUBufferUsage_Uniform, nullptr, "composite");
-    scrollBuffer_ = gpu_->buffer(kScrollGroups * 8, WGPUBufferUsage_Storage, nullptr, "uv scroll");
+    worldObjects_ = gpu_->buffer(kObjects * kObjectFloats * 4, WGPUBufferUsage_Storage, nullptr, "world objects");
+    skyObjects_ = gpu_->buffer(kScrollGroups * kObjectFloats * 4, WGPUBufferUsage_Storage, nullptr, "sky objects");
     for (int k = 0; k < 2; ++k) {
         WGPUBindGroupEntry e[2];
         e[0] = WGPU_BIND_GROUP_ENTRY_INIT;
@@ -616,8 +626,8 @@ void WorldRenderer::buildPipelines() {
         e[0].size = 64;
         e[1] = WGPU_BIND_GROUP_ENTRY_INIT;
         e[1].binding = 1;
-        e[1].buffer = scrollBuffer_;
-        e[1].size = kScrollGroups * 8;
+        e[1].buffer = k == 0 ? worldObjects_ : skyObjects_;
+        e[1].size = (k == 0 ? kObjects : kScrollGroups) * kObjectFloats * 4;
         WGPUBindGroupDescriptor bd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
         bd.layout = frameLayout_;
         bd.entryCount = 2;
@@ -706,10 +716,8 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
     size_t index = 0;
     for (const auto& b : d["batches"]) {
         const size_t batch = index++;
-        if (b.contains("hidden_resource")) {
-            // runtime flag bit 0 clear: never drawn
-            continue;
-        }
+        // runtime flag bit 0 clear: not in the scene (main.js hiddenMeshes) unless a set piece shows it
+        const bool defaultHidden = b.contains("hidden_resource");
         const std::string key = "9-" + std::to_string(b["texture"].get<int>());
         if (!textures.contains(key)) {
             continue;
@@ -733,8 +741,28 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
         Draw draw;
         draw.first = b["first_index"].get<uint32_t>();
         draw.count = b["index_count"].get<uint32_t>();
+        {
+            // main.js asset(): the batch's box over its indexed vertices (float32 positions), its sphere centre
+            double lo[3] = {1e300, 1e300, 1e300};
+            double hi[3] = {-1e300, -1e300, -1e300};
+            for (uint32_t i = draw.first; i < draw.first + draw.count && i < indices.size(); ++i) {
+                const float* v = vertices.data() + size_t(indices[i]) * 10;
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] = std::min(lo[k], double(v[k]));
+                    hi[k] = std::max(hi[k], double(v[k]));
+                }
+            }
+            for (int k = 0; k < 3; ++k) {
+                draw.centre[size_t(k)] = (lo[k] + hi[k]) * 0.5;
+            }
+        }
         draw.material = g->second;
-        draw.chunk = b.contains("chunk") ? b["chunk"].get<int>() : -1;
+        draw.defaultHidden = defaultHidden;
+        // web/set-pieces-renderer.js chunkMeshes: the chunk residency hides the plain static batches only (not the LiveComp, hidden,
+        // pickup, event-dead or moving ones)
+        const bool special = b.contains("livecomp_resource") || defaultHidden || b.contains("pickup_resource") || b.contains("event_dead_resource") ||
+                             b.contains("moving_resource");
+        draw.chunk = b.contains("chunk") && !special ? b["chunk"].get<int>() : -1;
         if (world && instance && b.contains("uv_scroll_group")) {
             draw.scroll = std::min<int>(b["uv_scroll_group"].get<int>() + 1, int(kScrollGroups) - 1);
         }
@@ -761,8 +789,6 @@ void WorldRenderer::loadPackage(Package& p, const std::string& assetsRoot, const
             p.transparent.push_back(draw);
         }
     }
-    // three.js reversePainterSortStable: renderOrder (SORTED_CLASS_ORDER 0.5 for classes 2 / 3), then creation order
-    std::stable_sort(p.transparent.begin(), p.transparent.end(), [](const Draw& a, const Draw& b) { return a.order < b.order; });
 }
 
 void WorldRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::string& code) {
@@ -776,6 +802,7 @@ void WorldRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
     atlas_ = upload(uint32_t(atlas.width), uint32_t(atlas.height), atlas.rgba, false);
     loadPackage(world_, assetsRoot, code, true);
     loadPackage(sky_, assetsRoot, "SKY", false);
+    fx_.load(gpu, assetsRoot);
 }
 
 void WorldRenderer::ensureTargets(uint32_t w, uint32_t h) {
@@ -795,8 +822,10 @@ void WorldRenderer::ensureTargets(uint32_t w, uint32_t h) {
     WGPUTextureViewDescriptor dv = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
     dv.aspect = WGPUTextureAspect_DepthOnly;
     depthSample_ = wgpuTextureCreateView(depth_.texture, &dv);
-    WGPUBindGroupEntry e[5];
-    for (int k = 0; k < 5; ++k) {
+    fogged_.texture = gpu_->texture(w, h, WGPUTextureFormat_RGBA8Unorm, usage, 1, "fogged world");
+    fogged_.view = wgpuTextureCreateView(fogged_.texture, &vd);
+    WGPUBindGroupEntry e[6];
+    for (int k = 0; k < 6; ++k) {
         e[k] = WGPU_BIND_GROUP_ENTRY_INIT;
         e[k].binding = uint32_t(k);
     }
@@ -806,11 +835,15 @@ void WorldRenderer::ensureTargets(uint32_t w, uint32_t h) {
     e[2].textureView = depthSample_;
     e[3].textureView = palette_.view;
     e[4].textureView = skyColor_.view;
+    // the fog pass writes the fogged world: the palette stands in for it there
+    e[5].textureView = palette_.view;
     WGPUBindGroupDescriptor bd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     bd.layout = compositeLayout_;
-    bd.entryCount = 5;
+    bd.entryCount = 6;
     bd.entries = e;
     compositeGroup_ = wgpuDeviceCreateBindGroup(gpu_->device, &bd);
+    e[5].textureView = fogged_.view;
+    finishGroup_ = wgpuDeviceCreateBindGroup(gpu_->device, &bd);
     WGPUBindGroupEntry ke = WGPU_BIND_GROUP_ENTRY_INIT;
     ke.binding = 0;
     ke.textureView = skyColor_.view;
@@ -821,30 +854,124 @@ void WorldRenderer::ensureTargets(uint32_t w, uint32_t h) {
     copyGroup_ = wgpuDeviceCreateBindGroup(gpu_->device, &kd);
 }
 
-void WorldRenderer::drawPackage(WGPURenderPassEncoder pass, const Package& p, const std::vector<Draw>& draws, const WorldFrameState& state) {
+void WorldRenderer::collect(const Package& p, const Mat4d& vp, const Mat4d& staticModel, const WorldFrameState& state, bool world,
+                            std::vector<Item>& opaque, std::vector<Item>& transparent) {
+    opaque.clear();
+    transparent.clear();
+    // three's _projScreenMatrix x matrixWorld applied to the sphere centre (w 1): the clip z, not divided
+    auto clipZ = [&](const Mat4d& model, const std::array<double, 3>& c) {
+        double w[4];
+        for (int r = 0; r < 4; ++r) {
+            w[r] = model[size_t(r)] * c[0] + model[size_t(4 + r)] * c[1] + model[size_t(8 + r)] * c[2] + model[size_t(12 + r)];
+        }
+        return vp[2] * w[0] + vp[6] * w[1] + vp[10] * w[2] + vp[14] * w[3];
+    };
+    // a moved or copied batch: its own object record (projection x view x matrixWorld, the batch's scroll)
+    auto record = [&](const Mat4d& model, int scroll) {
+        const size_t index = objectData_.size() / kObjectFloats;
+        if (index >= kObjects) {
+            throw std::runtime_error("world object records exhausted");
+        }
+        const Mat4d mvp = multiply(vp, model);
+        for (int k = 0; k < 16; ++k) {
+            objectData_.push_back(float(mvp[size_t(k)]));
+        }
+        const float* base = objectData_.data() + size_t(scroll) * kObjectFloats;
+        const float su = base[16];
+        const float sv = base[17];
+        objectData_.insert(objectData_.end(), {su, sv, 0.f, 0.f});
+        return uint32_t(index);
+    };
+    auto add = [&](const Draw& d, std::vector<Item>& list) {
+        if (d.chunk >= 0) {
+            // texture chunks the original has not streamed in are not drawn (0x22A5A0; an unknown chunk is drawn)
+            auto c = state.chunks.find(uint32_t(d.chunk));
+            if (c != state.chunks.end() && !c->second) {
+                return;
+            }
+        }
+        const BatchOverride* o = nullptr;
+        if (world && state.batches) {
+            auto it = state.batches->find(d.batch);
+            if (it != state.batches->end()) {
+                o = &it->second;
+            }
+        }
+        const bool present = !d.defaultHidden || (o && o->shown);
+        if (present && !(o && o->hidden)) {
+            Item item;
+            item.draw = &d;
+            item.id = d.batch;
+            if (o && o->moved) {
+                item.object = record(o->matrix, d.scroll);
+                item.z = clipZ(o->matrix, d.centre);
+            } else {
+                item.object = uint32_t(d.scroll);
+                item.z = clipZ(staticModel, d.centre);
+            }
+            list.push_back(item);
+        }
+        if (o && present) {
+            // the clones (mesh.clone(), added to the scene after every authored mesh: later ids)
+            for (size_t k = 0; k < o->copies.size(); ++k) {
+                Item item;
+                item.draw = &d;
+                item.id = 1000000 + d.batch * 64 + k;
+                item.object = record(o->copies[k], d.scroll);
+                item.z = clipZ(o->copies[k], d.centre);
+                list.push_back(item);
+            }
+        }
+    };
+    for (const auto& d : p.opaque) {
+        add(d, opaque);
+    }
+    for (const auto& d : p.transparent) {
+        add(d, transparent);
+    }
+    // painterSortStable / reversePainterSortStable (renderOrder, z, id; stable: a mesh's material groups keep their order)
+    std::stable_sort(opaque.begin(), opaque.end(), [](const Item& a, const Item& b) {
+        if (a.draw->order != b.draw->order) {
+            return a.draw->order < b.draw->order;
+        }
+        if (a.z != b.z) {
+            return a.z < b.z;
+        }
+        return a.id < b.id;
+    });
+    std::stable_sort(transparent.begin(), transparent.end(), [](const Item& a, const Item& b) {
+        if (a.draw->order != b.draw->order) {
+            return a.draw->order < b.draw->order;
+        }
+        if (a.z != b.z) {
+            return a.z > b.z;
+        }
+        return a.id < b.id;
+    });
+}
+
+void WorldRenderer::bindPackage(WGPURenderPassEncoder pass, const Package& p) {
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, p.vertices, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 1, p.colors, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 2, p.lightUv, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 3, p.vertexAlpha, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetIndexBuffer(pass, p.indices, WGPUIndexFormat_Uint32, 0, WGPU_WHOLE_SIZE);
-    for (const auto& d : draws) {
-        if (d.chunk >= 0) {
-            // texture chunks the original has not streamed in are not drawn (0x22A5A0; an unknown chunk is drawn)
-            auto c = state.chunks.find(uint32_t(d.chunk));
-            if (c != state.chunks.end() && !c->second) {
-                continue;
-            }
+}
+
+void WorldRenderer::drawItems(WGPURenderPassEncoder pass, const std::vector<Item>& items, int side) {
+    WGPURenderPipeline bound = nullptr;
+    for (const auto& item : items) {
+        const Draw& d = *item.draw;
+        auto it = pipelines_.find(d.kind * 10 + std::max(side, 0));
+        if (it == pipelines_.end()) {
+            continue;
+        }
+        if (it->second != bound) {
+            wgpuRenderPassEncoderSetPipeline(pass, it->second);
+            bound = it->second;
         }
         wgpuRenderPassEncoderSetBindGroup(pass, 1, d.material, 0, nullptr);
-        const bool transparent = d.kind >= 4;
-        for (int side = 0; side < (transparent && d.kind != 5 ? 2 : 1); ++side) {
-            auto it = pipelines_.find(d.kind * 10 + side);
-            if (it == pipelines_.end()) {
-                continue;
-            }
-            wgpuRenderPassEncoderSetPipeline(pass, it->second);
-            wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, uint32_t(d.scroll));
-        }
+        wgpuRenderPassEncoderDrawIndexed(pass, d.count, 1, d.first, 0, item.object);
     }
 }
 
@@ -870,12 +997,27 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
     }
     wgpuQueueWriteBuffer(gpu_->queue, worldUniform_, 0, wf, 64);
     {
-        std::vector<float> s(kScrollGroups * 2, 0.f);
-        for (size_t g = 0; g < state.scroll.size() && g + 1 < kScrollGroups; ++g) {
-            s[(g + 1) * 2] = state.scroll[g][0];
-            s[(g + 1) * 2 + 1] = state.scroll[g][1];
+        // the static records (the world's matrix, each scroll group's translation), then the frame's moved / copied batches
+        objectData_.assign(kScrollGroups * kObjectFloats, 0.f);
+        for (size_t g = 0; g < kScrollGroups; ++g) {
+            std::memcpy(objectData_.data() + g * kObjectFloats, wf, 64);
+            if (g >= 1 && g - 1 < state.scroll.size()) {
+                objectData_[g * kObjectFloats + 16] = state.scroll[g - 1][0];
+                objectData_[g * kObjectFloats + 17] = state.scroll[g - 1][1];
+            }
         }
-        wgpuQueueWriteBuffer(gpu_->queue, scrollBuffer_, 0, s.data(), s.size() * 4);
+        const Mat4 vp = multiply(P, V);
+        collect(world_, vp, translate(-origin[0], -origin[1], -origin[2]), state, true, worldOpaque_, worldTransparent_);
+        wgpuQueueWriteBuffer(gpu_->queue, worldObjects_, 0, objectData_.data(), objectData_.size() * 4);
+        // the sky: its meshes at -origin inside the sky group at eye + origin
+        std::vector<float> sky(kScrollGroups * kObjectFloats, 0.f);
+        for (size_t g = 0; g < kScrollGroups; ++g) {
+            std::memcpy(sky.data() + g * kObjectFloats, sf, 64);
+        }
+        wgpuQueueWriteBuffer(gpu_->queue, skyObjects_, 0, sky.data(), sky.size() * 4);
+        const std::vector<float> keep = objectData_;
+        collect(sky_, vp, translate(eye[0], eye[1], eye[2]), state, false, skyOpaque_, skyTransparent_);
+        objectData_ = keep;
     }
     if (!state.riders.empty()) {
         // a rider bypasses the model matrix: origin-relative positions through the camera's projection x view
@@ -900,6 +1042,7 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         // three's camera.matrixWorld: the inverse of the view (columns right, up, back, eye)
         const Mat4 W = {V[0], V[4], V[8], 0, V[1], V[5], V[9], 0, V[2], V[6], V[10], 0, eye[0], eye[1], eye[2], 1};
         post_.prepare(W.data(), V.data(), P.data(), near, far, width, height, depthSample_);
+        fx_.prepare(state.fx, eye, look, V.data(), P.data(), origin);
     }
     if (state.fogPalette && state.fogRevision != paletteRevision_) {
         gpu_->writeTexture(palette_.texture, 256, 1, state.fogPalette);
@@ -932,8 +1075,11 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
     {
         WGPURenderPassEncoder pass = colorPass(skyColor_.view, false);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, skyFrame_, 0, nullptr);
-        drawPackage(pass, sky_, sky_.opaque, state);
-        drawPackage(pass, sky_, sky_.transparent, state);
+        bindPackage(pass, sky_);
+        drawItems(pass, skyOpaque_, -1);
+        // three's transparent double pass: every DoubleSide transparent mesh's back faces, then the list with front faces
+        drawItems(pass, skyTransparent_, 0);
+        drawItems(pass, skyTransparent_, 1);
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
     }
@@ -944,25 +1090,66 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         wgpuRenderPassEncoderSetBindGroup(pass, 0, copyGroup_, 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, worldFrame_, 0, nullptr);
-        drawPackage(pass, world_, world_.opaque, state);
+        bindPackage(pass, world_);
+        drawItems(pass, worldOpaque_, -1);
+        // the board trails (renderOrder 500 .. 504): after the world's opaque draws, before the riders (600)
+        fx_.drawTrails(pass);
         for (const auto& [r, frame] : state.riders) {
             r->drawOpaque(pass);
         }
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, worldFrame_, 0, nullptr);
-        drawPackage(pass, world_, world_.transparent, state);
-        for (const auto& [r, frame] : state.riders) {
-            r->drawTransparent(pass);
+        // three's transparent double pass over the world's blended batches (renderOrder 0 / 0.5) and the riders' blended ones (600):
+        // every back face first, then the list with front faces
+        for (int side = 0; side < 2; ++side) {
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, worldFrame_, 0, nullptr);
+            bindPackage(pass, world_);
+            drawItems(pass, worldTransparent_, side);
+            for (const auto& [r, frame] : state.riders) {
+                r->drawTransparent(pass, side);
+            }
         }
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+    }
+    // the fog composite (web/fog-renderer.js fogBytes) into the fogged world
+    {
+        WGPURenderPassEncoder pass = colorPass(fogged_.view, false);
+        wgpuRenderPassEncoderSetPipeline(pass, fog_);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, compositeGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, post_.group(), 0, nullptr);
+        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+        wgpuRenderPassEncoderEnd(pass);
+        wgpuRenderPassEncoderRelease(pass);
+    }
+    // the encoded pass (web/snow-composite.js): the rider effects blended onto the fogged bytes, tested against the world depth
+    {
+        WGPURenderPassColorAttachment ca = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+        ca.view = fogged_.view;
+        ca.loadOp = WGPULoadOp_Load;
+        ca.storeOp = WGPUStoreOp_Store;
+        WGPURenderPassDepthStencilAttachment da = WGPU_RENDER_PASS_DEPTH_STENCIL_ATTACHMENT_INIT;
+        da.view = depth_.view;
+        da.depthReadOnly = true;
+        da.stencilReadOnly = true;
+        da.depthLoadOp = WGPULoadOp_Undefined;
+        da.depthStoreOp = WGPUStoreOp_Undefined;
+        da.stencilLoadOp = WGPULoadOp_Undefined;
+        da.stencilStoreOp = WGPUStoreOp_Undefined;
+        WGPURenderPassDescriptor rd = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+        rd.colorAttachmentCount = 1;
+        rd.colorAttachments = &ca;
+        rd.depthStencilAttachment = &da;
+        WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rd);
+        fx_.drawEncoded(pass);
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
     }
     // the depth queries and the glow halos on the world depth
     post_.encode(enc);
-    // the fog composite into the target
+    // the glows, the sun and ScreenTint into the target
     {
         WGPURenderPassEncoder pass = colorPass(target, false);
         wgpuRenderPassEncoderSetPipeline(pass, composite_);
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, compositeGroup_, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, finishGroup_, 0, nullptr);
         wgpuRenderPassEncoderSetBindGroup(pass, 1, post_.group(), 0, nullptr);
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         wgpuRenderPassEncoderEnd(pass);

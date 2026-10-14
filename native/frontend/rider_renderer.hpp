@@ -32,7 +32,8 @@ public:
     // the frame's uniforms: the camera's view-projection (origin-relative) and the origin
     void update(const std::array<float, 16>& viewProjection, const std::array<double, 3>& origin, const RiderFrame& frame);
     void drawOpaque(WGPURenderPassEncoder pass);
-    void drawTransparent(WGPURenderPassEncoder pass);
+    // side 0: back faces, 1: front faces (three's transparent double pass; the world's blended batches interleave between the two)
+    void drawTransparent(WGPURenderPassEncoder pass, int side);
 
 private:
     struct Batch {

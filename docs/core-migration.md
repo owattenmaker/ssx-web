@@ -60,6 +60,10 @@ The JS that decides simulation results, beyond presentation:
 | M5c | The career's result kernel (race / freestyle rounds, medal, records entry, peak runs) | coreCareerResults | core11, verified |
 | M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | coreCareerCascade | in the tree, verified |
 | M5e | The lodge's purchases (gear, uber tricks, songs, rewards, attributes) | coreCareerLodge | in the tree, verified |
+| M5f | The world's career events (collectibles, Big Challenge status words) | coreCareerWorld | in the tree, verified |
+| B | The peak world's station decisions (split HUD, booth / lodge door ending a Big Challenge) at the PS2's point | coreWorldEvents / stationSplitPs2 | in progress |
+| M6 | The NIS / cutscene clock on game ticks (approved by the user) | nisOnTicks | decomp |
+| M8 | The CTM world-state machine | | after C |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
 | M7 | Multiplayer rules (pickup arbitration, contact stream, ranking inputs); transport stays in JS | | planned |
 
@@ -336,6 +340,16 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   M5d session differential (3 x 1500 events); the page (a won R&B career final: the kernel ran, the save, inbox, reward record, HUD
   and dumps identical off / on); boot with the 266 KB module: Chrome title 815 vs 817 ms, WebKit 462 vs 464 ms (no cost).
 
+## M5f: the world's career events (pv coreCareerWorld)
+
+- engine/career_cascade.hpp ops `collect` (web/career.js markCollected: the collect bit 153B00, the award's cash 119EF8 kind 3 with
+  the earnings notices, 1599A0 the explore goal when the peak's collectible medal changed) and `challenge` (web/big-challenges.js
+  challengeStatus: the status word, the table's initial words 151600, 159B08 the explore goal when the challenge medal changed);
+  web/career-kernel.js worldKernel (integer indexes only; with the cascade, since the awards draw).
+- Proof: web/test-core-career-cascade.mjs with collects (in and out of range, with and without cash) and status words (bit 3 on /
+  off, indexes -1 .. past the table): identical with every kernel switch off / on / after a kernel failure; the collect / challenge /
+  career node tests and the round trips with the switch.
+
 ## Native core
 
 A native build of the course core (native/build-core-native.sh -> local/native-core: clang, the host's architecture, the sources of
@@ -397,6 +411,19 @@ native/core/race_driver.cpp follows):
    rescue and quit flags). Read-outs: `rider_state()`, `pose_physical()`, `rider_world_state()`, `race_result_info()`,
    `score_object_dump()`, `trick_name()`, the FX / HUD / skin read-outs.
 5. Pause actions: `race_give_up()`, restart (startRun again), `race_timed_out()`.
+
+Host rules a front end has to keep (they are I/O or UI, not simulation):
+
+- **The streaming hold (+0x1D0 wait, 2306B8).** In a streamed world (free ride, peak runs: web/free-ride.js) a game tick's gameplay
+  is skipped while a location the rider can reach is not in: `peak_world_blocking()` (a row still reading after its Load trigger)
+  or, on the host's side, an active (or about to be active) row whose collision or draw data is not loaded yet. The tick then runs
+  only `peak_world_tick()` and the host's feed (web/game-tick.js: `freeRide.stalled()` -> `freeRide.tick()`, no other pass). The
+  host reports a location's data with `peak_world_data_ready(track, 1)`; a native host whose data is always resident never holds.
+- **Big Challenge prompts.** The offer queue (`mission_offer_peek` / `mission_offer_pop`: type 8 an offer, 9 a failed run) opens the
+  host's prompt; the answer is an input event, `mission_prompt(kind, id)` (1 accept, 2 decline / quit, 4 retry). The status words
+  and the cash the core queues (`mission_ui_events` kinds 5 / 6) go to the career (web/big-challenges.js drainEvents; M5f).
+- **Stations and arrivals.** `peak_world_events` (kind 1 builtin 68: course, action, mode; 3 gates; 5 course changes; 6 the FAQ) open
+  the host's cutscenes, maps and world loads (the CTM world-state machine, M8).
 
 The rules (`rules_eval(fn, io, n)`, web/rules_bridge.cpp, RULE ids in web/core-rules.js) and the presentation generator
 (`presentation_*`) are in both the course core and the rules module; a native host links them once.

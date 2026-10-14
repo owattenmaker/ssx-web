@@ -9,6 +9,7 @@
 #include "gpu.hpp"
 #include "json.hpp"
 #include "post_effects.hpp"
+#include "rider_fx.hpp"
 #include "rider_renderer.hpp"
 #include "screen_tint.hpp"
 #include <array>
@@ -22,6 +23,20 @@ namespace ssx_native {
 // The tick's camera (tick_end / step_camera_head: eye, look-at, half horizontal FOV in radians, near, far; native meters)
 struct CameraView {
     std::array<float, 9> v{};
+};
+
+// three's matrixWorld of a world batch mesh (column-major, double; the static default is translate(-origin))
+using Mat4d = std::array<double, 16>;
+
+// A world batch the set pieces move, hide or copy this frame (set_pieces.hpp): its mesh's matrixWorld when moved, and the matrices of
+// its clones (web/moving-instances.js copies > 0), drawn after every authored mesh
+struct BatchOverride {
+    bool hidden = false;
+    // a batch the page keeps out of the scene by default (world.json hidden_resource) drawn this frame
+    bool shown = false;
+    bool moved = false;
+    Mat4d matrix{};
+    std::vector<Mat4d> copies;
 };
 
 // What the core says each frame (fog palette, chunk residency, pickups)
@@ -40,6 +55,10 @@ struct WorldFrameState {
     // the riders drawn in the world pass after the world (renderOrder 600): the human first, then the computer riders (their
     // scene order); each its renderer and this frame's palettes and lighting
     std::vector<std::pair<RiderRenderer*, const RiderFrame*>> riders;
+    // each rider's trail, wake and snow (the human first, then the computer riders in their slots)
+    std::vector<const RiderFxFrame*> fx;
+    // world.json batch index -> its set-piece state (null: everything static)
+    const std::map<size_t, BatchOverride>* batches = nullptr;
 };
 
 class WorldRenderer {
@@ -71,10 +90,23 @@ private:
         int kind = 0;
         WGPUBindGroup material = nullptr;
         int chunk = -1;
+        // renderOrder: 0, or 1 for SORTED_CLASS_ORDER (0.5: the depth-sorted static-model classes 2 / 3)
         int order = 0;
         size_t batch = 0;
-        // the UVScroll group + 1 (0: none), drawn as the first instance
+        // the UVScroll group + 1 (0: none): the static object record drawn as the first instance
         int scroll = 0;
+        // world.json hidden_resource: not in the scene unless a set piece shows it (flag cloth sources, MeshAnim pieces, LiveComp
+        // 'object' draws)
+        bool defaultHidden = false;
+        // the mesh's bounding sphere centre (the batch's indexed vertices' box centre, package coordinates)
+        std::array<double, 3> centre{};
+    };
+    // one draw of the frame, in three's render-list order: its object record (first instance) and projected depth
+    struct Item {
+        const Draw* draw = nullptr;
+        uint32_t object = 0;
+        double z = 0;
+        size_t id = 0;
     };
     struct Package {
         WGPUBuffer vertices = nullptr;
@@ -89,7 +121,13 @@ private:
     Texture upload(uint32_t w, uint32_t h, const std::vector<uint8_t>& rgba, bool mips);
     void buildPipelines();
     void ensureTargets(uint32_t w, uint32_t h);
-    void drawPackage(WGPURenderPassEncoder pass, const Package& p, const std::vector<Draw>& draws, const WorldFrameState& state);
+    // three.js's render lists for a package this frame: opaque by renderOrder, depth (near first), id; transparent by renderOrder,
+    // depth (far first), id. Moved and copied batches get object records after the static ones.
+    void collect(const Package& p, const Mat4d& vp, const Mat4d& staticModel, const WorldFrameState& state, bool world, std::vector<Item>& opaque,
+                 std::vector<Item>& transparent);
+    void bindPackage(WGPURenderPassEncoder pass, const Package& p);
+    // side: -1 opaque, 0 back faces, 1 front faces (three's transparent double pass)
+    void drawItems(WGPURenderPassEncoder pass, const std::vector<Item>& items, int side);
     void loadPackage(Package& p, const std::string& assetsRoot, const std::string& dir, bool world);
     WGPUBindGroup materialGroup(const Texture& map, bool clampMap);
 
@@ -111,7 +149,6 @@ private:
     WGPUBuffer skyUniform_ = nullptr;
     WGPUBuffer compositeUniform_ = nullptr;
     static constexpr uint64_t kScrollGroups = 256;
-    WGPUBuffer scrollBuffer_ = nullptr;
     WGPUBindGroup worldFrame_ = nullptr;
     WGPUBindGroup skyFrame_ = nullptr;
     // pipelines by kind: 0 terrain, 1 instance opaque, 2 blend pass (alpha test), 3 blend fringe, 4 additive, 5 sky opaque, 6 sky blend;
@@ -128,7 +165,18 @@ private:
     Texture depth_;
     WGPUTextureView depthSample_ = nullptr;
     WGPUBindGroup compositeGroup_ = nullptr;
+    WGPUBindGroup finishGroup_ = nullptr;
+    // the object records: [0, kScrollGroups) the static world (scroll group + 1), then this frame's moved / copied batches
+    static constexpr uint64_t kObjects = 8192;
+    static constexpr uint64_t kObjectFloats = 20;
+    WGPUBuffer worldObjects_ = nullptr;
+    WGPUBuffer skyObjects_ = nullptr;
+    std::vector<float> objectData_;
+    std::vector<Item> worldOpaque_, worldTransparent_, skyOpaque_, skyTransparent_;
+    WGPURenderPipeline fog_ = nullptr;
+    Texture fogged_;
     PostEffects post_;
+    RiderFx fx_;
 };
 
 }  // namespace ssx_native
