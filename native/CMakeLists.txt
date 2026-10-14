@@ -163,7 +163,8 @@ if(SSX_BUILD_FRONTEND)
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/gpu.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/image_io.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/frontend/texture_archive.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/world_renderer.cpp")
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/world_renderer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/frontend/rider_renderer.cpp")
     target_link_libraries(ssx3_render PUBLIC ssx3_stb)
     target_compile_features(ssx3_render PUBLIC cxx_std_20)
     target_include_directories(ssx3_render PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/frontend" "${CMAKE_CURRENT_SOURCE_DIR}/third_party"
@@ -173,6 +174,17 @@ if(SSX_BUILD_FRONTEND)
     ssx_core_tool(ssx3_render_shot "${CMAKE_CURRENT_SOURCE_DIR}/frontend/render_shot.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/inflate.cpp")
     target_include_directories(ssx3_render_shot PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/verify")
     target_link_libraries(ssx3_render_shot PRIVATE ssx3_render)
+    # the window (SDL3: zlib licence, a system install; docs/native.md "N3")
+    find_package(SDL3 CONFIG)
+    if(SDL3_FOUND)
+        ssx_core_tool(ssx3 "${CMAKE_CURRENT_SOURCE_DIR}/frontend/app.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/inflate.cpp")
+        target_include_directories(ssx3 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/verify")
+        target_link_libraries(ssx3 PRIVATE ssx3_render SDL3::SDL3)
+    else()
+        message(STATUS "SDL3 not found: the windowed front end (ssx3) is not built; ssx3_render_shot is")
+    endif()
+    add_executable(ssx3_image_compare "${CMAKE_CURRENT_SOURCE_DIR}/frontend/image_compare.cpp")
+    target_link_libraries(ssx3_image_compare PRIVATE ssx3_render)
 endif()
 
 # ---- Parity tests: the native results against the wasm build's (native/tests/parity.mjs) ----

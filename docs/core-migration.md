@@ -49,7 +49,7 @@ The JS that decides simulation results, beyond presentation:
 | M4a | The race's relationship records in the core's rider manager (the last mid-tick page callback) | coreRelationships | core6, verified (page tests pending a tree fix) |
 | M4b | The computer riders' event start and the race world's reset; the plane-drop seeds | coreEventStart | core8, verified |
 | M5a/b | The rules module (rules without a course core) and the session's presentation generator | rulesModule | in the tree, verified |
-| M5c | The career's result kernel (race / freestyle rounds, medal, records entry, peak runs) | coreCareerResults | in progress |
+| M5c | The career's result kernel (race / freestyle rounds, medal, records entry, peak runs) | coreCareerResults | core11, verified |
 | M5d | The award cascade and the career messages in the rules module (the save as ordered JSON) | | approved, next |
 | M5e | The lodge (gear, uber tricks, songs, attributes) | | planned |
 | M6 | The NIS clock / section point / cutscene ticks on game ticks: a behaviour change, the user's call | | not started |
@@ -288,6 +288,23 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   after the first quarter; every rider's inbox full (25) and 8-11 awards each. Page (live core, Metro City single event and CTM,
   8687 ticks): ?simtrace, dumps and start identical off / on, the module loaded and holding the generator (its first word the
   roster seed 3044084137).
+
+## M5c: the career's result kernel (pv coreCareerResults, core11)
+
+- engine/career_rules.hpp, through rules_eval (web/rules_bridge.cpp ids 28..32, in the course core and the rules module):
+  raceRound (web/career.js raceResult: DNF / finish / 0x122D78 estimate times, the ranks, the round, the level 0x147D20 with the
+  0x23AA24 margin, the message), freestyleRound (freestyleResult: the opponent's update, totals / shown / ranks, the round, the level,
+  the message), eventMedal (completeEvent's medal and platinum), recordInsert (addRecord's entry: f32 seconds, the first entry the run
+  is not worse than) and peakResult (web/peak-run.js).
+- web/core-rules.js coreRaceRound / coreFreestyleRound / coreEventMedal / coreRecordInsert / corePeakResult return undefined (the JS
+  runs) with the switch off, without a core that has the kernel, or for inputs the JS coerces oddly (non-finite times or scores, a
+  missing human, more than 8 riders). The page applies the outputs to its records; a level the kernel left as it was stays the same
+  object; round 3 sets no advance / message (as the JS).
+- Proof: web/test-core-career-results.mjs (two careers in lockstep, off / on: every result and every save; 43,192 rounds over 20,000
+  events in the rules module, 10,758 in core11's course core with CORE_JS); the career-session differential (3 x 1500 events,
+  rulesModule + coreCareerResults: draws, results, the generator's next words, the save blob identical); full ps2-captures 534 / 534
+  on core11; CORE_DIR=core11 PAGE_PV=coreCareerResults: test-rival-page, test-replay, test-records-verifier, test-online-records,
+  test-ctm-flow pass.
 
 ## Native core
 

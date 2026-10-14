@@ -25,8 +25,11 @@ void Gpu::process() {
 }
 
 void Gpu::init(WGPUSurface compatibleSurface) {
-    WGPUInstanceDescriptor desc = WGPU_INSTANCE_DESCRIPTOR_INIT;
-    instance = wgpuCreateInstance(&desc);
+    // an instance made before (for a window's surface) is kept
+    if (!instance) {
+        WGPUInstanceDescriptor desc = WGPU_INSTANCE_DESCRIPTOR_INIT;
+        instance = wgpuCreateInstance(&desc);
+    }
     if (!instance) {
         throw std::runtime_error("wgpuCreateInstance failed");
     }

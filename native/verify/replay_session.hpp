@@ -324,6 +324,21 @@ inline json composeCheat(const json& baseDoc, const json& skinDoc, bool career) 
     return out;
 }
 
+// A live Single Event's replay-shaped description (the native front end without a replay file): the course, the rider with the
+// profile's fresh attribute bytes, the solo lineup (time attack: no computer riders), and the start state a live start gives.
+inline json liveMeta(const std::string& course, const std::string& rider) {
+    json m = json::object();
+    m["course"] = course;
+    m["rider"] = {{"id", rider}, {"kind", "rider"}, {"base", nullptr}, {"career", false}, {"outfit", nullptr},
+                  {"attributes", json::array({5, 5, 5, 5, 5, 5, 5})}, {"uber", json::array()}, {"uberKey", ""}};
+    m["lineup"] = {{"values", json::array()}, {"enabled", false}, {"round", 3}, {"career", false}};
+    m["snapshot"] = {{"inWorld", nullptr}, {"timeLimit", 0}, {"inputMap", 0}, {"cameraView", 61},
+                     {"collect", {{"cash", 0}, {"state", json::array({1, 0, 0})}, {"rows", json::array()}}}, {"ai", nullptr}};
+    m["events"] = json::array();
+    m["finishTick"] = -1;
+    return m;
+}
+
 // ---- the replay's set-up and run ----
 struct Npc {
     int slot = 0;
@@ -333,6 +348,14 @@ struct Npc {
 
 // The race (named Verifier: the replay verifier was its first user)
 struct Verifier {
+    // the native front end: also the presentation set-up (the environment lattice for the rider lighting)
+    bool presentation = false;
+    json environmentMeta;
+    // a live run (the native front end): main.js startRun(null), no recorded start state to restore
+    bool live = false;
+    // the last tick's tick_begin flags (1 rescue, 2 placement, 4 pose, 8 pose again)
+    uint32_t tickFlags = 0;
+    float command14 = 0;
     Assets assets;
     json meta;
     std::vector<uint8_t> pad;
@@ -465,6 +488,14 @@ struct Verifier {
                 init_stage_flags(jsStringify(flags).c_str(), jsStringify(readyState).c_str());
             }
         }
+        // the environment lattice (presentation: the rider lighting; main.js initEnvironmentSliced, the whole document at once)
+        if (presentation) {
+            const std::string envRoot = assetPath(str(at(course, "environmentRoot"), "/assets/" + root));
+            const std::string envText = assets.text(envRoot + "environment.json");
+            const std::string envBin = assets.text(envRoot + "environment.bin");
+            init_environment(envText.c_str(), reinterpret_cast<const uint8_t*>(envBin.data()), int(envBin.size()));
+            environmentMeta = json::parse(envText);
+        }
         resetPhysics();
         // the boot rider (Zoe) on the course settings
         const std::string bootRig = assets.text("RIDER_ZOE/rider.json");
@@ -562,6 +593,20 @@ struct Verifier {
                 configureRider(n);
             });
             npcs.push_back(n);
+        }
+        // web/ai-race.js: each computer rider's lighting (presentation; opponent-riders.js initOpponentLighting)
+        if (presentation) {
+            const std::string envRoot = assetPath(str(at(course, "environmentRoot"), "/assets/" + root));
+            const std::string envText = jsStringify(json::parse(assets.text(envRoot + "environment.json")));
+            const std::string envBin = assets.text(envRoot + "environment.bin");
+            const std::string localLights = jsStringify(assets.doc(root + "local-lights.json"));
+            const std::string lightTree = jsStringify(assets.doc(root + "light-tree.json"));
+            for (const auto& n : npcs) {
+                inNpc(n, [&] {
+                    init_environment(envText.c_str(), reinterpret_cast<const uint8_t*>(envBin.data()), int(envBin.size()));
+                    init_rider_lighting(localLights.c_str(), lightTree.c_str());
+                });
+            }
         }
         const bool pairs = count > 1;
         rider_host((pairs ? 3 : 1) | 8);
@@ -1013,10 +1058,15 @@ struct Verifier {
         reset_rider_lighting();
         reset_animation();
         reset_race();
-        reset_pad_history();
+        // a live start keeps the pad history (pv padCarry); a replay starts it settled
+        if (!live) {
+            reset_pad_history();
+        }
         set_input_map(ssx_native::jsInt(at(R, "inputMap")));
         resetPhysics();
-        set_camera_view(ssx_native::jsInt(at(R, "cameraView")));
+        if (!live) {
+            set_camera_view(ssx_native::jsInt(at(R, "cameraView")));
+        }
         // web/stage-collect.js collectApply
         const json& collect = at(R, "collect");
         if (truthy(collect)) {
@@ -1038,6 +1088,10 @@ struct Verifier {
                 target[k] = uint32_t(ssx_native::jsInt(v[k]));
             }
         };
+        if (live) {
+            // a live run keeps the words its start left
+            return;
+        }
         put(animation_rng_words(), at(R, "rng"), 6);
         put(visual_rng_words(), at(R, "visual"), 6);
         if (!at(R, "lcg").is_null()) {
@@ -1092,6 +1146,9 @@ struct Verifier {
         const float* b = tick_begin(input, lastRescues, lastResetPlacement, 1, boneCount, teleportKnown ? 1 : 0, teleportKnown ? teleportCount : 0, 0);
         uint32_t flags;
         std::memcpy(&flags, b + 79, 4);
+        tickFlags = flags;
+        // the command's controller (4 passive air, 5 air): the keyboard's Simple mode routes new directions by it
+        command14 = b[14];
         if (flags & 1) {
             lastRescues = b[80];
         }
@@ -1114,7 +1171,7 @@ struct Verifier {
         } else {
             tick_mid();
         }
-        const float* e = tick_end(hasPose ? 1 : 0, hasPose ? posed[7] : 0, hasPose ? posed[9] : 0, hasPose ? posed[10] : 0, hasPose ? posed[11] : 0, 1, 0, 0, 0, 1,
+        const float* e = tick_end(hasPose ? 1 : 0, hasPose ? posed[7] : 0, hasPose ? posed[9] : 0, hasPose ? posed[10] : 0, hasPose ? posed[11] : 0, live ? 0 : 1, 0, 0, 0, 1,
                                   raceInfo[2] != 0 ? 1 : 0);
         if (e[0] == 1) {
             throw std::runtime_error("Missing posed physical frame");

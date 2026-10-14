@@ -317,7 +317,7 @@ WorldRenderer::Texture WorldRenderer::loadTexture(const std::string& assetsRoot,
         throw std::runtime_error("texture without an archive: " + entry.dump());
     }
     std::string pack = entry["pack"].get<std::string>();
-    const std::string key = pack + "#" + std::to_string(entry["id"].get<int>());
+    const std::string key = pack + "#" + TextureArchive::key(entry["id"]);
     auto it = archiveTextures_.find(key);
     if (it != archiveTextures_.end()) {
         return it->second;
@@ -328,7 +328,7 @@ WorldRenderer::Texture WorldRenderer::loadTexture(const std::string& assetsRoot,
     if (!a) {
         a = std::make_unique<TextureArchive>(path);
     }
-    const Image img = a->decode(entry["id"].get<int>());
+    const Image img = a->decode(entry["id"]);
     Texture t = upload(uint32_t(img.width), uint32_t(img.height), img.rgba, true);
     archiveTextures_[key] = t;
     return t;
@@ -804,6 +804,17 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         sf[k] = float(skyMvp[size_t(k)]);
     }
     wgpuQueueWriteBuffer(gpu_->queue, worldUniform_, 0, wf, 64);
+    if (!state.riders.empty()) {
+        // a rider bypasses the model matrix: origin-relative positions through the camera's projection x view
+        const Mat4 vp = multiply(P, V);
+        std::array<float, 16> f{};
+        for (int k = 0; k < 16; ++k) {
+            f[size_t(k)] = float(vp[size_t(k)]);
+        }
+        for (const auto& [r, frame] : state.riders) {
+            r->update(f, origin, *frame);
+        }
+    }
     wgpuQueueWriteBuffer(gpu_->queue, skyUniform_, 0, sf, 64);
     const auto& tn = state.tint;
     const float params[20] = {float(near), float(far), state.fogSlope, state.fogOffset,
@@ -856,7 +867,14 @@ void WorldRenderer::render(const CameraView& camera, const WorldFrameState& stat
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
         wgpuRenderPassEncoderSetBindGroup(pass, 0, worldFrame_, 0, nullptr);
         drawPackage(pass, world_, world_.opaque, state);
+        for (const auto& [r, frame] : state.riders) {
+            r->drawOpaque(pass);
+        }
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, worldFrame_, 0, nullptr);
         drawPackage(pass, world_, world_.transparent, state);
+        for (const auto& [r, frame] : state.riders) {
+            r->drawTransparent(pass);
+        }
         wgpuRenderPassEncoderEnd(pass);
         wgpuRenderPassEncoderRelease(pass);
     }

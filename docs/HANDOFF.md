@@ -1,3 +1,54 @@
+> **Deployed 2026-10-14 (coordinator): core-migration core11 (M5c), with coreEventStart, rulesModule and coreCareerResults ON.** web/runtime core.wasm `62610006…`, core.js `941f0c73…`; web/runtime/rules.wasm `a6f24aaa…`. Gate on this exact tree: test-core-rules, rules-module, core-hook, records-server, records-verifier, replay, rival-page, online-records, ctm-flow, ai-racers, slopestyle-bigair, career pass, and test-ps2-captures 534/534 with SSX_PV=coreEventStart.
+
+> **Time attack: restart at the start gate (2026-10-13, big-multiplayer agent; PAUSED by the user, resume point below).** Live with the no-live-verification deploy.
+> - **Rule (user, port-only):** in a session every restart starts the event as its first attempt's Continue does: play() -> startRun -> start_event (the gate, 3-2-1, GO; a backcountry rival event its own rolling start). No WS13 ride, gate idle cutscene or card, no course reload. The PS2 restart's audio keep (gameAudio.restartRun + the 2302A8 quit) is kept. The results' Restart skips "Are you sure?" in a session; the pause's Restart keeps it. After the deadline a restart is refused (ta-game attemptStart's note) and the page goes back to the results / pause.
+> - **Code:** web/career-ui.js restartToCard() (the `ui.timeAttack?.active` branch) and resultAction (i === 1). Inert outside a session.
+> - **Checked (Chrome, cutscenes on, local server; local/big-multiplayer/restart-check.mjs, git-ignored):** both restart paths go straight to 'game' (no loading / cutscene / card screen, no reload). Both restarted runs reproduce in the records verifier (14935 and 15568 ticks). Happiness Rival Time restarts at its rolling start with Mac. Screenshots: local/big-multiplayer/restart-shots/.
+> - **Second live stress test (20 bots):** podium BOT 02 / BOT 01 right after the overtime; the archived window marked verified 110 s after the next load; no drops; server ghost out 257 KB/s mean in the window. Results: local/big-multiplayer/results/2026-10-13T22-39-57-040Z/.
+> - **Resume point:**
+>   1. WebKit check: `node local/big-multiplayer/restart-check.mjs --webkit` timed out waiting for the first card (300 s, both offscreen and windowed). Find out why (the page under the WebKit driver with cutscenes on: is the intro cutscene stuck without frames?), then send WebKit screenshots of the results' Restart. Synthetic keys open no pause in this harness, so WebKit covers the results' Restart only.
+>   2. Send the coordinator the Chrome screenshots (restart-shots/chrome/pause-restart-t0/t90/t225, chrome-4-ABC1/pause-restart-t0/t90).
+>   3. Backcountry: the user may want a fade + 3-2-1 overlay (port-only) instead of the instant rolling start; not built.
+>   4. Update docs/big-multiplayer.md with the restart rule (not written yet).
+
+> **PAUSED (2026-10-13, core-migration agent): resume point.** No processes of mine running; no shared-file edits in flight.
+> - **Live/staged:** M1-M4b, M5a/b (rulesModule), M5c (coreCareerResults, core11 handed over), the coreHook hotfix. Docs current (core-migration.md M5a/b, M5c, Native core, Core API; tools/core-api.mjs --check in test:all).
+> - **M5d (pv coreCareerCascade) is ready in local/ only, approved to apply after the coordinator's "staged":** engine side local/core-migration/m5d/career_cascade.hpp (copy to engine/), career_module_add.cpp (append to web/rules_module.cpp), the scratch web copy local/core-migration/m5d/web/ with the edited pv-flags.js, lineup.js, career.js, career-messages.js and the new career-kernel.js and test-core-career-cascade.mjs (diff each against web/ first: at pause time the only differences were mine). web/build-rules.sh needs the exports `_career_data`, `_career_kernel`, `_career_out_size` and `-Iweb/third_party/nlohmann`; then `sh web/build-rules.sh` (rules.wasm ~251 KB). Proof so far (scratch): the session differential (local/core-migration/m5d/career-session.mjs, 3 x 1500 events) and the new test identical off / on / after a kernel failure; boot cost unmeasurable (Chrome 819 vs 825 ms, WebKit 395 vs 413 ms). Before hand-over: the page tests and round trips with rulesModule on (now the default).
+> - **Small fix due:** web/test-core-career-results.mjs should setPv('coreRules', true) itself (`SSX_PV=` empty turns every switch off and the test then fails its kernel-answered check).
+> - **Then:** M5e (the lodge), then the simulation-relevant JS left (freeRide.tick / peak world, Big Challenges, stage-collect, the cutscene section feed). M6 stays the user's call.
+
+> **PAUSED 2026-10-13 (native-port agent), resume point.** No process of mine is running.
+> - **Last step:** the computer riders are drawn. native/frontend/race_presenter.hpp is shared by `ssx3` and `ssx3_render_shot`. The opponents' lighting is initialized in each context when `presentation`, and the palette is reset on a reset placement. `ssx3_render_shot … sj-ai.ssxr --tick 600` built and ran (6 riders), but the picture is not checked yet.
+> - **Resume with:**
+>   1. Look at that shot and compare it with `native/tools/browser-shot.mjs` on an AI run (sj-ai: `--lineup` from its meta).
+>   2. Rerun `ctest --test-dir build/native-core` (the replay_session.hpp edits).
+>   3. Then UV scroll / set pieces, glows / sun, trails / snow, the rider shadow, and the Windows front-end build.
+> - **State of the tree:** native/ and docs/native.md section 7 describe the code as it stands. The build dir is build/native-core (`-DSSX_BUILD_FRONTEND=ON`, deployment target 26.0, SSX_WASM_CORE = local/native-port/wasm-after/core.js, a scratch core of the tree).
+
+> **Native N3 first light, the wasm fenv path, the Windows cross build (2026-10-13, native-port agent).** See [native.md](native.md) sections 3, 7 and 8.
+> - **Fenv:** the native core takes the wasm floating-point branches.
+>   - The 9 engine/ files now read `|| defined(SSX_NATIVE_CORE)`; native_shim.h makes fesetround inert.
+>   - CORE_OUT builds before and after are byte-identical (core.wasm 62610006…, core.js 941f0c73…).
+>   - The native ctest (6 tests, 17 replay fixtures) passes.
+> - **Windows:** a cross build with llvm-mingw 20261006 (`-DCMAKE_TOOLCHAIN_FILE=native/cmake/llvm-mingw-x86_64.cmake`). The ctest windows_link passes: standalone PE x86-64 images that import only KERNEL32 and the UCRT. Section 8 has the steps for a Windows machine.
+> - **N3:** `-DSSX_BUILD_FRONTEND=ON`, with wgpu-native v29.0.1.1 fetched (pinned SHA-256) and SDL3 from the system.
+>   - `ssx3` is the SDL3 window: live time trial, `--start` / `--watch` a replay, 60 Hz tick-lock pacing, pad_input, no audio, never takes focus unless `--focus`.
+>   - `ssx3_render_shot` renders headless, `ssx3_image_compare` makes a side by side, native/tools/browser-shot.mjs takes the page's frame.
+>   - Ported: the world (terrain light page, static-model blend classes), the sky, the CLUT fog, ScreenTint, and the skinned, lit rider (VU chop arithmetic in WGSL).
+>   - Snow Jam tick 1200 against the page: same ?simtrace state, frame mean difference 4.8 / 255.
+>   - Missing so far: glows / sun, trails / snow, UV scroll, set pieces, rider shadow, computer riders, HUD, audio.
+> - **Verifier:** `ssx3_verify_replay` inflates deflate-raw itself and prints `core` (`--core`).
+>   - Only validated courses give a verdict; others give ok:null.
+>   - The macOS deployment target is 26.0 (the records host).
+>   - Plus the stress test's run-zoe / run-mac fixtures.
+> - **README:** a "Native build" section in local/public-release/root/README.md, for the mirror.
+
+> **Core migration M5c: the career's result kernel (pv coreCareerResults, off); core to install: local/core-migration/core11 (2026-10-13, core-migration agent).** See [core-migration.md](core-migration.md) "M5c".
+> - **Snapshot:** local/core-migration/core11: core.wasm `62610006b752d060…`, core.js `941f0c73a5fa7ac0…` (core8 plus rules_eval ids 28..32; no new export). web/runtime/rules.{js,wasm} already carry the kernel (rules.wasm `a6f24aaa…`).
+> - **New / changed:** engine/career_rules.hpp, web/rules_bridge.cpp (cases), web/core-rules.js (wrappers), web/career.js (raceResult, freestyleResult, completeEvent's medal, addRecord), web/peak-run.js, web/pv-flags.js (coreCareerResults), web/test-core-career-results.mjs.
+> - **Proof:** 534 / 534 on core11; lockstep test 43,192 rounds (module) + 10,758 (core11 course core) identical; career-session differential identical (save blob byte-identical); page tests on core11 with PAGE_PV=coreCareerResults pass (rival page, replay, records verifier, online records, ctm-flow).
+> - **To turn on:** coreCareerResults (needs coreRules; in races the course core answers, in the menus the rules module with rulesModule).
+
 > **Deployed 2026-10-13 (coordinator): hotfix for the M3 rider-context regression, plus time attack without live verification.** Core unchanged (core8 90fa3ae5). ai-racers.js / pair-net.js / main.js coreHook wrappers: core-called hooks keep the JS context mirror in step, so a computer opponent's race_end no longer runs on the human's context (it zeroed the human's boost meter at the opponent's finish in freestyle Single Events with an opponent). Time attack: podium from uploaded bests, offline verification of archived windows (inert without MP_SESSIONS / the pv switches). Gate: core-hook, records-server, records-verifier, replay, rival-page, online-records, ai-racers, mp-session, slopestyle-bigair pass on this tree.
 
 > **Time-attack sessions: no live verification; the first live stress test (2026-10-13, big-multiplayer agent).** See [big-multiplayer.md](big-multiplayer.md) top and "TA-6: the live stress test".

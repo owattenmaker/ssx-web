@@ -8,6 +8,7 @@
 // All colour work is on GS bytes in RGBA8Unorm targets (pv encodedBlend: no sRGB, output = the bytes).
 #include "gpu.hpp"
 #include "json.hpp"
+#include "rider_renderer.hpp"
 #include "screen_tint.hpp"
 #include <array>
 #include <cstdint>
@@ -33,6 +34,9 @@ struct WorldFrameState {
     std::map<uint32_t, bool> chunks;
     // ScreenTint and the lightning flash (web/screen-tint.js)
     TintOutput tint;
+    // the riders drawn in the world pass after the world (renderOrder 600): the human first, then the computer riders (their
+    // scene order); each its renderer and this frame's palettes and lighting
+    std::vector<std::pair<RiderRenderer*, const RiderFrame*>> riders;
 };
 
 class WorldRenderer {

@@ -7,7 +7,7 @@ build's.
 
 State:
 - N1 (the build and its parity tests) and N2 (the native replay verifier, section 6) work on macOS arm64.
-- Next: N3, a minimal native front end.
+- N3, the native front end (section 7): the course, sky, fog, tint and rider render in an SDL3 window or headless.
 - Windows x64 and Linux: the build is written for them (clang-cl, no POSIX-only calls), but they are not built or tested yet.
 
 ## 1. Build
@@ -92,6 +92,14 @@ added there is part of the next native build, with no second list to keep in ste
     does.
   - One thread: contexts are switched, never run at the same time.
   - MSVC's cl has no emulated TLS, so on Windows the compiler is clang-cl.
+- **The WebAssembly floating-point environment** (2026-10-13).
+  - native_shim.h makes fesetround inert and fegetround always nearest, as musl's wasm fenv is, and defines SSX_NATIVE_CORE.
+  - With it, the 9 engine/ files that branch on `__EMSCRIPTEN__` take their wasm branches natively too (the software toward-zero
+    arithmetic of engine/original_rounding.hpp), and the hardware rounding mode never changes.
+  - The two builds therefore run the same arithmetic by construction, not only where the tests reach. A plain float operation
+    inside a rounding scope, or a direct fesetround (engine/reset_fade.hpp), would otherwise round toward zero natively and to
+    nearest in wasm.
+  - The wasm output is byte-identical with the change: CORE_OUT builds of the tree before and after.
 - **The parity tests (section 5)** check every build against the wasm build.
 
 ## 4. Platform hazards (what can still differ)
@@ -233,50 +241,76 @@ replay), not found yet. Found 2026-10-13, reported to the coordinator.
 - native: 10.6 s wall, 210 MB peak RSS;
 - the browser verifier in headless Chrome: 9.7 s simulation, 22 s wall under `nice -n 19`, plus Chrome's page load and GPU process.
 
-A solo or big-air run is 0.5-3.5 s natively, with nothing to start. The native time is dominated by fesetround (about 30 % of the
-samples): the proposed wasm floating-point environment (the coordinator's call: 9 engine/ files take their `__EMSCRIPTEN__` branches with SSX_NATIVE_CORE) takes it out. With that change and -O3, Snow Jam with five riders is 8.4 s.
+A solo or big-air run is 0.5-3.5 s natively, with nothing to start. Before the WebAssembly floating-point environment (section 3),
+fesetround took about 30 % of the native time; without it, and with -O3, Snow Jam with five riders took 8.4 s in a scratch build.
 
 **LTO breaks exactness natively.** `-O3 -flto` diverges, even on a solo run, and fails on six riders with "Race tick already open".
 -O3 alone stays exact. A full `-fsanitize=undefined` run reports nothing. Likely cause: LLVM treats a thread-local address
 (`llvm.threadlocal.address`, here emulated TLS) as fixed within a function, and cross-unit inlining across a context switch
 breaks that (the hazard docs/core-migration.md M3 notes). Not investigated further: native builds do not use LTO.
 
-## 7. N3: the native front end (plan; nothing rendered yet)
+## 7. N3: the native front end
 
-**Platform layer: SDL3** (zlib licence; 3.4 is installed by Homebrew here).
-- One library covers the window, keyboard, gamepads, high-DPI and later audio on macOS, Windows and Linux.
-- SDL_Gamepad gives the W3C "standard" layout that web/pad-input.js reads, from the same controller database family the browsers use.
-- A hidden window (`SDL_WINDOW_HIDDEN`, no focus taken) or no window at all serves the tests.
-- GLFW has no audio or gamepad mapping database; a hand-written layer per OS is three times the work.
+**State (2026-10-13):** the course world, sky, fog composite, ScreenTint and the skinned, lit human rider render from the exported
+assets. The core ticks at 60 Hz with the page's pacing. It runs in an SDL3 window (macOS) or headless. At the same tick and camera
+a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 
-**GPU: webgpu.h,** with wgpu-native first (prebuilt releases, Apache-2.0 / MIT) and Dawn (BSD-3, Chrome's implementation) as a later
-swap behind the same header. The web build's three.js WebGPU materials are TSL, so their WGSL comes from three.js. The port
-writes them as about 6-8 WGSL pipelines:
-- terrain with the PS2 light page;
-- instances per blend class (opaque, the pass + fringe pair, additive);
-- the sky;
-- the skinned, lit rider;
-- the fog CLUT composite;
-- ScreenTint.
+**Build:** `-DSSX_BUILD_FRONTEND=ON`.
+- **wgpu-native** v29.0.1.1: native/cmake/wgpu_native.cmake fetches the official release zip at configure time, pinned by
+  SHA-256 per platform. Nothing is vendored.
+- **SDL3** from the system (Homebrew `sdl3`; zlib licence) for the window. Without SDL3 only the headless tools build.
 
-All of them do integer maths on GS bytes in RGBA8Unorm targets (pv encodedBlend: no sRGB, identity output), so they port exactly.
+**Targets:**
+- `ssx3`, the windowed front end (native/frontend/app.cpp):
+  - `ssx3 ASSETS [--course ARA1 --rider zoe]` is a live time trial: the solo lineup, the page's live startRun(null).
+  - `--start RUN.ssxr` plays a replay's start live; `--watch RUN.ssxr` plays its recorded pad.
+  - `--shot OUT.png --shot-tick N` writes a frame and quits; `--hidden` opens no window on screen; `--at X,Y` places the window.
+  - Audio is never opened. The window is not focusable and the app does not activate (no Dock icon) unless `--focus`, so a run
+    never takes the user's keyboard.
+  - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits.
+- `ssx3_render_shot ASSETS RUN.ssxr OUT.png --tick N`: headless, no window.
+  - It draws the frame the page draws right after `ssxQA.advance` stepped N + 2 ticks (render alpha 0): the camera and rider
+    palette of tick N over the world state of tick N + 1.
+  - It prints the ?simtrace hash of tick N, so the page and native states can be checked equal before the pictures are compared.
+- `ssx3_image_compare WEB.png NATIVE.png OUT.png`: web | native | difference x 4 side by side, plus the mean / 95th percentile.
+- native/tools/browser-shot.mjs: the page's frame at the same tick.
+  - It plays the run's TAS pad in a Single Event (as tools/tas/page-run.mjs does) in headless Chrome, muted, widescreen Off, with
+    the HUD hidden.
+  - It prints the page's ?simtrace hash of tick N.
 
-**Data:** the exported assets as the page reads them.
-- ARA1: world.json, vertices.bin (40-byte stride), indices.bin, colors.bin, vertex-alpha.bin, terrain-light-atlas.png,
-  terrain-lighting.json / terrain-render.json, screen-tint.json.
-- TEXTURES/world.tex (SSXTEX01: indexed PNGs) and the SKY package.
-- RIDER_<ID> (rider.json, mesh, WARDROBE textures).
-- From the core: rider_skin_palette, rider_lighting_gpu_coefficients, fog_palette_info / rgba, fog_info, and the tick's camera
-  (eye, look, half-FOV, near, far in native meters).
+**What is ported** (each file names its web source):
 
-**Pacing:** web/tick-lock.js (one tick per display frame within ±25 % of 60 Hz, else web/fixed-step-clock.js with the
-interpolation alpha).
+| Native | Web | What |
+| --- | --- | --- |
+| frontend/world_renderer.cpp | main.js asset(), world-material.js, fog-renderer.js | the packages (40-byte vertices, colours, indices, vertex alpha, the PS2 light UVs per patch), the terrain combine (Cd - Cl) x Al >> 7, the static-model modulate with blend classes 0 / 1 (pass + fringe) / 2 / 3 (additive), three.js's draw order and its two-pass transparent DoubleSide, the sky pass as the world pass's background, the CLUT fog on the world depth (three.js perspectiveDepthToViewZ), texture chunks hidden while not streamed (section_chunks) |
+| frontend/screen_tint.hpp | screen-tint.js | the quadtree payload, the distance blend in fround steps, the lightning flash |
+| frontend/rider_renderer.cpp, rider_capture.hpp | rider-skinning.js, rider-lighting-nodes.js, rider-material.js | the core's skin palette pair (previous / current), VU chop add / mul in WGSL, the per-vertex irradiance of the core's ten rows, GS HIGHLIGHT2 on PS2-domain texels, riderDrawState's two blended passes for 'alph' / 'ea*' |
+| frontend/pacing.hpp | tick-lock.js, fixed-step-clock.js, ps2-frame-pacing.js | one tick per 60 Hz frame (debt paid with 0 / 2), else the fixed clock with the render alpha |
+| frontend/pad_input.hpp | pad-input.js | the 24 channels, bit for bit (ctest frontend_pad_input) |
+| frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
 
-**Input:** native/frontend/pad_input.hpp is web/pad-input.js, natively: the Classic / Simple keyboards, the standard pad, and the
-same arithmetic. The ctest frontend_pad_input checks 4800 frames bit for bit against the JS.
+**Visual parity:** Snow Jam, Zoe, the solo lineup, tick 1200 (local/native-port/shots/sj-solo-1200-web-native-diff.png).
+- The page's and native's ?simtrace hash of tick 1200 are equal (3993471844), so the states are the same.
+- The frames differ by a mean of 4.8 / 255 per channel; 30 % of channels are equal and the 95th percentile is 21.
+- The geometry, the camera, the rider's pose and lighting and the fog / tint match. The differences are what is not ported yet:
+  - the light glows and the sun flare (the beam over the kicker);
+  - the board trail and the snow spray;
+  - the chevron fence's UV scroll (uv_scroll_group);
+  - the rider shadow;
+  - the Xbox HD rider textures (the page's desktop default; native uses the PS2 set);
+  - texture filtering details (three.js generates mips on the GPU; anisotropy).
 
-**Visual parity check:** the native renderer draws offscreen at the same tick and camera as a page screenshot (Chrome headless);
-the two are compared side by side.
+**Paused 2026-10-13. Resume point:**
+- **Done:** computer riders drawn (race_presenter.hpp: each context's palette pair and lighting, the human core's view), built and run once (6 riders); the picture is not checked yet.
+- **Resume with:** compare against the page on an AI run, then rerun the native ctest (replay_session.hpp changed).
+
+**Next:**
+- the light glows and sun flare;
+- the board trail, the snow and wake particles;
+- UV scroll and the set pieces (moving instances, LiveComp, MeshAnim, pickups);
+- the rider shadow;
+- the HUD from the game's own LUI screens;
+- audio.
 
 ## 8. Windows
 
@@ -335,7 +369,9 @@ A cross-built .exe from build/native-win64 also runs there: for example
 | native/verify/ | the replay verifier: replay_file.hpp (SSXR and the pad stream), js_json.hpp (JS JSON semantics), core_api.hpp, verify_replay.cpp |
 | native/tools/browser-verify.mjs | the browser verifier's verdicts and replay traces (the N2 reference) |
 | native/tools/tas-replay.mjs | a replay file of a page run with no finish (page-run's start.json + the TAS pad) |
-| native/frontend/pad_input.hpp | web/pad-input.js natively (the front end's input); native/tests/pad-cases.mjs + pad_input_test.cpp check it |
+| native/frontend/ | the front end: app.cpp (SDL3 window), render_shot.cpp, world_renderer, rider_renderer / rider_capture, screen_tint, pacing, pad_input, gpu (webgpu.h helpers), texture_archive, image_io, image_compare |
+| native/verify/replay_session.hpp | the race set up as the page does (shared by the verifier and the front end; live or replay) |
+| native/tools/browser-shot.mjs | the page's frame at a tick (visual parity) |
 | native/build-core-native.sh | the first prototype build script (superseded by CMake; kept while the migration agent uses it) |
 
 Third-party code: nlohmann/json (MIT, vendored in web/third_party/nlohmann, shared with the wasm build). Nothing else yet;

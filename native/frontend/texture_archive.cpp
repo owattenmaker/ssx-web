@@ -19,14 +19,14 @@ TextureArchive::TextureArchive(const std::string& path) {
     const auto index = nlohmann::json::parse(std::string(reinterpret_cast<const char*>(bytes_.data()) + 12, n));
     payload_ = (12 + size_t(n) + 15) / 16 * 16;
     for (const auto& e : index["entries"]) {
-        entries_[e["id"].get<int>()] = {e["offset"].get<size_t>(), e["size"].get<size_t>()};
+        entries_[key(e["id"])] = {e["offset"].get<size_t>(), e["size"].get<size_t>()};
     }
 }
 
-Image TextureArchive::decode(int id) const {
-    auto it = entries_.find(id);
+Image TextureArchive::decode(const nlohmann::json& id) const {
+    auto it = entries_.find(key(id));
     if (it == entries_.end()) {
-        throw std::runtime_error("texture " + std::to_string(id) + " not in the archive");
+        throw std::runtime_error("texture " + key(id) + " not in the archive");
     }
     return decodePng(bytes_.data() + payload_ + it->second.offset, it->second.size);
 }

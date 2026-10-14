@@ -108,4 +108,14 @@ int pickup_visible(uint32_t resource);
 float* rider_skin_palette();
 int rider_skin_palette_count();
 uint32_t* rider_skin_palette_indices();
+// rider lighting (web/rider-material.js createRiderLightingUpdate)
+void init_environment(const char* metadata, const uint8_t* data, int length);
+float* rider_query_bounds();
+uint32_t* refresh_rider_lighting(const float* bounds, const float* rankPoint);
+float* shade_rider_lighting(const float* environment, const float* view, const float* point, float rimScale, const float* constants, const float* extra, int count);
+float* environment_irradiance();
+float* camera_render_view();
+float* rider_lighting_gpu_coefficients();
+float* environment_lighting_info();
+float* reset_info();
 }

@@ -13,10 +13,14 @@ namespace ssx_native {
 class TextureArchive {
 public:
     explicit TextureArchive(const std::string& path);
-    bool has(int id) const {
-        return entries_.count(id) > 0;
+    // ids are numbers (the world library) or names (the wardrobe archives): keyed by their text
+    static std::string key(const nlohmann::json& id) {
+        return id.is_string() ? id.get<std::string>() : id.dump();
     }
-    Image decode(int id) const;
+    bool has(const nlohmann::json& id) const {
+        return entries_.count(key(id)) > 0;
+    }
+    Image decode(const nlohmann::json& id) const;
 
 private:
     struct Entry {
@@ -25,7 +29,7 @@ private:
     };
     std::vector<uint8_t> bytes_;
     size_t payload_ = 0;
-    std::map<int, Entry> entries_;
+    std::map<std::string, Entry> entries_;
 };
 
 }  // namespace ssx_native
