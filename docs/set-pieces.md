@@ -695,3 +695,20 @@ tumbler). D (new data, switch off) shows no mismatch (it also fixes the crashbag
 In QA (no career) some in-world Transports did not arrive or reloaded the page (MOUNTAIN -> ABA1 / The Throne / BRA2), with
 either data. Settled (2026-09-30): a crashbag roller running on collision peakRelease had freed, and the Transport's held loop dropped
 for the boot rider; see [course-switch.md](course-switch.md) "In-world Transports that stalled or took the page down".
+
+## Collectible LiveComps against the PS2 (2026-10-14)
+
+- The collectibles (`mdl_*_collecta_*`, draw `none`) are LiveComp players started by their slot-1 section program (builtin 3: words
+  mode 1, low / high -1, key05 30, random start). They advance one game tick at a time: rate 30 / 30 / 60 = 1/60 s per tick over
+  [0, 1] s, looped (0x341AA0 / 0x341D48). Track mask 36 means node 0 bobs in z and spins about z.
+- PS2 reference: local/ps2-capture/runs/pickups/dbc2-collect.tick*.p2s (DBC2 free ride, career). local/anim-regress/ps2/scan.py
+  reads every LiveComp entity (vtable 0x490B10 at obj+0x3C; instance entity+0x18 -> +0x78 resource) with the object head and node
+  matrices. ps2/replay.mjs runs them through web/livecomp-animation.js: 32 / 34 node-matrix snapshots bit-exact, 31 consecutive
+  pairs (508 ticks) replayed exactly. The other two are the collected one at its pickup (the magnet moves the instance matrix).
+- Without its player a collectible is drawn static at rest on the PS2 as well. Instance flags (+0x8) in dbc2-collect.tick8467
+  (local/anim-regress/ps2/inst.py):
+  - every collecta with no entity has flags 0x210023, (flags & 3) == 3, so the static collector draws it;
+  - the three with a LiveComp entity (vtable 0x490B10) have 0x210345 and are drawn by the player;
+  - the collected one has the DeadNode-class entity 0x4906F0, flags 0x210340.
+  The port's rest draw for a collectible with no player (peak-set-pieces.js / set-pieces-renderer.js restMesh: never started, or
+  destroyed by a section leave) is the PS2's behaviour. Distant collectibles look still on both.

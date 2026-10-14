@@ -322,7 +322,7 @@ export const PV_DEFAULTS = Object.freeze({
   ghostRiders: false,
   mpCourseSelect: true,
   mpPreRace: true,
-  rivalStartAudio: false
+  rivalStartAudio: true
 });
 const overrides = new Map();
 function fromQuery() {

@@ -8,11 +8,14 @@
 //        [--hidden]                                  no window on screen (automated runs)
 //        [--focus]                                   take keyboard focus (by default the window never takes it unasked)
 //        [--at X,Y]                                  the window's position
+//        [--quality low|medium|high]                 the page's quality tier (default high, a desktop's: frontend/quality.hpp)
+//        [--riders ps2|xbox] [--bc 0|1]              the rider texture set (tier default), BC upload (default on where supported)
 // Keys: web/pad-input.js Classic (WASD / arrows left stick, Space Cross, Shift Square, ...); Escape quits.
 #include "gpu.hpp"
 #include "image_io.hpp"
 #include "pacing.hpp"
 #include "pad_input.hpp"
+#include "quality.hpp"
 #include "replay_session.hpp"
 #include "race_presenter.hpp"
 #include "world_renderer.hpp"
@@ -119,6 +122,9 @@ int main(int argc, char** argv) {
     bool hidden = false;
     bool focus = false;
     std::string windowAt;
+    std::string qualityTier = "high";
+    std::string riderSet;
+    std::string bcFlag;
     for (int k = 1; k < argc; ++k) {
         const std::string a = argv[k];
         auto next = [&] { return k + 1 < argc ? std::string(argv[++k]) : std::string(); };
@@ -140,15 +146,26 @@ int main(int argc, char** argv) {
             focus = true;
         } else if (a == "--at") {
             windowAt = next();
+        } else if (a == "--quality") {
+            qualityTier = next();
+        } else if (a == "--riders") {
+            riderSet = next();
+        } else if (a == "--bc") {
+            bcFlag = next();
         } else {
             assets = a;
         }
     }
     if (assets.empty()) {
-        std::fprintf(stderr, "usage: ssx3 ASSETS_DIR [--course C] [--rider R] [--start RUN.ssxr] [--watch RUN.ssxr] [--shot OUT.png --shot-tick N] [--hidden] [--focus]\n");
+        std::fprintf(stderr, "usage: ssx3 ASSETS_DIR [--course C] [--rider R] [--start RUN.ssxr] [--watch RUN.ssxr] [--shot OUT.png --shot-tick N] [--hidden] [--focus] [--quality T] [--riders S]\n");
         return 2;
     }
     try {
+        Quality quality = Quality::tierDefaults(qualityTier);
+        if (!riderSet.empty()) {
+            quality.setRiders(riderSet);
+        }
+        quality.bc = bcFlag != "0";
         // the window: never activated unasked (the user may be typing elsewhere), no Dock icon unless --focus
         if (!focus) {
             SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
@@ -203,6 +220,7 @@ int main(int argc, char** argv) {
             }
             set_rider_attributes(raw, 0);
         }
+        v.presentationFast = quality.presentationFast;
         v.presentationFlags();
         v.startRun();
 
@@ -242,6 +260,7 @@ int main(int argc, char** argv) {
         WGPUInstanceDescriptor idesc = WGPU_INSTANCE_DESCRIPTOR_INIT;
         gpu.instance = wgpuCreateInstance(&idesc);
         WGPUSurface surface = wgpuInstanceCreateSurface(gpu.instance, &sdesc);
+        gpu.allowBC = quality.bc;
         gpu.init(surface);
         WGPUSurfaceCapabilities caps = WGPU_SURFACE_CAPABILITIES_INIT;
         wgpuSurfaceGetCapabilities(surface, gpu.adapter, &caps);
@@ -314,6 +333,7 @@ int main(int argc, char** argv) {
         WGPUBindGroup blitGroup = wgpuDeviceCreateBindGroup(gpu.device, &bd);
 
         RacePresenter presenter(v);
+        presenter.riderTextures = quality.riderTextures;
         presenter.loadEffects(renderer);
         PadReader reader(v.pad);
         KeyboardContext keyboard;

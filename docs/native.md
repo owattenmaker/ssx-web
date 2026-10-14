@@ -290,6 +290,7 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/texture_archive.cpp | texture-archive.js | SSXTEX01, exact RGBA8 (stb_image), mips as a 2 x 2 box |
 | frontend/uv_scroll.hpp | uv-scroll.js, set-pieces-renderer.js | the scroller 0x35F7D0 in the EE scalar arithmetic (chop MUL / ADD / SUB with the guard bit, DIV.S nearest), the scroll groups by first appearance, the set-piece clock (set_piece_info, the slot-1 section enters, the ready state's phases); drawn as the first instance indexing a storage buffer |
 | frontend/set_pieces.hpp, livecomp.hpp, flags.hpp, ee_float.hpp | main.js frame, moving-instances.js, set-pieces-renderer.js, livecomp-animation.js, attached-setpieces.js, flag-animation.js, set-piece-cables.js, ee-scalar-float.js | per world batch this frame: hidden (pickups, event-dead from the event start, stage-program draw states), shown (the hidden batches of flag static draws, MeshAnim pieces, LiveComp 'object' players) and moved (moving instances and their clones, LiveComp node deltas, teeters, attached children, magnets, break pieces); the LiveComp players and the flag cloth stepped one game tick at a time to the core's set-piece clock (the go tick, the section log, the core's trigger / timer starts, section clocks, flag words), from the ready state; the cables as screen-space lines (guard band, near / far), alive by CableLife and the owner's chunk |
+| verify/board_flex.hpp, rider_renderer.cpp morphed | board-flex.js, rider-skinning.js createBoardFlex | pv boardFlex: the board's, hands' and SpecialA's morph parts loaded from the package, configured in the core after the human's init_animation (replay_session.hpp, as main.js) and at a computer rider's first capture; each palette's tick's 27 weights; sum(w x delta) added to the source position before skinning (the shadow silhouette too) |
 | frontend/rider_shadow.hpp, world_renderer.cpp terrain, rider_renderer.cpp drawShadow | rider-shadow.js, rider-skinning.js shadowPose, world-material.js riderShadowReceiver / glintBytes | the rider shadows: the six-bone box fit (374D00, float32), the nearest six riders in view, each silhouette (the drawn palettes, the parts' painter's rank, the board 0 while grounded) into its slot of the 768 x 128 atlas, the terrain's max(Cd - T, 0) in the 30 m slab; and the terrain glint pass 38D168 (terrain-glint.json) before it |
 | frontend/set_piece_fx.hpp, particles.hpp, terrain_sparkle.hpp, avalanche.hpp, startfire.hpp | set-piece-particles.js, set-piece-particle-eval.js, fog-puffs.js, set-piece-halos.js, crowd-2d.js, terrain-sparkle.js, avalanche-state.js, avalanche-trails.js, startfire-renderer.js, impact-fx-renderer.js | the stage programs' particle sprites (the VU1 burst / trail kernels: accumulators in the VU / EE operations, the sprite arithmetic in doubles like the page), the fog puffs (0x22A270 box cull, 0x2DC190 fades, far-to-near), the HaloModifier sprites, the 2D crowd's texture frames and camera flashes, the terrain sparkle (program 4's RNG chain, the twinkle rotation, the Surface painter's density) at renderOrder 640, the avalanche pieces' visibility and trails, the impact sprites (sparks with the per-slot fade, glints, grind chunks, the fist sparkle) and the start-gate fountains, each in three's order in its pass |
 | frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
@@ -301,7 +302,7 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | --- | --- | --- | --- |
 | sj-ai-900-shadow | Snow Jam, Zoe, 5 computer riders, 900 | 1.76 / 8 | the rider shadow on the pipe wall; 1.81 before it, 23.3 / 135 at first light |
 | sj-solo-2700-shadow | Snow Jam, Zoe, solo, 2700 | 1.10 / 4 | the shadow on the run-out; 1.25 before it |
-| sj-solo-190-crowd | Snow Jam, Zoe, solo, 190 | 2.06 / 8 | the stadium's animated crowd, the start-gate doors open at GO |
+| sj-solo-190-flex | Snow Jam, Zoe, solo, 190 | 1.88 / 8 | the board's flex (pv boardFlex) matches; 2.06 with the rest shape, the crowd and gate doors as before |
 | sj-solo-300-effects | the same run, 300 | 2.00 / 7 | gondolas, cable, banners, glows, sun |
 | sj-solo-1200-fx | the same run, 1200 | 2.47 / 9 | 4.8 / 21 at first light |
 | sj-solo-2700-fx | the same run, 2700 | 1.25 / 5 | the spray and both air streamers |
@@ -310,8 +311,6 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 The earlier milestones' shots stay in the folder for comparison.
 
 What differs is not ported yet, or not drawn the same:
-- the rider's board flex (pv boardFlex, web/board-flex.js: the board's and the hands' morph targets before skinning): the board's nose and
-  tail bend on the page, native draws the rest shape;
 - edges: texture filtering details (three.js generates mips on the GPU; anisotropy) and the Xbox HD rider textures (the page's desktop
   default; native uses the PS2 set).
 
@@ -421,6 +420,37 @@ with "The Windows front end is not supported yet". The core tools above (build/n
 6. **Console:** ssx3.exe is a console-subsystem program (main(), no SDL_main), so a console window opens with it. That is fine for a
    first run. A release build would link `-mwindows`.
 7. **The float-conversion check** above (`SSX_NATIVE_UBSAN=ON`) on x86-64, with the front end on.
+
+## 8b. Linux (x86-64, arm64): prepared, not built or run
+
+The build is ready for Linux in CMake and the code (2026-10-14), but nothing has been built or run on Linux. There is no Linux machine,
+container or VM here, and the user has said no downloads for Linux for now; the Linux code is compile-checked on macOS only.
+- **Configure:** `cmake -S . -B build/native-core -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSSX_BUILD_FRONTEND=ON`.
+  Clang is required (as on macOS). The core and the tools have no platform code: `std::aligned_alloc` for the context blocks,
+  `-femulated-tls`.
+- **wgpu-native:** native/cmake/wgpu_native.cmake fetches `wgpu-linux-x86_64-release.zip` (pinned). For arm64
+  `wgpu-linux-aarch64-release.zip` (15,755,874 bytes) stops configure with "SHA-256 not pinned yet" until its download is approved and
+  pinned. Linked statically, with dl / pthread / m.
+- **SDL3:** the system package through `find_package(SDL3 CONFIG)` (Debian 13 / Ubuntu 25.04+: `libsdl3-dev`, 3.2.x). Without it only the
+  headless tools build (ssx3_render_shot, ssx3_image_compare and the verifier / parity tools).
+- **The window's surface** (app.cpp): X11 (`WGPUSurfaceSourceXlibWindow` from SDL's X11 display and window number) or Wayland
+  (`WGPUSurfaceSourceWaylandSurface`), as SDL's video driver chose (`SDL_VIDEO_DRIVER=x11|wayland`). That branch was compile-checked
+  on macOS against the same SDL3 and webgpu.h headers.
+- **A first Linux run has to check:**
+  - the ctest suite (it runs the wasm reference under node);
+  - ssx3_render_shot's trace hashes against the macOS ones, and its frames with ssx3_image_compare (Vulkan, or GL as a fallback);
+  - the window on X11 and on Wayland (focus, the pad through SDL);
+  - the SDL3 3.2 API: app.cpp is built against 3.4 on macOS, and its calls and hints must also exist in 3.2 (not checked yet).
+- **The download set proposed for later** (not approved; nothing fetched). Sizes are from HEAD requests:
+  - wgpu-native v29.0.1.1 for Linux arm64, to pin its SHA-256 (Apache-2.0 / MIT):
+    `https://github.com/gfx-rs/wgpu-native/releases/download/v29.0.1.1/wgpu-linux-aarch64-release.zip`, 15,755,874 bytes. The x86-64 zip
+    (15,962,605 bytes) is pinned already and would be fetched by configure on Linux.
+  - A VM image for the installed qemu (qemu-system-aarch64 / x86_64 11.1 from Homebrew): Debian 13 genericcloud arm64
+    (`https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2`, 337,510,400 bytes; HVF-accelerated) and
+    amd64 (`debian-13-genericcloud-amd64.qcow2`, 341,508,096 bytes; emulated). Alternative: Ubuntu 25.10 arm64
+    (`https://cloud-images.ubuntu.com/releases/25.10/release/ubuntu-25.10-server-cloudimg-arm64.img`, 883,270,144 bytes).
+  - Inside the VM, Debian's packages: clang, cmake, ninja-build, libsdl3-dev (3.2.10), nodejs, python3 and mesa-vulkan-drivers
+    (lavapipe, for headless Vulkan).
 
 ## 9. Layout
 

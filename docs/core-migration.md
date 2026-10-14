@@ -369,8 +369,11 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   (race_clock_restart; PEAK_CLOCK=0: the old start) and, with either switch, drives the core's decisions after race_end.
 - Proof: allpeak/apr-start (the E station split) with SSX_PV=stationSplitPs2 on core12: the score exact to the end (13999 / 13999;
   the gate's limit is END with the switch, 12471 without); p2r-start, apj-start, peak1-race-start exact both ways.
-- **Unconfirmed: the points split (0x2B, 23C560).** No capture has a points-mode peak run reaching a station, so its value
-  (the page's score - split x 100) and its clock are not checked against the PS2; its timing follows the same 235868 path.
+- The points split (0x2B, 23C560): confirmed by allpeak/apj-full (All Peak Jam, 19,000 records), which posts it at record 16276
+  (slot 35, points -196242 = trunc(score) - split x 100, clock 0): with SSX_PV=stationSplitPs2 the score is exact through 17302
+  (off: through 16275). Gate allpeak/apj-full.
+- **Open (tracked):** apj-full record 17303: the PS2 posts a type-0x18 HUD message (slot 24, 2000 points; a trick-commit popup of
+  11A228) the port does not, and slot 25's points differ (6000 / 4000); both switch states. Next target after M6.
 
 ## Native core
 

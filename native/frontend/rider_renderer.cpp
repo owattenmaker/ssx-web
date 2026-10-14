@@ -1,7 +1,10 @@
 #include "rider_renderer.hpp"
+#include "bc_texels.hpp"
 #include "image_io.hpp"
 #include "texture_archive.hpp"
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -35,9 +38,21 @@ struct Frame {
   // x: the render alpha (previous -> current palette), y: lit, z: groups (the current palette's first row), w: texel scale
   params: vec4f,
   lighting: array<vec4f, 10>,
+  // pv boardFlex (web/board-flex.js): the 27 morph weights of the previous palette's tick, then of the current one's
+  weights: array<vec4f, 14>,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> palette: array<vec4f>;
+// the morph deltas: row 0 zeros, a row of 27 (source cm) per morphing vertex
+@group(0) @binding(2) var<storage, read> morphs: array<vec4f>;
+// web/rider-skinning.js createBoardFlex morphed: point + sum of weight x delta (palette p: 0 previous, 1 current)
+fn morphed(point: vec4f, row: u32, p: u32) -> vec4f {
+  var sum = vec4f(0.0);
+  for (var m = 0u; m < 27u; m++) {
+    sum = sum + morphs[row * 27u + m] * frame.weights[p * 7u + m / 4u][m % 4u];
+  }
+  return point + sum;
+}
 @group(1) @binding(0) var mapTex: texture_2d<f32>;
 @group(1) @binding(1) var mapSampler: sampler;
 @group(1) @binding(2) var<uniform> material: vec4f;
@@ -172,6 +187,7 @@ struct In {
   @location(1) normal: vec3f,
   @location(2) uv: vec2f,
   @location(3) group: u32,
+  @location(5) row: u32,
 };
 struct Out {
   @builtin(position) position: vec4f,
@@ -181,7 +197,7 @@ struct Out {
 @vertex fn vs(v: In) -> Out {
   let groups = u32(frame.params.z);
   let point = vec4f(v.position, 1.0);
-  let world = mix(transformPosition(v.group, 0u, point), transformPosition(v.group, groups, point), frame.params.x);
+  let world = mix(transformPosition(v.group, 0u, morphed(point, v.row, 0u)), transformPosition(v.group, groups, morphed(point, v.row, 1u)), frame.params.x);
   let o = frame.origin.xyz;
   let relative = vec4f(world.x * 0.01 - o.x * world.w, world.z * 0.01 - o.y * world.w, world.y * -0.01 - o.z * world.w, world.w);
   var out: Out;
@@ -223,6 +239,7 @@ struct ShadowIn {
   @location(0) position: vec3f,
   @location(3) group: u32,
   @location(4) rank: u32,
+  @location(5) row: u32,
 };
 struct ShadowOut {
   @builtin(position) position: vec4f,
@@ -232,7 +249,7 @@ struct ShadowOut {
 @vertex fn vsShadow(v: ShadowIn) -> ShadowOut {
   let groups = u32(frame.params.z);
   let point = vec4f(v.position, 1.0);
-  let world = mix(transformPosition(v.group, 0u, point), transformPosition(v.group, groups, point), frame.params.x);
+  let world = mix(transformPosition(v.group, 0u, morphed(point, v.row, 0u)), transformPosition(v.group, groups, morphed(point, v.row, 1u)), frame.params.x);
   let p = vec4f(world.xyz / world.w, 1.0);
   let n = vec2f(dot(shadow.rowX, p), dot(shadow.rowY, p));
   let r = f32(v.rank);
@@ -249,9 +266,94 @@ struct ShadowOut {
 }
 )";
 
+// web/texture-archive.js riderArchiveUrl: a WARDROBE textures.tex / gear.tex is read from its Xbox HD twin (textures-xbox.tex /
+// gear-xbox.tex) while that set is chosen; a twin that cannot be read falls back to the PS2 archive
+std::string riderArchivePath(const std::string& path, const std::string& set) {
+    static const std::regex twin(R"((/WARDROBE/[^/]+/)(textures|gear)\.tex$)");
+    if (set != "xbox" || !std::regex_search(path, twin)) {
+        return path;
+    }
+    const std::string hd = path.substr(0, path.size() - 4) + "-xbox.tex";
+    static std::map<std::string, bool> readable;
+    auto it = readable.find(hd);
+    if (it == readable.end()) {
+        std::ifstream probe(hd, std::ios::binary);
+        char magic[8] = {};
+        probe.read(magic, 8);
+        const bool ok = probe.gcount() == 8 && std::memcmp(magic, "SSXTEX01", 8) == 0;
+        if (!ok) {
+            std::fprintf(stderr, "Xbox HD rider textures unavailable, PS2 set used: %s\n", hd.c_str());
+        }
+        it = readable.emplace(hd, ok).first;
+    }
+    return it->second ? hd : path;
+}
+
+uint32_t mipLevels(uint32_t w, uint32_t h) {
+    uint32_t levels = 1;
+    for (uint32_t s = std::max(w, h); s > 1; s >>= 1) {
+        ++levels;
+    }
+    return levels;
+}
+
+// RGBA texels with their mips as the world textures (2 x 2 box): the PNG entries, and the BC entries without
+// texture-compression-bc (web/texture-archive.js texelTexture: three generates the mips)
+WGPUTexture uploadTexels(Gpu& gpu, const Image& img) {
+    const uint32_t levels = mipLevels(uint32_t(img.width), uint32_t(img.height));
+    WGPUTexture tex = gpu.texture(uint32_t(img.width), uint32_t(img.height), WGPUTextureFormat_RGBA8Unorm,
+                                  WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, levels);
+    std::vector<uint8_t> level = img.rgba;
+    uint32_t lw = uint32_t(img.width);
+    uint32_t lh = uint32_t(img.height);
+    gpu.writeTexture(tex, lw, lh, level.data(), 0);
+    for (uint32_t k = 1; k < levels; ++k) {
+        const uint32_t nw = std::max(1u, lw / 2);
+        const uint32_t nh = std::max(1u, lh / 2);
+        std::vector<uint8_t> next(size_t(nw) * nh * 4);
+        for (uint32_t y = 0; y < nh; ++y) {
+            for (uint32_t x = 0; x < nw; ++x) {
+                for (int c = 0; c < 4; ++c) {
+                    const uint32_t x1 = std::min(lw - 1, 2 * x + 1);
+                    const uint32_t y1 = std::min(lh - 1, 2 * y + 1);
+                    const uint32_t s = uint32_t(level[(size_t(2 * y) * lw + 2 * x) * 4 + c]) + level[(size_t(2 * y) * lw + x1) * 4 + c] +
+                                       level[(size_t(y1) * lw + 2 * x) * 4 + c] + level[(size_t(y1) * lw + x1) * 4 + c];
+                    next[(size_t(y) * nw + x) * 4 + c] = uint8_t((s + 2) / 4);
+                }
+            }
+        }
+        gpu.writeTexture(tex, nw, nh, next.data(), k);
+        level.swap(next);
+        lw = nw;
+        lh = nh;
+    }
+    return tex;
+}
+
+// an Xbox HD BC entry: its blocks and the bcMipChain levels (web/texture-archive.js bcTexture, a CompressedTexture) where the
+// device has texture-compression-bc; else the exact decoded texels (decodeBC) as a texel texture
+WGPUTexture uploadBC(Gpu& gpu, const bc::Entry& e) {
+    // a BC texture's size is whole blocks
+    if (!gpu.bc || e.width % 4 || e.height % 4) {
+        Image img;
+        img.width = int(e.width);
+        img.height = int(e.height);
+        img.rgba = bc::decode(e.codec, e.blocks, e.width, e.height);
+        return uploadTexels(gpu, img);
+    }
+    const std::vector<bc::Level> chain = bc::mipChain(e);
+    const WGPUTextureFormat format = e.codec == 1 ? WGPUTextureFormat_BC1RGBAUnorm : WGPUTextureFormat_BC2RGBAUnorm;
+    WGPUTexture tex = gpu.texture(e.width, e.height, format, WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, uint32_t(chain.size()));
+    for (size_t k = 0; k < chain.size(); ++k) {
+        gpu.writeBlocks(tex, chain[k].width, chain[k].height, chain[k].data.data(), uint32_t(bc::blockBytes(e.codec)), uint32_t(k));
+    }
+    return tex;
+}
+
 }  // namespace
 
-void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::string& package, const uint32_t* paletteIndices, int groupCount) {
+void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::string& package, const uint32_t* paletteIndices, int groupCount,
+                         const flex::Flex* flex) {
     gpu_ = &gpu;
     groups_ = groupCount;
     const std::string root = assetsRoot + "/" + package + "/";
@@ -271,6 +373,9 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
         float normal[3];
         float uv[2];
         uint32_t group;
+        // the shadow's painter's rank, the morph row (0: none)
+        uint32_t rank;
+        uint32_t row;
         uint32_t pad;
     };
     std::vector<Vertex> vertices(count);
@@ -289,6 +394,8 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
         o.uv[0] = v[i * 10 + 6];
         o.uv[1] = v[i * 10 + 7];
         o.group = paletteIndices[i];
+        o.rank = 0;
+        o.row = 0;
         o.pad = 0;
     }
     // web/main.js asset(): a rider's batches merged by texture:lightmap, in first-appearance order
@@ -327,13 +434,39 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
             }
         }
         for (size_t i = 0; i < count; ++i) {
-            vertices[i].pad = rank[i];
+            vertices[i].rank = rank[i];
+        }
+    }
+    // pv boardFlex: the morph deltas (vertices.bin frame, Y up metres -> source cm, Z up), a row per morphing vertex
+    std::vector<float> morphData(27 * 4, 0.f);
+    if (flex) {
+        uint32_t row = 1;
+        for (const auto& part : flex->parts) {
+            if (size_t(part.firstVertex + part.vertexCount) > count) {
+                continue;
+            }
+            morphData.resize(size_t(row + uint32_t(part.vertexCount)) * 27 * 4, 0.f);
+            for (int m = 0; m < part.morphCount; ++m) {
+                const size_t at = part.offsets[size_t(m)] / 4;
+                for (int k = 0; k < part.vertexCount; ++k) {
+                    const float* d = part.deltas.data() + at + size_t(k) * 3;
+                    float* o = morphData.data() + ((size_t(row) + size_t(k)) * 27 + size_t(part.column + m)) * 4;
+                    o[0] = d[0] * 100;
+                    o[1] = -d[2] * 100;
+                    o[2] = d[1] * 100;
+                    o[3] = 0;
+                }
+            }
+            for (int k = 0; k < part.vertexCount; ++k) {
+                vertices[size_t(part.firstVertex + k)].row = row + uint32_t(k);
+            }
+            row += uint32_t(part.vertexCount);
         }
     }
     std::vector<uint32_t> merged;
     WGPUDevice dev = gpu.device;
     // layouts
-    WGPUBindGroupLayoutEntry fe[2];
+    WGPUBindGroupLayoutEntry fe[3];
     fe[0] = WGPU_BIND_GROUP_LAYOUT_ENTRY_INIT;
     fe[0].binding = 0;
     fe[0].visibility = WGPUShaderStage_Vertex | WGPUShaderStage_Fragment;
@@ -342,8 +475,10 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
     fe[1].binding = 1;
     fe[1].visibility = WGPUShaderStage_Vertex;
     fe[1].buffer.type = WGPUBufferBindingType_ReadOnlyStorage;
+    fe[2] = fe[1];
+    fe[2].binding = 2;
     WGPUBindGroupLayoutDescriptor fd = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
-    fd.entryCount = 2;
+    fd.entryCount = 3;
     fd.entries = fe;
     frameLayout_ = wgpuDeviceCreateBindGroupLayout(dev, &fd);
     WGPUBindGroupLayoutEntry me[3];
@@ -381,46 +516,24 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
         const std::string tkey = "9-" + m.batch["texture"].dump();
         const json& entry = textures.at(tkey);
         std::string pack = entry["pack"].get<std::string>();
-        const std::string path = assetsRoot + "/" + (pack.rfind("/assets/", 0) == 0 ? pack.substr(8) : pack);
+        const std::string path = riderArchivePath(assetsRoot + "/" + (pack.rfind("/assets/", 0) == 0 ? pack.substr(8) : pack), textureSet);
         auto& a = archives[path];
         if (!a) {
             a = std::make_unique<TextureArchive>(path);
         }
-        const Image img = a->decode(entry["id"]);
-        // mips as the world textures (2 x 2 box)
-        uint32_t levels = 1;
-        for (uint32_t s = uint32_t(std::max(img.width, img.height)); s > 1; s >>= 1) {
-            ++levels;
-        }
-        WGPUTexture tex = gpu.texture(uint32_t(img.width), uint32_t(img.height), WGPUTextureFormat_RGBA8Unorm,
-                                      WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, levels);
-        std::vector<uint8_t> level = img.rgba;
-        uint32_t lw = uint32_t(img.width);
-        uint32_t lh = uint32_t(img.height);
-        gpu.writeTexture(tex, lw, lh, level.data(), 0);
-        for (uint32_t k = 1; k < levels; ++k) {
-            const uint32_t nw = std::max(1u, lw / 2);
-            const uint32_t nh = std::max(1u, lh / 2);
-            std::vector<uint8_t> next(size_t(nw) * nh * 4);
-            for (uint32_t y = 0; y < nh; ++y) {
-                for (uint32_t x = 0; x < nw; ++x) {
-                    for (int c = 0; c < 4; ++c) {
-                        const uint32_t x1 = std::min(lw - 1, 2 * x + 1);
-                        const uint32_t y1 = std::min(lh - 1, 2 * y + 1);
-                        const uint32_t s = uint32_t(level[(size_t(2 * y) * lw + 2 * x) * 4 + c]) + level[(size_t(2 * y) * lw + x1) * 4 + c] +
-                                           level[(size_t(y1) * lw + 2 * x) * 4 + c] + level[(size_t(y1) * lw + x1) * 4 + c];
-                        next[(size_t(y) * nw + x) * 4 + c] = uint8_t((s + 2) / 4);
-                    }
-                }
-            }
-            gpu.writeTexture(tex, nw, nh, next.data(), k);
-            level.swap(next);
-            lw = nw;
-            lh = nh;
+        // the entry's texel domain: a BC entry's own (its header), else the package's texel_domain (rider-material.js)
+        std::string domain = entry.value("texel_domain", "");
+        const TextureArchive::Bytes stored = a->raw(entry["id"]);
+        WGPUTexture tex = nullptr;
+        if (bc::isEntry(stored.data, stored.size)) {
+            const bc::Entry be = bc::parse(stored.data, stored.size);
+            domain = be.xbox ? "xbox" : "ps2";
+            tex = uploadBC(gpu, be);
+        } else {
+            tex = uploadTexels(gpu, decodePng(stored.data, stored.size));
         }
         WGPUTextureViewDescriptor vd = WGPU_TEXTURE_VIEW_DESCRIPTOR_INIT;
         WGPUTextureView view = wgpuTextureCreateView(tex, &vd);
-        const std::string domain = entry.value("texel_domain", "");
         const float scale[4] = {domain == "ps2" ? 255.f : 127.5f, 0, 0, 0};
         WGPUBuffer mu = gpu.buffer(16, WGPUBufferUsage_Uniform, scale, "rider material");
         WGPUBindGroupEntry e[3];
@@ -441,20 +554,25 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
     }
     vertices_ = gpu.buffer(vertices.size() * sizeof(Vertex), WGPUBufferUsage_Vertex, vertices.data(), "rider vertices");
     indices_ = gpu.buffer(merged.size() * 4, WGPUBufferUsage_Index, merged.data(), "rider indices");
-    uniform_ = gpu.buffer(256, WGPUBufferUsage_Uniform, nullptr, "rider frame");
+    uniform_ = gpu.buffer(kUniformBytes, WGPUBufferUsage_Uniform, nullptr, "rider frame");
     palette_ = gpu.buffer(uint64_t(groupCount) * 2 * 64, WGPUBufferUsage_Storage, nullptr, "rider palette");
-    WGPUBindGroupEntry e[2];
+    morphs_ = gpu.buffer(morphData.size() * 4, WGPUBufferUsage_Storage, morphData.data(), "rider morphs");
+    WGPUBindGroupEntry e[3];
     e[0] = WGPU_BIND_GROUP_ENTRY_INIT;
     e[0].binding = 0;
     e[0].buffer = uniform_;
-    e[0].size = 256;
+    e[0].size = kUniformBytes;
     e[1] = WGPU_BIND_GROUP_ENTRY_INIT;
     e[1].binding = 1;
     e[1].buffer = palette_;
     e[1].size = uint64_t(groupCount) * 2 * 64;
+    e[2] = WGPU_BIND_GROUP_ENTRY_INIT;
+    e[2].binding = 2;
+    e[2].buffer = morphs_;
+    e[2].size = morphData.size() * 4;
     WGPUBindGroupDescriptor bd = WGPU_BIND_GROUP_DESCRIPTOR_INIT;
     bd.layout = frameLayout_;
-    bd.entryCount = 2;
+    bd.entryCount = 3;
     bd.entries = e;
     frame_ = wgpuDeviceCreateBindGroup(dev, &bd);
 
@@ -465,16 +583,17 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
     pld.bindGroupLayouts = layouts;
     WGPUPipelineLayout pipelineLayout = wgpuDeviceCreatePipelineLayout(dev, &pld);
     WGPUShaderModule module = gpu.shader(kRiderShader, "rider");
-    WGPUVertexAttribute attrs[4] = {
+    WGPUVertexAttribute attrs[5] = {
         {nullptr, WGPUVertexFormat_Float32x3, 0, 0},
         {nullptr, WGPUVertexFormat_Float32x3, 12, 1},
         {nullptr, WGPUVertexFormat_Float32x2, 24, 2},
         {nullptr, WGPUVertexFormat_Uint32, 32, 3},
+        {nullptr, WGPUVertexFormat_Uint32, 40, 5},
     };
     WGPUVertexBufferLayout vbl = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
     vbl.arrayStride = sizeof(Vertex);
     vbl.stepMode = WGPUVertexStepMode_Vertex;
-    vbl.attributeCount = 4;
+    vbl.attributeCount = 5;
     vbl.attributes = attrs;
     WGPUBlendState normal{};
     normal.color = {WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha};
@@ -526,15 +645,16 @@ void RiderRenderer::load(Gpu& gpu, const std::string& assetsRoot, const std::str
         spl.bindGroupLayoutCount = 2;
         spl.bindGroupLayouts = sl;
         WGPUPipelineLayout shadowPipelineLayout = wgpuDeviceCreatePipelineLayout(dev, &spl);
-        WGPUVertexAttribute sa[3] = {
+        WGPUVertexAttribute sa[4] = {
             {nullptr, WGPUVertexFormat_Float32x3, 0, 0},
             {nullptr, WGPUVertexFormat_Uint32, 32, 3},
             {nullptr, WGPUVertexFormat_Uint32, 36, 4},
+            {nullptr, WGPUVertexFormat_Uint32, 40, 5},
         };
         WGPUVertexBufferLayout svl = WGPU_VERTEX_BUFFER_LAYOUT_INIT;
         svl.arrayStride = sizeof(Vertex);
         svl.stepMode = WGPUVertexStepMode_Vertex;
-        svl.attributeCount = 3;
+        svl.attributeCount = 4;
         svl.attributes = sa;
         WGPURenderPipelineDescriptor pd = WGPU_RENDER_PIPELINE_DESCRIPTOR_INIT;
         pd.layout = shadowPipelineLayout;
@@ -588,7 +708,7 @@ void RiderRenderer::drawShadow(WGPURenderPassEncoder pass, const ShadowSlot& slo
 }
 
 void RiderRenderer::update(const std::array<float, 16>& viewProjection, const std::array<double, 3>& origin, const RiderFrame& frame) {
-    float u[64] = {};
+    float u[kUniformBytes / 4] = {};
     std::memcpy(u, viewProjection.data(), 64);
     u[16] = float(origin[0]);
     u[17] = float(origin[1]);
@@ -597,6 +717,11 @@ void RiderRenderer::update(const std::array<float, 16>& viewProjection, const st
     u[21] = frame.lit ? 1.f : 0.f;
     u[22] = float(groups_);
     std::memcpy(u + 24, frame.lighting.data(), 160);
+    // the morph weights (27 a palette, 28 slots)
+    for (size_t m = 0; m < 27; ++m) {
+        u[64 + m] = m < frame.flexPrevious.size() ? frame.flexPrevious[m] : 0.f;
+        u[64 + 28 + m] = m < frame.flexCurrent.size() ? frame.flexCurrent[m] : 0.f;
+    }
     wgpuQueueWriteBuffer(gpu_->queue, uniform_, 0, u, sizeof u);
     const size_t bytes = size_t(groups_) * 64;
     if (frame.previous.size() * 4 >= bytes && frame.current.size() * 4 >= bytes) {

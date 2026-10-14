@@ -21,7 +21,8 @@ public:
     }
     // after each tick, in the rider's context; reset: the tick was a rescue / placement (no blend across it). A computer rider
     // (web/opponent-riders.js) passes the human core's view (it steps no camera) and keeps the packaged rim scale.
-    void capture(bool reset, const float* view = nullptr, bool human = true) {
+    // flex: the rider's configured morph parts (pv boardFlex; null: none)
+    void capture(bool reset, const float* view = nullptr, bool human = true, const flex::Flex* flex = nullptr) {
         reset = reset || resetPending_;
         resetPending_ = false;
         const int size = rider_skin_palette_count();
@@ -35,6 +36,8 @@ public:
                 if (!frame_.bonesCurrent.empty() && frame_.bonesPrevious.size() == frame_.bonesCurrent.size()) {
                     frame_.bonesPrevious = frame_.bonesCurrent;
                 }
+                // web/rider-skinning.js boardFlex.hold
+                frame_.flexPrevious = frame_.flexCurrent;
             }
         } else {
             const bool hadPose = available_ && !reset;
@@ -45,6 +48,12 @@ public:
                 frame_.previous = now;
             }
             frame_.current = now;
+            // boardFlex.capture(core, available && !reset): the current weights become the previous ones, or both the new ones
+            if (flex) {
+                const auto weights = flex::weights(*flex);
+                frame_.flexPrevious = hadPose && frame_.flexCurrent.size() == weights.size() ? frame_.flexCurrent : weights;
+                frame_.flexCurrent = weights;
+            }
             available_ = true;
             // the pose bones of this capture and the last one (a reset or a new length: both this one's)
             const float* bones = world_pose_bones();

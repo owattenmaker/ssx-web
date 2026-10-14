@@ -23,12 +23,20 @@ TextureArchive::TextureArchive(const std::string& path) {
     }
 }
 
-Image TextureArchive::decode(const nlohmann::json& id) const {
+TextureArchive::Bytes TextureArchive::raw(const nlohmann::json& id) const {
     auto it = entries_.find(key(id));
     if (it == entries_.end()) {
         throw std::runtime_error("texture " + key(id) + " not in the archive");
     }
-    return decodePng(bytes_.data() + payload_ + it->second.offset, it->second.size);
+    if (payload_ + it->second.offset + it->second.size > bytes_.size()) {
+        throw std::runtime_error("texture " + key(id) + " past the end of the archive");
+    }
+    return {bytes_.data() + payload_ + it->second.offset, it->second.size};
+}
+
+Image TextureArchive::decode(const nlohmann::json& id) const {
+    const Bytes b = raw(id);
+    return decodePng(b.data, b.size);
 }
 
 }  // namespace ssx_native

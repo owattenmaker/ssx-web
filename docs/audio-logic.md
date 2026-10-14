@@ -446,6 +446,28 @@ Jam, 5000 ticks): Allegra/Zoe (kind 1, level 0) passes gave the friend lines 0x2
 Gate: CHARACTER volume != 0, not `288AE0`, rider not crashed, local human (`285D98`), voice free, listener within
 range (`288B40`). Tiered banks (Amateur/Pro/Expert) are chosen by the peak (1/2/else).
 
+**Who speaks (checked 2026-10-14 for the "Griff mocking Zoe" online report).** Every rider category posts with the speaker =
+the rider the line is about: `29F330(rider)` = the speaker mask, `123128(rider)` = the speaker index passed to `2B1458`.
+Pass `2A0560(audio, A passer, B passed)` posts two requests: A's Pass_Foe 0x2081 / Hey + Pass_Friend 0x2080 (P 601, args
+A's mask, speed 1/2, subject B for the friend line) first, then B's Passed_by_Foe 0x207F / Passed_by_Friend 0x207D (P 600,
+KEEP). Hit `2A0A30` posts the target's Hit_by_Foe 0x208F / Aggression_Response 0x207E / Hit_by_Friend 0x2078 and the other's
+Hit_Foe 0x208A / Hit_Friend 0x208E. Gates of 2A0560: `29F0A0`, `288AE0`, guest `123168` on both, game tick - audio+0x582C
+>= 600, both riders' +0x470 < 0, voice free `2B0E28`, both in the same listener range `288B40`, 670.56 < relative speed
+< 1788.16; when both riders pass the +0x6C0 vtable+0x48 / +0x87C == 0 test, one of them must be `285D98`'s rider (what the
+vtable+0x48 call answers is not confirmed). So a computer rider's taunt about the human (P 601) is the original's rule.
+- Bank: Events.evt picks the record by the speaker mask; the request streams `data\speech\char\<registry name>` (2B04D8:
+  the registry entry whose id matches, 2B03B8 picks the BIG from the name's language suffix, sprintf at 0x2B05B8).
+- ARMSX2 (snow-jam-countdown-anchor, Zoe + five computer riders, event-race pad then a tuck, hooks 2B1458 / 2B03B8 / 2B04D8,
+  local/speech-speaker/ps2/zoe-race): Allegra passes at 846 -> Pass_Friend_ari, then Passed_by_Friend_zoe; Zoe passes at 1482
+  -> Hey_zoe + Pass_Friend_zoe; 2328 Post_Object_Collision_zoe; 2874 Wipeout_Amateur_zoe; Psymon at 3138 -> Pass_Foe_psy,
+  then Passed_by_Foe_zoe at 3241; 4470 PA_Rider_Postition_eng.
+- Port: all 323 web/public/assets/AUDIO/speech .dat files are byte-identical to the disc's same-named entries and the .hdr
+  ids equal registry.json's (local/speech-speaker/disc_check.py). Online pages (local/speech-speaker/mp-speech.mjs, two
+  Chrome pages, Zoe host or joiner, to the finish) post only the local human's own lines (speaker 4: Wipeout_Amateur_zoe,
+  Post_Object_Collision_zoe) plus PA / DJ, on core 1e117b0c; on core11 the race throws at the gate first. Online,
+  web/sfx-game.js knows only the local human, so the other racers' pass / hit lines (which 2A0560 / 2A0A30 would post) are
+  missing; the online PA_Rider_Postition line passes place 0 (game-tick rec.place without aiActive). Both not fixed.
+
 | Bank | Event(s) | Function | Trigger |
 |---|---|---|---|
 | Big_Air_* | 0x2084/0x2083/0x2091 | `29FCC8` | take-off `294678` when predicted air >= 4.0 s, not in backcountry |

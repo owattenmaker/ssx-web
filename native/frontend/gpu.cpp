@@ -61,6 +61,13 @@ void Gpu::init(WGPUSurface compatibleSurface) {
     WGPUDeviceDescriptor ddesc = WGPU_DEVICE_DESCRIPTOR_INIT;
     ddesc.label = sv("ssx3");
     ddesc.uncapturedErrorCallbackInfo.callback = onError;
+    // the Xbox HD rider textures upload as BC blocks where the device has them (web/texture-archive.js configureTextureDecode)
+    const WGPUFeatureName bcFeature = WGPUFeatureName_TextureCompressionBC;
+    bc = allowBC && wgpuAdapterHasFeature(adapter, bcFeature);
+    if (bc) {
+        ddesc.requiredFeatureCount = 1;
+        ddesc.requiredFeatures = &bcFeature;
+    }
     struct DeviceResult {
         bool done = false;
         WGPUDevice device = nullptr;
@@ -145,6 +152,20 @@ void Gpu::writeTexture(WGPUTexture t, uint32_t w, uint32_t h, const void* rgba, 
     layout.rowsPerImage = h;
     WGPUExtent3D size{w, h, 1};
     wgpuQueueWriteTexture(queue, &dst, rgba, size_t(w) * h * 4, &layout, &size);
+}
+
+void Gpu::writeBlocks(WGPUTexture t, uint32_t w, uint32_t h, const void* blocks, uint32_t blockBytes, uint32_t mip) {
+    WGPUTexelCopyTextureInfo dst = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    dst.texture = t;
+    dst.mipLevel = mip;
+    const uint32_t bw = (w + 3) / 4;
+    const uint32_t bh = (h + 3) / 4;
+    WGPUTexelCopyBufferLayout layout = WGPU_TEXEL_COPY_BUFFER_LAYOUT_INIT;
+    layout.bytesPerRow = bw * blockBytes;
+    layout.rowsPerImage = bh;
+    // the copy covers whole blocks: a level below 4 x 4 is still one block (its physical size)
+    WGPUExtent3D size{bw * 4, bh * 4, 1};
+    wgpuQueueWriteTexture(queue, &dst, blocks, size_t(bw) * bh * blockBytes, &layout, &size);
 }
 
 WGPUShaderModule Gpu::shader(const std::string& wgsl, const char* label) {

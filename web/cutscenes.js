@@ -839,6 +839,16 @@ export function createCutscenes(host) {
     if (step.location) state.location = step.location;   // pv transportFade: the heli drop appended to the Transport list plays at the destination (anchors, sets, cues)
     if (step.fmv) {   // ABC1/DBC2/EBC3 movie (list 29..31): no audio track (the pktrans stream plays over it)
       state.seq = null; host.onMovie?.(true);   // pv worldUnderCuts: only a movie step stops the world (main.js pushes its HOLD)
+      // pv nisOnTicks: the movie's end is seen by the NIS tick (0x276CC8: 0x283BB8 the movie's done flag -> 0x277800), which ends the step
+      // and pops its context in that update (update: moviePoll)
+      if (pv('nisOnTicks')) {
+        const m = (state.movie = { done: false, played: null });
+        (host.movie || playMovie)(FMV[step.fmv] || step.fmv, { skippable: !!(step.flags & FLAG.SKIP) }).then(
+          (p) => { m.done = true; m.played = p; },
+          () => { m.done = true; }
+        );
+        return;
+      }
       let played; try { played = await (host.movie || playMovie)(FMV[step.fmv] || step.fmv, { skippable: !!(step.flags & FLAG.SKIP) }); } finally { host.onMovie?.(false); }
       if (played?.skipped && (step.flags & FLAG.SKIP)) return skip(state);
       state.at++; return startStep(state);
@@ -1006,6 +1016,18 @@ export function createCutscenes(host) {
     // pv nisOnTicks: a pause context with mask bit 0x08 skips the NIS tick (0x230BDC); the fade's own clock still steps
     if (ticks != null && host.nisStopped?.()) {
       if (s.seq?.ready) s.seq.fadeT = (s.seq.fadeT ?? s.seq.t) + ticks;
+      return lastPose;
+    }
+    // pv nisOnTicks: a movie step that ended (its done flag) ends in this NIS tick
+    if (ticks != null && s.movie?.done && s.steps[s.at]?.fmv) {
+      const m = s.movie;
+      s.movie = null;
+      host.onMovie?.(false);
+      if (m.played?.skipped && (s.steps[s.at].flags & FLAG.SKIP)) skip(s);
+      else {
+        s.at++;
+        s.stepping = startStep(s);
+      }
       return lastPose;
     }
     const prevPose = lastPose;

@@ -21,6 +21,9 @@ struct Gpu {
     WGPUAdapter adapter = nullptr;
     WGPUDevice device = nullptr;
     WGPUQueue queue = nullptr;
+    // texture-compression-bc: asked for before init (false: the page's ?bc=0, the RGBA decode), granted after it
+    bool allowBC = true;
+    bool bc = false;
     // surface: when given (a window's), the adapter must be able to present to it
     void init(WGPUSurface compatibleSurface = nullptr);
     void release();
@@ -29,6 +32,8 @@ struct Gpu {
     WGPUBuffer buffer(uint64_t size, WGPUBufferUsage usage, const void* data = nullptr, const char* label = nullptr);
     WGPUTexture texture(uint32_t w, uint32_t h, WGPUTextureFormat format, WGPUTextureUsage usage, uint32_t mips = 1, const char* label = nullptr);
     void writeTexture(WGPUTexture t, uint32_t w, uint32_t h, const void* rgba, uint32_t mip = 0);
+    // one mip level of a block-compressed texture (blockBytes per 4 x 4 block, rows of blocks tightly packed)
+    void writeBlocks(WGPUTexture t, uint32_t w, uint32_t h, const void* blocks, uint32_t blockBytes, uint32_t mip);
     WGPUShaderModule shader(const std::string& wgsl, const char* label);
     // an RGBA8 texture's pixels (rows tightly packed)
     std::vector<uint8_t> readback(WGPUTexture t, uint32_t w, uint32_t h);

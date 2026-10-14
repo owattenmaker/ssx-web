@@ -1,7 +1,9 @@
 // pv rivalStartAudio (docs/backcountry.md "HUD, speech, music, FX"): an offline backcountry rival event's rolling start runs 2872A8
 // (main.js -> web/game-audio.js rivalStart) once, as single player (0x535C11 != 2): the rival's BC_Challenge 0x20D3 (2A1138: the
-// rival speaks to the human; speaker mask, subject mask, 4), then the artist intro 0x20CF. ARMSX2 (happiness-ready, Zoe vs Mac):
-// 2B1458 event 0x20D3 with speaker 3 (Mac) at the rolling start, the stream Bc_Challenge_mac (local/speech-speaker/ps2/bc-start).
+// rival speaks to the human; speaker mask, subject mask, 4), then the artist intro 0x20CF. 2872A8 sets audio+0x5788 = 1 at
+// 0x28737C..0x28738C when 0x535C12 is 4 / 5 (rival time / points) and 0x535C11 != 2 (not multiplayer); 2A43B8 then posts it.
+// ARMSX2 (happiness-ready + Cross, Zoe vs Mac, local/speech-speaker/ps2/bc-start2): 2872A8 at tick 0, 2B1458 event 0x20D3 with
+// speaker 3 (Mac) at tick 1, streams Char_Silence_500, Hey_mac, BC_Challange_mac (the disc's spelling), artist intro 0x20CF at 250.
 // Off: the start never reached the old phase 3 -> 5 edge (the race starts at phase 5), so nothing ran, and mpGame (always
 // created) made every offline start the multiplayer path.
 // Real game path: Single Event > Happiness Rival Time (ui.startSingleEvent), the card's Continue (careerUI.play), real frames.

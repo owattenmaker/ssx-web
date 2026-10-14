@@ -353,6 +353,8 @@ struct Verifier {
     flex::Flex humanFlex;
     // the native front end: also the presentation set-up (the environment lattice for the rider lighting)
     bool presentation = false;
+    // quality.presentationFast (web/quality.js: tier low on; the replay verifier and the shots compare against quality=low)
+    bool presentationFast = true;
     json environmentMeta;
     // a live run (the native front end): main.js startRun(null), no recorded start state to restore
     bool live = false;
@@ -920,10 +922,11 @@ struct Verifier {
         install(assembleLineup(lineupData, who.base, v, fixed["tables"], round));
     }
 
-    // main.js applyPresentationFast (every frame; quality=low: presentationFast on)
+    // main.js applyPresentationFast (every frame)
     void presentationFlags() {
-        auto flags = [] {
-            set_presentation_fast(1);
+        const int fast = presentationFast ? 1 : 0;
+        auto flags = [fast] {
+            set_presentation_fast(fast);
             set_rider_fx_render_scale(1);
             set_fx_reset_kicker(1);
             stage_teleport_enable(1);

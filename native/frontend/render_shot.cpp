@@ -3,8 +3,11 @@
 // The frame is the one the page draws right after stepping N + 2 ticks (ssxQA.advance: render alpha 0): the camera and palettes of
 // tick N over the world state of tick N + 1 (native/tools/browser-shot.mjs takes the page's). No window.
 //   ssx3_render_shot ASSETS_DIR REPLAY.ssxr OUT.png [--tick N] [--size 640x480]
+//                    [--quality low|medium|high] [--riders ps2|xbox] [--bc 0|1]
+// The quality defaults to low, as native/tools/browser-shot.mjs loads the page (?quality=low); the app's default is high.
 #include "gpu.hpp"
 #include "image_io.hpp"
+#include "quality.hpp"
 #include "race_presenter.hpp"
 #include "replay_session.hpp"
 #include "world_renderer.hpp"
@@ -20,20 +23,34 @@ int main(int argc, char** argv) {
         long tickTarget = 300;
         uint32_t width = 640;
         uint32_t height = 480;
+        std::string qualityTier = "low";
+        std::string riderSet;
+        std::string bcFlag;
         for (int k = 1; k < argc; ++k) {
             const std::string a = argv[k];
             if (a == "--tick" && k + 1 < argc) {
                 tickTarget = std::stol(argv[++k]);
             } else if (a == "--size" && k + 1 < argc) {
                 std::sscanf(argv[++k], "%ux%u", &width, &height);
+            } else if (a == "--quality" && k + 1 < argc) {
+                qualityTier = argv[++k];
+            } else if (a == "--riders" && k + 1 < argc) {
+                riderSet = argv[++k];
+            } else if (a == "--bc" && k + 1 < argc) {
+                bcFlag = argv[++k];
             } else {
                 positional.push_back(a);
             }
         }
         if (positional.size() != 3) {
-            std::fprintf(stderr, "usage: ssx3_render_shot ASSETS_DIR REPLAY.ssxr OUT.png [--tick N] [--size 640x480]\n");
+            std::fprintf(stderr, "usage: ssx3_render_shot ASSETS_DIR REPLAY.ssxr OUT.png [--tick N] [--size 640x480] [--quality T] [--riders S] [--bc 0|1]\n");
             return 2;
         }
+        Quality quality = Quality::tierDefaults(qualityTier);
+        if (!riderSet.empty()) {
+            quality.setRiders(riderSet);
+        }
+        quality.bc = bcFlag != "0";
         // the race, as the replay verifier sets it up, with the presentation set-up (the riders' lighting)
         Verifier v;
         v.presentation = true;
@@ -53,6 +70,7 @@ int main(int argc, char** argv) {
             }
             set_rider_attributes(raw, 0);
         }
+        v.presentationFast = quality.presentationFast;
         v.presentationFlags();
         const std::string triggers = v.assets.textOr(v.code + "/camera-triggers.json", "");
         if (!triggers.empty()) {
@@ -61,6 +79,7 @@ int main(int argc, char** argv) {
         v.startRun();
         replay_camera_begin(0x5d, 1);
         RacePresenter presenter(v);
+        presenter.riderTextures = quality.riderTextures;
         PadReader reader(v.pad);
         float input[24];
         uint32_t trace = 0;
@@ -76,6 +95,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("no camera yet");
         }
         Gpu gpu;
+        gpu.allowBC = quality.bc;
         gpu.init();
         WorldRenderer renderer;
         renderer.load(gpu, v.assets.root, v.code);
@@ -90,9 +110,9 @@ int main(int argc, char** argv) {
         const auto pixels = gpu.readback(target, width, height);
         writePng(positional[2], int(width), int(height), pixels.data());
         const auto& effects = renderer.effects();
-        std::printf("{\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"glows\":%u,\"sun\":%d,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"out\":%s}\n",
+        std::printf("{\"tick\":%ld,\"trace\":%u,\"riders\":%zu,\"glows\":%u,\"sun\":%d,\"camera\":[%g,%g,%g,%g,%g,%g,%g,%g,%g],\"quality\":%s,\"riderTextures\":%s,\"bc\":%d,\"out\":%s}\n",
                     tickTarget, trace, state.riders.size(), effects.glows(), effects.sunVisible() ? 1 : 0, camera.v[0], camera.v[1], camera.v[2], camera.v[3], camera.v[4], camera.v[5], camera.v[6], camera.v[7], camera.v[8],
-                    json(positional[2]).dump().c_str());
+                    json(quality.tier).dump().c_str(), json(quality.riderTextures).dump().c_str(), gpu.bc ? 1 : 0, json(positional[2]).dump().c_str());
         std::fflush(stdout);
         std::_Exit(0);
     } catch (const std::exception& e) {

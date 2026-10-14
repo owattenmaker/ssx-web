@@ -48,6 +48,9 @@ public:
         for (size_t k = 0; k < v.npcs.size(); ++k) {
             npcs_.push_back(std::make_unique<RiderCapture>(irradiance));
             placements_.push_back(-1);
+            // web/opponent-riders.js: the computer rider's morph parts (pv boardFlex), configured at its first capture
+            const std::string package = session::str(session::at(v.npcs[k].record, "package"));
+            npcFlex_.push_back(flex::load(v.assets.path(package + "/"), nlohmann::json::parse(v.assets.text(package + "/rider.json"))));
         }
     }
     // after each core tick
@@ -64,7 +67,7 @@ public:
             sun_->tick(fog_info(), environment_world_loads());
         }
         const bool reset = (v_.tickFlags & 3) != 0;
-        human_->capture(reset);
+        human_->capture(reset, nullptr, true, &v_.humanFlex);
         // the computer riders (ai-race.js endTick / opponent-riders.js capture): a reset placement (reset_info[2] changed) or the
         // race start resets the palette pair; the view is the human core's
         if (v_.aiActive) {
@@ -75,7 +78,11 @@ public:
                     const float placements = reset_info()[2];
                     const bool npcReset = placements_[k] != placements;
                     placements_[k] = placements;
-                    npcs_[k]->capture(npcReset, view, false);
+                    // init_animation (web/ai-racers.js configureRider) clears the morph parts: set them again
+                    if (!npcFlex_[k].parts.empty() && rider_skin_palette_count() && flex::unconfigured()) {
+                        flex::configure(npcFlex_[k]);
+                    }
+                    npcs_[k]->capture(npcReset, view, false, &npcFlex_[k]);
                 });
             }
         }
@@ -88,17 +95,22 @@ public:
     bool cameraValid() const {
         return cameraValid_;
     }
+    // quality.riderTextures (frontend/quality.hpp), read when the riders' renderers are made
+    std::string riderTextures = "xbox";
     // the riders' renderers, once their palettes exist (the palette groups come from each context)
     void loadRiders(Gpu& gpu) {
         if (!humanRenderer_ && human_->available()) {
             humanRenderer_ = std::make_unique<RiderRenderer>();
-            humanRenderer_->load(gpu, v_.assets.root, session::str(session::at(v_.entry, "package")), rider_skin_palette_indices(), rider_skin_palette_count());
+            humanRenderer_->textureSet = riderTextures;
+            humanRenderer_->load(gpu, v_.assets.root, session::str(session::at(v_.entry, "package")), rider_skin_palette_indices(), rider_skin_palette_count(),
+                                 &v_.humanFlex);
         }
         if (v_.aiActive && npcRenderers_.empty()) {
             for (size_t k = 0; k < v_.npcs.size(); ++k) {
                 auto r = std::make_unique<RiderRenderer>();
+                r->textureSet = riderTextures;
                 const std::string package = session::str(session::at(v_.npcs[k].record, "package"));
-                v_.inNpc(v_.npcs[k], [&] { r->load(gpu, v_.assets.root, package, rider_skin_palette_indices(), rider_skin_palette_count()); });
+                v_.inNpc(v_.npcs[k], [&] { r->load(gpu, v_.assets.root, package, rider_skin_palette_indices(), rider_skin_palette_count(), &npcFlex_[k]); });
                 npcRenderers_.push_back(std::move(r));
             }
         }
@@ -244,6 +256,7 @@ private:
     std::unique_ptr<RiderCapture> human_;
     std::vector<std::unique_ptr<RiderCapture>> npcs_;
     std::vector<float> placements_;
+    std::vector<flex::Flex> npcFlex_;
     std::unique_ptr<RiderRenderer> humanRenderer_;
     std::vector<std::unique_ptr<RiderRenderer>> npcRenderers_;
     std::vector<RiderFrame> frames_;

@@ -21,6 +21,12 @@ public:
         return entries_.count(key(id)) > 0;
     }
     Image decode(const nlohmann::json& id) const;
+    // an entry's stored bytes (a PNG file, or a BC entry of the Xbox HD rider set: frontend/bc_texels.hpp)
+    struct Bytes {
+        const uint8_t* data = nullptr;
+        size_t size = 0;
+    };
+    Bytes raw(const nlohmann::json& id) const;
 
 private:
     struct Entry {

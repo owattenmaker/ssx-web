@@ -354,6 +354,7 @@ const cases = [
   // 2326) moves the path's collision (0x334888 on the entity's nodes), so the 2661 get-up no longer meets it at rest. Score to the
   // end: the 5943 collectible (2000) is taken through its magnet as in p2r-start (round 2).
   { name: 'allpeak/apj-start', args: ['--zoe', '--course', 'MOUNTAINJ', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: END, why: 'All Peak Jam from Continue on the whole-mountain world (jumps, grabs, the trick score)' },
+  { name: 'allpeak/apj-full', args: ['--zoe', '--course', 'MOUNTAINJ', '--peak-run'], exactThrough: END, bonesThrough: 0, scoreThrough: pv('stationSplitPs2') ? 17302 : 16275, why: 'All Peak Jam from Continue to past the first station (19,000 records): the points split at 16276 (HUD 0x2B, 23C560) posts at the PS2 point with pv stationSplitPs2; 17303: a type-0x18 popup (slot 24, 2000 points) the port does not post (docs/core-migration.md "B")' },
   // Conquer the Mountain free ride on the whole mountain (docs/ctm-parity.md "The whole mountain"; seed MOUNTAINF = the capture's
   // baseline ctm-parity/mountain/states/frdra4-lodgeD.p2s, Zoe on Intimidator at tick 3370; tools/ps2_autopilot.py route DRA4 -> DRA4_A ->
   // Green Base Station, local/ps2-capture/runs/ctm -> ctm-parity/mountain/runs). Physics, bones and the trick cash exact through 8403:

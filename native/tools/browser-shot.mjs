@@ -4,6 +4,7 @@
 // captured. A frame right after a step draws render alpha 0: the camera of tick N (the previous camera pose) over the state of
 // tick N + 1, which ssx3_render_shot --tick N draws the same way. Prints {tick, trace} (the page's ?simtrace hash of tick N).
 //   node native/tools/browser-shot.mjs PAD.tas OUT.png --tick N [--course ARA1] [--rider zoe] [--attributes 55|none] [--lineup JSON] [--eval JS]
+//        [--riders ps2|xbox] [--bc 0|1]   the page's ?riders= (the rider texture set; quality=low's default is ps2) and ?bc=
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
 import { parse, toChannels } from '../../tools/tas/pad-format.mjs';
@@ -20,6 +21,11 @@ const course = opt('course', 'ARA1');
 const rider = opt('rider', 'zoe');
 const lineup = opt('lineup') ? JSON.parse(opt('lineup')) : null;
 const attributes = opt('attributes', 'none') === 'none' ? null : +opt('attributes');
+const riders = opt('riders');
+const bc = opt('bc');
+if (riders && !['ps2', 'xbox'].includes(riders)) throw new Error('--riders ps2|xbox');
+if (bc && !['0', '1'].includes(bc)) throw new Error('--bc 0|1');
+const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '');
 const { frames } = parse(fs.readFileSync(padPath, 'utf8'));
 
 const browser = await startBrowser({ width: 640, height: 480 });
@@ -33,7 +39,7 @@ try {
   await browser.goto(`${server.origin}/manifest.webmanifest`);
   // a fresh profile; widescreen Off (the 4:3 frame)
   await E(`(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('ssx3.widescreen','0');return 1})()`);
-  await browser.goto(`${server.origin}/?qa=1&course=${course}&rider=${rider}&cutscenes=0&quality=low&simtrace=1&mute=1`);
+  await browser.goto(`${server.origin}/?qa=1&course=${course}&rider=${rider}&cutscenes=0&quality=low&simtrace=1&mute=1${query}`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
   await E(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));return 1})()`);
   if (attributes != null) {
@@ -58,7 +64,8 @@ try {
   const trace = await E(`window.__simTrace.ticks[${base}+${tick}]`);
   // --eval JS: an expression evaluated in the page at that state (diagnostics, e.g. ssxEffects states)
   const extra = opt('eval') ? await E(opt('eval')) : undefined;
-  console.log(JSON.stringify({ tick, trace, out, ...(extra === undefined ? {} : { eval: extra }) }));
+  const decode = await E(`(async()=>{try{const m=await import('/texture-archive.js');return m.textureDecodeConfig()}catch(e){return String(e)}})()`);
+  console.log(JSON.stringify({ tick, trace, out, riders: riders ?? 'ps2', decode, ...(extra === undefined ? {} : { eval: extra }) }));
 } finally {
   await browser.close();
   await server.close();

@@ -602,13 +602,12 @@ let nisStartPending = null;
 // (0x230BEC: after the world states, before the rider manager), or, on frames that run no game update (the simulation held by a
 // context that leaves the NIS running, or not racing), whole 60 Hz ticks of the frame time paced as the PS2 frame loop paces updates
 const nisOnTicks = () => pv('nisOnTicks') && !!cutscenes?.tick;
-// (the same update clock as the simulation's: its phase carries across a hold and its release, as the PS2's updates run on)
-function nisFrameTicks(dt) {
-  if (!nisOnTicks() || !cutscenes?.active) return;
-  simulation.advance(dt, () => cutscenes.tick());
-}
 function nisStart() {
-  if (nisOnTicks() && cutscenes?.active) cutscenes.tick();
+  if (nisOnTicks()) {
+    // the cut's rider actor waiting for the rider's first posed tick, held at this update's NIS point (not at a frame's start)
+    if (nisCut && nisCutAt !== null && nisPosed()) nisCutHold(nisCutAt === true ? null : nisCutAt);
+    if (cutscenes?.active) cutscenes.tick();
+  }
   const a = nisStartPending;
   if (a) {
     nisStartPending = null;
@@ -656,7 +655,8 @@ function nisPreloadWatch() {
 }
 let nisStrayFrames = 0;
 function nisWatch() {
-  if (nisCut && nisCutAt !== null && nisPosed()) nisCutHold(nisCutAt === true ? null : nisCutAt);
+  // (pv nisOnTicks: per update, in nisStart)
+  if (!nisOnTicks() && nisCut && nisCutAt !== null && nisPosed()) nisCutHold(nisCutAt === true ? null : nisCutAt);
   if (!nisHeld || isPaused() || cutscenes?.active || ui.screen !== 'game' || transporting) {
     nisStrayFrames = 0;
     return;
@@ -3887,8 +3887,37 @@ function frame(ms) {
     // online races keep running behind the pause menu (neutral pad) and follow the server race clock (web/net/mp-game.js)
     const online = !!mpGame?.simulating(),
       simHeld = contexts.simFrame();
+    // pv nisOnTicks (docs/core-migration.md M6): while a cutscene plays offline, every update runs as 0x2306B8 runs it, on the one update
+    // clock: the NIS tick (unless a context masks it), then the simulation if no context holds it, so a context the NIS tick pops (a
+    // movie's end) lets that same update simulate. The game tick runs its NIS tick itself (main.js nisStart). Frames without a cutscene
+    // take the paths below, unchanged.
+    if (nisOnTicks() && cutscenes?.active && !online) {
+      const lockedTicks = pv('tickLock') ? tickLock.frame(dt) : null;
+      if (lockedTicks != null) simulation.pending = 0;
+      const tickPad = stallKeyInput(finished && !pv('padCarry') ? NEUTRAL_PAD : input, ms, dt, steerSnap, finished);
+      let simulated = 0;
+      simulation.advance(lockedTicks != null ? lockedTicks / 60 : Math.min(ps2FrameTime(dt), quality.maxFrameDt), () => {
+        if (running && !contexts.simFrame() && !mpGame?.holding()) {
+          gameTick.tick(typeof tickPad === 'function' ? tickPad(simulated) : tickPad, FixedStepClock.ticksLeft);
+          simulated++;
+        } else {
+          cutscenes.tick();
+          // the pad sample the update consumes (padCarry: as a frame that does not tick feeds it)
+          padCarryFeed(input, 1 / 60);
+        }
+      });
+      acc = lockedTicks != null ? 1 / 60 : simulation.pending;
+      if (simulated) {
+        flushHumanSkin();
+        padCarryAcc = 0;
+      } else {
+        keyBase = new Set(keys);
+        keyLog.length = 0;
+        tickLock.reset();
+      }
+    }
     // a pop runs the tick from the next frame (E11)
-    if (running && (!simHeld || online) && !mpGame?.holding()) {
+    else if (running && (!simHeld || online) && !mpGame?.holding()) {
       // pv padCarry: the finished ride reads the pad as the PS2's (its control 10 ignores it; the finish tick's control 0 still crouches on
       // a held Cross: c0a-ret2 1700)
       const tickInput = (finished && !pv('padCarry')) || simHeld ? NEUTRAL_PAD : input;
@@ -3913,8 +3942,6 @@ function frame(ms) {
       flushHumanSkin();
       padCarryAcc = 0;
     } else {
-      // pv nisOnTicks: no game update this frame: the NIS on its own ticks
-      nisFrameTicks(Math.min(ps2FrameTime(dt), quality.maxFrameDt));
       keyBase = new Set(keys);
       keyLog.length = 0;
       padCarryFeed(input, dt);

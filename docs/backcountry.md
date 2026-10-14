@@ -132,6 +132,14 @@ So the rival **rides and scores its own tricks** (its own score object); there a
   rival modes outside multiplayer the rider speech BC_Challenge is queued (0x5788: rival slot 1 speaks to the human,
   2A1138), otherwise DJ Radio BIG intro; then the artist intro (0x5778 = 1). Finish 286EA0 -> 2A4078: kind 5 (Rival Time)
   PA_Finish_Line, kind 6 in round 1 PA_Rider_Position. `game-audio.js rivalStart`, `finish({challengeKind})`.
+  - 2872A8 in detail: only for 0x535C10 = 5 / 6 and when `295028(audio, 0, 0)` is 0; 0x535C12 = 4 / 5 and 0x535C11 != 2 set
+    audio+0x5788 = 1 (0x28737C..0x28738C), else 2A26F0 + the 2B1758 flush; then 0x5774 = 0x5778 = 1 (artist intro). ARMSX2
+    (happiness-ready + Cross, local/speech-speaker/ps2/bc-start2): 2872A8 at tick 0, 0x20D3 speaker Mac at tick 1 (Hey_mac +
+    BC_Challange_mac), the artist intro 0x20CF at 250.
+  - pv rivalStartAudio (off; web/main.js): the port's trigger waited for a race phase 3 -> 5 edge that no longer comes (the
+    race starts at phase 5), so the rolling start ran nothing; and it passed `mp: !!mpGame`, always true. On: the first
+    frame at phase 5 without the countdown 4, mp = an online race (`mpGame.racing`). web/test-rival-start-audio.mjs (on: one
+    start, 0x20D3 speaker 3 with masks 0x2 / 0x20 / 4, then 0x20CF, no 0x20E5; off: no start).
 - Locator beam over the rival (RFX+0xB00, update 0x2E39D8, draw 0x2E3AF8; `web/rival-beam.js createRivalBeam`): an 8-vertex
   strip along the camera up from the rival's bone 5 (base alpha 0, +130 cm and +20130 cm at the colour, +20260 cm alpha 0),
   half width 85 cm along the camera right, texture 'beam' (renderer+0xFFC, white with a triangular alpha across S), colour

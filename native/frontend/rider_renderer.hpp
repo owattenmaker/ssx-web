@@ -6,6 +6,7 @@
 // - web/rider-lighting-nodes.js / rider-material.js: the per-vertex irradiance of the core's ten lighting rows
 //   (rider_lighting_gpu_coefficients) on the palette-transformed ITOF15 normal, quantized before interpolation; GS HIGHLIGHT2
 //   on the PS2-domain texels; riderDrawState (opaque, or 'alph' / 'ea*' in two blended passes).
+#include "../verify/board_flex.hpp"
 #include "gpu.hpp"
 #include "json.hpp"
 #include <array>
@@ -28,6 +29,9 @@ struct RiderFrame {
     std::vector<float> bonesPrevious;
     std::vector<float> bonesCurrent;
     std::array<float, 12> physical{};
+    // pv boardFlex: the morph weights (27 renderer columns) of the previous and the current palette's tick
+    std::vector<float> flexPrevious;
+    std::vector<float> flexCurrent;
 };
 
 // a rider's slot in the shadow atlas this frame (web/rider-shadow.js update): the silhouette rows over the skinned source position
@@ -41,8 +45,13 @@ struct ShadowSlot {
 
 class RiderRenderer {
 public:
+    // the rider texture set (quality.riderTextures, frontend/quality.hpp), read by load: 'xbox' (the desktop default) reads a
+    // WARDROBE textures.tex / gear.tex from its Xbox HD twin where that exists (web/texture-archive.js riderArchiveUrl)
+    std::string textureSet = "xbox";
     // package: RIDER_ZOE; paletteIndices: the core's rider_skin_palette_indices (one group per vertex)
-    void load(Gpu& gpu, const std::string& assetsRoot, const std::string& package, const uint32_t* paletteIndices, int groupCount);
+    // flex: the rider's morph parts (pv boardFlex; null: the rest shape)
+    void load(Gpu& gpu, const std::string& assetsRoot, const std::string& package, const uint32_t* paletteIndices, int groupCount,
+              const flex::Flex* flex = nullptr);
     // the frame's uniforms: the camera's view-projection (origin-relative) and the origin
     void update(const std::array<float, 16>& viewProjection, const std::array<double, 3>& origin, const RiderFrame& frame);
     void drawOpaque(WGPURenderPassEncoder pass);
@@ -72,6 +81,8 @@ private:
     WGPURenderPipeline pipelines_[3][2] = {};
     WGPURenderPipeline shadowPipeline_ = nullptr;
     WGPUBuffer shadowUniform_ = nullptr;
+    WGPUBuffer morphs_ = nullptr;
+    static constexpr size_t kUniformBytes = (64 + 56) * 4;
     WGPUBindGroup shadowGroup_ = nullptr;
     uint32_t indexCount_ = 0;
     std::vector<Batch> batches_;
