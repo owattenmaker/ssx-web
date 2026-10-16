@@ -423,7 +423,7 @@ drops by the award). The loser had the boost counter for one latency.
   disconnected, gave up (TIME'S UP) or ran out of time. Podium screens exist only in Conquer the Mountain's final
   round in the original, so a single online race has none.
 
-### Results of racers still on course (pv mpEstimateClock, off; 2026-10-15)
+### Results of racers still on course (pv mpEstimateClock, on since the 2026-10-15 deploy)
 
 Field report (2026-10-14, live, a normal online lobby; the host's diag.log shows two pages through mp-lobby with mpCourseSelect and
 mpPreRace on ERA5, DBC2, ARA1, CRA3, ERA5, EBC3, DBC2; no time attack): "if Griff finishes first, Psymon's timer counts down on
@@ -479,7 +479,45 @@ course. Its Results wait for every human, so it shows no countdown or time-out a
 
 `web/test-mp-estimate-clock.mjs` (in test:all) checks the old row's run-down on a synthetic run, the order, and the wiring.
 
-## Multiplayer leaderboard (pv mpBoard, off; 2026-10-15)
+### The Results' #stage data-screen (pv resultsScreenAttr, on since the 2026-10-16 deploy)
+
+The first finisher's Results come from game-tick.js's results tick, `ui.showResults`, which set `ui.screen` but left
+`#stage data-screen` at 'game' (ui.set writes it). So diagnostics.js never logged that screen (the live diag.log showed the first
+finisher going game -> mp-lobby), and the CSS keyed on data-screen treated those Results as the ride, offline too: the touch
+deck kept its face labels (mobile.css), and widescreen 1 kept `#ui` in the band only because of that.
+
+- **Switch on:** `ui.showResults` writes `data-screen = 'results'`. The constructor sets `#stage data-results-attr = 1`, and
+  style.css keeps `[data-results-attr="1"][data-screen="results"] #ui` in widescreen 1's band (top 12.5 %, height 75 %).
+- **PS2 rule for the band** (ARMSX2, 16:9 mode 1, the event-start-wsmode1 state ridden to the finish with Square):
+  - The place popup, Top 5 Record Times (local/mp-clock/ps2-ws1/run/final.png) and Single Event Results
+    (local/mp-clock/ps2-ws1f/run/sample13801.png) all lie in the letterbox band, like the HUD.
+  - The picture is rows 59..419 of 480. Both panels span rows 103..379 (column 200), the banded mapping 56 + 0.75y.
+  - The Results frame comes from a derived start state, local/mp-clock/ps2-ws1f/base-norecord.p2s: the live Snow Jam race
+    records at 0x5360C8 (stride 0x14; BOMBER 177 ... 215 s) are set to 100..104 s, so the 03:32 finish (5th) enters no top 5
+    and the PS2 goes straight to its Results, with no input. Script: race-square.json (Square 15000, 1800 idle).
+  - A Cross on the records panel of the cleaned savestate ps2-ws1/run/final.p2s was ignored (ps2-ws1d, ps2-ws1e: Cross,
+    Start and the D-pad, hook samples counted). Not explained: other ps2_navigate scripts pass that panel with an 8-frame Cross
+    in a ridden run.
+- **Port, 8-run matrix** (local/mp-clock/results-attr.mjs, OUT=local/mp-clock/attr2; ARA1, ai=0):
+  - Widescreen 1 (640 x 480): `#ui` at rows 60..420 with the switch off and on, in Chrome and WebKit. The Results panel is at
+    rows 106..370 in both. Sheet: local/mp-clock/sheets/results-ws1-ps2-vs-port.png (PS2, Chrome off, Chrome on, WebKit on).
+  - Phone (390 x 844, touch deck on): off, data-screen 'game' and the face labels visible on Results; on, 'results' and the
+    labels hidden (the menu deck). Chrome and WebKit the same.
+  - diag=1: off logs only title -> game; on adds game -> results.
+- **Seen, not changed:** the port's Results panel is 106..370 against the PS2's 103..379 with the switch off and on: the panel's
+  own layout (results-lui.js), not the band.
+- **Gates with the switch on** (PAGE_PV / SSX_PV=resultsScreenAttr): test-widescreen, touch-controls, fe-screens, race-finish,
+  mp-page (Chrome + Chrome; Chrome + WebKit with `MP_WK_TIMER=1`), records-verifier, replay, rival-page, online-records,
+  line-length, comment-code all pass.
+- **Status: on, deployed 2026-10-16** (`resultsScreenAttr: true`). Page only: no core, server or asset change.
+
+## Multiplayer leaderboard (pv mpBoard, on since the 2026-10-16 deploy)
+
+**Status: on, deployed 2026-10-16.** The default-switch set was re-run on the final tree (after the trick-ranking,
+Leaderboards and results-focus follow-ups): test-mp, mp-prerace, mp-page (Chrome + Chrome; Chrome + WebKit with
+`MP_WK_TIMER=1`), ta-page, online-records, records-server, records-verifier, replay, rival-page, fe-screens, save-store,
+mp-estimate-clock, race-board, line-length and comment-code pass. test-online-records passes with `PAGE_PV=mpBoard`. The host
+needs no setting: the race board is on unless `MP_RACE_BOARD=0` (live `GET /mp/race-board?course=ARA1` answers 200 after the deploy).
 
 The user's request: after the event results, a second screen with the event's global leaderboard. It asks for your username
 to save your score, and the name then stays on the profile. The user's decision: online race results go on their own board per

@@ -764,8 +764,9 @@ Browser: web/widescreen.js (mode table, `originalProjection`, `widescreenView`, 
 pause Options "Widescreen" row (web/ui.js), `layoutStage` in web/main.js, CSS in web/style.css. Off = 4:3 stage
 (default); 16:9 = the PS2's literal 4:3 frame (3D canvas and in-race HUD canvas in the 12.5%/75% band); Anamorphic =
 16:9 stage, 16:9 camera aspect, HUD canvas stretched 4/3 as a 16:9 TV shows it. Camera vertical fov is unchanged in all
-modes. Test: web/test-widescreen.mjs (in npm test). Not verified: whether the pause/front-end menus letterbox in mode 1
-(capture log stops while paused); snow billboard cap (snow-billboard.js) still assumes a 448-line source viewport, so
+modes. Test: web/test-widescreen.mjs (in npm test). The race's end overlays do letterbox in mode 1: the place popup, Top 5
+Record Times and Single Event Results lie in the band (panels rows 103..379 of 480; docs/multiplayer.md "The Results'
+#stage data-screen"). Not verified: whether the pause/front-end menus letterbox in mode 1 (capture log stops while paused); snow billboard cap (snow-billboard.js) still assumes a 448-line source viewport, so
 in mode 1 its projected-size cap uses the 4:3 y scale instead of 0.75x.
 
 ## Word-level PS2 parity (2026-09-23)

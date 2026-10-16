@@ -5,8 +5,11 @@
 // (free-ride.js drainEvents -> main.js 'stationCut' -> nisHoldAt); with nisAfterScan the placement waits for host.nisStart, which
 // simulate calls before every pass of the next tick. This checks that contract on a stub core: the firing tick's section pass runs
 // before the hold, and the hold before the next tick's passes.
+// Both tick paths: pv coreTick (web/game_tick.cpp: tick_mid runs a solo run's section activation 0x101B60, tick_begin the next
+// tick's passes) and the page's own passes (_section_pass, _race_begin, _step_rider).
 import assert from 'node:assert/strict';
 import { createGameTick } from './game-tick.js';
+import { setPv } from './pv-flags.js';
 
 const calls = [];
 const heap = new ArrayBuffer(1 << 16);
@@ -19,13 +22,30 @@ const host = {
   freeRide: { stalled: () => false, tick() { if (tickNo === 1) pending = { pos: [1, 2, 3], yaw: 0 }; } }, // builtin 68 in tick 1's 121818
   nisStart() { if (!pending) return; const a = pending; pending = null; core._nis_hold(1, a.pos[0], a.pos[1], a.pos[2], 1, 0); },
 };
-const tick = createGameTick(host);
 const input = new Float32Array(24);
-for (tickNo = 1; tickNo <= 2; tickNo++) { calls.push(`tick ${tickNo}`); tick.simulate(input); }
 const at = (name, from = 0) => calls.indexOf(name, from);
-const t2 = at('tick 2'), scan1 = at('_section_pass'), hold = at('_nis_hold');
-assert.ok(scan1 >= 0 && scan1 < t2, 'tick 1 runs its section pass');
-assert.ok(hold > scan1, 'the hold comes after the firing tick\'s section pass');
-assert.ok(hold > t2 && hold < at('_race_begin', t2) && hold < at('_step_rider', t2), 'the hold comes before every pass of the next tick');
-assert.equal(calls.filter((c) => c === '_nis_hold').length, 1);
-console.log('test-nis-after-scan: the station cut\'s hold after the firing tick\'s section pass, before the next tick\'s passes');
+
+function run(coreTick) {
+  setPv('coreTick', coreTick);
+  calls.length = 0;
+  pending = null;
+  const tick = createGameTick(host);
+  for (tickNo = 1; tickNo <= 2; tickNo++) {
+    calls.push(`tick ${tickNo}`);
+    tick.simulate(input);
+  }
+  setPv('coreTick', null);
+  const path = coreTick ? 'core tick' : 'page passes';
+  const t2 = at('tick 2');
+  const hold = at('_nis_hold');
+  const scan1 = at(coreTick ? '_tick_mid' : '_section_pass');
+  assert.ok(scan1 >= 0 && scan1 < t2, `${path}: tick 1 runs its section pass`);
+  assert.ok(hold > scan1, `${path}: the hold comes after the firing tick's section pass`);
+  const next = coreTick ? [at('_tick_begin', t2)] : [at('_race_begin', t2), at('_step_rider', t2)];
+  assert.ok(hold > t2 && next.every((k) => k > hold), `${path}: the hold comes before every pass of the next tick`);
+  assert.equal(calls.filter((c) => c === '_nis_hold').length, 1, `${path}: one hold`);
+}
+
+run(true);
+run(false);
+console.log('test-nis-after-scan: the station cut\'s hold after the firing tick\'s section pass, before the next tick\'s passes (core tick and page passes)');

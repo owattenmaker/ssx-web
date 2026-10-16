@@ -1,3 +1,40 @@
+> **Deployed 2026-10-16 (coordinator, the user's go-ahead): mpBoard + resultsScreenAttr ON.** Core unchanged (core15 `e66ce287…`, capture-verified); game data unchanged (no edge cache bump); build `b20261016183032-4edbfb`, bundle main-DybpnORk.js.
+> - **Online races:** after the final results, Continue opens the event's online race board (name entry on first use). The Leaderboards menu has an Online Races item. Trick events rank by score.
+> - **Results screen:** the Single Event / online Results write `data-screen = 'results'`. Widescreen 1 keeps them in the band, as the PS2 does. The touch deck hides its face labels there. diagnostics.js logs the screen.
+> - **Gate:** the test loop's run on the flipped tree passed 249/249 in 1215 s (FIXED: test-ps2-captures, test-nis-after-scan). The targeted proofs are in the entry below.
+> - **test-nis-after-scan fixed (test only):** the stub core takes the coreTick path (game_tick.cpp: tick_mid runs a solo run's section activation 0x101B60), so `_section_pass` was never called. It had failed in every loop run since at least 2026-10-13. It now checks the same contract on both paths: core tick (`_tick_mid` before the hold, the hold before the next `_tick_begin`) and the page passes (setPv coreTick off).
+> - **Live checks:**
+>   - Root 200. /build.json no-store. Hashed bundles `immutable`; missing files 404 `no-cache`.
+>   - The live chunk has `mpBoard:!0 resultsScreenAttr:!0`. host server.log shows a clean start. `GET /mp/race-board?course=ARA1` returns 200 (an empty board).
+>   - In the browser pane (?mute=1): `#stage data-results-attr = 1`. Main Menu -> Single Event -> Zoe -> Peak 1 -> Race -> Snow Jam loaded and raced at ~60 fps, with no load error. Tab closed.
+>   - Two 404s, ARA1/freestyle-event.json and ARA1/avalanches.json, are optional files that don't exist locally either.
+> - **Test loop:** running again (pid 91391, `TEST_LOOP_GAP_MIN=30`, niced).
+> - **Not mine, left running:** headless Chrome for Testing processes and one mp-server (--port 21363), 18-20 h old at the resume, from earlier sessions.
+
+> **(Flipped and deployed: see the entry above.) Resumed (2026-10-16, coordinator): mpBoard and resultsScreenAttr proven, both ready to flip.** Live unchanged (core15 `e66ce287…`). No code change today: docs only (multiplayer.md, engine/CAMERA_RECOVERY.md).
+> - **mpBoard** (online race leaderboard; [multiplayer.md](multiplayer.md) "Multiplayer leaderboard", Status line):
+>   - The default-switch set re-run on the final tree passes 15/15: test-mp, mp-prerace, mp-page, ta-page, online-records, records-server, records-verifier, replay, rival-page, fe-screens, save-store, mp-estimate-clock, race-board, line-length, comment-code.
+>   - test-mp-page Chrome + WebKit (`MP_WK_TIMER=1`) passes with the defaults. test-online-records passes with `PAGE_PV=mpBoard` (the Leaderboards board with three items).
+>   - The host needs no setting: mp-server loads race-board.mjs whenever records are on, unless `MP_RACE_BOARD=0`.
+> - **resultsScreenAttr** (`ui.showResults` writes `#stage data-screen = 'results'`; [multiplayer.md](multiplayer.md) "The Results' #stage data-screen"):
+>   - PS2 Results frame captured. A derived start state (local/mp-clock/ps2-ws1f/base-norecord.p2s) sets the live Snow Jam race records at 0x5360C8 to 100..104 s, so the 03:32 finish enters no top 5 and the PS2 shows Single Event Results with no input (sample13801.png).
+>   - In 16:9 mode 1 the Results panel spans rows 103..379 of 480, inside the picture's 59..419. That matches the records panel and the switch's band rule.
+>   - The 8-run matrix (Chrome / WebKit x phone / ws1 x off / on; local/mp-clock/attr2/) is consistent in both browsers. Widescreen 1: `#ui` 60..420 off and on, the panel 106..370 in both. Phone: on hides the face labels. diag=1: on adds game -> results. Sheet: local/mp-clock/sheets/results-ws1-ps2-vs-port.png.
+>   - Gates with PAGE_PV / SSX_PV=resultsScreenAttr pass 11/11: widescreen, touch-controls, fe-screens, race-finish, mp-page, records-verifier, replay, rival-page, online-records, line-length, comment-code. test-mp-page Chrome + WebKit passes too.
+> - **Seen, not changed:**
+>   - The port's Results panel is 106..370 against the PS2's 103..379, with the switch off and on: the panel layout (results-lui.js), not this switch.
+>   - On the cleaned savestate ps2-ws1/run/final.p2s, the PS2 records panel ignored every scripted press (Cross, Start, D-pad; ps2-ws1d / ps2-ws1e), although the hook counted the samples. Not explained. For a Results frame, poke the records instead.
+>   - Harness note: a browser test run directly (not through `npm test`) needs `caffeinate -d -u -i`. Without it the first `test-mp-page.mjs --webkit` run stalled 13 min before player 0 connected.
+> - **To turn on:** `mpBoard: true` and `resultsScreenAttr: true` in web/pv-flags.js, then deploy. The test loop (web/test-loop.mjs) was not running at resume (its last run is 2026-10-13: ps2-captures timeout, nis-after-scan). It was restarted 2026-10-16 (`TEST_LOOP_GAP_MIN=30`, niced, pid 86912). Check its failure set before the deploy.
+
+> **The first rider on entering Select Character wears its saved outfit (2026-10-15, charsel-lag agent):** see [characters.md](characters.md) "The first rider on entry". **pv `charselEntryOutfit`**: on, deployed by the coordinator together with archiveRanges.
+> - **Before:** the first rider showed its default FE package until it was picked again (the outfit's package is prepared by the pick). Seen in the live archiveRanges check.
+> - **PS2:** the entry (0x181308, 0x1812A8 -> 181BD0 -> 1A0508 -> 19E588) asks for the profile's rider, and the slot assembles it from the profile's rows (19E960 -> 14AD28).
+> - **Port:**
+>   - `wardrobe.js` `outfitPrepared(ui, rider)`: prepareOutfit records the stamp it prepared for.
+>   - `character-select.js onEnter -> entryReload`: an unprepared rider gets the stamp + commit reload. A prepared one shows at once.
+> - **Checked:** WebKit and Chrome on the local server: the entry root is `RIDER_ZOE/fe` with the switch off and `WARDROBE/ZOE/f2c4e119f` with it on. The new entry cases in test-charsel-settle pass, and test-fe-screens / fe-preview / wardrobe / characters / save-store / line-length / comment-code pass with the switch on and off.
+
 > **Deployed 2026-10-15 (coordinator): archiveRanges + taPodiumFit + taPodiumLabels + charselEntryOutfit ON; host MP_TA_PODIUM_FIT=1.** Core unchanged (core15 `e66ce287…`). Outfit gear archives are read by range (?identity=1, edge + origin deployed, live probe 206 exact); the TA podium phase is the server-picked scene's length (podium-scripts.mjs, margin 0) and hands straight to the vote; podium labels are clipped to the picture; Select Character shows the first rider in its saved outfit. Host plist backed up as state/server.plist.bak-20261015-podiumfit. Gate on this exact tree (900 s limit per test): podium-fit, chunk-view, ta-page, mp-session, session-verifier, archive-ranges, texture-archive(-decode), charsel-settle, fe-screens, fe-preview, wardrobe, characters, save-store, rider-prefetch, records-server, records-verifier, replay, rival-page, online-records, mp-page pass.
 
 > **Time-attack podium: the podium phase as long as the scene, straight to the vote (2026-10-15, ta-podium agent):** see [big-multiplayer.md](big-multiplayer.md) "The podium phase as long as the scene". Not deployed. **Server setting `podiumFit` (`MP_TA_PODIUM_FIT=1`, margin `MP_TA_PODIUM_MARGIN_MS`, default 0) and pv `taPodiumFit`, `taPodiumLabels` (off).** No core or asset change.
@@ -50,7 +87,7 @@
 >   - Model after settle on this fast link: 0.45-1.2 s with ranges, 0.45-2.6 s without.
 >   - Shots in scratchpad `live/out/`.
 >   - Seen there and not changed: on entering Select Character, the first rider shows its default package, because its outfit is prepared only when it is picked.
-> - **Ready to flip:** `archiveRanges: true`.
+> - **Ready to flip:** `archiveRanges: true` (flipped and deployed by the coordinator, 2026-10-15).
 
 > **Time attack's (and online races') collectibles stood as static props: a warm-up race in the page, not the stage world. Fixed behind pv warmVisibility (off, ready to flip) (2026-10-15, ta-collect agent).** See [set-pieces.md](set-pieces.md) "Warm-up and the renderers' visibility".
 > - **PS2 rule:** a Single Event (0x535C11 = 1) or online (2) makes every listed collectible a DeadNode (30C4A8, builtin 38): no draw, no contact. Snow Jam countdown memdiff: type-6 entities (ctm-events-in-world.md 6.3). An online race's collectibles were not captured on the PS2; that rule comes from the code. A time-attack attempt is a Single Event, so its collectibles must not be there. The boost pickups spin and can be collected as in any race.

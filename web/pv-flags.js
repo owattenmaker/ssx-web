@@ -368,7 +368,7 @@ export const PV_DEFAULTS = Object.freeze({
   taPodiumWorld: true,
   warmVisibility: true,
   charselSettle: true,
-  resultsScreenAttr: false,
+  resultsScreenAttr: true,
   sfxPs2Rng: false,
   mpEstimateClock: true,
   crowdSeqPs2: false,
@@ -454,7 +454,7 @@ export const PV_DEFAULTS = Object.freeze({
   mpTickLock: true,
   feCursorRestore: true,
   frameGateRecover: true,
-  mpBoard: false
+  mpBoard: true
 });
 const overrides = new Map();
 function fromQuery() {

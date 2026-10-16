@@ -1762,6 +1762,26 @@ returns while `!ui.ready`, so presses in between were dropped.
 - Test: `web/test-charsel-settle.mjs` (npm test): the download abort rules, and the cursor / stamp / retarget / supersede /
   Cross / leave rules.
 
+### The first rider on entry (2026-10-15, pv charselEntryOutfit)
+
+Before this switch, entering Select Character showed the first rider in its default package until that rider was picked again. The
+outfit's FE package is only prepared by a pick, so this happened for example right after a page load.
+- **PS2:** the screen's entry asks the preview slot for the profile's rider: 0x181308, then 0x1812A8 -> 181BD0 -> 1A0508 ->
+  19E588. The slot assembles that rider from the profile's committed rows (19E960 -> 14AD28), so it is in its saved outfit, never a
+  default package.
+  - 0x181308's own 1A0508 passes table[0] (0x440F68). 0x1812A8's call in the same entry retargets it before the 4-frame stamp
+    fires. That ordering is from the code only, not captured.
+- **Port:**
+  - `wardrobe.js prepareOutfit` records the outfit stamp (`outfitStamp`) it prepared the packages for; `outfitPrepared(ui, rider)`
+    compares it with the rider's stamp now.
+  - `character-select.js onEnter -> entryReload`: a rider that is not prepared gets the reload (the stamp, then the commit, as
+    after a move). A prepared one is 19E588's own loaded character and shows at once.
+  - `ui.js restoreRider`'s commit supersedes it.
+- **Checked:**
+  - Local Vite server, WebKit and Chrome, an outfit saved for every rider: the entry preview root is `RIDER_ZOE/fe` with the
+    switch off and `WARDROBE/ZOE/f2c4e119f` with it on. With archiveRanges on it reads 193 KB of ranges.
+  - `test-charsel-settle.mjs` covers both cases: not prepared commits at frame > stamp; prepared does nothing.
+
 ## Sam in the roster row (2026-09-23)
 
 The user found Sam's outline greyed out and set apart from the row. Before: the Sam PS2 build's 64x128 atlas (a
