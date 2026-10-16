@@ -205,6 +205,26 @@ forger can still claim just above it (0.9 x the world record beats every human) 
 - **Not measured:** the Single Event Map's own intro activate frame on the PS2. The port's lock for these screens stays 0 apart from
   the cursor restore.
 
+### The online race boards (pv mpBoard, off; 2026-10-15)
+
+Normal online races (docs/multiplayer.md "Multiplayer leaderboard") have their own boards: web/server/race-board.mjs,
+`<MP_RECORDS_DIR>/race-board.json`. They are unverified (contacts and knockouts from other players cannot be re-simulated alone),
+so they never touch board.json, the verifier queue or these boards. Shared with the records:
+- the event keys (`<mode>:<COURSE>`, eventTable) and the order (`better`);
+- `cleanName` (the Player Name charset, 1..8, the blocklist);
+- the 61toptimes layout (results-lui.js `records()`, as ctm-board draws it);
+- the Player Name. Before, the records' Save Records keyboard was prefilled with the Player Name but did not write it back. The
+  race board's first-use keyboard saves the name on the profile (`ssx3.playerName`), so later records and time-attack sessions
+  get it too.
+
+The Leaderboards board (ctm-board, opened over the front end) gets a third item, Online Races, with pv mpBoard, for modes 0-4.
+Square (Shift) switches the same screen between the course records and the event's race board (online-records-ui.js `switchBoard` /
+`fetchRaces`, GET /mp/race-board?event=K&name=<Player Name>). The race view's items are Online Records / Return, with no Watch Replay.
+
+The PS2 name rule, re-read in local/output sub_00183238 for that work, is the one in section 1: 1CD088(kb, 8) at 0x1837A4 (kb+0x60
+= clamp(8, 0, 63)), and 1CE3C8 turning off key 0x4B and the punctuation key ids from 0x1837C4. With pv mpBoard, characters typed on
+the computer keyboard follow it too (fe-screens.js `keyboardKey`; for the records' keyboard as well).
+
 ### Not done / open
 
 - Runs in-world (pv eventInWorld, off today) and the peak runs are not submittable (their replays need the streamed world's

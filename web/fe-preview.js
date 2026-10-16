@@ -79,10 +79,10 @@ export function morphWeights(part, samples, s) {
 // FE preview package location for a roster entry (Sam has his own race package copied into RIDER_SAM/fe).
 export function previewRoot(entry) { return entry?.fe_root || (entry?.package ? `/assets/${entry.package}/fe/` : null); }   // fe_root: a worn outfit's package
 
-async function fetchOk(url, type) {
+async function fetchOk(url, type, signal = null) {
   const v = wardrobeFile(url, type === 'json' ? 'json' : 'buffer');
   if (v !== undefined) return v;
-  const r = await fetch(url);
+  const r = await fetch(url, signal ? { signal } : undefined);
   if (!r.ok) throw Error(`${url}: ${r.status}`);
   return type === 'json' ? r.json() : r.arrayBuffer();
 }
@@ -91,7 +91,9 @@ async function fetchOk(url, type) {
 // switch on Select Character must not stall the main thread. One shared worker; generated Equip Gear packages
 // (web/wardrobe.js, main-thread memory) are posted to it.
 let worker = null;
-function prepareInWorker(root) {
+// signal (pv charselSettle, FrontEndPreview.supersede): the main thread's downloads (world.json, the texture archive) stop when a
+// later preview supersedes this one; the worker's own reads are small and finish (their result is dropped).
+function prepareInWorker(root, signal = null) {
   if (typeof Worker === 'undefined') return null;
   worker ??= createGuardedWorker({ name: 'fe-preview', url: FE_PREVIEW_WORKER, local: () => prepareFrontEndPreview });
   const files = {};
@@ -102,26 +104,27 @@ function prepareInWorker(root) {
   // world.json and the texture PNGs are read here (web/downloads.js: shared with the race package, counted by the
   // loading screens; the rider's texture archive is fetched once): the worker gets the PNG Blobs and decodes them.
   return (async () => {
-    files['world.json'] ??= await fetchOk(root + 'world.json', 'json');
-    const blobs = await textureBlobs(root, files['world.json']);
+    files['world.json'] ??= await fetchOk(root + 'world.json', 'json', signal);
+    const blobs = await textureBlobs(root, files['world.json'], signal);
     return worker.request({ root, files, blobs, bc: textureDecodeConfig().bc });   // bc: Xbox HD entries as BC blocks (web/texture-archive.js)
   })();
 }
 // The PNG Blob of every texture of a package: a generated package's own file (web/wardrobe.js), an archive entry
 // (the rider's texture archive, web/texture-archive.js) or an older export's PNG file.
-async function textureBlobs(root, world) {
+async function textureBlobs(root, world, signal = null) {
   const out = {};
   await Promise.all(Object.entries(world.textures || {}).map(async ([k, t]) => {
     const local = t.path !== undefined ? wardrobeFile(root + t.path, 'buffer') : undefined;
-    out[k] = local !== undefined ? new Blob([local]) : await packageTextureBlob(root, t);
+    out[k] = local !== undefined ? new Blob([local]) : await packageTextureBlob(root, t, signal ? { signal } : undefined);
   }));
   return out;
 }
 // Main-thread fallback (no Worker, e.g. node tests): the same prepared shape.
-async function prepareHere(root) {
-  const [world, rig, vb, ib, mb] = await Promise.all([fetchOk(root + 'world.json', 'json'), fetchOk(root + 'rider.json', 'json'),
-    fetchOk(root + 'vertices.bin'), fetchOk(root + 'indices.bin'), fetchOk(root + 'morphs.bin').catch(() => new ArrayBuffer(0))]);
-  const textures = {}, blobs = await textureBlobs(root, world);
+async function prepareHere(root, signal = null) {
+  const [world, rig, vb, ib, mb] = await Promise.all([fetchOk(root + 'world.json', 'json', signal), fetchOk(root + 'rider.json', 'json', signal),
+    fetchOk(root + 'vertices.bin', 'buffer', signal), fetchOk(root + 'indices.bin', 'buffer', signal),
+    fetchOk(root + 'morphs.bin', 'buffer', signal).catch(() => new ArrayBuffer(0))]);
+  const textures = {}, blobs = await textureBlobs(root, world, signal);
   await Promise.all(Object.entries(blobs).map(async ([k, blob]) => {
     textures[k] = await decodeTextureBlob(blob, textureDecodeConfig().bc);
   }));
@@ -167,6 +170,12 @@ export class FrontEndPreview {
     this.cache = new Map();
     this.pending = new Map();
     this.compile = null;
+    // pv charselSettle (web/character-select.js sets both): supersede: a want() of another root aborts the load in flight (its
+    // downloads stop, a package prepared after that is not built or compiled); cacheLimit: at most that many built models are
+    // kept, the least recently used dropped first (never the one shown).
+    this.supersede = false;
+    this.cacheLimit = 0;
+    this.loadAbort = null;
   }
   get ready() {
     return !!this.model && this.model.root === this.root;
@@ -177,19 +186,31 @@ export class FrontEndPreview {
     if (!root || this.failed.has(root)) return false;
     if (root !== this.root) {
       this.root = root;
+      if (this.supersede) {
+        this.loadAbort?.abort();
+        this.loadAbort = null;
+      }
       const cached = this.cache.get(root);
       if (cached) {
+        this.touch(root);
         this.swap(cached);
         this.loading = null;
         return true;
       }
-      const request = (this.loading = this.fetch(T, root)
+      const abort = this.supersede ? new AbortController() : null;
+      this.loadAbort = abort;
+      const request = (this.loading = this.fetch(T, root, { signal: abort?.signal ?? null })
         .then((model) => {
           if (this.loading !== request) return;
           this.swap(model);
           this.loading = null;
         })
         .catch((error) => {
+          if (abort?.signal.aborted && error?.name === 'AbortError') {
+            // superseded (pv charselSettle): not a failure
+            if (this.loading === request) this.loading = null;
+            return;
+          }
           console.warn('FE preview package unavailable (tools/export_fe_preview.py)', root, error);
           this.failed.add(root);
           if (this.loading === request) this.loading = null;
@@ -222,9 +243,15 @@ export class FrontEndPreview {
   }
   // Prepare (worker) + build + compile a package without showing it; cached. Used for the current rider and to
   // warm the neighbours / the roster in idle time (prefetch).
-  fetch(T, root) {
-    if (this.cache.has(root)) return Promise.resolve(this.cache.get(root));
-    if (this.pending.has(root)) return this.pending.get(root);
+  // signal (supersede): see the constructor. A job another caller started without one is shared and runs to its end.
+  fetch(T, root, { signal = null } = {}) {
+    if (this.cache.has(root)) {
+      this.touch(root);
+      return Promise.resolve(this.cache.get(root));
+    }
+    // a job whose own signal was aborted is not reused (it ends with AbortError): a new one starts
+    const running = this.pending.get(root);
+    if (running && !running.signal?.aborted) return running;
     const job = (async () => {
       const mark = (n) => {
         try {
@@ -232,7 +259,9 @@ export class FrontEndPreview {
         } catch {}
       };
       mark('fetch');
-      const prepared = await (prepareInWorker(root) || prepareHere(root));
+      const prepared = await (prepareInWorker(root, signal) || prepareHere(root, signal));
+      // superseded while it was prepared: no main-thread build or compile for a model nobody wants now
+      if (signal?.aborted) throw new DOMException('FE preview superseded', 'AbortError');
       mark('build');
       const model = this.build(T, root, prepared);
       mark('compile');
@@ -248,8 +277,12 @@ export class FrontEndPreview {
       }
       mark('ready');
       this.cache.set(root, model);
+      this.trimCache();
       return model;
-    })().finally(() => this.pending.delete(root));
+    })().finally(() => {
+      if (this.pending.get(root) === job) this.pending.delete(root);
+    });
+    job.signal = signal;
     this.pending.set(root, job);
     return job;
   }
@@ -292,13 +325,31 @@ export class FrontEndPreview {
         if (this.cache.has(r)) continue;
         try {
           await this.fetch(T, r);
-        } catch {
-          this.failed.add(r);
+        } catch (error) {
+          // a job shared with a superseded want() (pv charselSettle) was aborted, not broken
+          if (error?.name !== 'AbortError') this.failed.add(r);
         }
       }
       return true;
     };
     return (this.prefetching = (this.prefetching || Promise.resolve()).then(next));
+  }
+  // the cache's use order (cacheLimit): most recently used last
+  touch(root) {
+    const m = this.cache.get(root);
+    if (!m || !this.cacheLimit) return;
+    this.cache.delete(root);
+    this.cache.set(root, m);
+  }
+  trimCache() {
+    if (!this.cacheLimit) return;
+    for (const [root, m] of this.cache) {
+      if (this.cache.size <= this.cacheLimit) break;
+      if (m === this.model) continue;
+      this.cache.delete(root);
+      m.group.parent?.remove(m.group);
+      m.dispose();
+    }
   }
   release() {
     for (const [root, m] of this.cache)

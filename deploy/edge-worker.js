@@ -22,6 +22,13 @@ export default {
     // CACHE_GEN in the URL: the edge cache keys on the full URL (custom cf.cacheKey is Enterprise-only and ignored),
     // so bumping it retires every edge copy at once; the origin ignores the query. Any client query is dropped.
     const target = new URL(url); target.search = `?g=${CACHE_GEN}`;
+    // A range read of a file's own bytes (web/archive-ranges.js asks with ?identity=1): its own edge cache key, fetched with
+    // Accept-Encoding: identity, so the edge caches the file itself and cuts ranges out of it. Without it the edge cached the
+    // brotli copy and answered a Range with bytes of that compressed body (2026-10-15).
+    if (url.searchParams.get('identity') === '1') {
+      target.search = `?g=${CACHE_GEN}&identity=1`;
+      headers.set('accept-encoding', 'identity');
+    }
     const upstream = await fetch(new Request(target, { method: request.method, headers }), { cf: { cacheEverything: true } });
     // To the browser: hashed bundles are immutable; game files are revalidated on each load (ETag -> 304 from the
     // edge, no body), so a deploy that changes courses.json or a course package is picked up at once. Which files are

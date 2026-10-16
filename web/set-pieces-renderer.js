@@ -29,6 +29,7 @@ import { createAvalancheDraw, ENTITY_DRAWN } from './avalanche-state.js';
 import { createAvalancheTrails } from './avalanche-trails.js';
 import { adoptWorldCopy } from './cutscene-stage-sets.js';
 import { heapU32 } from './heap-views.js';
+import { chunkModel, steadyResidency } from './chunk-view.js';
 
 const params = new URL(globalThis.location?.href ?? 'http://x/').searchParams; // ?livecomp=0 / ?flags=0 / ?uvscroll=0 for comparisons
 const sortedJson = (value) => JSON.stringify(value, Object.keys(value).sort());
@@ -130,6 +131,10 @@ export async function createSetPieceRenderer({core, group, load, course = null})
   // texture chunk -> resident (core section_chunks, filled by update()); declared before the fog puffs, whose residency reads it from their
   // first draw (it ran into the temporal dead zone while this async set-up was still awaiting: 'Cannot access chunkResident before init')
   const chunkResident = new Map();
+  // pv taPodiumWorld (main.js ui.cb.cutscene / sectionPoint): the NIS eye whose streamer steady state stands in for the core's residency
+  // while the time-attack podium plays (web/chunk-view.js); its model is parsed from sections.json at the first use
+  let chunkEyeAt = null;
+  let chunkEyeModel = null;
   // web/fog-puffs.js, docs/visual-parity.md 41: the kind-5 fog-particle puffs (0x22A270 / 0x2DC190 / 0x2DBF98), each
   // instance while its record's texture chunk is resident (chunkResident below; an unknown chunk counts as resident).
   const fogPuffs = await createFogPuffs({
@@ -385,6 +390,21 @@ export async function createSetPieceRenderer({core, group, load, course = null})
         out.push(mesh);
       }
       return out;
+    },
+    // pv warmVisibility (main.js warmupRender): the warm-up put back every visible flag as it was when it began. The DeadNode /
+    // RestoreNode / Hide states and the texture chunks change a mesh only when the core's state changes, so one applied during the
+    // warm frames is applied again here.
+    refreshVisibility() {
+      for (const meshes of scriptMeshes.values())
+        for (const mesh of meshes)
+          if (mesh.userData.scriptVisible !== undefined || mesh.userData.chunkVisible !== undefined) applyVisibility(mesh);
+      for (const mesh of chunkMeshes) if (mesh.userData.chunkVisible !== undefined) applyVisibility(mesh);
+      avalanche?.refresh?.();
+    },
+    // pv taPodiumWorld: the NIS camera's eye (PS2 cm), or null to give the residency back to the core's streamer
+    chunkEye(eye) {
+      if (eye && sectionText && !chunkEyeModel) chunkEyeModel = chunkModel(JSON.parse(sectionText));
+      chunkEyeAt = eye && chunkEyeModel ? [eye[0], eye[1], eye[2]] : null;
     },
     // Trigger contacts of other riders (computer riders run in their own core instances).
     fireContact(resource) {
@@ -663,6 +683,7 @@ export async function createSetPieceRenderer({core, group, load, course = null})
           U = heapU32(core),
           n = U[p];
         for (let k = 0; k < n; k++) chunkResident.set(U[p + 1 + 2 * k], U[p + 2 + 2 * k] === 3);
+        if (chunkEyeAt) for (const [id, on] of steadyResidency(chunkEyeModel, chunkEyeAt, [...chunkResident.keys()])) chunkResident.set(id, on);
         for (let i = 0; i < chunkMeshes.length; i++) {
           const mesh = chunkMeshes[i],
             on = chunkResident.get(mesh.userData.chunk) ?? true;

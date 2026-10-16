@@ -8,6 +8,9 @@
 //   ctm-board    the event's full online board on the same 61toptimes layout, 5 rows a page (an addition): Up / Down move the row
 //                cursor, Left / Right and L1 / R1 page, Cross Watch Replay, Triangle back. Also opened from the main menu's
 //                Leaderboards (through the Select Event maps).
+//                pv mpBoard: from the Leaderboards, a third item (and Square) switches the same screen to the event's online race board
+//                (web/server/race-board.mjs, the unverified results of online races; docs/multiplayer.md "Multiplayer leaderboard"),
+//                subtitle "Online Races", items Online Records / Return; Square or Online Records switches back.
 import { pv } from './pv-flags.js';
 import { raceTime } from './race-time.mjs';
 import { recordSlot } from './career.js';
@@ -19,6 +22,7 @@ const TEXT = {
   saved: (rank) => `Your record is number ${rank + 1} online.`, notKept: 'Your best time under this name is already listed.', notKeptScore: 'Your best score under this name is already listed.',
   offline: 'Online records unavailable.', loading: 'Loading...', failed: 'The record could not be saved.',
   review: 'Your run is under review.',   // the server held it (under its event's floor: records.mjs), neutral on purpose
+  races: 'Online Races', noRaces: 'No online races saved for this event yet.',
 };
 let shared = null;
 export const onlineRecords = () => (shared ??= new OnlineRecords());
@@ -168,21 +172,54 @@ export class OnlineRecordsUI {
   openBoard(key, { back = 'ctm-records', ev = null, fe = false, backIndex = 0 } = {}) {
     if (!key) return;
     const [mode, code] = key.split(':'), course = ev?.course ?? (this.cu.career?.courses ?? this.cu.data?.courses ?? []).findIndex((x) => x.code === code);
-    this.board = { key, ev: ev ?? { mode: +mode, course }, back, backIndex, fe, rows: [], total: 0, cursor: 0, status: 'loading', timed: this.records.timed(key) };
+    this.board = { key, ev: ev ?? { mode: +mode, course }, back, backIndex, fe, rows: [], total: 0, cursor: 0, status: 'loading', timed: this.records.timed(key),
+      kind: 'records' };
     this.ui.set('ctm-board'); this.ui.index = 0; this.ui.sync();
     this.fetchBoard();
   }
   async fetchBoard() {
     const b = this.board; if (!b) return;
+    if (b.kind === 'races') return this.fetchRaces(b);
     try { const r = await this.records.board(b.key, 0, 100); if (this.board !== b) return; b.rows = r.rows; b.total = r.total; b.timed = r.timed; b.status = 'ready'; }
     catch { if (this.board !== b) return; const top = this.records.top(b.key); b.rows = top ?? []; b.total = b.rows.length; b.status = top ? 'cached' : 'error'; }
     this.ui.sync();
   }
-  boardItems() { return [TEXT.watch, this.cu.t('kT_OVRCMNReturn', 'Return')]; }
+  // pv mpBoard: the Leaderboards' board also shows the event's online race board (an event a lobby can race: modes 0-4)
+  racesOn() { const b = this.board; return pv('mpBoard') && !!b?.fe && b.ev?.mode >= 0 && b.ev.mode < 5; }
+  boardItems() {
+    const ret = this.cu.t('kT_OVRCMNReturn', 'Return');
+    if (this.board?.kind === 'races') return [TEXT.online, ret];
+    return this.racesOn() ? [TEXT.watch, TEXT.races, ret] : [TEXT.watch, ret];
+  }
+  // switch the screen between the course records and the online race board (pv mpBoard, from the Leaderboards)
+  switchBoard() {
+    const b = this.board; if (!b || !this.racesOn()) return;
+    b.kind = b.kind === 'races' ? 'records' : 'races';
+    Object.assign(b, { rows: [], total: 0, cursor: 0, status: 'loading', you: null, timed: b.kind === 'races' ? b.ev.mode === 0 || b.ev.mode === 4 : this.records.timed(b.key) });
+    this.ui.index = 0; this.ui.sync();
+    this.fetchBoard();
+  }
+  async fetchRaces(b) {
+    try {
+      const q = new URLSearchParams({ event: b.key, limit: '50', name: this.playerName() });
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null, t = ctl ? setTimeout(() => ctl.abort(), 6000) : null;
+      let r;
+      try { r = await fetch(`/mp/race-board?${q}`, { cache: 'no-store', ...(ctl ? { signal: ctl.signal } : {}) }); } finally { if (t) clearTimeout(t); }
+      if (!r.ok) throw new Error(String(r.status));
+      const body = await r.json(); if (this.board !== b || b.kind !== 'races') return;
+      b.rows = body.rows ?? []; b.total = body.total | 0; b.timed = !!body.timed; b.you = body.you ?? null; b.status = 'ready';
+    } catch { if (this.board !== b || b.kind !== 'races') return; b.rows = []; b.total = 0; b.status = 'error'; }
+    this.ui.sync();
+  }
   focusedEntry() { return this.board?.rows?.[this.board.cursor] ?? null; }
-  boardDisabled(i) { if (i !== 0) return false; const r = this.focusedEntry(); return !r || !r.replay || !this.ui.cb.watchOnlineReplay || this.board.status === 'error'; }
+  boardDisabled(i) {
+    if (this.board?.kind === 'races') return false;
+    if (i === 1 && this.racesOn()) return false;
+    if (i !== 0) return false; const r = this.focusedEntry(); return !r || !r.replay || !this.ui.cb.watchOnlineReplay || this.board.status === 'error'; }
   chooseBoard(i) {
-    if (i === 1) { this.backBoard(); return; }
+    if (this.board?.kind === 'races') { if (i === 0) this.switchBoard(); else this.backBoard(); return; }
+    if (this.racesOn() && i === 1) { this.switchBoard(); return; }
+    if (i === (this.racesOn() ? 2 : 1)) { this.backBoard(); return; }
     if (this.boardDisabled(0)) return;
     const b = this.board, entry = this.focusedEntry();
     this.ui.cb.watchOnlineReplay({ entry, key: b.key, ev: b.ev, back: () => { this.board = b; this.ui.set('ctm-board'); this.ui.index = 0; this.ui.sync(); } });
@@ -200,6 +237,8 @@ export class OnlineRecordsUI {
     if (e.code === 'ArrowRight' || e.code === 'KeyE') { e.preventDefault(); if (!e.repeat) move(b.cursor + PAGE); return true; }
     if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) this.chooseBoard(0); return true; }
     if (e.code === 'Escape') { e.preventDefault(); if (!e.repeat) this.backBoard(); return true; }
+    // pv mpBoard: Square (Shift) switches between the course records and the online race board
+    if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && this.racesOn()) { e.preventDefault(); if (!e.repeat) this.switchBoard(); return true; }
     return false;
   }
   drawBoard(c, bg) {
@@ -207,18 +246,29 @@ export class OnlineRecordsUI {
     if (b.fe && bg) { bg.fillStyle = '#75a9cb'; bg.fillRect(0, 0, 640, 448); }   // the front end's sky blue behind the panel (web/fe-screens.js)
     if (!cu.luiPanels()) return;
     const start = Math.floor(b.cursor / PAGE) * PAGE, pages = Math.max(1, Math.ceil(b.rows.length / PAGE));
-    const rows = b.rows.slice(start, start + PAGE).map((r, k) => this.row(r, b.timed, true, { rank: (r.rank ?? start + k) + 1, focus: start + k === b.cursor, player: this.mine(r) }));
-    const message = b.status === 'loading' ? TEXT.loading : b.status === 'error' ? TEXT.offline : TEXT.page(start / PAGE + 1, pages) + (b.status === 'cached' ? `  (${TEXT.offline})` : '');
+    const races = b.kind === 'races';
+    const raceRow = (r) => ({ name: r.name, rider: this.riderName(r.rider), value: b.timed ? raceTime(r.value, true) : String(r.value), player: false });
+    const rows = b.rows.slice(start, start + PAGE).map((r, k) => {
+      const extra = { rank: (r.rank ?? start + k) + 1, focus: start + k === b.cursor, player: this.mine(r) };
+      return races ? { ...raceRow(r), ...extra } : this.row(r, b.timed, true, extra);
+    });
+    const empty = races && b.status === 'ready' && !b.rows.length;
+    const message = b.status === 'loading' ? TEXT.loading : b.status === 'error' ? TEXT.offline : empty ? TEXT.noRaces
+      : TEXT.page(start / PAGE + 1, pages) + (b.status === 'cached' ? `  (${TEXT.offline})` : '');
     cu.resultsLui.records(c, {
       title: cu.eventTitle(b.ev),
       timed: b.timed,
-      subtitle: TEXT.online,
+      subtitle: races ? TEXT.races : TEXT.online,
       rows,
       message,
       items: this.boardItems(),
       index: this.ui.index,
       disabled: (i) => this.boardDisabled(i)
     });
+  }
+  riderName(id) {
+    const e = (this.ui.riders || []).find((x) => x.id === id);
+    return (e?.name || (id ? id[0].toUpperCase() + id.slice(1) : '')).split(' ')[0];
   }
   mine(r) { return !r.default && (r.id === this.run?.id || (!!r.name && r.name.toLowerCase() === this.playerName().toLowerCase())); }
 }

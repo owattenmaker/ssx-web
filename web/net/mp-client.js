@@ -291,8 +291,9 @@ export function createMpClient({
     get preRace() {
       return preRace;
     },
-    finish(ticks, dnf = false, reason = '') {
-      send({ t: 'finish', ticks, dnf, reason });
+    // score: a trick event's score at its finish (pv mpBoard: the race board's value for the trick events; web/server/race-board.mjs)
+    finish(ticks, dnf = false, reason = '', score = null) {
+      send({ t: 'finish', ticks, dnf, reason, ...(Number.isInteger(score) ? { score } : {}) });
     },
     chat(text) {
       send({ t: 'chat', text });

@@ -18,6 +18,9 @@
 //        [--ui-clock F] [--canvas-log OUT.json]      with the shot: the results panels' timeline frame fixed at F; the shot frame's
 //                                                    UI canvas calls (native/tools/browser-shot.mjs --canvas-log)
 //        [--results-log OUT.json]                    the race's standings and the Single Event outcome when the results show
+//        [--shot-replay N]                           with --shot: the frame after the auto replay's tick N instead (behind the results)
+//        [--shot-run K]                              with --shot: in the K-th run (0 the first; a results Restart starts the next)
+//        [--menu-keys K1,K2,...]                     QA: menu keys (KeyboardEvent.code), each once the screen takes input
 //        [--audio-log OUT.json]                      with the shot: the director timeline, the sfx requests and their ticks, the
 //                                                    speech posts and each tick's listener (a shot run then steps at 60 Hz, as
 //                                                    native/tools/browser-shot.mjs --paced steps the page)
@@ -48,6 +51,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string>
 
 using namespace ssx_native;
@@ -135,6 +139,22 @@ struct Out { @builtin(position) position: vec4f, @location(0) uv: vec2f };
 
 }  // namespace
 
+// the run's replay (web/replay.js): its start snapshot (liveStart at startRun's end), the pad of every tick up to the finish, and the
+// auto replay's state (its tick, whether it has played since the live run: replay_camera_begin's fromLive)
+struct RunReplay {
+    nlohmann::json snapshot;
+    std::vector<std::array<float, 24>> pads;
+    long finishTick = -1;
+    // the results are up (resultsShown): the auto replay starts
+    bool pending = false;
+    bool active = false;
+    bool replayed = false;
+    long t = 0;
+    bool available() const {
+        return finishTick >= 0 && snapshot.is_object();
+    }
+};
+
 // a muted run's audio device: renders the context into a scratch buffer at the wall-clock rate, in 5 ms steps, on its own thread
 // (the same lock the device callback takes); stopped and joined before the context goes
 class SilentDevice {
@@ -190,6 +210,9 @@ int main(int argc, char** argv) {
     double uiClock = -1;
     std::string canvasLog;
     std::string resultsLog;
+    long shotReplay = -1;
+    int shotRun = 0;
+    std::vector<std::string> menuKeys;
     for (int k = 1; k < argc; ++k) {
         const std::string a = argv[k];
         auto next = [&] { return k + 1 < argc ? std::string(argv[++k]) : std::string(); };
@@ -231,6 +254,17 @@ int main(int argc, char** argv) {
             canvasLog = next();
         } else if (a == "--results-log") {
             resultsLog = next();
+        } else if (a == "--shot-replay") {
+            shotReplay = std::stol(next());
+        } else if (a == "--shot-run") {
+            shotRun = std::stoi(next());
+        } else if (a == "--menu-keys") {
+            std::stringstream list(next());
+            for (std::string code; std::getline(list, code, ',');) {
+                if (!code.empty()) {
+                    menuKeys.push_back(code);
+                }
+            }
         } else {
             assets = a;
         }
@@ -633,6 +667,34 @@ int main(int argc, char** argv) {
             }
         }
         RacePresenter& presenter = *presenterSlot;
+        // web/replay.js liveStart (startRun's end): the start snapshot (the run's snapshot fields with the words the start left: the shared
+        // game RNG 0x4FF030, the visual stream 0x4FF018, gp+0xA0C) and main.js's replay prepare: the course's replay camera triggers
+        RunReplay replay;
+        // the run's own start description (a restart starts from it again; the replay's restarts put their snapshot in its place)
+        const json startSnapshot = v.meta["snapshot"];
+        const bool startLive = v.live;
+        auto liveStart = [&] {
+            replay = RunReplay{};
+            replay.snapshot = startSnapshot;
+            auto words = [](const uint32_t* p, int n) {
+                json a = json::array();
+                for (int k = 0; k < n; ++k) {
+                    a.push_back(p[k]);
+                }
+                return a;
+            };
+            replay.snapshot["rng"] = words(animation_rng_words(), 6);
+            replay.snapshot["visual"] = words(visual_rng_words(), 6);
+            replay.snapshot["lcg"] = *visual_lcg_word();
+        };
+        liveStart();
+        {
+            const std::string triggers = v.assets.textOr(v.code + "/camera-triggers.json", "");
+            if (!triggers.empty()) {
+                replay_camera_triggers(triggers.c_str());
+            }
+        }
+        FixedStepClock replayClock;
         // a Single Event's results (web/career-ui.js finish: ctm-records on a new top time, then ctm-results), over the stopped world
         fe::CareerData career;
         bool careerReady = false;
@@ -672,6 +734,12 @@ int main(int argc, char** argv) {
             std::ofstream(savePath) << saveDoc.dump();
         };
         fe::ResultsLui resultsLui;
+        // the PDA frame and the Yes / No popup (UI/ctm-screens.json: the results' Restart prompt)
+        fe::CtmPda pda;
+        try {
+            pda.load(readJson("UI/ctm-screens.json"), uiImages, uiText);
+        } catch (const std::exception&) {
+        }
         bool resultsReady = false;
         if (careerReady) {
             try {
@@ -699,6 +767,8 @@ int main(int argc, char** argv) {
         // the menus' keys off the race (web/gamepad-menus.js) and whether the live ticks still run (web/game-tick.js s.running)
         fe::MenuInput menuInput;
         bool live = true;
+        // the run's number (a results Restart starts the next)
+        int runIndex = 0;
         // web/career-ui.js finish for a race: the standings as the results tick left them (web/ai-race.js standings), the human's
         // finish (race_result_info [1], DNF when timed out) and race ticks (main.js lastState.raceTicks, race_result_info [4])
         auto openResults = [&](long atTick) {
@@ -748,6 +818,8 @@ int main(int argc, char** argv) {
             const fe::RaceOutcome outcome = fe::singleEventRace(career, records, eventCourse, fe::riderCharacter(riderName), standings, raceTicks);
             persist();
             screens.open(outcome);
+            // replay.resultsShown: the auto replay starts once the results are up
+            replay.pending = true;
             if (!resultsLog.empty()) {
                 json log;
                 json rows = json::array();
@@ -764,7 +836,8 @@ int main(int argc, char** argv) {
                 log["medal"] = outcome.medal;
                 log["record"] = outcome.record;
                 log["topTime"] = screens.topTime();
-                std::ofstream(resultsLog) << log.dump();
+                log["run"] = runIndex;
+                std::ofstream(runIndex ? resultsLog + "." + std::to_string(runIndex) : resultsLog) << log.dump();
             }
         };
         float audioPhase = -1;
@@ -811,6 +884,7 @@ int main(int argc, char** argv) {
         std::optional<std::array<double, 3>> heardFrom;
         std::array<double, 16> heardInverse{};
         bool audioFinished = false;
+        std::string audioScreen = "game";
         hud.begin(v);
         v.afterMid = [&] { hud.afterMid(v); };
         // the EA RADIO BIG popup (web/audio-menu.js subscribe: not while the race music is off)
@@ -841,13 +915,66 @@ int main(int argc, char** argv) {
         bool running = true;
         // a results menu's choice: Next event and Quit leave (the event select and the title are the FE flow still to come); Restart
         // waits for the 87yndialog and world state 13's restart, Replay for the full replay (greyed without it)
+        // the results' Restart (restartToCard): the page's path without cutscenes, play(): the replay behind the results stops (host.ended:
+        // the session's camera view) and the round starts again from its start (main.js startRun as a live start). The gondola ride
+        // back up (world state 13) and the round card come with the cutscenes.
+        std::function<void()> restartRun;
         auto act = [&](fe::SingleEventScreens::Action a) {
             using Action = fe::SingleEventScreens::Action;
             if (a == Action::NextEvent || a == Action::Quit) {
                 running = false;
             }
+            if (a == Action::Restart && restartRun) {
+                restartRun();
+            }
         };
         auto menuUp = [&] { return screens.screen() != fe::SingleEventScreens::Screen::None; };
+        // web/replay.js rewind: main.js startRun(R) on the start snapshot (the game sounds start over: replayRewind; the music plays on),
+        // tick 0, the clock reset; the replay camera begins (0x26EE68, from the live run the first time) or rewinds (0x1620D0)
+        auto rewind = [&](bool first) {
+            gameAudio->replayRewind();
+            v.replayRestart(replay.snapshot);
+            presenter.restart();
+            replay.t = 0;
+            replayClock.reset();
+            if (first) {
+                replay_camera_begin(0x5d, replay.replayed ? 0 : 1);
+                replay.replayed = true;
+            } else {
+                replay_camera_rewind();
+            }
+        };
+        restartRun = [&] {
+            ++runIndex;
+            // replay.stop -> host.ended: the session's camera view (0x3D) again
+            if (replay.active) {
+                set_camera_view(0x3d);
+            }
+            presenter.replayView = false;
+            screens.close();
+            menuInput.releaseAll();
+            // startRun(): the run's own start, the live host state (running, finished, the results timing) fresh
+            v.meta["snapshot"] = startSnapshot;
+            v.live = startLive;
+            v.running = true;
+            v.finished = false;
+            v.resultsPending = false;
+            v.resultsShow = false;
+            v.postFinishTicks = 0;
+            v.startRun();
+            presenter.restart();
+            hud.begin(v);
+            v.afterMid = [&] { hud.afterMid(v); };
+            gameAudio->runStart(courseIndex, true, v.code, riderName);
+            audioFinished = false;
+            audioPhase = -1;
+            live = true;
+            // a watched replay's pad from its start again
+            tick = 0;
+            clock.reset();
+            tickLock.reset();
+            liveStart();
+        };
         auto menuKey = [&](const std::string& code, bool repeat) {
             if (!code.empty()) {
                 act(screens.key(code, repeat));
@@ -883,8 +1010,14 @@ int main(int argc, char** argv) {
                 }
             }
             // the pad's menu keys (the UI frame counter's passes first) and the held arrows' repeats
-            menuInput.step(padOf(gamepad), nowMs, menuUp(), [&] { screens.frame(); }, [&](const std::string& code) { menuKey(code, false); });
+            menuInput.step(padOf(gamepad), nowMs, menuUp(), [&] { act(screens.frame()); }, [&](const std::string& code) { menuKey(code, false); });
             menuInput.keyRepeats(nowMs, menuUp(), [&](const std::string& code) { menuKey(code, false); });
+            // QA: the next scripted menu key once the screen takes input
+            if (!menuKeys.empty() && menuUp() && screens.accepts()) {
+                const std::string code = menuKeys.front();
+                menuKeys.erase(menuKeys.begin());
+                menuKey(code, false);
+            }
             const uint64_t now = SDL_GetTicksNS();
             const double dt = double(now - last) / 1e9;
             last = now;
@@ -911,9 +1044,25 @@ int main(int argc, char** argv) {
                 ticks = clock.advance(std::min(ps2FrameTime(dt), 0.25));
                 alpha = clock.alpha();
             }
-            for (int k = 0; k < ticks && live; ++k) {
+            // the frame's ticks: the live run's, or the auto replay's (the recorded pad; no HUD, no results: web/game-tick.js present)
+            auto runTicks = [&](int count, bool replaying) {
+              for (int k = 0; k < count; ++k) {
+                if (replaying) {
+                    if (!replay.active) {
+                        break;
+                    }
+                    // past the finish tick the auto replay loops (web/replay.js frame: this step only rewinds)
+                    if (replay.t > replay.finishTick) {
+                        rewind(false);
+                        continue;
+                    }
+                } else if (!live) {
+                    break;
+                }
                 float pad[24];
-                if (!watchFile.empty()) {
+                if (replaying) {
+                    std::memcpy(pad, replay.pads[size_t(replay.t)].data(), sizeof pad);
+                } else if (!watchFile.empty()) {
                     reader.read(tick, pad);
                 } else {
                     const StandardPad sp = padOf(gamepad);
@@ -921,10 +1070,23 @@ int main(int argc, char** argv) {
                     const auto channels = buildPad([&](const std::string& c) { return keys.count(c) > 0; }, &sp, &keyboard);
                     std::memcpy(pad, channels.data(), sizeof pad);
                 }
-                hud.beforeTick();
-                v.tick(pad);
+                // web/replay.js record: the run's pad up to its finish
+                if (!replaying && replay.finishTick < 0) {
+                    std::array<float, 24> kept;
+                    std::memcpy(kept.data(), pad, sizeof pad);
+                    replay.pads.push_back(kept);
+                }
+                if (!replaying) {
+                    hud.beforeTick();
+                }
+                const auto fin = v.tick(pad);
+                if (!replaying && fin.seen && replay.finishTick < 0) {
+                    replay.finishTick = long(replay.pads.size()) - 1;
+                }
                 presenter.afterTick();
-                hud.afterTick(v);
+                if (!replaying) {
+                    hud.afterTick(v);
+                }
                 // the game audio tick (web/game-tick.js present): the cores' audio queues, painters, speech
                 {
                     audio::GameAudio::TickState ts;
@@ -1016,6 +1178,11 @@ int main(int argc, char** argv) {
                         listenerLog.push_back(heard);
                     }
                 }
+                if (replaying) {
+                    ++replay.t;
+                    ++tick;
+                    continue;
+                }
                 // the results this tick (web/game-tick.js present: ui.showResults -> careerUI.finish)
                 if (v.resultsShow && resultsReady && eventMode == 0 && !menuUp()) {
                     openResults(tick);
@@ -1028,6 +1195,27 @@ int main(int argc, char** argv) {
                         running = false;
                     }
                 }
+              }
+            };
+            runTicks(ticks, false);
+            // main.js replayFrame, after the frame's live ticks: with the results up the auto replay replaces the live ticks (running =
+            // false) and steps on its own clock (min(dt, 0.25)); a shot run steps it one tick a frame
+            if (!replay.active && replay.pending && menuUp() && replay.available()) {
+                live = false;
+                replay.active = true;
+                presenter.replayView = true;
+                v.afterMid = nullptr;
+                rewind(true);
+            }
+            if (replay.active) {
+                int n = 1;
+                if (shotPath.empty()) {
+                    n = replayClock.advance(std::min(dt, 0.25));
+                    alpha = replayClock.alpha();
+                } else {
+                    alpha = 0;
+                }
+                runTicks(n, true);
             }
             if (!presenter.cameraValid()) {
                 continue;
@@ -1038,14 +1226,25 @@ int main(int argc, char** argv) {
             renderer.render(camera, state, frameView, fw, fh, 4.0 / 3.0);
             // main.js frame audio: GO, the finish, then the listener (the frame's camera)
             {
-                const float phase = v.raceInfo[5];
-                if (audioPhase == 4 && phase != 4) {
-                    gameAudio->go();
+                // main.js audioScreens: a change of screen (the results: 288AE0, the replay behind them)
+                const std::string screenName = screens.screen() == fe::SingleEventScreens::Screen::Records   ? "ctm-records"
+                                               : screens.screen() == fe::SingleEventScreens::Screen::Results ? "ctm-results"
+                                                                                                             : "game";
+                if (screenName != audioScreen) {
+                    audioScreen = screenName;
+                    gameAudio->screen(screenName);
                 }
-                audioPhase = phase;
-                if (v.finished && !audioFinished) {
-                    audioFinished = true;
-                    gameAudio->finish(false, v.aiActive ? int(v.worldState[360]) : 0, race_timed_out() != 0);
+                // while the live run goes on (main.js: if (running))
+                if (live) {
+                    const float phase = v.raceInfo[5];
+                    if (audioPhase == 4 && phase != 4) {
+                        gameAudio->go();
+                    }
+                    audioPhase = phase;
+                    if (v.finished && !audioFinished) {
+                        audioFinished = true;
+                        gameAudio->finish(false, v.aiActive ? int(v.worldState[360]) : 0, race_timed_out() != 0);
+                    }
                 }
                 // main.js frame: the listener reads the three.js camera before this frame's render moves it (the previous frame's)
                 gameAudio->listener(listenerKnown ? &listenerInverse : nullptr, listenerEye, renderer.origin);
@@ -1058,14 +1257,15 @@ int main(int argc, char** argv) {
             }
             hud.keyboard = lastDevice.empty() ? gamepad == nullptr : lastDevice == "keyboard";
             // the shot frame's UI canvas calls (--canvas-log)
-            const bool logFrame = !canvasLog.empty() && !shotPath.empty() && tick > shotTick;
+            const bool shotNow = !shotPath.empty() && runIndex == shotRun && (shotReplay >= 0 ? replay.active && replay.t > shotReplay : tick > shotTick);
+            const bool logFrame = !canvasLog.empty() && shotNow;
             // ui.draw: a results screen draws alone (no race HUD), else the HUD
             HudCanvas& uiCanvas = menuUp() ? feCanvas : hud.canvas;
             if (menuUp()) {
                 feCanvas.begin();
                 feCanvas.logging = logFrame;
                 resultsLui.setKeyboard(hud.keyboard);
-                screens.draw(feCanvas, resultsLui, double(SDL_GetTicksNS()) / 1e9 * 60, uiClock);
+                screens.draw(feCanvas, resultsLui, pda, double(SDL_GetTicksNS()) / 1e9 * 60, uiClock);
             } else {
                 hud.canvas.logging = logFrame;
                 hud.draw(v, double(SDL_GetTicksNS()) / 1e9);
@@ -1080,7 +1280,7 @@ int main(int argc, char** argv) {
                 wgpuCommandBufferRelease(hcmd);
                 wgpuCommandEncoderRelease(henc);
             }
-            if (!shotPath.empty() && tick > shotTick) {
+            if (shotNow) {
                 const auto pixels = gpu.readback(frameTex, fw, fh);
                 writePng(shotPath, int(fw), int(fh), pixels.data());
                 std::printf("{\"tick\":%ld,\"out\":%s}\n", tick - 1, json(shotPath).dump().c_str());

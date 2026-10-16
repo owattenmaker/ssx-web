@@ -1223,6 +1223,8 @@ export async function createFreeRide({
     return spawn;
   };
   api.setPieces = () => setPieces; // QA
+  // pv warmVisibility (main.js warmupRender): the stage world's script states applied again after the warm-up's restore
+  api.refreshVisibility = () => setPieces?.refreshVisibility?.();
   return api;
 }
 

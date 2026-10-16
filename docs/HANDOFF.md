@@ -1,3 +1,264 @@
+> **Deployed 2026-10-15 (coordinator): archiveRanges + taPodiumFit + taPodiumLabels + charselEntryOutfit ON; host MP_TA_PODIUM_FIT=1.** Core unchanged (core15 `e66ce287…`). Outfit gear archives are read by range (?identity=1, edge + origin deployed, live probe 206 exact); the TA podium phase is the server-picked scene's length (podium-scripts.mjs, margin 0) and hands straight to the vote; podium labels are clipped to the picture; Select Character shows the first rider in its saved outfit. Host plist backed up as state/server.plist.bak-20261015-podiumfit. Gate on this exact tree (900 s limit per test): podium-fit, chunk-view, ta-page, mp-session, session-verifier, archive-ranges, texture-archive(-decode), charsel-settle, fe-screens, fe-preview, wardrobe, characters, save-store, rider-prefetch, records-server, records-verifier, replay, rival-page, online-records, mp-page pass.
+
+> **Time-attack podium: the podium phase as long as the scene, straight to the vote (2026-10-15, ta-podium agent):** see [big-multiplayer.md](big-multiplayer.md) "The podium phase as long as the scene". Not deployed. **Server setting `podiumFit` (`MP_TA_PODIUM_FIT=1`, margin `MP_TA_PODIUM_MARGIN_MS`, default 0) and pv `taPodiumFit`, `taPodiumLabels` (off).** No core or asset change.
+> - **Why:** with the fixed 20 s podium phase, the 11-13 s scene ended in the podium phase, and ta-results showed for about 7 s before the vote.
+> - **Server:** new web/server/podium-scripts.mjs (node: only). It picks the winner's scene the way cutscenes.js chooseScript does: CUTSCENES/index.json list 9, or 10 for cheat skins 10..20 / 28; the least shown in the session first; Sam takes Mac's scenes.
+>   - sessions.mjs `podiumLength`: the phase is the scene's ticks / 60 + the margin, and `podiumScript` goes out with the results. The fallback is podiumMs (20 s).
+>   - mp-server.mjs loads the table from the assets root.
+> - **Page:** ta-ui.js podium() plays results.podiumScript.
+>   - A scene watched to its end within 600 ms of the phase's end opens ta-vote at once.
+>   - A podium in its last 180 ticks at the vote plays to its end (at most 3 s), then opens ta-vote.
+>   - A skipped podium shows ta-results until the vote. An older page plays its own variant, which is stopped at the vote.
+>   - Labels are drawn only inside the picture, between the letterbox bars.
+> - **Margin 0** (approved): a page's scene starts 80-495 ms after the phase starts. +0.5 s would have flashed ta-results for 0.05-0.3 s.
+> - **Proof:** local/ta-podium/e2e.mjs with E2E_FIT=1, Chrome + Chrome and Chrome + WebKit.
+>   - Both pages played the server's scene. The phase was 11.67 s / 10.83 s, and every page went cutscene -> ta-vote, with the vote screen opening as the scene ended.
+>   - No labels on the bars in the close-ups (local/ta-podium/sheets/e2e-podium-fit.png).
+> - **Tests:** new test-podium-fit (in test:all): 14 courses x 11 riders on the game data, the skin rules, and the phase on a fake clock.
+>   - Passing with PAGE_PV=taPodiumFit,taPodiumLabels: test-mp-session, test-session-verifier, test-ta-page, test-chunk-view.
+>   - Passing with the defaults: test-ta-page, test-mp-page.
+> - **Changed:** web/server/podium-scripts.mjs (new), web/server/sessions.mjs (DEFAULTS podiumFit / podiumMarginMs, podiumScripts, podiumLength), web/server/mp-server.mjs, web/ta-ui.js, web/pv-flags.js, web/test-podium-fit.mjs (new), web/package.json, docs/big-multiplayer.md.
+> - **To turn on:** set `MP_TA_PODIUM_FIT=1` on the host and set taPodiumFit and taPodiumLabels to true. Either one alone is safe: the page without the server's scene behaves as today, and the server without the page switch only shortens the phase, so old pages stop their podium at the vote.
+
+> **Deployed 2026-10-15 (coordinator): warmVisibility + taPodiumWorld + taPodiumVote ON; range-read origin / edge support shipped (archiveRanges off).** Core unchanged (core15 `e66ce287…`). Time attack / online races hide the collectas as the PS2's Single Event does (the warm-up no longer restores stale visibility); the TA podium draws the finish stage (chunk-view.js steady set at the NIS eye) and hands straight to results / vote. mp-server and the edge worker honour ?identity=1 ranges. Gate on this exact tree: chunk-view, ta-page, mp-session, session-verifier, cutscenes, presentation, set-pieces(+renderer, locations), stage-world, pickup-collection, mp-pickups, edge-worker, precompress, archive-ranges, texture-archive, downloads, charsel-settle, fe-preview, wardrobe, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit) pass.
+
+> **Rider gear archives read by ranges: an outfit's 1-2 entries instead of the whole file (2026-10-15, charsel-lag agent):** see [asset-formats.md](asset-formats.md) "Texture archives: range reads". **pv `archiveRanges` (off).** It needs the host side deployed: deploy/edge-worker.js (`wrangler deploy`) and web/server/mp-server.mjs. No asset change.
+> - **Before:** `texture-archive.js loadArchive` fetched the whole `WARDROBE/<ID>/gear(-xbox).tex` and kept it as a Blob (Xbox HD 15-38 MB raw, 2.6-4.1 MB brotli; PS2 3-11 MB). An outfit draws only 1-2 of its entries (16-96 KB), for both the FE preview and the race package.
+> - **Live probe (curl, the live site):** a Range request was answered by the edge from its cached brotli copy (`content-range: bytes 0-131071/3224050`, `content-encoding: br`). With `Accept-Encoding: identity` it decoded the bytes of that compressed range. Those offsets are unusable.
+> - **Port:**
+>   - New `web/archive-ranges.js`: `?identity=1` plus a single Range; the head and index (128 KB) first, then each entry once.
+>   - It is strict: an answer counts only as 206 with the exact Content-Range, no content coding, a matching X-Decoded-Length and the exact length. Anything else falls back to the whole file for the rest of the page (`rangeState.broken`).
+>   - `texture-archive.js`: `gearArchive` / `wholeArchive`, and `archiveBlob` reads from the ranged archive; the budget counts the bytes held.
+>   - Edge: `?identity=1` gets its own cache key and `Accept-Encoding: identity`; nothing else changed.
+>   - Origin: `?identity=1` never serves a precompressed copy.
+> - **Measured** (50 Mbit/s throttle, brotli to br clients as the origin does):
+>   - Zoe outfit preview: Chrome 3.07 MB / model 3.5 s after settle -> 192 KB / 0.51 s; WebKit 21.5 MB / 4.5 s -> 192 KB / 0.77 s.
+>   - Race load: Xbox HD set 3.07 MB -> 192 KB; PS2 set 5.0 MB -> 135 KB.
+>   - The page keeps about 200 KB instead of the archive Blob.
+>   - Repeat visits: Chrome answers every range with a 304. WebKit keeps at most one 206 per URL and not reliably, so it reads 64-192 KB again (the whole file would be a 304).
+> - **Bytes and texels identical:**
+>   - `web/test-archive-ranges.mjs` (new, in test:all): 891 entries of 4 archives equal the whole-file slices, and 225 decode to equal texels. A server without ranges and the edge's brotli ranges both fall back with the same bytes.
+>   - In-page in WebKit and Chrome: 40 entries equal a whole fetch.
+>   - test-edge-worker and test-precompress cover `?identity=1`.
+> - **Tests:**
+>   - These pass: test-edge-worker, precompress, archive-ranges, texture-archive, downloads, charsel-settle, line-length, comment-code.
+>   - With the switch on and off: fe-preview, wardrobe, fe-screens, characters.
+>   - Round trips pass with the switch on and off: test-rider-prefetch, test-replay, test-records-verifier, test-online-records, test-texture-archive-decode.
+> - **Live check (2026-10-15, after the origin and edge deploy; read-only, test profiles with an outfit on every rider; Moby, Psymon, Griff in turn on Select Character):**
+>   - With the switch on, WebKit and Chrome each made 7 range requests and 0 whole-file requests: no fallback.
+>   - Transferred: 610 KB against 9,952 KB with the switch off. Held in the page: 608 KB against 71-109 MB decoded.
+>   - Model after settle on this fast link: 0.45-1.2 s with ranges, 0.45-2.6 s without.
+>   - Shots in scratchpad `live/out/`.
+>   - Seen there and not changed: on entering Select Character, the first rider shows its default package, because its outfit is prepared only when it is picked.
+> - **Ready to flip:** `archiveRanges: true`.
+
+> **Time attack's (and online races') collectibles stood as static props: a warm-up race in the page, not the stage world. Fixed behind pv warmVisibility (off, ready to flip) (2026-10-15, ta-collect agent).** See [set-pieces.md](set-pieces.md) "Warm-up and the renderers' visibility".
+> - **PS2 rule:** a Single Event (0x535C11 = 1) or online (2) makes every listed collectible a DeadNode (30C4A8, builtin 38): no draw, no contact. Snow Jam countdown memdiff: type-6 entities (ctm-events-in-world.md 6.3). An online race's collectibles were not captured on the PS2; that rule comes from the code. A time-attack attempt is a Single Event, so its collectibles must not be there. The boost pickups spin and can be collected as in any race.
+> - **Measured** (local/ta-collect/probe.mjs, online.mjs; local mp server, MP_SESSIONS=1):
+>   - In every mode the core holds the collectibles as DeadNodes (type 6, flags 0x210005, not drawn). The boost pickups are identical.
+>   - The page drew all of them in time attack (ARA1 30, BRA2 35, ASS1 30, DBC2 44) and in an online race (ARA1, both pages; Chrome + Chrome, Chrome + WebKit). An offline Single Event drew none.
+> - **Cause:**
+>   - main.js warmupRender saves every object's `visible` when it starts and restores it in its finally.
+>   - set-pieces-renderer.js applies the core's DeadNode / RestoreNode / Hide states (and the texture chunks) only when a state changes.
+>   - Time attack (the solo lineup) and online races (no computer riders) start the warm-up before any frame has applied the event's DeadNodes. They get applied during the warm frames, then undone by the restore, for good.
+>   - A Single Event with riders waits for the lineup prepare, so it was hidden there by luck.
+>   - Traced with a property trap on mdl_ARA1_collecta_1008's mesh. A keyed diff of all mesh visibility (time attack against a Single Event) differs only in the 31 collecta meshes, apart from the riders.
+> - **Fix, pv warmVisibility (off):** after the restore, `refreshOwnedVisibility()` re-applies every visibility a renderer owns on change only:
+>   - set-pieces-renderer.js `refreshVisibility` (script and chunk states, then avalanche-state.js draw `refresh`);
+>   - peak-set-pieces.js `refreshVisibility`, through free-ride.js `api.refreshVisibility`;
+>   - main.js eventDeadMeshes, back to their startRun state (`eventDeadShown`).
+>   No core, asset or simulation change. Off path: the same behaviour.
+> - **Checked with the switch:**
+>   - 0 collectibles drawn in time attack (ARA1 / BRA2 / ASS1 / DBC2, Chrome; ARA1 WebKit) and in online races (ARA1, Chrome + Chrome, Chrome + WebKit). The boosts are unchanged.
+>   - Screenshots: local/ta-collect/out/ta-0-ARA1-{chrome,webkit}[-warmVisibility]/04-near-t1650.png (the snowflake by the boost meter goes).
+>   - The same 12 tests pass with the switch off and with PAGE_PV=warmVisibility: test-ta-page, mp-page, mp-pickups, pickup-collection, stage-world, set-pieces, set-pieces-locations, set-pieces-renderer, records-verifier, replay, online-records, session-verifier.
+>   - test-line-length and test-comment-code pass.
+> - **Not checked:** the applyAntialias re-warm during a run, and the streamed world's warm-ups (they call the same refresh). The TA podium agent was told to test its stray pieces with the switch.
+
+> **Time-attack podium: straight to the vote, and the finish stage drawn (2026-10-15, ta-podium agent):** see [big-multiplayer.md](big-multiplayer.md) "The podium's world and its hand-off to the vote". Not deployed. **pv `taPodiumVote` and `taPodiumWorld` (both off).** No core, server or asset change.
+> - **Podium -> vote:** main.js ui.cb.cutscene put back the screen the podium started from (ta-room after the overtime, 'game', ctm-results) until the next 250 ms follow() opened ta-vote. ta-ui.js podium() now plays with restore: false and opens ta-results (podium phase) or ta-vote (vote phase) itself. Two pages, 3 s podium: off cutscene -> game -> ta-vote; on cutscene -> ta-vote (Chrome + Chrome, Chrome + WebKit).
+> - **Grey slabs:** the podium is the finish stage (`mdl_<LOC>_end_bdlg_*`, Snow Jam texture chunk 27, plus 25 / 28 / 34). The renderer draws a static instance only while its chunk is resident (0x22A5A0). The port's streamer (0x3A8290) follows the race camera, which in time attack waits at the start gate, and no game update runs during the podium. On the PS2 the streamer reads the outer camera (the NIS camera) every update, and a podium always follows a finish.
+>   - Fix: during the TA podium, set-pieces-renderer.js uses the streamer's steady state for the NIS eye: new web/chunk-view.js, the same sections.json chunk trees and range. Draw only, the core untouched.
+>   - The core mechanism (a new export feeding ChunkStreaming the NIS eye) is written up as a follow-up in docs/core-migration.md.
+>   - The career podium is fine: it plays at the finish, where the core's streamer holds exactly that set (measured on a ridden Single Event).
+> - **PS2 parity:** ARMSX2 race-f (Snow Jam final won, #60 win_ps_zoea) vs the port, before and after, at six script times: local/ta-podium/sheets/ara1-ps2-before-after.png. After, the stage, the screen, the walls and the numbered steps match. BRA2 and ERA5 fixed, CHP2 unchanged (already resident). WebKit checked.
+> - **Stray pieces:** the red crash bag (the "chevron") and the teal banners stand in the PS2 frames too (race-f samples 14842 / 14900). They looked stray only because the stage around them was missing.
+> - **With all three switches on** (taPodiumVote, taPodiumWorld, warmVisibility), the e2e passes in Chrome + Chrome and Chrome + WebKit: cutscene -> ta-results -> ta-vote, with the podium inside the stage (local/ta-podium/sheets/e2e-all-three-switches.png). The wide shots match the PS2 (sheets/ara1-ps2-vs-all-three-switches.png).
+> - **Tests:** new web/test-chunk-view.mjs (in test:all; all 14 podium courses). With the switches on (PAGE_PV) and off: test-ta-page, test-presentation, test-records-verifier, test-replay, test-online-records. Also test-mp-session, test-cutscenes, test-set-pieces-renderer, line-length, comment-code. Harnesses and shots: local/ta-podium/.
+> - **Changed:** web/pv-flags.js, web/ta-ui.js (podium()), web/main.js (ui.cb.cutscene, the cutscene host's sectionPoint), web/set-pieces-renderer.js (chunkEye + one line in the chunk block), web/chunk-view.js (new), web/test-chunk-view.mjs (new), web/package.json, docs.
+> - **Ready to flip** both switches once the coordinator has checked Safari on a live session.
+> - **Seen, not changed:** in the podium close-ups the winner's label is drawn on the letterbox bar. The close-ups' framing also differs slightly from the PS2 on every camera alternative.
+
+> **Deployed 2026-10-15 (coordinator): charselSettle + mpEstimateClock ON.** Core unchanged (core15 `e66ce287…`). Select Character moves the cursor on every press and loads the preview once the cursor settles (19E588 stamp frame+4, 19F138), aborting superseded fetches; online Results show no time for a human still on course (the PS2's 2-player rule: 0x122D78 only for computer riders). Gate: charsel-settle, fe-screens, fe-preview(s), rider-prefetch, wardrobe, characters, save-store, mp-estimate-clock, mp, mp-prerace, race-finish, ta-page, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit); re-run on the final tree: charsel-settle, fe-screens, ta-page, mp-estimate-clock, chunk-view, records-verifier, replay, rival-page, online-records. Inert in the tree: warmVisibility, taPodiumVote, taPodiumWorld, mpBoard, resultsScreenAttr (off).
+
+> **Select Character lag with outfits: the cursor moves on the press, the preview loads once the cursor settles (2026-10-15, charsel-lag agent):** see [characters.md](characters.md) "Select Character: cursor and preview load". Not deployed. **pv `charselSettle` (off).** No core or asset change.
+> - **Cause (measured):** `character-select.js cycle()` awaited `ui.cb.rider` (main.js selectRider -> wardrobe.js outfitRider) before it moved the cursor, and outfitRider held `ui.ready = false`, so the presses in between were dropped.
+>   - With a custom outfit, a rider's first visit waits for wardrobe.json, parts.bin (3.2 MB) and animation-samples. The preview then started on every step and nothing cancelled it (gear-xbox.tex is ~22 MB per rider).
+>   - CPU was not the cause: package builds take 2-8 ms.
+> - **PS2 rule:** see characters.md for the addresses.
+>   - The cursor move (0x181980) fills the stats at once (181BD0); 19E588 hides the model and sets the reload stamp +0xCD4 = frame + 4 (renderer +0x5A74). A move while it is pending only retargets +0xC24.
+>   - 19F138 starts the load once frame > stamp (19E960 unloads the one in flight). The staged async load shows the model when it is done.
+>   - Not checked against an ARMSX2 capture of a fast cycle.
+> - **Port, with the switch on:**
+>   - `character-select.js`: the cursor moves now; requestPreview / stepReload / startReload are 19E588 / 19F138 / 19E960; the rider commit runs at the reload, with the previous one aborted. Cross and Triangle commit a pending reload, and the flash holds at white until the commit lands.
+>   - `main.js selectRider(rider, { signal })`: the latest pick wins, `ui.ready` is left alone, and `ensureRider` and the event rider stage await `riderPicked()`.
+>   - `ui.js restoreRider`: the cursor goes to the saved rider at once.
+>   - `wardrobe.js`: `{ signal, hold }`, and `knownPreviewEntry` for the roster prefetch (no prefetch of default packages that are never shown).
+>   - `fe-preview.js`: `supersede` (a later want aborts the load; a stale package is not built or compiled) and a least-recently-used cache of 12 models (it had no limit).
+>   - `texture-archive.js` / `downloads.js`: a shared download stops once every signalled caller aborted it; callers without a signal keep it to the end.
+> - **Measured** (WebKit / Chrome; 11 presses 100 ms apart; local server at 40 ms + 50 Mbit/s):
+>   - Custom outfits: presses dropped 9 / 10 of 11 -> 0. Press to cursor drawn, median 591 / 655 ms -> 10 / 33 ms. Model after the cursor stops 7.7 / 7.4 s -> 4.5 s. MB fetched 53 / 43 -> 26 / 28.
+>   - Default outfits: dropped 6 / 8 -> 0; median 144 / 176 -> 15 / 36 ms.
+>   - 500 ms presses in WebKit: model 14.3 -> 4.3 s, 111 -> 48 MB.
+>   - What is left is the whole gear-xbox.tex: 22 MB raw on the dev server, 3.1 MB brotli live. Range reads: see the entry above (pv archiveRanges).
+> - **Tests:** new `web/test-charsel-settle.mjs` (in test:all).
+>   - These pass with the switch on and off: test-fe-screens, fe-preview, fe-previews, wardrobe, characters, save-store, downloads, texture-archive, rider-prefetch, line-length, comment-code.
+>   - These pass with the switch on and off too: test-replay, test-records-verifier, test-online-records, test-texture-archive-decode.
+>   - test-replay and test-records-verifier each failed once with the switch off, under a machine load of 40-50 from other projects (an ARA1 replay start timing, a replay 502 / 300 s timeout). Both passed on rerun; the off path is unchanged.
+>   - Function check in WebKit and Chrome: three Rights then Cross reaches Setup Character with the cursor's rider in its outfit; Left Left Triangle commits the rider under the cursor.
+>   - Scratch harnesses and shots: scratchpad `charsel/` (perf-charsel.mjs, func-charsel.mjs, out/).
+> - **Ready to flip:** the switch needs a Safari check on the live site (real network) by the coordinator, then `charselSettle: true`.
+
+> **PAUSED (2026-10-15, multiplayer board agent): resume point for pv mpBoard (off).** Nothing of mine is running; node --check is clean on every edited file; test-race-board and test-line-length pass. See [multiplayer.md](multiplayer.md) "Multiplayer leaderboard".
+> - **Done since the entry below (the coordinator's two follow-ups):**
+>   - Trick events on the online Results rank by score. The PS2 rule: 0x238160 (2P) uses table 0x47C0D0 to pick the handler: race -> 8 (vtable 0x47CED0, 0x23AE00); slope style / pipe / big air -> 9 (vtable 0x47CE68, results 0x239EC8: score +0x198 into 0x536640, ranked by 238B70 / qsort 0x245E30, the higher score first).
+>     - New web/net/trick-rows.js; mp-game.js resultRows calls it for a trick event, an ordering-only change.
+>     - mp-ui drawResults shows a Score column; mp-server's finish records carry the score.
+>   - Leaderboards: ctm-board's third item, Online Races; Square switches to the race board (online-records-ui.js switchBoard / fetchRaces).
+>   - ui.js showResults keeps an online results screen's focus (a late show tick had moved Cross onto the greyed Save Records).
+>   - Trick runs scoring 0 are saved on the race board.
+> - **Passed after these edits:**
+>   - `PAGE_PV=mpBoard MP_BOARD=1 node test-mp-page.mjs` passes Chrome + Chrome and Chrome + WebKit, on ARA1 and on `MP_COURSE=CHP2`. That includes the results order, the keyboard -> profile -> board, race 2 skipping the keyboard, and Leaderboards -> records -> Square -> Online Races with both racers.
+>   - Shots and logs: scratchpad proof-{cc,cw}-{ARA1,CHP2}/.
+>   - test-race-board (including the trick order and the score echo).
+> - **Left before "ready to flip":**
+>   - Re-run the default-switch set on this tree: test-mp, mp-prerace, mp-page, ta-page, online-records, records-server, records-verifier, replay, rival-page, fe-screens, save-store, mp-estimate-clock, line-length, comment-code. The last 14/14 was before the follow-up edits to online-records-ui.js, mp-game.js, mp-ui.js and ui.js.
+>   - Re-run test-online-records with PAGE_PV=mpBoard (the Leaderboards board now has three items with the switch).
+>   - Then report "ready to flip" to the coordinator.
+
+> **PAUSED by the user again (2026-10-15, coordinator).** Live is unchanged (core15 `e66ce287…`, nothing deployed today). Ready or nearly ready, all off in the tree: mpEstimateClock (online Results: no time for a human still on course; proven), mpBoard (online race leaderboard + name entry + trick ranking by score 0x239EC8 + Leaderboards 'Online Races'; final proof rerun pending), the ui.showResults data-screen fix (in progress). Deploy them together after their proofs. Older resume items (core17 install, net_world.inc <set>, sfxPs2Rng on-run, AI ground-crash events) are in the earlier PAUSED note below.
+
+> **PAUSED by the user (2026-10-14, coordinator).** All agents stopped with resume points below (sfx RNG, core migration, native port). Live: core15 `e66ce287…` with everything deployed today. On resume: (1) install core17 + coreContactStream (ready); (2) web/net_world.inc uses std::set without `#include <set>` (fine in the wasm build through animation_bridge.cpp's includes, but the native ssx3 link fails) - add the include in the core migration's next core step; (3) the sfxPs2Rng / crowdSeqPs2 switch-on capture run, then native must make the same draws before the flip; (4) computer riders' ground crashes post no crash event in the core (engine/riding.hpp) - core work.
+
+> **PAUSED (2026-10-15, mp results-clock agent): resume point for pv resultsScreenAttr (off; not ready to flip).** Nothing of mine is running: the PS2 capture and the page matrix were stopped by PID. The tree is safe: both of my switches are off, and node --check / line-length / comment-code / test-mp-estimate-clock are clean.
+> - **The switch:** web/ui.js `showResults` (the game-tick.js 375 Results) writes `#stage data-screen = 'results'`, as `ui.set` does. With the switch the constructor also sets `#stage data-results-attr = 1`, and web/style.css keeps `[data-results-attr="1"][data-screen="results"] #ui` in widescreen 1's band.
+> - **PS2 evidence for the band** (ARMSX2, the event-start-wsmode1 state ridden to the finish with Square; local/mp-clock/ps2-ws1/run/sample13203.png and 13501..16800.png):
+>   - In 16:9 mode 1 the place popup ("5th place 03:32 New Record!") and the Top 5 Record Times panel lie in the letterbox band, like the HUD.
+>   - The records panel sits at rows 103..380 of 480. That is the banded mapping (56 + 0.75y) of a full-frame panel.
+>   - The port with the switch off (data-screen stuck at 'game', so banded) put the Results panel at 106..370. With the switch on but before the band rule (#ui full frame) it was at 61..413, over the bars: wrong. Shots: local/mp-clock/attr/chrome-ws1-{off,on}.png from that first matrix.
+>   - The Results panel itself was not captured: with a new record the PS2 shows the records first. Resume: local/mp-clock/ps2-ws1c (script race-square.json: Square 12900, wait 800, Cross 8, wait 1200). Rebuild with `python3 tools/ps2_navigate.py build local/ps2-capture/snaps/event-start-wsmode1.p2s local/mp-clock/ps2-ws1c/race-square.json local/mp-clock/ps2-ws1c/nav.p2s`, then `run ... --frames 14900 --speed turbo --timeout 2400 --snap-every 150`. It takes about 25 min.
+> - **Measured, first matrix** (local/mp-clock/results-attr.mjs; Chrome, before the band rule):
+>   - Phone 390 x 844 with the touch deck on: off, data-screen 'game' and the face labels visible on Results; on, 'results' and the labels hidden (the menu deck).
+>   - diag=1: off logs only title -> game; on adds game -> results.
+>   - WebKit: only ws1-on ran. The harness then set localStorage on a non-HTML page, which WebKit refuses (fixed in the script, not rerun).
+> - **Left before "ready to flip":**
+>   - Rerun the 8-run matrix with the band rule (Chrome / WebKit x phone / ws1 x off / on): `cd web && VIEW=phone|ws1 node ../local/mp-clock/results-attr.mjs [--webkit] [--on]`.
+>   - The PS2 Results frame above.
+>   - Gates with PAGE_PV=resultsScreenAttr: test-widescreen, test-touch-controls, test-fe-screens, test-race-finish, test-mp-page (both pairs), test-records-verifier, test-replay, test-rival-page, test-online-records.
+>   - Then the multiplayer.md / widescreen notes (engine/CAMERA_RECOVERY.md "Not verified: whether the pause/front-end menus letterbox in mode 1": the Results overlays do).
+> - **The other agent's edit:** test-mp-estimate-clock now matches the mpBoard agent's refactor of mp-ui.js drawResults (the time value in `value`) with a regex over sourceOf.
+> - **Changed for this switch:** web/ui.js (showResults, the constructor), web/pv-flags.js (resultsScreenAttr), web/style.css (the band rule); scratch local/mp-clock/{results-attr.mjs, attr/, ps2-ws1*/}.
+
+> **Online Results "timer counts down" (field report 2026-10-14): fixed behind pv mpEstimateClock (off, ready to flip) (2026-10-15, mp results-clock agent).** See [multiplayer.md](multiplayer.md) "Results of racers still on course".
+> - **What it was:** the first finisher's Results row for a racer still on course, not a HUD.
+>   - The host's diag.log (aggregates only): two pages in a normal online lobby (mpCourseSelect, mpPreRace) on ERA5, DBC2, ARA1, CRA3, ERA5, EBC3, DBC2, 04:35-05:09 UTC.
+>   - The unfinished page's race clock counts up in every run.
+> - **Cause:** no switch caused it; it dates from when the online Results were built. `mp-game.js resultRows` gave each unfinished racer the 0x122D78 estimate on every frame. It took this page's race clock, which stops at its own finish (0x113DB0 counts only in Race), against the other racer's live distance. So the row ran down toward this page's own finish time, then jumped up to the recorded time.
+> - **PS2:**
+>   - At each finish, 125108 calls 238358, which calls the results slot +0x44: 0x23A760 for a race, 0x23AE00 for the multiplayer race (vtables 0x47CF38 / 0x47CED0, read from the ELF).
+>   - Only after 12A250 (every human finished; 0x23A8B4 / 0x23AF0C) does 0x122D78 run (0x23A954 / 0x23AF74), once, for the riders still on course.
+>   - So a human is never estimated.
+>   - The row loop 0x1E5AA0 draws "DNF" (0x4A2160) or the time. It has no form for an unset time.
+>   - 0x113DB0 has no time-out, and the HUD clock (0x1EB63C..0x1EB650) counts down only under an event time limit (freestyle).
+> - **Fix (the coordinator chose the strict 2-player reading):**
+>   - With the switch on, a racer still on course has no time: its time is left empty until its recorded time comes.
+>   - Row order: the timed rows, then the racers on course (slot order), then DNF (`web/net/result-rows.js`, `mp-ui.js drawResults`).
+>   - Computer riders offline keep the one-time estimate, unchanged.
+> - **Proof:** local/mp-clock/repro.mjs and analyze.mjs: two real pages on ARA1, every frame's HUD clock and rows. Shots are in local/mp-clock/before2/ and after4/.
+>   - Off: the row ran 15004 -> 13956 (Chrome + Chrome) and 14991 -> 13065 (Chrome + WebKit), then jumped +3403 / +2914.
+>   - On: no time in all 3001 / 1629 frames, then 17359 / 15979.
+>   - The HUD clock never decreased in any run.
+>   - New web/test-mp-estimate-clock.mjs is in test:all.
+> - **Gate with PAGE_PV / SSX_PV=mpEstimateClock:** mp-estimate-clock, mp, mp-prerace, mp-tick-lock, race-finish, trick-hud, mp-page (Chrome + Chrome; Chrome + WebKit with MP_WK_TIMER=1), ta-page, records-verifier, replay, rival-page and online-records all pass. mp-page also passes with the defaults.
+> - **The "later finisher went game -> mp-lobby with no Results" in the live diag.log is not a game bug: it is diag.log not seeing that screen.**
+>   - The page with game -> mp-lobby is the first finisher. Its Results come from game-tick.js 375, `ui.showResults`, which sets `ui.screen` without writing `#stage data-screen` (ui.js 631). diagnostics.js only sees data-screen changes.
+>   - The page with game -> results is the later finisher. The server's final results reach it on 'game', and `mp-ui.js showResults` uses `ui.set`.
+>   - So the two pages are the other way round from how they first looked, and both racers pressed Back at about the same time.
+>   - Two-page runs (local/mp-clock/repro2.mjs; logs back-host-riding.log, back-host-finished.log, back-joiner-riding.log): the first finisher pressed Back while the other rode, or right after the other finished; host first and joiner first; the pre-race card on. The later racer got its own Results every time, and the first finisher's Results never pass through `ui.set`.
+>   - Side effect of the same gap, not fixed: CSS keyed on data-screen (`style.css` widescreen 1 `[data-screen="game"] #ui`, `mobile.css` touch face buttons) still sees 'game' under game-tick Results, offline too.
+> - **Changed:** web/net/mp-game.js (resultRows), web/mp-ui.js (drawResults), web/pv-flags.js (mpEstimateClock), web/package.json (test:all); new web/net/result-rows.js and web/test-mp-estimate-clock.mjs; docs/multiplayer.md.
+
+> **Multiplayer leaderboard after the online results (pv mpBoard, off, ready to flip) (2026-10-15, multiplayer board agent).** See [multiplayer.md](multiplayer.md) "Multiplayer leaderboard" and [online-records.md](online-records.md) "The online race boards".
+> - **Flow:** online Single Event Results -> Continue (greyed until the server's final results) -> the event's board on 61toptimes (results-lui.js `records()`, the ctm-board layout): "Online Races", ranks, the top 5 or the top 4 plus your row, your row orange, the message line, Continue / Save Records. No saved Player Name: the game keyboard (cKeyboardPopup 'record') asks, Done writes `ssx3.playerName` (the profile's Player Name, editable in Rider Details) and saves the run. Later races save under it at once; the board shows every time.
+> - **PS2 name rule** (local/output sub_00183238): 1CD088(kb, 8) at 0x1837A4 (kb+0x60 = clamp(8, 0, 63)); 1CE3C8 turns off key 0x4B (Tab) and the punctuation keys (0x1837C4..0x1838A0); 1CD2F0 overwrites at the limit. With the switch on, typed characters follow it too (fe-screens.js keyboardKey).
+> - **Server:** new web/server/race-board.mjs (node: + records.mjs only), `<MP_RECORDS_DIR>/race-board.json` (separate from board.json, unverified, never in the verifier queue; `MP_RACE_BOARD=0` turns it off).
+>   - mp-server `maybeResults` hands each finished race (its own ticks, verdict, rider; a trick event's score from the finish message) to `raceDone()`, kept in memory for 30 min.
+>   - `POST /mp/race-board/save` (x-ssx-session token, {race, name}) is accepted only from a finished, non-DNF, not-implausible racer of that race, once per race, with the server's value.
+>   - `GET /mp/race-board?event|course&name`.
+>   - Rules: one entry per name per event (best kept); races by ticks, tricks by score, ties to the earlier entry; records.mjs cleanName; 6/min and 30/h per connection; no address, token or client id stored.
+>   - A restart loses the races: the save gets 404 and the page says "The record could not be saved." (6 s timeouts, no hang).
+> - **Protocol addition:** `{t:'finish', ..., score}` (optional; mp-client finish's 4th argument; mp-game sends the score object's +0x198 with the switch on). Old servers ignore it.
+> - **Checked:** new web/test-race-board.mjs (in test:all): the module, the page side against stub servers, mp-server end to end with a restart. `PAGE_PV=mpBoard MP_BOARD=1 node test-mp-page.mjs` (both racers tuck to the finish; race 1 keyboard -> name -> saved, race 2 no keyboard, both racers on the board) passes Chrome + Chrome and Chrome + WebKit (`MP_WK_TIMER=1 ... --webkit`), with screenshots of each screen (`MP_SHOTS`). Defaults: test-mp, mp-prerace, mp-page, ta-page, online-records, records-server, records-verifier, replay, rival-page, fe-screens, save-store, line-length, comment-code pass (14/14). With the switch: test-online-records, test-fe-screens.
+> - **Not done:** the main menu's Leaderboards does not list these boards; online freestyle results are still ordered by time on the results screen (only the board ranks by score).
+> - **Changed:** web/pv-flags.js (mpBoard), web/mp-board-ui.js (new), web/mp-ui.js, web/ui.js (mpUI.key also under mpBoard), web/fe-screens.js (typed-character rule), web/net/mp-game.js (finish score), web/net/mp-client.js (finish score argument), web/server/race-board.mjs (new), web/server/mp-server.mjs, web/test-race-board.mjs (new), web/test-mp-page.mjs (MP_BOARD), web/package.json (test:all), docs/multiplayer.md, docs/online-records.md.
+
+> **Native FE paused: auto replay done, Restart written but not built (2026-10-14, native-port agent; paused at the user's request).** See [native.md](native.md) section 7, "Resume point".
+> - **Done and checked: the auto replay behind the results** (web/replay.js 'auto').
+>   - The live run's start snapshot and its pad up to the finish are kept.
+>   - When the results are up, the race restarts from the snapshot on the same cores (Verifier::replayRestart, GameAudio::replayRewind) and is drawn through the replay camera, with its cuts and the loop.
+>   - sj-ai replay ticks 300 / 3000 / 9000 against browser-shot `--replay-ticks`: 0.38 / 0.74 / 0.41 mean.
+> - **Written, not yet built or run: the results' Restart.**
+>   - What it does: 87yndialog over the PDA frame (new native/frontend/ctm_pda.hpp), the 20-frame exit, then the page's no-cutscene play() (a live startRun). The gondola ride and the card come with the cutscenes.
+>   - Where it stopped: app.cpp compiled, but the ssx3 link failed on another agent's in-progress web/net_world.inc (std::set without <set>). My build retry loop is stopped; nothing of mine is running.
+> - **Still open:** the slow app load (about 20 s against about 7 s for render_shot), not yet explained; time the loader stages next.
+> - **Next, in order:**
+>   - build and check Restart (the recipe is in native.md);
+>   - the results' menu sounds;
+>   - the title, Single Event select, card and intro (the cutscenes);
+>   - MSAA and render scale;
+>   - follow pv sfxPs2Rng when it flips.
+> - **QA tools added:**
+>   - browser-shot `--replay-ticks`, `--keys`, and `--ui-clock` now also fixes the PDA clock;
+>   - ssx3 `--shot-replay`, `--shot-run`, `--menu-keys`.
+> - **Changed since the results entry below:**
+>   - native/frontend/{app.cpp, ctm_pda.hpp (new), single_event.hpp, race_presenter.hpp, rider_capture.hpp, game_audio.*};
+>   - native/verify/{replay_session.hpp, core_api.hpp};
+>   - native/tools/browser-shot.mjs.
+
+> **PAUSED (2026-10-14, core-migration agent): resume point.** No processes of mine running; no shared-file edits in flight; the shared tree is inert on the live core15 (coreContactStream / coreNetWorld off and guarded on their exports; the new tests skip on cores without them; core-api --check clean; the core sources build: core18b was built from them).
+> - **core17 ready to install** with pv coreContactStream on (local/core-migration/core17: core.wasm `bcaeeed7…`, core.js `c837036f…`): full test-ps2-captures 535 / 535 with the defaults and with -collectSlotReset, identical to core15's but for the replay-return heap readout (+0.1 MB); round trips test-replay, test-records-verifier, test-online-records, test-ctm-event-world, test-ctm-stream, test-mountain-ride pass; test-mp-page on core17 with coreContactStream + mpKnockouts passes (Chrome + Chrome, Chrome + WebKit). See the entry below.
+> - **core18 (not proven):** local/core-migration/core18b (core.wasm `6a004507…`, built from the shared tree; = core17 + web/net_world.inc, pv coreNetWorld). Done: web/test-mp-net-world.mjs (JS vs core byte-identical over 5200 contested ticks); test-mp-page on core18b with coreNetWorld,coreContactStream and with -coreNetWorld (Chrome + Chrome); two pages tucking 60 s with the switch (events applied both ways, no errors). Not done (stopped at the pause): its full 535 (defaults, -collectSlotReset), the round trips, test-mp-page --webkit, a two-page contested pickup (zoe vs zoe hung in the lobby; not investigated).
+> - **Left of M7:** step 3 the grid spot (web/net/grid-seed.js onlineGridState into the core: a draft plan only, nothing written; proof test-mp-grid's 2532 combinations + 372 core starts, values compared parsed, -0 normalised as JSON.stringify does); step 4 the ranking pipeline; then the ghost state and the pair host (test-mp-latency 50 / 100 / 200 ms, test-mp-pairs, test-remote-riders, test-mp-page both engines). Pacing stays a host contract (document it).
+> - **N (not started):** the cutscene feeds in the core (the section point eye, nis_hold actor positions, the NIS board root from the three.js pose into nis_hold_probe(2)); after M7.
+> - **Workflow notes:** core drafts in local/core-migration/tree (a copy of web/'s sources; local/core-migration/tree-build.sh builds it without touching the shared tree); finished files go into web/ in one step. Logs: local/core-migration/suite17-*.log, m7/ (mp-ko.mjs two-page driver, ko-pairs.mjs, net-world-diff.mjs, apply-networld.py), m8/ (probe-ws.mjs, ws-results.mjs).
+
+> **PAUSED (user request): audio picks on the PS2 presentation stream + the crowd clock (pv sfxPs2Rng, crowdSeqPs2; both off) (2026-10-14, sfx RNG agent).** See [audio-logic.md](audio-logic.md) 5.6 and [native.md](native.md) section 7 "Audio parity".
+> - **Landed (safe, both switches off):**
+>   - web/sfx-ps2-rng.js (new) and the PS2 rules in sfx-game.js, audio-crowd.js and game-audio.js.
+>   - game-tick.js: with the switch on, tick_begin runs as its four parts with `gameAudio.riderPass`. It also adds `gameSimTrace` / `__simTrace.sim`, and `__simTrace.compare` is 'ticks' while the switch is off.
+>   - main.js: the sim trace push. With the switch on, the replay start no longer restores 0x4FF018.
+>   - test-replay and test-online-records read `__simTrace.compare`.
+>   - compare-ai-capture.mjs: the env options AUDIO_DRAWS / VISUAL_SYNC / VISUAL_TICKS. tools/ps2_audio_log.py: `ADDR:name:rng|midi` extra hooks and PS2_AUDIO_LOG_ARENA.
+>   - web/test-sfx-ps2-rng.mjs (in test:all).
+> - **Passed:**
+>   - test-ps2-captures, full, defaults: 535/535 (local/sfx-rng/ps2cap-off-direct.log).
+>   - Defaults: test-replay, test-online-records, test-records-verifier, test-rival-page; audio-sfx, game-audio, mp-speech, audio-timeline, ctm-audio, sfx-ps2-rng.
+>   - Both switches on (local/sfx-rng/tree, a mirror with the defaults flipped; logs local/sfx-rng/on-*.log): the same ten tests.
+>   - browser-shot's combined trace with the switch off equals the native fixture (sj-ai 900 = 4032718118, 3000 = 1797270300).
+>   - Page audio logs with the switch on are deterministic (local/sfx-rng/page/).
+>   - ARMSX2 proofs: local/sfx-rng/zoe-rng.* and era-rng.* (all 20 / 10 audio draws exact).
+> - **Left, then "ready to flip":**
+>   - The full test-ps2-captures with `SSX_PV=sfxPs2Rng,crowdSeqPs2` (stopped at the pause; rerun `cd web && SSX_PV=sfxPs2Rng,crowdSeqPs2 PAR=8 node test-ps2-captures.mjs`, log local/sfx-rng/ps2cap-on-direct.log). Run it directly: `npm test -- ps2-captures` hit its 15-minute cap under load.
+>   - Then the full HANDOFF entry (draft: local/sfx-rng/handoff.md).
+>   - Native must make the same draws before the flip (native.md section 7).
+>   - The computer riders' ground crashes post no AE_CRASH (engine/riding.hpp): core work.
+
+> **Core migration M8c-1, M7-1 and the online knockout fix; core to install: local/core-migration/core17 (2026-10-14, core-migration agent).** See [core-migration.md](core-migration.md) "M8" and "M7".
+> - **core17** (core.wasm `bcaeeed7…`, core.js `c837036f…`) = core15 + M8c-1 (web/game_tick.cpp tick_results: world state 5 at EndRace, 7 at the results; a course event's 230F40 at tick_input) + M7-1 (web/contact_stream.inc: exports contact_stream_begin / react / random / test). Full test-ps2-captures (defaults and -collectSlotReset): 535 each, identical to core15's but for the replay-return heap readout (+0.1 MB). Round trips on core17: test-replay, test-records-verifier, test-online-records, test-ctm-event-world, test-ctm-stream, test-mountain-ride pass.
+> - **pv coreContactStream (off):** web/net/pair-net.js draws the contact streams in the core. Proof: the core's words equal contactStream's on 720 keys (test-mp-pairs); test-mp-pairs / test-mp-latency / test-remote-riders byte-identical on and off; test-mp-page on core17 (Chrome + Chrome, Chrome + WebKit).
+> - **pv mpKnockouts (on since the coordinator's flip; JS only):** online crash attacks count the attacker's KO (107E70 0x108304 -> 10E468 at 0x10830C -> 119400: +0x128, popup 0x2C; no 0x535C11 test): the victim's client sends a notice (an attack packet, amount -1, sender = victim), the attacker's client runs pair_knockout. Proof: web/test-mp-knockouts.mjs (test:all); two real pages (local/core-migration/m7/mp-ko.mjs): off 2 attacked bails / 0 KOs, on 1 / 1 (Chrome + Chrome, Chrome + WebKit).
+> - **In the tree for the next core (core18, pv coreNetWorld off):** web/net_world.inc, the shared-world replication (triggers, the pickup arbitration, world events, the WORLD packet bytes) in the core; web/net/mp-game.js behind the switch; web/test-mp-net-world.mjs (test:all; skips on cores without it): 5200 ticks of two contested runs, every WORLD packet byte-identical and both cores identical every tick, JS vs core.
+
 > **Deployed 2026-10-14 (coordinator): mpKnockouts ON.** Core unchanged (core15 `e66ce287…`). Online knockouts are credited: the victim's client sends the attacked-crash notice (ATTACK, amount -1, sender = victim) and the attacker's client runs pair_knockout (10E468 -> 119400: +0x128, popup 0x2C), as the PS2 counts them in 2-player. Gate on this exact tree: core-api, mp-knockouts, mp, mp-pairs, mp-latency, remote-riders, mp-speech, mp-tick-lock, mp-prerace, ai-racers, audio-sfx, game-audio, ta-page, records-server, records-verifier, replay, rival-page, online-records, mp-page (Chrome+Chrome, Chrome+WebKit) pass. Inert: coreContactStream (needs core17), sfxPs2Rng, crowdSeqPs2 (off).
 
 > **Native Single Event results (2026-10-14, native-port agent).** See [native.md](native.md) section 7.

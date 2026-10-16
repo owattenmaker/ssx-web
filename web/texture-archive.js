@@ -31,6 +31,8 @@ import { isBCEntry, parseBCEntry, decodeBC } from './bc-texels.js';
 import { decodeTextureJob } from './texture-decode-job.js';
 import { createGuardedWorker, workerUrl } from './worker-guard.js';
 import { quality, device } from './quality.js';
+import { pv } from './pv-flags.js';
+import { rangedArchive, rangeState } from './archive-ranges.js';
 
 const MAGIC = 'SSXTEX01';
 const archives = new Map(); // absolute URL -> Promise<archive>, most recently used last
@@ -61,45 +63,125 @@ export function riderArchiveUrl(url, set = quality.riderTextures) {
   return m && !hdMissing.has(absolute(url)) ? url.replace(/(textures|gear)\.tex$/, '$1-xbox.tex') : url;
 }
 
-export function textureArchive(url) {
+// signal (pv charselSettle; the Select Character preview, web/fe-preview.js): the caller may let go of the archive. Its download
+// stops (web/downloads.js) once every caller that came with a signal aborted it and none came without one; an archive that
+// finished stays in the cache below.
+export function textureArchive(url, { signal = null } = {}) {
   const hd = riderArchiveUrl(url);
-  if (hd === url) return loadArchive(url);
-  return loadArchive(hd).catch((error) => { hdMissing.add(absolute(url)); console.warn(`Xbox HD rider textures unavailable, PS2 set used: ${error?.message ?? error}`); return loadArchive(url); });
+  if (hd === url) return loadArchive(url, signal);
+  return loadArchive(hd, signal).catch((error) => {
+    if (error?.name === 'AbortError') throw error;
+    hdMissing.add(absolute(url));
+    console.warn(`Xbox HD rider textures unavailable, PS2 set used: ${error?.message ?? error}`);
+    return loadArchive(url, signal);
+  });
 }
 
-function loadArchive(url) {
+const abortError = () => new DOMException('The archive was aborted.', 'AbortError');
+// pv archiveRanges (web/archive-ranges.js): the rider gear archives are read by ranges, only the entries asked for
+const RANGED = /\/assets\/WARDROBE\/[^/]+\/gear(-xbox)?\.tex$/;
+// The whole file: {url, index, blob, start, entries}.
+async function wholeArchive(url, stop) {
+  const response = await fetch(url, stop ? { signal: stop.signal } : undefined);
+  if (!response.ok) throw Error(`${url}: ${response.status}`);
+  const blob = await response.blob();
+  const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (String.fromCharCode(...head.subarray(0, 8)) !== MAGIC) throw Error(`${url}: not a texture archive`);
+  const n = new DataView(head.buffer).getUint32(8, true);
+  const index = JSON.parse(new TextDecoder().decode(await blob.slice(12, 12 + n).arrayBuffer()));
+  const start = 12 + n + ((16 - ((12 + n) % 16)) % 16);
+  return { url, index, blob, start, entries: new Map(index.entries.map((e) => [e.id, e])) };
+}
+// A gear archive by ranges, else (no range support: rangeState.broken from here on) the whole file.
+async function gearArchive(url, key, stop) {
+  if (rangeState.broken) return wholeArchive(url, stop);
+  try {
+    const onBytes = (held) => {
+      if (!archives.has(key)) return;
+      archiveBytes.set(key, held);
+      trimRiderArchives(key);
+    };
+    return await rangedArchive(url, { signal: stop?.signal ?? null, onBytes });
+  } catch (error) {
+    if (!error?.rangeUnsupported) throw error;
+    rangeState.broken = true;
+    console.warn(`Texture archive ranges unavailable, whole files from here on: ${error.message}`);
+    return wholeArchive(url, stop);
+  }
+}
+function loadArchive(url, signal = null) {
   const key = absolute(url);
+  if (signal?.aborted) return Promise.reject(abortError());
   let job = archives.get(key);
   if (job) { archives.delete(key); archives.set(key, job); }   // most recently used last
   if (!job) {
-    job = (async () => {
-      const response = await fetch(url);
-      if (!response.ok) throw Error(`${url}: ${response.status}`);
-      const blob = await response.blob();
-      const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
-      if (String.fromCharCode(...head.subarray(0, 8)) !== MAGIC) throw Error(`${url}: not a texture archive`);
-      const n = new DataView(head.buffer).getUint32(8, true);
-      const index = JSON.parse(new TextDecoder().decode(await blob.slice(12, 12 + n).arrayBuffer()));
-      const start = 12 + n + ((16 - ((12 + n) % 16)) % 16);
-      return { url, index, blob, start, entries: new Map(index.entries.map((e) => [e.id, e])) };
-    })();
+    const stop = signal && pv('charselSettle') ? new AbortController() : null;
+    job = pv('archiveRanges') && RANGED.test(key) ? gearArchive(url, key, stop) : wholeArchive(url, stop);
     archives.set(key, job);
     job.catch(() => { if (archives.get(key) === job) archives.delete(key); });
     if (evictable(key)) {
       const riders = [...archives.keys()].filter(evictable); for (const k of riders.slice(0, Math.max(0, riders.length - riderArchiveLimit()))) { archives.delete(k); archiveBytes.delete(k); }
-      job.then((a) => { if (archives.get(key) === job) { archiveBytes.set(key, a.blob.size); trimRiderArchives(key); } }, () => {});
+      job.then((a) => { if (archives.get(key) === job) { archiveBytes.set(key, a.ranged ? a.held : a.blob.size); trimRiderArchives(key); } }, () => {});
     }
+    job.stop = stop;
+    job.holders = 0;
+    job.then(() => { job.settled = true; }, () => { job.settled = true; });
   }
-  return job;
+  if (!signal) {
+    // a caller without a signal keeps it to its end
+    job.stop = null;
+    return job;
+  }
+  return holdArchive(job, key, signal);
+}
+// One signalled caller of a shared archive job: rejects with AbortError when its signal fires; the last one to let go of an
+// unfinished job stops its download and drops it from the cache.
+function holdArchive(job, key, signal) {
+  job.holders++;
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const onAbort = () => {
+      if (done) return;
+      done = true;
+      job.holders--;
+      if (job.holders <= 0 && !job.settled && job.stop) {
+        job.stop.abort();
+        if (archives.get(key) === job) {
+          archives.delete(key);
+          archiveBytes.delete(key);
+        }
+      }
+      reject(abortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    const finish = (fn) => (v) => {
+      signal.removeEventListener('abort', onAbort);
+      if (done) return;
+      done = true;
+      fn(v);
+    };
+    job.then(finish(resolve), finish(reject));
+  });
 }
 
 /** Start fetching archives early (e.g. the world library under the loading screen) without waiting. */
 export function prefetchTextureArchive(url) { textureArchive(url).catch(() => {}); }
 
 /** The PNG of one entry as a Blob slice (no copy). */
-export async function archiveBlob(url, id) {
-  const a = await textureArchive(url), e = a.entries.get(id);
+export async function archiveBlob(url, id, { signal = null } = {}) {
+  const a = await textureArchive(url, { signal }), e = a.entries.get(id);
   if (!e) throw Error(`${url}: no texture ${id}`);
+  // pv archiveRanges: the entry's own range (read once); a range answer that fails its checks: the whole archive from here on
+  if (a.ranged) {
+    try {
+      return await a.entryBlob(id);
+    } catch (error) {
+      if (!error?.rangeUnsupported) throw error;
+      rangeState.broken = true;
+      if (archives.get(absolute(a.url))) archives.delete(absolute(a.url));
+      return archiveBlob(url, id, { signal });
+    }
+  }
   return a.blob.slice(a.start + e.offset, a.start + e.offset + e.size, e.codec ? 'application/octet-stream' : 'image/png');
 }
 
@@ -185,10 +267,10 @@ export async function packageTexels(root, t) {
 }
 
 /** A package texture as a PNG Blob (archive slice or the fetched file). */
-export async function packageTextureBlob(root, t) {
+export async function packageTextureBlob(root, t, { signal = null } = {}) {
   const s = textureSource(root, t);
-  if (s.archive) return archiveBlob(s.archive, s.id);
-  const r = await fetch(s.file); if (!r.ok) throw Error(`${s.file}: ${r.status}`);
+  if (s.archive) return archiveBlob(s.archive, s.id, { signal });
+  const r = await fetch(s.file, signal ? { signal } : undefined); if (!r.ok) throw Error(`${s.file}: ${r.status}`);
   return r.blob();
 }
 

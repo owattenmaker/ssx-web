@@ -8,10 +8,13 @@
 //               as ui.js draws it) with every online racer: recorded finish times, 0x122D78 estimates for racers
 //               still on course, DNF last. It keeps ui.js's 'results' screen name, so main.js keeps drawing the
 //               finish camera behind it exactly as in a single event; ui.showResults lands here unchanged.
+//               pv mpBoard: its item is Continue once the server's final results are in, which opens the event's online race
+//               board on the same screen (web/mp-board-ui.js: 61toptimes, the name keyboard, Continue / Save Records).
 // Lobby screens are drawn with the career menus' frame/help helpers so they match the rest of the front end.
 import { inviteLink } from './net/mp-client.js';
 import { raceTime } from './race-time.mjs';
 import { pv } from './pv-flags.js';
+import { MpBoard } from './mp-board-ui.js';
 const Y = (y) => Math.round(y * 448 / 480);
 const SCREENS = ['mp-connect', 'mp-lobbies', 'mp-lobby', 'mp-card'];
 const ORDINAL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
@@ -23,6 +26,8 @@ export class MultiplayerScreens {
     this.notice = '';
     this.noticeUntil = 0;
     this.onlineResults = false;
+    // pv mpBoard: the online race board after the results (web/mp-board-ui.js)
+    this.board = pv('mpBoard') ? new MpBoard(ui, session) : null;
     // pv onlineTimeAttack: the time-attack screens (web/ta-ui.js, loaded only with the switch on), a 'Time Attack' row above the
     // lobbies once they are loaded
     this.ta = null;
@@ -42,6 +47,16 @@ export class MultiplayerScreens {
   }
   get client() {
     return this.session.client;
+  }
+  // pv mpBoard: the board of this race is up on the results screen (a board left from an earlier race is closed)
+  boardOpen() {
+    const b = this.board;
+    if (!b?.open) return false;
+    if (b.view.race !== (this.session.race?.id ?? null)) {
+      b.close();
+      return false;
+    }
+    return true;
   }
   get racing() {
     return this.session.racing;
@@ -89,6 +104,8 @@ export class MultiplayerScreens {
         'Chat',
         'Leave Lobby'
       ];
+    if (screen === 'results' && this.boardOpen()) return this.board.items();
+    if (screen === 'results' && this.board) return [this.ui.careerUI?.t?.(0x0f3ab955, 'Continue') || 'Continue'];
     if (screen === 'results') return ['Back to Lobby'];
     if (screen === 'mp-card') return [this.cardLabel()];
     return [];
@@ -108,16 +125,22 @@ export class MultiplayerScreens {
     }
     if (screen === 'mp-lobby') return (i === 1 || i === 2) && (!this.client.isHost || !!s.lobby?.race);
     if (screen === 'mp-card') return !!this.session.card?.ready;
+    // pv mpBoard: the board's Save Records; the results' Continue waits for the server's final results
+    if (screen === 'results' && this.boardOpen()) return this.board.disabled(i);
+    if (screen === 'results' && this.board) return !this.session.finalResults;
     return false;
   }
   layout(screen, i) {
     if (this.ta?.owns(screen)) return this.ta.layout(screen, i);
     if (screen === 'mp-lobby') return [40, Y(120) + i * Y(30), 250, Y(26)];
+    if (screen === 'results' && this.boardOpen()) return [430, Y(366) + i * Y(16), 150, Y(16)];
     if (screen === 'results') return [450, 299 + i * 15, 126, 17];
     if (screen === 'mp-card') return [430, Y(380), 160, Y(24)];
     return [40, Y(110) + i * Y(26), 360, Y(24)];
   }
   key(e) {
+    // pv mpBoard: the name keyboard over the board
+    if (this.ui.screen === 'results' && this.boardOpen() && this.board.key(e)) return true;
     return !!this.ta?.key(e);
   }
   // the in-race HUD line of a time-attack session (web/ui.js after the career HUD)
@@ -180,6 +203,12 @@ export class MultiplayerScreens {
       }
       return;
     }
+    if (ui.screen === 'results' && this.board) {
+      if (this.boardOpen()) {
+        if (!this.board.choose(i)) this.toLobby();
+      } else if (this.session.finalResults) this.board.start();
+      return;
+    }
     if (ui.screen === 'results') this.toLobby();
     // the card takes Continue from its phase 5 (web/screen-phases.js), as the Single Event card does
     if (ui.screen === 'mp-card' && (!ui.phases || ui.phases.accepts())) this.session.continueCard?.();
@@ -195,7 +224,10 @@ export class MultiplayerScreens {
     if (ui.screen === 'mp-lobby') {
       this.client.leave();
       ui.set('mp-lobbies');
-    } else if (ui.screen === 'results') this.toLobby();
+    } else if (ui.screen === 'results') {
+      if (this.boardOpen() && this.board.back()) return;
+      this.toLobby();
+    }
     else this.leaveToMenu();
   }
   leaveToMenu() {
@@ -211,6 +243,7 @@ export class MultiplayerScreens {
   }
   // Back from the results: the finish camera behind them stops (the local run ends, as Quit does) and the lobby opens.
   toLobby() {
+    this.board?.close();
     this.ui.cb.quit?.();
     this.session.backToLobby();
     this.onlineResults = false;
@@ -277,6 +310,7 @@ export class MultiplayerScreens {
       s = this.client.state,
       screen = ui.screen,
       career = ui.careerUI;
+    if (screen === 'results' && this.boardOpen()) return this.board.draw(c);
     if (screen === 'results') return this.drawResults(c);
     if (screen === 'mp-card') return this.drawCard(c);
     if (this.ta?.owns(screen)) return this.ta.draw(c, b);
@@ -449,16 +483,22 @@ export class MultiplayerScreens {
     ui.text(c, 'Single Event Results', 88, 112, 19, '#66a9bb');
     ui.text(c, 'Rank', 118, 149, 17, '#d1e1e2');
     ui.text(c, 'Riders', 198, 149, 17, '#d1e1e2');
-    ui.text(c, 'Time', 418, 149, 17, '#d1e1e2');
+    // pv mpBoard: a trick event's Results show the score (0x1E5AA0's 'timePoints%d' prints "%d" points; 0x239EC8 ranks by it)
+    const trick = !!this.board && !!this.session.trickEvent;
+    const header = trick ? this.ui.careerUI?.t?.('kT_OVRCMNScore', 'Score') || 'Score' : 'Time';
+    ui.text(c, header, 418, 149, 17, '#d1e1e2');
     rows.forEach((r, i) => {
       const color = r.human ? '#e8bd72' : '#d1e1e2',
         y = 175 + i * 19;
       ui.text(c, r.dnf ? '-' : ORDINAL[i] || String(i + 1), 128, y, 18, color);
       ui.text(c, r.name || '', 198, y, 18, color);
-      ui.text(c, r.dnf ? 'DNF' : raceTime(r.ticks, false), 418, y, 18, color);
+      // pv mpEstimateClock: a racer still on course has no time (web/net/result-rows.js); its time is left empty
+      const value = r.dnf ? 'DNF' : trick ? (Number.isInteger(r.score) ? String(r.score) : '') : raceTime(r.ticks, false);
+      if (!r.onCourse) ui.text(c, value, 418, y, 18, color);
     });
     if (!final) ui.text(c, 'Racers still on course...', 88, 175 + 6 * 19 + 4, 14, '#66a9bb');
-    ui.items().forEach((label, i) => ui.text(c, label, 450, 299 + i * 15, 14, '#dce5e4'));
+    // pv mpBoard: Continue greyed until the server's final results (disabled() is false without the switch)
+    ui.items().forEach((label, i) => ui.text(c, label, 450, 299 + i * 15, 14, this.disabled('results', i) ? '#35606d' : '#dce5e4'));
     ui.sprite('OV_1-2', 55, 122, 24, 24, 430, 313, 17, 17);
   }
   noticeText() {

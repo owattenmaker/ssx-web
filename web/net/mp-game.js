@@ -25,6 +25,8 @@ import { createPickupArbiter } from './pickup-arbiter.js';
 import { paceSeconds } from './race-pace.js';
 import { createOpponentRiders } from '../opponent-riders.js';
 import { estimateFinishTicks, orderByTime } from '../ai-race.js';
+import { orderOnlineRows } from './result-rows.js';
+import { orderTrickRows, TRICK_EVENTS } from './trick-rows.js';
 import { loadCharacter, humanSettings } from '../character-roster.js';
 import { outfitKey, remoteOutfitRider } from '../wardrobe.js';
 import { humanCharacter } from '../lineup.js';
@@ -113,6 +115,8 @@ export function createMpGame({
     lightPtr = 0;
   // the opponents array of the last render (pv riderCull)
   let drawnOpponents = null;
+  // pv coreNetWorld (docs/core-migration.md "M7"): the shared-world replication in the core (web/net_world.inc), set at the race start
+  let coreWorld = false;
   let remoteFx = null,
     worldQueue = [],
     sentTriggers = new Set(),
@@ -234,6 +238,10 @@ export function createMpGame({
       return race;
     },
     resultRows: (raceTicks) => resultRows(raceTicks),
+    // pv mpBoard: the race is a trick event (its Results show and rank scores)
+    get trickEvent() {
+      return trickEvent();
+    },
     get finalResults() {
       return finalResults;
     },
@@ -475,6 +483,11 @@ export function createMpGame({
       return;
     }
     if (frame[1] === WORLD) {
+      // pv coreNetWorld: the packet's bytes and its sender, for the core
+      if (coreWorld) {
+        worldQueue.push({ bytes: frame.slice(1), from: frame[0] });
+        return;
+      }
       const w = decodeFrame(frame);
       if (w) worldQueue.push(w);
     }
@@ -484,7 +497,8 @@ export function createMpGame({
   });
   client.on('finished', (m) => {
     if (!race) return;
-    finished.set(m.slot, { ticks: m.ticks, dnf: m.dnf, reason: m.reason });
+    // score: a trick event's score (pv mpBoard pages send it; the server echoes it)
+    finished.set(m.slot, { ticks: m.ticks, dnf: m.dnf, reason: m.reason, score: m.score });
     if (m.dnf && m.slot !== race.slot) {
       if (['quit', 'left', 'late', 'reload', 'disconnected'].includes(m.reason)) remote.hide(m.slot);
       else remote.markGone(m.slot, m.reason !== 'time');
@@ -601,6 +615,11 @@ export function createMpGame({
     }
   }
   // 0x122D78 estimates for racers still on course; recorded times for the finished; DNF last.
+  // pv mpEstimateClock (web/net/result-rows.js): a racer still on course is a human, which the PS2 never estimates: its row has no
+  // time (onCourse) until its recorded time comes.
+  const ownScore = (core) => new Int32Array(core.HEAPU8.buffer, core._score_object_dump(), 0x1d0 / 4)[0x198 / 4];
+  // the race's course is a trick event (slope style, super pipe, big air: courses.json `event`)
+  const trickEvent = () => TRICK_EVENTS.includes((ui.courses || []).find((c) => c.code === (race?.course || course().code))?.event);
   function resultRows(raceTicks) {
     if (!race) return [];
     const core = getCore(),
@@ -613,7 +632,8 @@ export function createMpGame({
         fin = finalResults?.find((x) => x.slot === s);
       let ticks = null,
         dnf = false,
-        estimated = false;
+        estimated = false,
+        onCourse = false;
       if (fin) {
         dnf = fin.dnf;
         ticks = fin.ticks;
@@ -626,13 +646,23 @@ export function createMpGame({
       } else {
         const latest = mine ? { remaining: progress?.[0] } : remote.racers.get(s)?.latest;
         const originCm = origins[s] ?? latest?.remaining ?? 0;
-        if (latest && Number.isFinite(latest.remaining)) {
+        // Off: this page's race clock (stopped at its own finish) against the racer's newest distance, every frame: the row ran down
+        // toward this page's finish time, then jumped up to the recorded time (field report 2026-10-14).
+        if (!latest || !Number.isFinite(latest.remaining)) dnf = true;
+        else if (pv('mpEstimateClock')) onCourse = true;
+        else {
           ticks = estimateFinishTicks(raceTicks, originCm, latest.remaining, s);
           estimated = true;
-        } else dnf = true;
+        }
       }
-      return { slot: s, name: p.name, human: mine, ticks, dnf, estimated, reason: fin?.reason ?? f?.reason ?? '' };
+      // pv mpBoard: a trick event's score (the server's echo of the finish message; this page's own from its score object)
+      let score = fin?.score ?? f?.score ?? null;
+      if (score == null && mine && !dnf && ticks != null && core?._score_object_dump) score = ownScore(core);
+      return { slot: s, name: p.name, human: mine, ticks, dnf, estimated, onCourse, score, reason: fin?.reason ?? f?.reason ?? '' };
     });
+    // pv mpBoard: a trick event ranks by score (0x239EC8 / 238B70, web/net/trick-rows.js)
+    if (pv('mpBoard') && trickEvent()) return orderTrickRows(rows);
+    if (pv('mpEstimateClock')) return orderOnlineRows(rows);
     const timed = rows.filter((r) => !r.dnf),
       dnfs = rows.filter((r) => r.dnf);
     const sorted = orderByTime(timed.map((r) => r.ticks)).map((i) => timed[i]);
@@ -736,6 +766,8 @@ export function createMpGame({
       fxPending = [];
       resetCounters = null;
       pickups = createPickupArbiter({ slot: race.slot });
+      coreWorld = pv('coreNetWorld') && !!core._net_world_apply;
+      if (coreWorld) core._net_world_begin(race.slot);
       if (core._world_triggers) {
         const p = core._world_triggers(),
           n = new Uint32Array(core.HEAPU8.buffer, p, 1)[0];
@@ -768,6 +800,18 @@ export function createMpGame({
       if (!pairNet) return;
       // Shared world changes other racers made (web/shared_world.inc replays, as between the six AI cores).
       const core = getCore();
+      // pv coreNetWorld: the core applies the packets (triggers, the pickup arbitration, the events: web/net_world.inc)
+      if (coreWorld) {
+        for (const m of worldQueue.splice(0)) {
+          const p = core._malloc(m.bytes.length);
+          core.HEAPU8.set(m.bytes, p);
+          core._net_world_apply(p, m.bytes.length, m.from);
+          core._free(p);
+        }
+        const s = new Uint32Array(core.HEAPU8.buffer, core._net_world_stats(), 7);
+        stats.pickupsRevoked = s[2];
+        stats.worldApplied = s[4];
+      }
       for (const w of worldQueue.splice(0)) {
         for (const k of w.triggers)
           if (!sentTriggers.has(k)) {
@@ -817,6 +861,17 @@ export function createMpGame({
       // This racer's shared world changes (pickups taken, crashbags kicked, triggers, sections) to the others.
       const core = getCore(),
         triggers = [];
+      // pv coreNetWorld: the core makes the WORLD packet (web/net_world.inc net_world_packet)
+      if (coreWorld) {
+        const p = core._net_world_packet(pairNet.tick - 1) >> 2;
+        const n = new Uint32Array(core.HEAPU8.buffer)[p];
+        if (n) {
+          client.sendState(new Uint8Array(core.HEAPU8.buffer, (p + 1) * 4, n).slice(), { essential: true });
+          stats.sentWorld = (stats.sentWorld ?? 0) + 1;
+        }
+        if (pairNet.tick % SEND_EVERY === 1) sendState();
+        return;
+      }
       if (core._world_triggers) {
         const p = core._world_triggers(),
           n = new Uint32Array(core.HEAPU8.buffer, p, 1)[0];
@@ -857,7 +912,10 @@ export function createMpGame({
       if (!reportedFinish && isFinished()) {
         reportedFinish = true;
         const dnf = !!core._race_timed_out?.();
-        client.finish(dnf ? 0 : resultTicks(), dnf, dnf ? 'gave up' : '');
+        // pv mpBoard: the score object's total (+0x198, as game-tick.js latches it at the finish) for a trick event's race board row
+        let score = null;
+        if (pv('mpBoard') && !dnf && core._score_object_dump) score = ownScore(core);
+        client.finish(dnf ? 0 : resultTicks(), dnf, dnf ? 'gave up' : '', score);
       }
     },
     // pv riderCull (main.js cullOffscreenRiders): f(group, x, y, z) for each remote rider drawn this frame, with the translation of its

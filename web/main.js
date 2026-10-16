@@ -76,6 +76,7 @@ let currentRiderFrame = null,
 import { FixedStepClock } from './fixed-step-clock.js';
 import {
   gameTrace,
+  gameSimTrace,
   traceOut,
   memoryHash,
   TRACE_OUT_FLOATS,
@@ -337,6 +338,7 @@ const ui = new OriginalUI({
         meter.done('lazyFiles');
         meter.done('course');
         meter.begin('rider');
+        await riderPicked();
         if (riderStale()) await selectRider(selectedRider.entry);
         // ensureRider's first step, before the plan
         prefetchLineup(eventOf());
@@ -849,6 +851,8 @@ let worldScene,
 const pickupMeshes = [],
   eventDeadMeshes = [],
   movingMeshes = [];
+// the event DeadNodes' draw as startRun last set it (pv warmVisibility: applied again after a warm-up's restore)
+let eventDeadShown = true;
 async function asset(name, isRider = false, root = '/assets/' + name + '/', opts = null) {
   // opts.pause(): awaited between slices (streamed Peak 1 locations build on idle frames, web/free-ride.js)
   let sliceAt = performance.now();
@@ -1274,13 +1278,38 @@ function disposeRider(group) {
 let loadedRider = selectedRider,
   pendingRider = null;
 const sameRider = (a, b) => !!a && !!b && a.id === b.id && a.base === b.base && a.outfit === b.outfit && (a.uber ?? '') === (b.uber ?? '');
-async function selectRider(rider) {
+// pv charselSettle: the latest pick wins (an earlier one still resolving its outfit is dropped, its downloads aborted by its caller's
+// signal), outfitRider no longer holds ui.ready (Select Character's cursor moves on meanwhile), and riderPicked() waits for it.
+let riderPick = null,
+  riderPickSeq = 0;
+async function selectRider(rider, { signal = null } = {}) {
   if (!rider?.package) throw Error('Unknown rider');
   const entry = rider;
-  rider = await outfitRider(ui, rider);
-  rider = withProfile(ui, entry, rider);
-  selectedRider = rider;
-  pendingRider = sameRider(rider, loadedRider) ? null : rider;
+  if (!pv('charselSettle')) {
+    rider = await outfitRider(ui, rider);
+    rider = withProfile(ui, entry, rider);
+    selectedRider = rider;
+    pendingRider = sameRider(rider, loadedRider) ? null : rider;
+    return;
+  }
+  const seq = ++riderPickSeq;
+  const job = (async () => {
+    let resolved = await outfitRider(ui, entry, { signal, hold: false });
+    resolved = withProfile(ui, entry, resolved);
+    if (seq !== riderPickSeq) return;
+    selectedRider = resolved;
+    pendingRider = sameRider(resolved, loadedRider) ? null : resolved;
+  })();
+  riderPick = job;
+  try {
+    await job;
+  } finally {
+    if (riderPick === job) riderPick = null;
+  }
+}
+// pv charselSettle: the rider pick in flight (if any) has landed in selectedRider / pendingRider
+async function riderPicked() {
+  while (riderPick) await riderPick.catch(() => {});
 }
 // careerRider (web/career-rider.js): the entry is resolved again when what it came from changed (play mode, gear record, uber selection)
 /* the rival challenges' objectives card lies over the ready state, as on the PS2 (WS2 at race tick 0: the riders at
@@ -1387,6 +1416,7 @@ const riderStale = () =>
 /* the career block of the human: a cheat skin plays on its base rider's (setup slot +0x11, 145C38; lodgeCheats) */
 const careerId = () => (selectedRider?.kind === 'cheat' ? selectedRider.base || 'zoe' : selectedRider?.id);
 async function ensureRider() {
+  await riderPicked();
   if (riderStale()) await selectRider(selectedRider.entry);
   while (pendingRider) {
     const r = pendingRider;
@@ -1808,6 +1838,8 @@ function onlineCast() {
   for (const r of mpGame?.introRacers?.() ?? []) race[r.slot] = r.entry ? cutsceneRider(r.entry, r.slot) : null;
   return { humans: [race[0] ?? null, race[1] ?? null].filter(Boolean), race, ai: [], roles: [] };
 }
+// pv taPodiumWorld: the time-attack podium (ta-ui.js, o.chunksAtEye) gives its NIS eye to the set-piece renderer's texture-chunk residency
+let nisChunkEye = false;
 function setupCutscenes() {
   if (new URL(location.href).searchParams.get('cutscenes') === '0') return;
   cutscenes = createCutscenes({
@@ -1824,6 +1856,8 @@ function setupCutscenes() {
       for (const a of list) worldAiHold.pos[a.slot] = [a.pos[0], a.pos[1], a.pos[2], Math.cos(a.yaw), Math.sin(a.yaw)];
     },
     sectionPoint: (eye) => {
+      // pv taPodiumWorld: the chunks the NIS camera's eye streams in (0x3A8290 reads the outer camera, the NIS camera during a NIS)
+      if (nisChunkEye) setPieceRenderer?.chunkEye?.(eye);
       if (
         // the gate's fly-over plays before cb.eventInWorld
         (!(pv('nisSectionPoint') || (pv('eventInWorldAi') && (worldEvent || worldAi))) && !(eye === null && sectionPointOn)) ||
@@ -1933,6 +1967,8 @@ function setupCutscenes() {
     // o.hold: the rider waits (world state 10 arrivals)
     const ws10Hold = o.hold && !underCut ? contexts.push(CTX.HOLD, { owner: `WS10 cutscene hold (${o.kind})` }) : null;
     if (o.kind === 'podium') gameAudio.podium?.();
+    const chunksAtEye = !!o.chunksAtEye && pv('taPodiumWorld');
+    if (chunksAtEye) nisChunkEye = true;
     // an arrival intro (the Happiness plane, the heli drops) holds the audio ride start (28E888) until it ends (web/game-audio.js
     // arrivalCinematic)
     const arrival = o.kind === 'arrival';
@@ -1948,6 +1984,10 @@ function setupCutscenes() {
       if (underCut) {
         contexts.pop(movieHold);
         movieHold = null;
+      }
+      if (chunksAtEye) {
+        nisChunkEye = false;
+        setPieceRenderer?.chunkEye?.(null);
       }
       if (ui.screen === 'cutscene' && o.restore !== false) ui.set(back);
     }
@@ -2563,6 +2603,7 @@ function startRun(R = null) {
   core._reset_fog();
   core._reset_rider_lighting();
   for (const mesh of eventDeadMeshes) mesh.visible = true;
+  eventDeadShown = true;
   if (!R) ui.set('game');
   finished = false;
   resultsPending = false;
@@ -2643,6 +2684,7 @@ function startRun(R = null) {
       progressMeter?.load();
     }
     for (const mesh of eventDeadMeshes) mesh.visible = false;
+    eventDeadShown = false;
     state = new Float32Array(core.HEAPF32.buffer, core._rider_state(), 16).slice();
   }
   lastRescues = state[13];
@@ -2658,7 +2700,8 @@ function startRun(R = null) {
     // the words the reset leaves as the run left them: the shared game RNG 0x4FF030, the visual stream 0x4FF018 and gp+0xA0C
     const W = (p) => new Uint32Array(core.HEAPU8.buffer, p, 6);
     W(core._animation_rng_words()).set(R.rng);
-    W(core._visual_rng_words()).set(R.visual);
+    // pv sfxPs2Rng: the stream carries on from the results, as the PS2's replay restore 0x26DBF0 leaves 0x4FF018 (it restores 0x4FF030 only)
+    if (!pv('sfxPs2Rng')) W(core._visual_rng_words()).set(R.visual);
     if (R.lcg != null && core._visual_lcg_word) new Uint32Array(core.HEAPU8.buffer, core._visual_lcg_word(), 1)[0] = R.lcg;
     return;
   }
@@ -2776,7 +2819,10 @@ let startButtonHeld = false;
 
 // ?simtrace=1 (QA, docs/workers.md): the per-tick exactness trace of the running game (web/game-tick.js gameTrace)
 const simTrace =
-  new URL(location.href).searchParams.get('simtrace') === '1' ? { ticks: [], out: new Float32Array(TRACE_OUT_FLOATS) } : null;
+  new URL(location.href).searchParams.get('simtrace') === '1' ? { ticks: [], sim: [], out: new Float32Array(TRACE_OUT_FLOATS) } : null;
+// the trace a replay must reproduce (test-replay, test-online-records): pv sfxPs2Rng's replays draw their own audio picks from the visual
+// stream, so they reproduce the sim hash (docs/audio-logic.md 5.6); off, the combined one
+if (simTrace) simTrace.compare = pv('sfxPs2Rng') ? 'sim' : 'ticks';
 if (simTrace) {
   window.__simTrace = simTrace;
   window.__memoryHash = () => memoryHash(core);
@@ -3098,14 +3144,12 @@ const gameTick = createGameTick(gameHost, {
   trace: (rec) => {
     // pv fadesOnTicks (docs/core-migration.md F): the fades' step at the update's end (the view fade 2E4370 in 22E840, after the riders)
     if (pv('fadesOnTicks')) cutscenes?.fadeTick?.();
-    if (simTrace)
-      simTrace.ticks.push(
-        gameTrace(
-          core,
-          aiActive ? aiRace.racers.npcs.map((n) => n.core) : [],
-          traceOut(simTrace.out, { state, posePhysicalFrame, raceInfo, cameraPose: rec.camera ?? null })
-        )
-      );
+    if (simTrace) {
+      const npcCores = aiActive ? aiRace.racers.npcs.map((n) => n.core) : [];
+      const out = traceOut(simTrace.out, { state, posePhysicalFrame, raceInfo, cameraPose: rec.camera ?? null });
+      simTrace.ticks.push(gameTrace(core, npcCores, out));
+      simTrace.sim.push(gameSimTrace(core, npcCores, out));
+    }
   }
 });
 function simTick(input) {
@@ -4689,6 +4733,9 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
     warmView.drawables = [];
     warmView.active = new Set();
     for (const [o, v] of shown) o.visible = v;
+    // pv warmVisibility: the renderers that apply a mesh's visibility only when its state changes apply it again (a change during the
+    // warm frames was undone by the restore above: time attack's collectibles stood as static props)
+    if (pv('warmVisibility')) refreshOwnedVisibility();
     for (const o of culled) o.frustumCulled = true;
     for (const p of terrainProxies) {
       p.removeFromParent();
@@ -4701,6 +4748,12 @@ async function warmupRender(framesDone = null, { skip = null, cap = warmNewMater
   framesDone?.();
   await gpuIdle();
   performance.mark('warm:gpu');
+}
+// pv warmVisibility: every visibility a renderer owns and applies only on a change, applied again (after warmupRender's restore)
+function refreshOwnedVisibility() {
+  setPieceRenderer?.refreshVisibility?.();
+  freeRide?.refreshVisibility?.();
+  for (const mesh of eventDeadMeshes) mesh.visible = eventDeadShown;
 }
 /* resolves once the GPU has run everything submitted so far (WebGPU; pipelines included), at most 30 s */
 const gpuIdle = () => {
@@ -5512,6 +5565,7 @@ async function unloadCourse() {
   courseRoots = [];
   pickupMeshes.length = 0;
   eventDeadMeshes.length = 0;
+  eventDeadShown = true;
   movingMeshes.length = 0;
   // encoded-pass effects of the old course (snow-composite.js)
   pruneEncodedEffects((e) => {
@@ -6624,6 +6678,7 @@ async function init() {
       },
       eventDead(visible) {
         for (const mesh of eventDeadMeshes) mesh.visible = visible;
+        eventDeadShown = !!visible;
       },
       setPieces() {
         return setPieceRenderer;

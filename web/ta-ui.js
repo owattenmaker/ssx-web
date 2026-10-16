@@ -35,6 +35,7 @@ import { drawPlaceLabel } from './race-place-hud.js';
 import { toScene } from './cutscenes.js';
 import { HUD_FONTS } from './trick-hud.js';
 import { outfitPreviewEntry } from './wardrobe.js';
+import { pv } from './pv-flags.js';
 
 const SY = 448 / 480;
 const FPS = 60;
@@ -46,6 +47,14 @@ const RANDOM = 'random';
 const BOX = { y: 362, w: 176, h: 82, gap: 22, thumbH: 56 };
 // GL_1-1 (the loading screen's page): the orange '?' cell
 const QUESTION = [164, 2, 34, 50];
+// pv taPodiumFit: a podium still playing when the vote phase starts plays on if it has at most TAIL_TICKS (NIS ticks) left, for at
+// most TAIL_MS (a slow page's podium runs slower than real time and is stopped)
+const TAIL_TICKS = 180;
+const TAIL_MS = 3000;
+// pv taPodiumFit: a scene that ends this close to the podium phase's end opens the vote at once (the server's phases step every 250 ms)
+const DUE_MS = 600;
+// pv taPodiumLabels: the NIS letterbox bars (cutscenes.js overlay: 60 of 480 lines each), in the 448-line overlay frame
+const BAR = (60 * 448) / 480;
 // a rider's name label sits this far above its podium step (source cm)
 const LABEL_HEIGHT = 235;
 const MODE_NAMES = ['Race', 'Slope Style', 'Super Pipe', 'Big Air', 'Rival Time', 'Rival Points'];
@@ -510,6 +519,9 @@ export class TaScreens {
     // the podium cutscene still playing when the server's podium phase is over (a slow page: with pv nisOnTicks the scene runs on
     // game ticks, and a frame's ticks are capped, so at a low frame rate it outlasts the phase): it ends, so the page gets the vote
     if (s.phase !== 'podium' && screen === 'cutscene' && this.labels) {
+      // pv taPodiumFit: the server's podium phase lasts the scene itself (sessions.mjs podiumFit), so a podium in its last ticks plays
+      // to its end, from which the vote opens (podium() after); a slow page's podium is still stopped
+      if (pv('taPodiumFit') && this.podiumTail()) return;
       ui.cutscene?.stop?.();
       return;
     }
@@ -526,11 +538,27 @@ export class TaScreens {
   // The CTM podium cutscene (web/cutscenes.js, WS12 0x27AC60) with the top three in their own characters and outfits where the course
   // has its steps (the winner's win_ps scene: bindings 1 / 2 / 3 on anchors 20 / 21 / 22), each labelled with its place and name;
   // then (or at once, without steps) the results with the medals.
+  // pv taPodiumVote: the podium plays with restore: false and its end opens the next screen itself (the results in the podium phase,
+  // the vote once that phase is on), so the screen the podium started from (ta-room after the overtime) never shows in between;
+  // any other phase (a late page) gets that screen back, as before.
   podium() {
     const r = this.st.results;
-    const after = () => {
+    const handOff = pv('taPodiumVote');
+    const back = this.ui.screen;
+    const after = (played) => {
       this.labels = null;
-      if (this.st.session?.phase === 'podium') this.go('ta-results', 0);
+      const s = this.st.session;
+      // pv taPodiumFit: the server's podium phase ends with the server's scene (sessions.mjs podiumFit), so a scene watched to its end
+      // opens the vote at once, its boxes coming with the vote phase (at most DUE_MS later); a skipped one shows the results until then
+      const due = pv('taPodiumFit') && Number.isInteger(r?.podiumScript) && played?.played && !played.skipped && this.ta.timeLeft() <= DUE_MS;
+      if (s?.phase === 'podium' && due) {
+        this.voteShown = s.window?.id;
+        this.go('ta-vote', 0);
+      } else if (s?.phase === 'podium') this.go('ta-results', 0);
+      else if (handOff && s?.phase === 'vote' && this.voteShown !== s.window?.id) {
+        this.voteShown = s.window?.id;
+        this.go('ta-vote', 0);
+      } else if (handOff && this.ui.screen === 'cutscene') this.go(back, 0);
     };
     const roles = (r?.podium ?? []).map((x) => this.role(x)).filter(Boolean);
     const code = String(r?.event ?? '').split(':')[1];
@@ -540,10 +568,22 @@ export class TaScreens {
     }
     this.labels = { code, rows: r.podium.slice(0, 3) };
     try {
-      Promise.resolve(this.ui.cb.cutscene({ kind: 'podium', place: 0, roles })).then(after, after);
+      // pv taPodiumWorld: the course's finish stage drawn as after a finish (main.js ui.cb.cutscene, set-pieces-renderer.js chunkEye)
+      const o = { kind: 'podium', place: 0, roles, ...(handOff ? { restore: false } : {}), ...(pv('taPodiumWorld') ? { chunksAtEye: true } : {}) };
+      // pv taPodiumFit: the scene the server picked and timed the podium phase by (results.podiumScript)
+      if (pv('taPodiumFit') && Number.isInteger(r.podiumScript)) o.steps = [{ script: r.podiumScript, flags: 1 }];
+      this.tailAt = null;
+      Promise.resolve(this.ui.cb.cutscene(o)).then(after, after);
     } catch {
       after();
     }
+  }
+  // pv taPodiumFit: the podium has at most TAIL_TICKS left and has run on into the vote phase for less than TAIL_MS
+  podiumTail() {
+    const seq = this.ui.cutscene?.seq;
+    if (!seq?.ready) return false;
+    this.tailAt ??= performance.now();
+    return seq.duration - seq.t <= TAIL_TICKS && performance.now() - this.tailAt < TAIL_MS;
   }
   // a podium rider as the cutscene cast takes it: the roster entry of its character (a cheat skin over its base). The front end's
   // preview models exist for the default outfits and for this page's own worn outfit (wardrobe.js outfitPreviewEntry), so another
@@ -579,6 +619,8 @@ export class TaScreens {
       const sy = (1 - (q[1] * vx + q[5] * vy + q[9] * vz + q[13]) / w) * 224;
       const scale = 0.6;
       const width = (place === 0 ? 66 : 80) * scale;
+      // pv taPodiumLabels: only a label wholly inside the picture (a close-up puts the step above the frame, onto the bar)
+      if (pv('taPodiumLabels') && (sy - 42 * scale - 4 < BAR || sy + 6 > 448 - BAR || sx - width / 2 < 0 || sx + width / 2 > 640)) return;
       drawPlaceLabel(this.ui, c, place, sx - width / 2, sy - 42 * scale - 4, scale);
       // the name in the front-end font, with the dark shadow of the world captions (cutscenes.js loadingCaption)
       this.ui.text(c, row.name, sx + 1.5, sy + 1.5, 15, '#1a1a10', 'FEFONT', 'center');

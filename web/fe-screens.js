@@ -19,6 +19,7 @@
 // frames: Main Menu Multi Play / Online, Rider Details Cheat Characters, local/ps2-capture/menus/fe-texture). Every Cross/Triangle that changes screen plays the white fade (whitefade, TransitionOut).
 // Rider screens (setup, details) put layers 0..9 on the UI background canvas, behind the 3D rider, like 08sel_char.
 import { LuiScreen } from './lui-player.js';
+import { pv } from './pv-flags.js';
 import { drawBuyPopup } from './buy-popup.js';   // the buy popups as PS2 139buy_popup
 import { drawFePopup } from './fe-popup.js';     // cFEPopup's own layout (0x1C6B08) for the lodge's Yes / No questions
 import { FOCUS_LAG } from './lui-flash.js';   // introLead
@@ -1167,6 +1168,9 @@ export class FeScreens {
     }
     if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
+      // pv mpBoard: a name takes only what the pad keyboard can type (Player Name: letters, digits, the shifted digits, space;
+      // the punctuation keys are off, 1CE3C8 at 0x1837C4..0x1838A0)
+      if (k.overwriteFull && pv('mpBoard') && !/^[A-Za-z0-9 !@#$%^&*()]$/.test(e.key)) return true;
       // typing on the computer keyboard: the character goes in and the highlight moves to Done (Enter accepts)
       if (k.overwriteFull)
         this.keyboard = { ...keyboardPress(k, e.key), row: 2, col: 12 }; // the pad keyboard's rule (1CD2F0)

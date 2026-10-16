@@ -4,17 +4,22 @@ import { FixedStepClock } from './fixed-step-clock.js';
 // pose / world state, the shared visual and game RNG words and the human's score object: the words a change to the
 // game loop must reproduce bit for bit (QA: traces before / after the change).
 export const TRACE_OUT_FLOATS = 45; // rider_state 16, pose_physical 12, race_end 8, camera 9
+export const TRACE_SIM_FLOATS = 36; // the tick outputs without the camera
+export const gameSimTrace = (human, npcCores, out) => gameTrace(human, npcCores, out, { presentation: false });
 import { pv } from './pv-flags.js';
 
-export function gameTrace(human, npcCores, out) {
+// presentation = false (gameSimTrace): without the tick outputs' camera (its shake draws the visual stream, 0x1656B0 / 0x165938) and the
+// visual words 0x4FF018: the words a replay reproduces when its audio draws differ from the live run's (pv sfxPs2Rng: 29F660 returns
+// at 288AE0 in a replay, 296310's range gate reads the replay's listener, and the PS2's replay 0x26DBF0 restores 0x4FF030 only).
+export function gameTrace(human, npcCores, out, { presentation = true } = {}) {
   let h = 0x811c9dc5 >>> 0;
   const mix = (u32) => { for (let i = 0; i < u32.length; i++) h = Math.imul(h ^ u32[i], 16777619) >>> 0; };
-  mix(new Uint32Array(out.buffer, out.byteOffset, out.length));
+  mix(new Uint32Array(out.buffer, out.byteOffset, presentation ? out.length : TRACE_SIM_FLOATS));
   for (const c of [human, ...npcCores]) {
     mix(new Uint32Array(c.HEAPU8.buffer, c._rider_state(), 16)); mix(new Uint32Array(c.HEAPU8.buffer, c._pose_physical(), 12));
     if (c._rider_world_state) mix(new Uint32Array(c.HEAPU8.buffer, c._rider_world_state(), 8));
   }
-  mix(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6));
+  if (presentation) mix(new Uint32Array(human.HEAPU8.buffer, human._visual_rng_words(), 6));
   if (human._animation_rng_words) mix(new Uint32Array(human.HEAPU8.buffer, human._animation_rng_words(), 6));
   if (human._score_object_dump) mix(new Uint32Array(human.HEAPU8.buffer, human._score_object_dump(), 0x1d0 / 4));
   return h;

@@ -43,6 +43,14 @@ try {
   r = await get('/assets/WARDROBE/ZOE/gear-xbox.tex', { 'accept-encoding': 'gzip, deflate, br' });
   assert.equal(r.res.headers['content-encoding'], 'br'); assert.ok(r.body.length < hd.length / 3); assert.deepEqual(zlib.brotliDecompressSync(r.body), hd); assert.equal(+r.res.headers['x-decoded-length'], hd.length);
   const brTag = r.res.headers.etag;
+  // ?identity=1 (web/archive-ranges.js through deploy/edge-worker.js): the file itself to a br client, and exact byte ranges of it
+  r = await get('/assets/WARDROBE/ZOE/gear-xbox.tex?g=1&identity=1', { 'accept-encoding': 'gzip, deflate, br' });
+  assert.equal(r.res.headers['content-encoding'], undefined);
+  assert.deepEqual(r.body, hd);
+  r = await get('/assets/WARDROBE/ZOE/gear-xbox.tex?identity=1', { 'accept-encoding': 'identity', range: 'bytes=16-47' });
+  assert.equal(r.res.statusCode, 206);
+  assert.equal(r.res.headers['content-range'], `bytes 16-47/${hd.length}`);
+  assert.deepEqual(r.body, hd.subarray(16, 48));
   // gzip cannot see the repeats (no .gz copy: not worth it): a gzip-only client gets the raw bytes, under another ETag
   r = await get('/assets/WARDROBE/ZOE/gear-xbox.tex', { 'accept-encoding': 'gzip' }); assert.equal(r.res.headers['content-encoding'], undefined); assert.deepEqual(r.body, hd); assert.notEqual(r.res.headers.etag, brTag);
   r = await get('/assets/ARA1/noise.bin', { 'accept-encoding': 'gzip' }); assert.equal(r.res.headers['content-encoding'], undefined); assert.deepEqual(r.body, noise);

@@ -60,6 +60,11 @@ export const DEFAULTS = {
   archiveMs: 6 * 3600000,
   archiveMax: 200,
   podiumMs: 20000,
+  // podiumFit (docs/big-multiplayer.md "The podium's world and its hand-off to the vote"): the podium phase lasts the winner's podium
+  // scene, which the server picks (podium-scripts.mjs) and sends with the results, plus podiumMarginMs; podiumMs stays the length
+  // without one (no scene table, a course without podium steps, an unknown rider)
+  podiumFit: false,
+  podiumMarginMs: 0,
   voteMs: 15000,
   voteResultMs: 2000,
   standingsMs: 500,
@@ -103,7 +108,8 @@ function take(b, t) {
 // events: records.mjs eventTable (key -> {mode, code, timed, ...}); floors: records.mjs floorTable (key -> {ticks});
 // send(clientId, message); clients: Map id -> client (mp-server's); random: () => [0, 1) (tests).
 // sendBinary(clientId, bytes): the ghost bundles.
-export function createSessions({ events, floors = new Map(), now = () => Date.now(), send, sendBinary = () => {}, clients, verifierToken = null,
+// podiumScripts: podium-scripts.mjs podiumScripts(assets) (the podium's scene and length, with options.podiumFit), or null.
+export function createSessions({ events, floors = new Map(), now = () => Date.now(), send, sendBinary = () => {}, clients, verifierToken = null, podiumScripts = null,
   log = console, random = Math.random, options = {} } = {}) {
   const O = { ...DEFAULTS, ...options };
   const sessions = new Map();
@@ -287,6 +293,17 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
     s.recent = s.recent.slice(-4);
     setPhase(s, 'vote-result', now() + O.voteResultMs);
   }
+  // The podium phase's length (options.podiumFit): the scene the server picked for the window's top three (its number goes out with
+  // the results as podiumScript, so every page plays it), the least shown in this session first; else podiumMs.
+  function podiumLength(s) {
+    if (!O.podiumFit || !podiumScripts || !s.results?.podiumCourse) return O.podiumMs;
+    s.podiumPlays ??= new Map();
+    const pick = podiumScripts.choose(events.get(s.window.event)?.code, s.results.podium, s.podiumPlays, random);
+    if (!pick) return O.podiumMs;
+    s.podiumPlays.set(pick.script, (s.podiumPlays.get(pick.script) || 0) + 1);
+    s.results.podiumScript = pick.script;
+    return Math.round((pick.ticks * 1000) / podiumScripts.tickHz + O.podiumMarginMs);
+  }
   function step(s) {
     const t = now();
     if (s.phase === 'load') {
@@ -305,7 +322,7 @@ export function createSessions({ events, floors = new Map(), now = () => Date.no
         archiveWindow(s, t);
         // the session's rounds so far (web/ta-ui.js: the circuit standings 109MultiplayerStandings)
         s.results.history = s.history.map((h) => ({ window: h.window, event: h.event, timed: h.timed, winner: h.winner?.name ?? null, value: h.winner?.value ?? null }));
-        setPhase(s, 'podium', t + O.podiumMs);
+        setPhase(s, 'podium', t + podiumLength(s));
         toSession(s, s.results);
       }
     } else if (s.phase === 'podium') {

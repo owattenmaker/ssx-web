@@ -79,6 +79,10 @@ public:
     RiderFrame& frame() {
         return frame_;
     }
+    // the next capture starts over (no blend from the last one)
+    void reset() {
+        resetPending_ = true;
+    }
     bool available() const {
         return available_;
     }

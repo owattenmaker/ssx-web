@@ -72,7 +72,8 @@ The JS that decides simulation results, beyond presentation:
 | N | The cutscene feeds (section point, nis_hold actors, the NIS board root) in the core | | after M8 |
 | M7-1 | The online contact random stream in the core | coreContactStream | in the tree (core17), verified |
 | KO | Online knockouts counted (a fix) | mpKnockouts | in the tree (JS only), verified on two pages |
-| M7-2.. | Pickup arbitration + shared-world replication, the grid spot, the ranking pipeline, the ghost state and pair host; pacing stays a host contract | | next |
+| M7-2 | Pickup arbitration + shared-world replication (the WORLD packet bytes in / out) | coreNetWorld | in the tree (core18), verified (node) |
+| M7-3.. | The grid spot, the ranking pipeline, the ghost state and pair host; pacing stays a host contract | | next |
 
 The core API a native front end needs afterwards: load (the existing init_* documents); session (event_setup -> the lineup and
 packages to load, event_start, restart, give_up, camera view, input map); tick(pad[24]) -> one record (state, pose, camera, race
@@ -511,6 +512,33 @@ The fix (one mechanism for the start and the pauses; done 2026-10-13):
   attacked crashes with the switch, 0 without); two real pages (local/core-migration/m7/mp-ko.mjs, page 1 held beside page 0 and
   charging punches): off, the victim 2 attacked bails and the attacker 0 KOs; on (Chrome + Chrome and Chrome + WebKit) 1 attacked
   bail and 1 KO; test-mp-page passes with it.
+- M7-2 (pv coreNetWorld, core18): web/net_world.inc, the shared-world replication of web/net/mp-game.js beginTick / endTick and
+  web/net/pickup-arbiter.js: the host moves the WORLD packets' bytes (net_world_apply at the tick's start for each packet received,
+  net_world_packet after the tick); the core keeps the triggers shared once (sent or applied; the race start's own count as shared),
+  arbitrates a boost pickup two racers took inside the 60-tick debounce (the earlier tick keeps it, on the same tick the lower slot;
+  the loser's pickup_revoke) and applies the events (world_event_apply). Proof: web/test-mp-net-world.mjs (two identical contested
+  Snow Jam runs over a 6-tick link, 5200 ticks, mp-game's JS logic against the core's: all 283 WORLD packets per client byte-identical,
+  both cores identical every tick, 1 revocation, 295 events applied); test-mp-page on core18 with the switch (Chrome + Chrome); two
+  real pages tucking 60 s (local/core-migration/m7/mp-ko.mjs MP_TUCK=1): each page applies the other's events, no page errors.
+
+## Follow-up: the texture-chunk streamer on the NIS camera (for a future core; the time-attack podium, pv taPodiumWorld)
+
+- **PS2:** 0x2306A8 (the game's update) calls 0x3A6928 -> 0x3A8290 every update, whatever the world state (0x230788 / 0x230834).
+  0x3A8290 reads the outer camera: eye +0x20, range 1.5 x +0x08. During a NIS the outer camera is the NIS camera (ctm-events-in-world.md
+  stage 4 milestone 4: the director's point is the outer camera's +0x20). So a podium streams the chunks around its own camera.
+- **Port today:** the streamer (engine/section_streaming.hpp `ChunkStreaming::frame`) runs only inside section_scan
+  (web/section_gameplay.inc), from section_pass in the race tick, with the eye the race camera step left (core.cpp camera_for_head ->
+  browser_section_viewer). There is no export for it, and none to set the viewer. Calling section_pass outside a race does not help:
+  its clock is chairliftTicks - 1, which does not advance without race_begin (nothing finishes loading), and it also runs the activation
+  scan (sim state). The time-attack podium plays with no game update running, its camera far from the race camera at the start gate.
+- **In the tree instead (draw only, JS):** web/chunk-view.js computes the streamer's steady state for the NIS eye (the same chunk trees
+  and range: the requested chunks plus the locked ones), and set-pieces-renderer.js uses it while the time-attack podium plays.
+  The core's streamer state is untouched (it is in the rider-context snapshot registry).
+- **To do with a core:** an export, e.g. `section_chunk_view(x, y, z, far, frames)`, that runs `ChunkStreaming::frame` `frames` times on
+  the streamer's own clock (continuing from its last frame) with the given eye. The page would call it before the podium's first frame
+  (enough frames for the requested chunks to load one at a time; Snow Jam 25 / 27 / 28 / 34 at 135 / 135 / 135 / 71 ticks) and once per
+  podium tick. Then remove chunk-view.js and its renderer hook. A native front end needs the real mechanism: every NIS feeds the
+  streamer its camera.
 
 ## Native core
 

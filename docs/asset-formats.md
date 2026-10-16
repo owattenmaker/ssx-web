@@ -192,6 +192,64 @@ One file, many textures (tools/texture_archive.py writes and verifies, web/textu
 - **Archive references** in `world.json`: `{pack, id}` (pack package-relative unless it starts with '/'). Rider
   packages already use `archive` for the disc BIG a texture came from; that field is unrelated.
 
+## Texture archives: range reads (2026-10-15, pv archiveRanges, off)
+
+An Equip Gear outfit draws 1-2 entries of its rider's gear archive, but `loadArchive` fetched the whole file and kept it as one
+Blob: 15-38 MB raw in the Xbox HD set (2.6-4.1 MB brotli on the wire), 3-11 MB in the PS2 set. With the switch on,
+`web/archive-ranges.js` reads `WARDROBE/<ID>/gear.tex` and `gear-xbox.tex` by HTTP ranges: the head and index first, then only
+the entries a package asks for. `textures.tex` and the world library stay whole files: the default outfit uses nearly all of them.
+
+- **Reads:**
+  - First `bytes=0-131071`. The Xbox HD gear indexes are 52-99 KB; a longer one gets a second range.
+  - Then one range per entry, read once and kept with the archive (`entryBlob`).
+  - The rider archive budget (`trimRiderArchives`) counts the bytes held: head + entries.
+  - charselSettle's abort signal stops the head read.
+  - A network failure is retried once, then the whole file is read through web/downloads.js, which retries it again.
+- **Checks:** a range answer counts only when it is the exact bytes asked for:
+  - 206, `Content-Range` with the asked start and end (or the end of the file);
+  - no content coding, and `X-Decoded-Length` (when sent) equal to the range total;
+  - a body of that length.
+  Anything else, or a later entry that fails, sets `rangeState.broken`: that archive and every later one in the page is read
+  whole, with the same bytes.
+- **Hosting:**
+  - Probed on 2026-10-15: a Range request for `gear-xbox.tex` at the Cloudflare edge was answered from its cached brotli copy,
+    `content-range: bytes 0-131071/3224050` (the total is the brotli size) with `content-encoding: br`. Asked with
+    `Accept-Encoding: identity`, the edge decoded the bytes of that compressed range. Those offsets are useless, so the checks
+    above fall back.
+  - The fix is the `?identity=1` URL:
+    - `deploy/edge-worker.js` gives it its own edge cache key (`?g=<gen>&identity=1`) and sends `Accept-Encoding: identity`;
+    - `web/server/mp-server.mjs` never serves a precompressed copy for it, so the edge caches the file itself and cuts real ranges.
+  - Requests without the query (music `.mus`, speech `.dat`, every whole file) are unchanged.
+  - The browser itself sends `Accept-Encoding: identity` with a Range header. The origin and Vite dev already answer single ranges.
+- **HTTP cache (three visits on one profile):**
+  - Chrome keeps every range (sparse entries): each one is a 304 on the next visit.
+  - WebKit keeps at most one 206 per URL, and not on every visit. One URL per range (`&at=<start>`) kept none, so it was dropped.
+  - So a Safari repeat visit reads its ranges again: 130-200 KB per outfit archive, against a 304 for the whole file.
+- **Measured** (scratchpad `range/`; the Vite server throttled to 40 ms + 50 Mbit/s, brotli for br clients as the origin does):
+
+  | load (Zoe in a custom outfit) | whole file | ranges |
+  |---|---|---|
+  | Select Character preview, Chrome (brotli, as on the live site) | 3.07 MB, model 3.5 s after settle | 192 KB, 0.51 s |
+  | Select Character preview, WebKit (no br over http) | 21.5 MB, 4.5 s | 192 KB, 0.77 s |
+  | Race load, Xbox HD set (Chrome, brotli) | 3.07 MB | 192 KB |
+  | Race load, PS2 set (WebKit) | 5.0 MB | 135 KB |
+
+  - The page keeps about 200 KB instead of the whole archive Blob.
+  - Per rider (raw bytes): an outfit's FE preview needs 1-2 gear entries (16-96 KB), the same ones as its race package; the
+    archives are 2.6-4.1 MB brotli.
+- **Checks:**
+  - `web/test-archive-ranges.mjs` (npm test):
+    - every entry of Zoe's and Griff's gear-xbox.tex, Mac's PS2 gear.tex and Brodi's small one (891 entries) equals the
+      whole-file slice;
+    - every 4th entry decodes to the same texels (BC to RGBA, PNG to RGBA);
+    - one entry of Moby's 37.7 MB archive costs 192 KB;
+    - the 200 and edge-brotli answers fall back with the same bytes.
+  - In WebKit and Chrome pages, 40 entries of Moby's archive read by ranges equal a whole fetch.
+  - test-edge-worker and test-precompress cover `?identity=1`.
+- **Live check (2026-10-15, after the deploy):** WebKit and Chrome, three outfit riders in turn. 7 range requests and no
+  whole-file read (no fallback); 610 KB transferred against 9,952 KB with the switch off; 608 KB held against 71-109 MB decoded.
+  Ready to flip.
+
 ## Rider texture archives (phase 2)
 
 On the disc each character's textures are one archive: PS2 `DATA/CHAR/<X>TXP.BIG` (ALLEG, ELISE, GRIFF, KAORI, MAC,

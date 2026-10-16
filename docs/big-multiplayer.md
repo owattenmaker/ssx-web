@@ -173,6 +173,10 @@ LOAD (course) -> WINDOW (time limit) -> OVERTIME (runs in progress finish) -> PO
 
 ### 2.2 Simulation model
 
+- **Collectibles (2026-10-15):** an attempt is a Single Event, so its collectibles are DeadNodes (30C4A8, 0x535C11 != 0): not drawn,
+  not collectable. The page drew them as static props until pv warmVisibility (docs/set-pieces.md "Warm-up and the renderers'
+  visibility"). The boost pickups spin and are collected as in any Single Event.
+
 - **Each client runs a solo deterministic run.** The core is exactly the Single Event one: the rider's own grid seed (slot 0),
   `aiRace.enabled = false` (the lineup `{values: [], enabled: false}`, ai-race.js prepareFixed already maps that to no computer
   rider), no pair world (pairNet is not created), no shared world, no remote FX puppets. Ghosts never enter the core.
@@ -386,6 +390,8 @@ changes. game-tick.js and ai-racers.js are not touched; if TA-3 needs a hook the
 ## 8. Switches
 
 Client (web/pv-flags.js, added to PV_DEFAULTS before any code reads them, all off): `onlineTimeAttack`, `ghostRiders`.
+Later: `taPodiumVote` (the podium hands straight to the vote) and `taPodiumWorld` (the podium's finish stage drawn), live since
+2026-10-15; `taPodiumFit` / `taPodiumLabels` (off) with the server's `MP_TA_PODIUM_FIT=1`, section 11 "The podium's world and its hand-off to the vote".
 Server: `MP_SESSIONS=1` (unset: no sessions). With all of them off, the page and the server behave as today.
 
 ## 9. Open questions for the user (each with a recommended default)
@@ -661,3 +667,99 @@ but with pv onlineTimeAttack off the page offers nothing, and with it on, sessio
   3 ms, ping p95 2 ms, 13.7 KB/s per bot, server ghost out peak 288 KB/s, 0 dropped; podium TEST BOT 02 / 01; the archived window
   verified 3 s after the next load. (stress.mjs warns that its recorded runs carry the core8 hash; both still reproduced.)
 
+### The podium's world and its hand-off to the vote (2026-10-15), pv taPodiumVote, pv taPodiumWorld (live), taPodiumFit, taPodiumLabels
+
+Field report (local/ta-video/ta-podium-vote.mp4): "it should just go from podium -> voting", and "the podium environment is like fucked"
+(the three riders on flat grey slabs under an open, blown-out sky, course pieces around them).
+
+**Podium -> vote (pv taPodiumVote):**
+- Cause: main.js `ui.cb.cutscene` (and cutscenes.js `play`'s `done`) put back the screen that was open when the cutscene started. In a
+  session that is ta-room (follow() moves ctm-objectives to ta-room in the overtime), 'game' (a rider at the gate) or ctm-results. When the
+  podium ends after the server's podium phase (follow()'s guard stops a podium still playing), that screen showed until the next 250 ms
+  follow() opened ta-vote. Measured with a 3 s podium phase: A cutscene -> game -> ta-vote, B cutscene -> ctm-results -> ta-vote
+  (local/video harness: cutscene -> ta-room -> ta-vote).
+- Fix (ta-ui.js podium()): the podium plays with `restore: false`; its end opens ta-results in the podium phase (as before) and ta-vote
+  (voteShown set) once the vote phase is on; any other phase gets the old screen back.
+- With the fixed 20 s podium phase the 11-13 s cutscene ends in the podium phase, so the page shows ta-results until the vote opens
+  (about 7 s). The podium fit below removes that.
+- Switches: taPodiumVote and taPodiumWorld are live since the 2026-10-15 deploy (with warmVisibility).
+
+**The podium phase as long as the scene (server setting podiumFit; pv taPodiumFit, pv taPodiumLabels, both off), 2026-10-15:**
+- Server (web/server/podium-scripts.mjs, sessions.mjs `podiumLength`): at the podium the server picks the winner's scene as the page's
+  ScriptChoice does (cutscenes.js chooseScript, 0x27B0C0). It takes CUTSCENES/index.json's choice list 9 (`win_ps_<char>{a,b,c}`) or 10
+  (`win_ps_cheat` for cheat skins 10..20 / 28), keeps the entries whose mask word 0 holds the winner's base character, then the least
+  shown in this session, then random. Sam takes Mac's; other skins take their base rider's, Zoe without one.
+  - Its number goes out with the results (`podiumScript`, also in a joiner's snapshot).
+  - The phase is the scene's ticks / 60 s plus `podiumMarginMs` (default 0).
+  - With no scene (no table on the assets root, a course without podium steps, an unknown rider) it stays `podiumMs` (20 s).
+  - mp-server: `MP_TA_PODIUM_FIT=1` turns it on, `MP_TA_PODIUM_MARGIN_MS` sets the margin. Off, nothing changes.
+- Page (pv taPodiumFit): plays `results.podiumScript` (steps [{script, flags 1}]), so every page shows the same scene.
+  - A scene watched to its end within 600 ms of the phase's end opens ta-vote at once. Its boxes come with the vote phase (the server's
+    phases step every 250 ms).
+  - A podium still in its last 180 ticks when the vote phase starts plays to its end (at most 3 s more), then opens ta-vote. A slow
+    page's podium is still stopped.
+  - A skipped podium shows ta-results until the vote, as before.
+  - Pages without the switch (or older pages) play their own variant. Their podium is stopped at the vote, with the old screen between.
+- Margin 0, not +0.5 s (the coordinator's call, 2026-10-15). Measured, a page's scene starts 0.1-0.5 s after the podium phase (the 250 ms
+  follow(), the load): 80-495 ms in the e2e runs. So with 0 the vote phase opens just before the scene ends, and the page plays the
+  last ticks into it. With +0.5 s the scene ended 0.05-0.3 s before the vote, a ta-results flash.
+- Labels (pv taPodiumLabels): a rider's place and name are drawn only while the label lies wholly inside the picture, between the NIS
+  letterbox bars (60 of 480 lines each). The PS2 has no such labels; they are port-only (the user's rule, TA-5). Before this, a
+  close-up drew the winner's label on the top bar, above the step out of frame.
+- Checks (local/ta-podium/e2e.mjs with E2E_FIT=1, the default switches plus taPodiumFit and taPodiumLabels): Chrome + Chrome and
+  Chrome + WebKit pass. Both pages played the server's scene (#61 / #62). The phase was 11.67 s / 10.83 s, not 20 s. Every page went
+  cutscene -> ta-vote, with the vote screen opening as the scene ended (0-80 ms). The close-ups had no labels on the bars.
+  test-podium-fit (new, in test:all) runs every podium course x base rider on the game data, the cheat and skin rules, and the phase on
+  a fake clock (off, on, margin, no table, a joiner's snapshot).
+
+**The podium's world (pv taPodiumWorld):**
+- The set: the podium scripts play at the course's finish stage, the static instances `mdl_<LOC>_end_bdlg_*` (Snow Jam: body, podium
+  steps, podium floor, `eb_podium_int`) in world.json. Anchors 20 / 21 / 22 are locator 0 (`mdl_<LOC>_end_bdlg_podium_steps_1000`)
+  plus the step offsets. There is no separate stage world or LiveComp for it.
+- PS2 (ARMSX2, local/ps2-capture/ctm-parity/runs/race-f: the Snow Jam final won, WS12 #60 `win_ps_zoea`, Zoe / Mac / Psymon, samples
+  14780..15471, script time = sample - 14779): the riders stand on the numbered steps inside the stage: dark blue walls, the SSX 3
+  screen above, the coloured spot beams and lights; the open side shows the finish area (banners, the red crash bag).
+- Cause: those instances sit in texture chunks (Snow Jam 25 / 27 / 28 / 34; the stage is chunk 27) that the race start does not hold.
+  The renderer draws a static instance only while its chunk is resident (0x22A5A0, set-pieces-renderer.js). The streamer (0x3A8290, run
+  every game update from 0x2306A8, with the outer camera's eye +0x20 and range 1.5 x +0x08) follows the race camera in the port. During
+  a NIS the PS2's outer camera is the NIS camera, and a PS2 podium always follows a finish, so these chunks are resident. In time attack
+  the podium plays with no game update running and the race camera at the start gate (the objectives card, a restart, or the results'
+  auto replay, which restarts from the gate). So chunks 25 / 26 / 27 / 28 / 29 / 34 were state 0, and 163 of chunk 27's meshes were
+  not drawn. What was left: the step slabs and floor, which have no chunk. The open sky let the sun flare blow the frame out.
+- Measured on a ridden Single Event (local/ta-podium/ride-chunks.mjs): the core's streamer holds exactly 25 / 27 / 28 / 34 (and the
+  locked chunks) near the finish (tick 14000), then the results' auto replay resets it to the start's set. So the career podium (played
+  at the finish, before the results) has the stage. The time-attack podium is the only one without it.
+- Fix: while the time-attack podium plays (ta-ui.js passes `chunksAtEye`), main.js gives the NIS eye (cutscenes.js sectionFeed ->
+  host.sectionPoint) to `setPieceRenderer.chunkEye()`. The renderer then replaces the core's residency with the streamer's steady state
+  for that eye: web/chunk-view.js walks the same SECTIONS/sections.json chunk trees and range (0x3AA028 / 0x3A9E50). That gives the
+  requested chunks plus the locked ones, the set the PS2 holds after a finish. This is draw eligibility only. The core's streamer state
+  (in the rider-context snapshot) is not touched. Feeding the core's streamer itself needs a new core export (docs/core-migration.md
+  "Follow-up: the texture-chunk streamer on the NIS camera").
+- Not confirmed: the NIS camera's far plane. chunk-view uses sections.json `viewer_range_cm` (W+0x290, the range the streamer held at
+  the race start). The distance is in doubles, not in the EE's rounding.
+- The stray pieces: the red crash bag and the banners near the steps are in the PS2 frames too (race-f sample 14792). With pv
+  warmVisibility on as well (the pickups agent's switch), the podium draws the same chunk sets.
+
+**Checks** (local/ta-podium/: harnesses sbs.mjs, probe.mjs, ride-chunks.mjs, e2e.mjs; sheets/):
+- PS2 vs the port, before / after, at script times 13 / 121 / 223 / 322 / 423 / 523 (the closest camera alternative by PSNR):
+  sheets/ara1-ps2-before-after.png. After: the stage, the screen, the walls, the beams and the numbered steps line up with the PS2.
+  The close-ups (322+) frame a little differently on every alternative. This is the camera, not the environment, and was not looked
+  into.
+- Other courses (no PS2 capture): Metro-City (BRA2) and Gravitude (ERA5) were broken before and have their stage after. The Junction
+  (CHP2, every chunk resident at the start) is the same both ways (sheets/). test-chunk-view: on all 14 courses with podium steps,
+  the podium interior's chunk is resident in the steady state (8 of them do not have it resident at the start); Snow Jam's steady set
+  equals the core's streamer near the finish.
+- WebKit: the same stage on Snow Jam (sheets/ara1-webkit-on.png).
+- Two pages (e2e.mjs: Online Lobbies -> Create Lobby -> join -> both ride -> TIME'S UP -> podium -> vote -> the next window), both
+  switches on:
+  - Chrome + Chrome, 3 s podium phase: cutscene -> ta-vote on both pages.
+  - Chrome + WebKit, 3 s podium phase: cutscene -> ta-vote on both.
+  - Chrome + Chrome, default podium: cutscene -> ta-results -> ta-vote. The podium is inside the stage, with the names over the steps
+    (sheets/e2e-podium-before-after.png).
+  - Switches off: cutscene -> game -> ta-vote and cutscene -> ctm-results -> ta-vote.
+  - One switch-on Chrome + Chrome run failed e2e.mjs's restart check (its screen watcher saw ctm-results before the Restart, a race in
+    the harness before the podium). The other runs passed it.
+- Tests (switches on, PAGE_PV, and off): test-ta-page, test-presentation, test-records-verifier, test-replay, test-online-records;
+  test-mp-session, test-cutscenes, test-chunk-view, test-set-pieces-renderer (off).
+- Seen, not changed: in a close-up the winner's label is drawn over the letterbox bar. It is placed above the step, which is off the top
+  of the frame.

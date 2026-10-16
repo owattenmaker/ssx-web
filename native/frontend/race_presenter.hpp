@@ -92,8 +92,17 @@ public:
             }
         }
         if (v_.hasCamera) {
-            std::memcpy(cameraPrev_, cameraValid_ && !reset ? cameraCur_ : v_.camera, sizeof cameraPrev_);
-            std::memcpy(cameraCur_, v_.camera, sizeof cameraCur_);
+            // a replay draws through its replay camera (web/game-tick.js present: cameraPose = rec.replayCamera ?? rec.camera)
+            const bool replayPose = replayView && v_.hasReplayCamera;
+            const float* pose = replayPose ? v_.replayCamera : v_.camera;
+            std::memcpy(cameraPrev_, cameraValid_ && !reset ? cameraCur_ : pose, sizeof cameraPrev_);
+            // a cut (the replay camera's id [9] changed, or the last pose was no replay camera's): no blend
+            if (replayPose && cameraValid_ && !reset && !(cameraCutKnown_ && cameraCut_ == v_.replayCamera[9])) {
+                std::memcpy(cameraPrev_, pose, sizeof cameraPrev_);
+            }
+            std::memcpy(cameraCur_, pose, sizeof cameraCur_);
+            cameraCutKnown_ = replayPose;
+            cameraCut_ = replayPose ? v_.replayCamera[9] : 0;
             cameraValid_ = true;
         }
         // web/game-tick.js present: terrainRefinement.update(state 0..2, the contact patch, rec.clock)
@@ -112,6 +121,20 @@ public:
     bool flushTerrain = false;
     bool cameraValid() const {
         return cameraValid_;
+    }
+    // the auto replay behind the results (web/replay.js): the replay camera's poses
+    bool replayView = false;
+    // main.js startRun(R) for the replay: no camera pose until its first tick, the rider frames and the refined terrain start over
+    void restart() {
+        cameraValid_ = false;
+        cameraCutKnown_ = false;
+        human_->reset();
+        for (auto& n : npcs_) {
+            n->reset();
+        }
+        if (refinement_) {
+            refinement_->reset();
+        }
     }
     // quality.riderTextures (frontend/quality.hpp), read when the riders' renderers are made
     std::string riderTextures = "xbox";
@@ -309,6 +332,8 @@ private:
     float cameraPrev_[9] = {};
     float cameraCur_[9] = {};
     bool cameraValid_ = false;
+    bool cameraCutKnown_ = false;
+    float cameraCut_ = 0;
 };
 
 }  // namespace ssx_native

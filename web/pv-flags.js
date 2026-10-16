@@ -201,6 +201,9 @@
 // mpPreRace (mp pre-race agent, docs/multiplayer.md "Pre-race"): an online race starts as a Single Event does (WS10 intro list 4 -> 5 with
 // every racer at its grid slot, the objectives card over the gate idle, Continue, then WS3's 3-2-1), the intro started on one server
 // instant and the countdown on the server's GO once every racer pressed Continue (web/net/mp-game.js, web/server/mp-server.mjs preRace).
+// mpBoard (multiplayer board agent, docs/multiplayer.md "Multiplayer leaderboard"): after an online race's final results, Continue opens
+// the event's online-race board (61toptimes, web/mp-board-ui.js) on the server's unverified board (web/server/race-board.mjs); with no
+// saved Player Name the game keyboard asks for one and saves it on the profile (ssx3.playerName); later races save under it at once.
 // coreRiderManager (core-migration agent, docs/core-migration.md slice M3): a race's computer riders run on the core's rider manager
 // (web/rider_manager.cpp: 0x128AF0's stages, the shared RNG cursor, the rider pairs, the shared world, the FX passes) instead of
 // web/ai-racers.js's choreography; the event set-up stays in ai-racers.js. Needs a core with manager_configure. Off: ai-racers.js.
@@ -218,6 +221,9 @@
 // coreWorldEvents (core-migration agent, docs/core-migration.md "B"): the peak world's station decisions in the core (web/peak_world.inc
 // peak_run_setup: a peak run's station split on the HUD, a booth / lodge door ending a Big Challenge), made at the end of peak_world_tick
 // where web/free-ride.js drainEvents made them; needs a core with peak_run_setup. Off: the page decides.
+// coreNetWorld (core-migration agent, docs/core-migration.md "M7"): an online race's shared-world replication (the triggers shared once,
+// the boost pickups two racers took inside the 60-tick debounce, the other racers' world events) in the core (web/net_world.inc): the
+// host moves the WORLD packets' bytes; needs a core with net_world_apply. Off: web/net/mp-game.js and web/net/pickup-arbiter.js.
 // mpKnockouts (core-migration agent, docs/core-migration.md "M7"; a fix, a behaviour change): an online crash attack counts the attacker's
 // knockout (107E70 -> 10E468 -> 119400: +0x128, popup 0x2C, the meter award 10E098 category 2), as offline and in the PS2's 2-player mode
 // (no 0x535C11 test); the attacker's client credits it when its prediction of the remote victim's reaction is the attacked crash.
@@ -304,8 +310,67 @@
 // crowdSeqPs2 (sfx RNG agent, docs/audio-logic.md 5.6): the crowd .eam sequences are read with Crowd.bnk and a reaction posts its
 // notes in its own tick, one sequence tick = 10 ms x 94 / 93.75 (3B5540: 100 service ticks per 94 IOP wakeups at 48000 / 512 Hz).
 // Off: the notes post when the sequence's fetch resolves (a tick or more late) at 10 ms a tick.
+// mpEstimateClock (mp results-clock agent, docs/multiplayer.md "Results of racers still on course"): in an online race's Results a racer
+// still on course has no time (its time is left empty, after the timed rows, before DNF) until its recorded time comes
+// (web/net/result-rows.js). Every online racer is a human, and the PS2 never estimates a human: its results handlers (0x23A760 race,
+// 0x23AE00 multiplayer race) give 0x122D78 only to riders still on course once every human has finished (12A250, then 0x23A954 /
+// 0x23AF74). Off: the 0x122D78 estimate with this page's clock, stopped at its finish, against the racer's newest distance every
+// frame, so the row ran down toward this page's own finish time until that racer finished (field report 2026-10-14).
+// resultsScreenAttr (mp results-clock agent, docs/multiplayer.md "Results of racers still on course"): ui.showResults (the Single Event /
+// online Results from game-tick.js's results tick) writes #stage data-screen = 'results', as ui.set does. Off: data-screen stays
+// 'game' under those Results, so diagnostics.js never logs the screen (the 2026-10-14 diag.log showed the first finisher going
+// game -> mp-lobby) and the CSS keyed on data-screen (style.css widescreen 1, mobile.css touch labels) treats them as the ride.
+// charselSettle (charsel-lag agent, docs/characters.md "Select Character: cursor and preview load"): Left / Right on Select Character
+// moves the cursor at once, as the PS2's UIMenu does (input kind 1, 0x181980 -> 181BD0: stats now, then 1A0508 -> 19E588). The preview
+// model hides on the change and its load starts once frame > the stamp first change + 4 (19E588 +0xCD4; a move while the stamp is
+// pending only retargets +0xC24; renderer frame counter +0x5A74, 0x382B10); 19F138 then starts it (19E960, which unloads the one in
+// flight: a later load supersedes it, its downloads aborted). The rider commit (main.js selectRider, wardrobe.js outfitRider) runs at
+// that load, latest wins, and no longer holds ui.ready; ensureRider and Cross wait for it. Off: each press waited for the outfit's
+// files (wardrobe.json, parts.bin) and dropped the presses meanwhile (Safari field report 2026-10-15: 9 of 11 presses dropped).
+// warmVisibility (ta-collect agent, docs/set-pieces.md "Warm-up and the renderers' visibility"): after the race warm-up (main.js
+// warmupRender) puts back every object's visible flag as it was when the warm-up began, the renderers that own a mesh's visibility
+// apply it again (set-pieces-renderer.js / peak-set-pieces.js refreshVisibility: the core's DeadNode / RestoreNode / Hide state and the
+// texture chunks; avalanche-state.js draw refresh). They change a mesh only when the core's state changes, so a change made during the
+// warm frames was undone for good. Field report 2026-10-15: in time attack (no computer-rider lineup to prepare, so the warm-up begins
+// before any frame applied the event's DeadNodes) the 30 Snow Jam collectibles stood as static props. Off: the warm-up's restore stands.
+// taPodiumVote (ta-podium agent, docs/big-multiplayer.md "The podium's world and its hand-off to the vote"): the time-attack podium
+// cutscene plays with restore: false, and its end opens the next screen itself (ta-results in the podium phase, ta-vote once the vote
+// phase is on). Off: the end put back the screen the podium started from (ta-room after the overtime), shown until the next 250 ms
+// follow() opened the vote (field report 2026-10-15: cutscene -> ta-room -> ta-vote).
+// taPodiumWorld (ta-podium agent, same section): while the time-attack podium plays, the static instances' texture-chunk residency
+// (0x22A5A0) is the steady state of the chunk streamer 0x3A8290 for the NIS camera's eye (the outer camera +0x20 during a NIS): the
+// chunks the eye requests through the chunk trees (0x3AA028, range 1.5 x far) and the locked ones, as after a finish. Off: residency
+// follows the race camera, which in time attack waits at the start gate, so the finish stage (Snow Jam chunk 27) was not drawn and the
+// riders stood on bare slabs under the open sky.
+// archiveRanges (charsel-lag agent, docs/asset-formats.md "Texture archives: range reads"; a port rule, the PS2 reads its own disc): a
+// rider's gear archive (WARDROBE/<ID>/gear.tex, gear-xbox.tex) is read by HTTP ranges, head + index and then only the entries a
+// package asks for (web/archive-ranges.js): an outfit's 1-2 gear entries (16-96 KB) instead of the whole 15-38 MB file (2.6-4.1 MB
+// brotli). A range answer that is not exactly the asked bytes (a host without ranges, an edge cutting ranges of its brotli copy)
+// falls back to the whole file. Needs deploy/edge-worker.js ?identity=1 live first. Off: every gear archive is read whole.
+// taPodiumFit (ta-podium agent, docs/big-multiplayer.md "The podium's world and its hand-off to the vote"): the time-attack podium plays
+// the scene the server picked (results.podiumScript, sessions.mjs podiumFit, which times the podium phase by it), and a podium in its
+// last 180 ticks when the vote phase starts plays to its end (at most 3 s more), from which ta-vote opens; a scene watched to its end
+// within 600 ms of the phase's end opens ta-vote at once (not skipped: those see ta-results until the vote). Off: the page's own
+// ScriptChoice, and a podium still playing at the vote is stopped.
+// taPodiumLabels (ta-podium agent, same section): a podium rider's place and name label is drawn only while it lies wholly inside the
+// picture between the NIS letterbox bars. Off: a close-up drew the winner's label on the top bar.
+// charselEntryOutfit (charsel-lag agent, docs/characters.md "Select Character: cursor and preview load"; needs charselSettle): on
+// entering Select Character the first rider shows in its saved outfit. The PS2's entry (0x181308 / 0x1812A8 -> 181BD0 -> 1A0508 ->
+// 19E588) asks for the profile's rider and the slot assembles it from the profile's rows (19E960 -> 14AD28). Here a rider whose
+// outfit packages are not prepared yet gets the reload (stamp + commit, wardrobe.js outfitPrepared). Off: it showed its default
+// package until it was picked again (the outfit is prepared by the pick), e.g. after a page load.
 export const PV_DEFAULTS = Object.freeze({
+  charselEntryOutfit: true,
+  taPodiumFit: true,
+  taPodiumLabels: true,
+  archiveRanges: true,
+  taPodiumVote: true,
+  taPodiumWorld: true,
+  warmVisibility: true,
+  charselSettle: true,
+  resultsScreenAttr: false,
   sfxPs2Rng: false,
+  mpEstimateClock: true,
   crowdSeqPs2: false,
   speechRange: false,
   flyover: false,
@@ -369,6 +434,7 @@ export const PV_DEFAULTS = Object.freeze({
   coreWorldEvents: false,
   coreWorldState: true,
   coreContactStream: false,
+  coreNetWorld: false,
   mpKnockouts: true,
   stationSplitPs2: true,
   nisOnTicks: true,
@@ -387,7 +453,8 @@ export const PV_DEFAULTS = Object.freeze({
   rivalStartAudio: true,
   mpTickLock: true,
   feCursorRestore: true,
-  frameGateRecover: true
+  frameGateRecover: true,
+  mpBoard: false
 });
 const overrides = new Map();
 function fromQuery() {

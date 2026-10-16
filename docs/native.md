@@ -282,14 +282,30 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
     keyboard.
   - A Single Event race ends in its results (frontend/single_event.hpp, below): on the core's results tick (tick_results' show,
     finish + 408) a new top-5 time opens "Top 5 Record Times" (61toptimes), else "Single Event Results" (43final_standings). The
-    live ticks stop at finish + 409 and the screens stay up over the stopped world. The menus read the keys and the pad as the page's
-    do (frontend/menu_input.hpp). Next event and Quit leave the app for now (no event select or title yet). Restart does nothing yet:
-    it waits for the 87yndialog and world state 13's restart. Replay is greyed, as the page greys it without a replay. Freestyle
-    events still end at the live stop.
+    menus read the keys and the pad as the page's do (frontend/menu_input.hpp). Freestyle events still end at the live stop.
+  - The auto replay plays behind them, as on the page (web/replay.js 'auto', main.js replayFrame). The live run keeps its start
+    snapshot (liveStart: the run's snapshot fields and the start words of the game RNG, the visual stream and gp+0xA0C) and every
+    tick's pad up to the finish. When the results are up, the live ticks stop and the run starts again from the snapshot on the same
+    cores (Verifier::replayRestart = main.js startRun(R); GameAudio::replayRewind). It steps the recorded pad on its own clock
+    (min(dt, 0.25)) and draws through the replay camera: the course's camera triggers, replay_camera_begin(0x5D) and tick_end's
+    [10..19] pose, no blend across a cut. Past the finish tick it rewinds and loops.
+  - Results menu: Next event and Quit leave the app for now (no event select or title yet). Replay is greyed, as the page greys it
+    without the full replay. Restart opens 'Restart / Are you sure?' (87yndialog over the PDA frame, frontend/ctm_pda.hpp, with the
+    20-frame exit before the choice acts). Yes starts the round again as the page does without cutscenes (play(): startRun as a live
+    start, the replay stopped). The page's gondola ride (world state 13) and the round card come with the cutscenes.
+    **Paused 2026-10-14 before this was built:** the Restart prompt and the restart are written (app.cpp restartRun,
+    single_event.hpp Screen::Restart, ctm_pda.hpp) and app.cpp compiled, but the link stopped on another agent's in-progress
+    web/net_world.inc (std::set without <set>). The Restart path has not been run or checked against the page yet; see the resume
+    point below.
   - The records table is saved in the user's app data folder (SDL_GetPrefPath "ssx3/native", save.json: `{version, records}` as
     the page's save keeps them). `--save PATH` names another file. Hidden and shot runs keep no save unless `--save` is given.
-  - QA: `--results-log OUT.json` writes the standings and the outcome when the results open. With the shot, `--canvas-log
-    OUT.json` writes that frame's UI canvas calls and `--ui-clock F` fixes the results panels' timeline frame.
+  - QA:
+    - `--results-log OUT.json` writes the standings and the outcome when the results open (`.1`, `.2`... for the runs after a
+      Restart).
+    - With the shot, `--canvas-log OUT.json` writes that frame's UI canvas calls and `--ui-clock F` fixes the panels' timeline frame
+      (the PDA opened and its popup set at 0).
+    - `--shot-replay N` shoots the frame after the auto replay's tick N; `--shot-run K` shoots in the run after K Restarts.
+    - `--menu-keys K1,K2,...` sends menu keys, each once the screen takes input.
   - Keys: web/pad-input.js Classic; gamepads through SDL's standard mapping; Escape quits during the race and is Triangle (back)
     on the results.
 - `ssx3_render_shot ASSETS RUN.ssxr OUT.png --tick N`: headless, no window.
@@ -322,7 +338,10 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
     same log as `ssx3 --audio-log`. Use it with `--paced` and one chunk (`--chunk` at least the tick), because a gap between page
     calls runs extra frames without ticks.
   - `--pv LIST` passes `?pv=` (`-onlineRecords`: the PS2's local records table, as native keeps). `--ui-clock F` fixes the results
-    panels' timeline frame. `--no-replay` greys Replay, as native has no full replay yet.
+    panels' timeline frame (and opens the PDA and its popup at 0). `--no-replay` greys Replay, as native has no full replay yet.
+  - `--replay-ticks R` steps the auto replay behind the results R ticks (window.__replay.step) after tick N: ssx3 `--shot-replay
+    R - 1` draws the same frame. `--keys K1,K2,...` sends menu keys after tick N, each once the screen takes input (the frame clock
+    runs from then on, so the UI frame counter steps).
   - Past the pad's last frame the run holds that frame, as a replay's pad stream (and the native reader) keeps its last values. So
     a run can go on to its results.
 - native/tools/compare-canvas-log.mjs PAGE.json NATIVE.json: the two logs compared entry by entry, numbers exactly.
@@ -347,6 +366,8 @@ a Snow Jam frame is within a mean 4.8 / 255 of the page's (below).
 | frontend/rider_fx.cpp, draw_order.hpp | board-trail.js, wake-renderer.js, snow-renderer.js, snow-billboard.js, boost-renderer.js, opponent-fx.js, snow-composite.js, ps2-draw-order.js | the trail ribbon / roof in five stencil passes after the world's opaque draws (renderOrder 500 .. 504); the encoded pass: the fogged world bytes in their own target, the wake, the ten snow emitters (three's lookAt quaternion, Matrix4.compose, the 128-pixel extent cap, the flipbook frame), the boost ribbons, aura faces and streamers (strm rows flipped), drawn with the world depth in three's transparent order (the 0x364240 key, then each geometry's bounding-sphere depth as three first computed it, then creation order); every computer rider's from its own core, culled by its 100 m sphere (pv fxCull) |
 | frontend/loading_screen.hpp, hud_canvas.cpp fillPolygon / rotated drawImage, hud_widgets.hpp multiplyRegion | loading-screen.js, load-meter.js | the event load screen: GL.LUI 110ctrl_load from LOADING/loading.json (frame-0 properties, timeline events, linear animation tracks, layers), the sprites (tinted copies of a page region: bilinear inside the source rect, multiply, destination-in), the gouraud quads as solid or two-stop linear-gradient fills, the rotated snowflakes, the LUI text (FEFONT x 0.79), the keyboard panel (Classic / Simple rows, key caps) or the DualShock picture, the load hint (0x245950's rotation), the percentage of the load meter (work stages by their typical time, creeping between reports, never backwards) and the fades. ssx3_ui_shot against ui-shot.mjs: every canvas call equal (748, 442 and 656 calls at three states); pixels within 0.28 to 0.67 mean |
 | frontend/career_data.hpp, single_event.hpp, menu_input.hpp | career.js (raceResult, heatRecord, addRecord, completeEvent, records), career-ui.js (finish, drawResults, drawRecords, resultItems, items / disabled / key / choose / back of ctm-records and ctm-results), locale.js, race-time.mjs, menu-rules.js, screen-phases.js, gamepad-menus.js | a Single Event race's results: the times, ranks and medal through the core's result kernel (engine/career_rules.hpp), the top-5 entry and the saved table (the PS2's local one: the page's pv onlineRecords boards are not in native), the two screens' rows, messages and menus (wrapping, skipping greyed items, the 31-frame intro lock, Single Event focus on Restart) and the menus' pad history and key repeat. sj-ai to its results tick: the page's outcome, screen and focus, 290 canvas calls equal but one; ssx3_ui_shot `--screen single` against ui-shot.mjs in 6 states with key presses: canvas calls equal but one (the cut canvas's ±1) |
+| app.cpp RunReplay, verify/replay_session.hpp replayRestart, race_presenter.hpp replayView, game_audio replayRewind | replay.js (liveStart, record, finish, start('auto'), rewind, frame), main.js (createRaceReplay host, replayFrame, startRun(R)), game-tick.js (the replay camera), game-audio.js replayRewind | the auto replay behind the results: the start snapshot, the recorded pad, the restart on the same cores, the replay camera and its cuts, the loop. sj-ai's replay ticks 300 / 3000 / 9000 behind the results against browser-shot `--replay-ticks`: 0.38 / 0.74 / 0.41 mean (local/native-port/shots/fe-sj-ai-replay*) |
+| frontend/ctm_pda.hpp | ctm-pda.js (frame, opening, dialog) | the PDA frame (PDATemplate's layers from 11, over the world) and the Yes / No popup 87yndialog: the results' Restart prompt |
 | frontend/terrain_refinement.hpp, world_renderer.cpp terrainCommit | terrain-refinement.js, terrain-detail.js, terrain-mesh.js, terrain-worker-core.js, terrain-overlays.js | the near-rider terrain: every 0.1 s of the game clock (or a new contact patch) the plan of up to 8 patches within 30 m (2 m hysteresis, the contact patch first) at 32 x 32 with their neighbours' edges matched, each patch's bicubic mesh from its polynomial (JS's evaluation order, Math.hypot), committed on the frame after (the page's worker reply): the coarse triangles of the patches that change degenerated or restored in the course's index buffer, the refined meshes drawn with their patch's material and light-page map |
 | frontend/audio_decode.hpp | audio-decode.js | EA .pt headers, EA-XA, PS-ADPCM, PCM8, MicroTalk (UTK) streams and banks |
 | frontend/webaudio.hpp/.cpp | (Chromium's Web Audio) | AudioContext in 128-frame quanta, AudioParam automation (cancelAndHold, event pruning), gain, buffer source (linear interpolation, loops, sub-sample starts), equal-power panner, lowpass biquad, the destination; one recursive lock between the game and audio threads |
@@ -472,6 +493,28 @@ What differs:
     121818: web/game-tick.js calls tick_input, race_begin, tick_rider, then gameAudio.riderPass, then tick_progress. With the same
     point and rules, native's picks equal the page's. A reaction posts all its crowd notes in its own tick, at
     10 x 94 / 93.75 ms a sequence tick, on the audio clock. Compare the post tick and the delay, not the note's start tick.
+  - **pv sfxPs2Rng: the draws native must make** (once it flips, the combined ?simtrace hash includes the visual words they move).
+    The page's draw sites, in order; each draw is one BXrand step (0x317A08) on the human core's `visual_rng_words`:
+    - **The rider pass** (web/game-tick.js: tick_input, race_begin, tick_rider, then `gameAudio.riderPass`, then tick_progress).
+      sfx-game `riderPass` takes the riders sfx-game already knows, in slot order. It reads each rider's queued `audio_events` (without
+      clearing them) and fresh `audio_telemetry`, and draws, per event in order:
+      - AE_CRASH (3): a crash draw if `(human || listener distance < 100) && surface b != 2 && b != 3`; then a grunt draw if the grunt gate
+        is open and the rider is the human; then a crowd draw if `human && |a| > 0 && crowd.reacts('fall', level)`.
+      - AE_CRASH_LOOP (4) with b != 0: a crash draw (the surface is telemetry [5]).
+      - AE_CRASH_GRUNT (6) kinds 0 / 1: a grunt draw (gate, human). Kind 2 and AE_SOFT (18) draw nothing, but they close the gate for the
+        rest of the pass.
+      - AE_LANDING (2): a crowd draw if `human && a > 0 && crowd.reacts('trick', level)`.
+      - AE_PAIR (24): a grunt draw for the target B (c) when `(A || B human) && CHARACTER > 0 && neither motion is 2` and the gate is open.
+      - The grunt gate: CHARACTER bus > 0, not a replay, the rider not finished, no grunt voice playing (any rider's, `G.gruntVoice`), and no
+        grunt already decided in this pass.
+      - The values are kept per (rider, event index). The tick's dispatch takes them by kind. A queue that has not been drained yet is
+        not drawn again (`r.preSeen`).
+    - **The tick's audio** (`gameAudio.gameTick` -> sfx-game `tick`): an event the pass did not see draws when its dispatcher runs (same
+      gates). The anticipation pick (crowd.update -> 2A5AE8) and the finish cheer `crowd.trick(2)` (286EA0) draw here.
+    - **Formulas:** crash `0x30 + (r & 0x7FFF) * 3 / 0x7FFF`; grunt kind 1 `(r & 0x7FFF) * 3 / 0x7FFF`, kind 0 the same + 3; crowd
+      `list[r % n]`.
+    - **Replays:** the replay start does not restore 0x4FF018 (main.js startRun), as the PS2's 0x26DBF0 restores 0x4FF030 only. A
+      replay draws with its own gates, so the replay checks compare `__simTrace.sim`: the hash without the camera and the visual words.
 - the startup timing: the native first frame loads the riders' renderers (about 0.9 s, after the world-load audio), which the page
   does under its load screen. So the lines and DJ timers after the world load start later natively. This is fixed with the load
   screen in the FE flow.
@@ -486,11 +529,22 @@ What differs:
 - the two renderer gaps (re-shot with `--paced`): sj-solo 15300 was not a valid comparison (the run's pad ends at 15199 and the page
   stops ticking at its results, and the page ran the 5-rider default lineup: the solo fixture needs `--lineup` with the replay's
   `enabled: false` lineup). At valid ticks the finish frames now agree (below); sj-ai 200 is written up above;
-- the FE screens and the game flow: the load screen and a race's results are done (above). Next:
-  - the auto replay behind the results (web/replay.js 'auto': startRun on the start snapshot, the recorded pad with the replay
-    camera). It is the results frames' main difference now: the page replays the run behind the panel, native shows the stopped
-    finish camera (local/native-port/shots/fe-sj-ai-results);
-  - Restart (the 87yndialog over the pause PDA, then world state 13), the results' audio, and the freestyle results;
+- **Resume point (paused 2026-10-14 at the user's request):**
+  1. Build `ssx3` once web/net_world.inc compiles. Run ctest; its 6 fast tests and core_verify_replays passed after the results
+     work and before the Restart edits.
+  2. Check Restart on sj-ai. Native: `--menu-keys Space,ArrowUp,Space` from the results (Restart, then Up to Yes, then Yes).
+     Compare `--results-log`'s `.1` file for the second run with the first, and check that `--shot-run 1` frames match the first
+     run's frames at the same tick. Page: browser-shot `--keys Space,ArrowUp` with `--ui-clock 120 --canvas-log`, for the
+     87yndialog's canvas calls.
+  3. The slow app load (about 20 s, against about 7 s for ssx3_render_shot's load) is still not explained. The sequential load
+     was as slow, so the loader thread is not the cause. Time the loader stages next.
+  4. Then the order the coordinator set: the results' menu sounds, the title, the Single Event select, the objectives card and
+     the intro (the cutscenes, which the Restart's gondola ride needs too), then tier high's MSAA and render scale.
+  5. When pv sfxPs2Rng flips on the page, native's crash and grunt sfx picks need the same presentation-RNG draws. The sfx agent
+     documents the draw sites, and the coordinator says when.
+- the FE screens and the game flow: the load screen, a race's results and the auto replay behind them are done and checked;
+  Restart without the cutscenes is written but not yet run (above). Next:
+  - the results' menu sounds (web/audio-menu.js), and the freestyle results;
   - then the title, the Single Event select, the objectives card and the intro;
 - tier high's MSAA (4 samples on the world and the fog-renderer pass targets, main.js applyAntialias) and render scale 'full' (the
   display's pixel ratio): the native app defaults to tier high, so players see the difference.

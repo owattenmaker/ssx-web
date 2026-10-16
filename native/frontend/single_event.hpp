@@ -8,6 +8,7 @@
 // keeps the PS2's local table, the page's onlineRecords-off path.
 #include "career_data.hpp"
 #include "career_rules.hpp"
+#include "ctm_pda.hpp"
 #include "results_lui.hpp"
 #include <algorithm>
 #include <optional>
@@ -263,13 +264,16 @@ inline RaceOutcome singleEventRace(const CareerData& data, RecordsStore& records
     return out;
 }
 
-// The two results screens of a Single Event (ctm-records, ctm-results) over the stopped world.
+// The results screens of a Single Event (ctm-records, ctm-results) and the results' Restart prompt (ctm-restart: 87yndialog over the
+// PDA frame), over the world behind them.
 class SingleEventScreens {
 public:
-    enum class Screen { None, Records, Results };
+    enum class Screen { None, Records, Results, Restart };
     enum class Action { None, NextEvent, Restart, Replay, Quit };
-    // web/menu-rules.js introLockFrames: 43final_standings / 61toptimes activate at 30, input from 31
+    // web/menu-rules.js introLockFrames: 43final_standings / 61toptimes / 87yndialog activate at 30, input from 31
     static constexpr int kIntroLock = 31;
+    // web/menu-rules.js PS2_CHOICE_OUTRO: the Yes / No popup's TransitionOut (87yndialog 50 -> 70) before its choice acts
+    static constexpr int kChoiceOutro = 20;
 
     const CareerData* data = nullptr;
     const RecordsStore* records = nullptr;
@@ -297,12 +301,26 @@ public:
             index_ = resultsFocus();
         }
     }
-    // the UI frame counter (screen-phases.js step): one pass per 60 Hz pad update
-    void frame() {
+    // the UI frame counter (screen-phases.js step): one pass per 60 Hz pad update. A choice's exit (phase 6) reaches its Stop after
+    // its frames, and the next pass (phase 7) runs the choice: its action comes back from here
+    Action frame() {
         ++frame_;
+        inPass_ = true;
+        Action out = Action::None;
+        if (exit_ && exitStopped_) {
+            const int choice = *exit_;
+            exit_.reset();
+            exitStopped_ = false;
+            out = act(choice);
+        } else if (exit_ && frame_ - exitAt_ >= kChoiceOutro) {
+            exitStopped_ = true;
+        }
+        inPass_ = false;
+        return out;
     }
+    // phase 5 only (no input while the intro locks or a choice's exit plays)
     bool accepts() const {
-        return screen_ != Screen::None && frame_ - startedAt_ >= kIntroLock;
+        return screen_ != Screen::None && !exit_ && frame_ - startedAt_ >= kIntroLock;
     }
     // 0x1E7558: a Single Event's results open on item 1 (Restart)
     int resultsFocus() const {
@@ -319,6 +337,9 @@ public:
                 return {d.t(0x0f3ab955u, "Continue"), d.t(0x0b0bfc13u, "Save Records")};
             }
             return {d.t("kT_OVRCMNReturn", "Return")};
+        }
+        if (screen_ == Screen::Restart) {
+            return {d.t("kT_CMNYes", "Yes"), d.t("kT_CMNNo", "No")};
         }
         return {};
     }
@@ -343,6 +364,12 @@ public:
             if (repeat) {
                 return Action::None;
             }
+            // the Yes / No popup (web/ui.js ps2MenuStep: a wrapping menu)
+            if (screen_ == Screen::Restart) {
+                const int n = int(items().size());
+                index_ = (((index_ + (code == "ArrowUp" ? -1 : 1)) % n) + n) % n;
+                return Action::None;
+            }
             // the OV.LUI overlay menus (0x39AB50 / 0x39AC48): the next item not greyed, round past either end (wrap flag 0x80)
             const int n = int(items().size());
             const int d = code == "ArrowUp" ? -1 : 1;
@@ -362,6 +389,10 @@ public:
             return choose(index_);
         }
         if (code == "Escape") {
+            // Triangle on the 87yndialog = No
+            if (screen_ == Screen::Restart) {
+                return choose(1);
+            }
             back();
         }
         return Action::None;
@@ -370,13 +401,25 @@ public:
         if (disabled(i)) {
             return Action::None;
         }
+        // a choice on the Yes / No popup plays its exit first (web/screen-phases.js leave): the action comes from frame()
+        if (screen_ == Screen::Restart) {
+            if (!exit_) {
+                exit_ = i;
+                exitAt_ = frame_;
+                exitStopped_ = false;
+            }
+            return Action::None;
+        }
         if (screen_ == Screen::Results) {
             // resultAction: 0 Next event (the event select), 1 Restart ('Are you sure?' first), 2 the full replay, 3 Records, 4 Quit
             if (i == 0) {
                 return Action::NextEvent;
             }
             if (i == 1) {
-                return Action::Restart;
+                // 0x20CF9C: 'Are you sure?' first, on No
+                set(Screen::Restart);
+                index_ = 1;
+                return Action::None;
             }
             if (i == 2) {
                 return Action::Replay;
@@ -418,15 +461,37 @@ public:
     }
     void close() {
         screen_ = Screen::None;
+        exit_.reset();
+        exitStopped_ = false;
     }
 
-    // drawResults / drawRecords through 43final_standings / 61toptimes (web/results-lui.js); nowFrames: the wall clock in 60ths of a
-    // second (the panels' clock); fixedClock >= 0: the timeline frame fixed (QA)
-    void draw(HudCanvas& c, ResultsLui& lui, double nowFrames, double fixedClock = -1) {
+    // drawResults / drawRecords through 43final_standings / 61toptimes (web/results-lui.js), the Restart prompt over the PDA frame
+    // (drawMcomm: the pause's frame without its rows, then 87yndialog); nowFrames: the wall clock in 60ths of a second (the panels'
+    // clock); fixedClock >= 0: the timeline frames fixed (QA: the panels at that frame, the PDA opened and the popup set at 0)
+    void draw(HudCanvas& c, ResultsLui& lui, CtmPda& pda, double nowFrames, double fixedClock = -1) {
         if (screen_ == Screen::None || !lui.ready()) {
             return;
         }
         const CareerData& d = *data;
+        if (screen_ == Screen::Restart) {
+            const double now = fixedClock >= 0 ? fixedClock : nowFrames;
+            const std::vector<std::string> lines = splitLines({d.t("kT_BTNRestart", "Restart"), d.t(0x0ebe93e5u, "Are you sure?")});
+            // mcommFrame: the PDA opens when a PDA screen follows a non-PDA one (no PDA draw for 250 ms)
+            if (fixedClock >= 0) {
+                pda.opening(0);
+                std::string key;
+                for (size_t k = 0; k < lines.size(); ++k) {
+                    key += (k ? "|" : "") + lines[k];
+                }
+                pda.fixPopup(key, 0);
+            } else if (pdaDrawnAt_ < 0 || nowFrames - pdaDrawnAt_ > 15) {
+                pda.opening(nowFrames);
+            }
+            pdaDrawnAt_ = nowFrames;
+            pda.frame(c, now);
+            pda.dialog(c, lines, index_, now, d.t("kT_CMNYes", "Yes"), d.t("kT_CMNNo", "No"));
+            return;
+        }
         const double t = fixedClock >= 0 ? fixedClock : lui.clock(nowFrames);
         const std::string title = d.eventName(outcome_.mode, outcome_.course) + " - " + modeLabel(outcome_.mode);
         const bool timed = ssx::rules::isTimed(outcome_.mode);
@@ -499,6 +564,32 @@ public:
     }
 
 private:
+    // the Yes / No popup's choice at its Stop: Yes restarts the round from the results (restartToCard), No goes back to them
+    Action act(int choice) {
+        if (choice == 0) {
+            close();
+            return Action::Restart;
+        }
+        set(Screen::Results);
+        index_ = resultsFocus();
+        return Action::None;
+    }
+    // promptLines' strings split at their line breaks
+    static std::vector<std::string> splitLines(const std::vector<std::string>& texts) {
+        std::vector<std::string> out;
+        for (const auto& t : texts) {
+            size_t at = 0;
+            for (;;) {
+                const size_t nl = t.find('\n', at);
+                out.push_back(t.substr(at, nl == std::string::npos ? std::string::npos : nl - at));
+                if (nl == std::string::npos) {
+                    break;
+                }
+                at = nl + 1;
+            }
+        }
+        return out;
+    }
     // web/career-ui.js MODE_LABEL
     static std::string modeLabel(int mode) {
         static const char* labels[6] = {"Race", "Slopestyle", "Super Pipe", "Big Air", "Rival", "Rival"};
@@ -517,7 +608,8 @@ private:
     // ui.set: a change of screen restarts its phases (and the focus at 0)
     void set(Screen s) {
         if (s != screen_) {
-            startedAt_ = frame_;
+            // a screen entered by a choice inside the pass builds on the next one
+            startedAt_ = inPass_ ? frame_ + 1 : frame_;
         }
         screen_ = s;
         index_ = 0;
@@ -527,6 +619,11 @@ private:
     bool topTime_ = false;
     long frame_ = 0;
     long startedAt_ = 0;
+    bool inPass_ = false;
+    std::optional<int> exit_;
+    long exitAt_ = 0;
+    bool exitStopped_ = false;
+    double pdaDrawnAt_ = -1;
     RaceOutcome outcome_;
 };
 

@@ -17,11 +17,23 @@ const tamper = (c) => { const i = c.length - 5; return c.slice(0, i) + (c[i] ===
 const calls = [];
 // The origin (web/server/mp-server.mjs serveStatic) marks exactly Vite's hashed bundles immutable; missing files 404.
 const originHashed = (p) => /^\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$/.test(p);
-globalThis.fetch = async (req, init) => { calls.push({ url: req.url, edge: req.headers.get('x-ssx-edge'), cf: init?.cf }); const p = new URL(req.url).pathname;
+globalThis.fetch = async (req, init) => { calls.push({ url: req.url, edge: req.headers.get('x-ssx-edge'), cf: init?.cf, ae: req.headers.get('accept-encoding') }); const p = new URL(req.url).pathname;
   if (p.includes('/gone-')) return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
   return new Response('body', { status: 200, headers: { 'cache-control': originHashed(p) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600', 'cdn-cache-control': 'max-age=2592000', etag: '"x"' } }); };
 const run = (path, { cookie, method = 'GET', headers = {} } = {}) => worker.fetch(new Request('https://ssx.example.com' + path, { method, headers: { ...(cookie ? { cookie } : {}), ...headers } }), env);
 
+// ?identity=1 (web/archive-ranges.js): its own edge cache key and Accept-Encoding: identity to the origin; other requests unchanged
+{
+  const headers = { range: 'bytes=0-9', 'accept-encoding': 'gzip, br' };
+  calls.length = 0;
+  await run('/assets/WARDROBE/ZOE/gear-xbox.tex?identity=1&x=2', { cookie: cookieFor(future), headers });
+  assert.equal(new URL(calls[0].url).search, `?g=${CACHE_GEN}&identity=1`);
+  assert.equal(calls[0].ae, 'identity');
+  calls.length = 0;
+  await run('/assets/WARDROBE/ZOE/gear-xbox.tex', { cookie: cookieFor(future), headers });
+  assert.equal(new URL(calls[0].url).search, `?g=${CACHE_GEN}`);
+  assert.equal(calls[0].ae, 'gzip, br');
+}
 // No / bad session: 401 without touching origin or cache.
 for (const cookie of [undefined, cookieFor(future, crypto.randomBytes(32)), cookieFor(Math.floor(Date.now() / 1000) - 5), 'ssx_gate=v1.1.x', tamper(cookieFor(future))]) {
   calls.length = 0; const r = await run('/assets/ARA1/vertices.bin', { cookie });

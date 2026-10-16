@@ -79,6 +79,7 @@ void set_stage_collect_row(int track, uint32_t lo, uint32_t hi);
 void start_event();
 int replay_camera_triggers(const char* text);
 void replay_camera_begin(int mode, int fromLive);
+void replay_camera_rewind();
 // the tick (web/game_tick.cpp)
 float* tick_begin(const float* pad, float lastRescues, float lastResetPlacement, int animationReady, int boneCount, int teleportKnown, float teleportCount,
                   int tweakWord);

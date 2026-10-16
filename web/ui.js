@@ -128,6 +128,9 @@ export class OriginalUI {
     this.keyboardMode = loadKeyboardMode();
     this.stage = document.querySelector('#stage');
     this.stage.dataset.screen = this.screen;
+    // pv resultsScreenAttr: style.css keeps the Results over the race in widescreen 1's band, as the HUD (PS2 16:9 frames: the place
+    // popup and the records panel lie in lines 56..392 like the HUD; docs/multiplayer.md)
+    if (pv('resultsScreenAttr')) this.stage.dataset.resultsAttr = '1';
     this.careerUI = new CareerScreens(this);
     this.loading = new LoadingScreen(this);
     this.transitions = new TransitionScreens(this);
@@ -179,8 +182,8 @@ export class OriginalUI {
       if (this.previews?.key(e)) return;
       // web/fe-previews.js
       if (this.saveLoad?.key(e)) return;
-      // web/mp-ui.js: the time-attack screens' own keys (Left / Right values, the game keyboard)
-      if (pv('onlineTimeAttack') && this.mpUI?.owns(this.screen) && this.mpUI.key(e)) return;
+      // web/mp-ui.js: the time-attack screens' own keys (Left / Right values, the game keyboard); pv mpBoard: the board's name keyboard
+      if ((pv('onlineTimeAttack') || pv('mpBoard')) && this.mpUI?.owns(this.screen) && this.mpUI.key(e)) return;
       // Square: Options (PS2 main menu legend)
       if (
         this.screen === 'main' &&
@@ -595,6 +598,14 @@ export class OriginalUI {
       entry = this.riders.find((r) => r.id === id);
     if (!base || (base.id === this.rider?.id && !sel.base)) return;
     const target = entry?.kind === 'cheat' && sel.base ? { ...entry, base: sel.base } : base;
+    if (pv('charselSettle') && this.characterSelect?.commitRider) {
+      // the cursor is on the restored rider at once; its commit runs as a settled Select Character reload (presses move on from it)
+      this.characterSelect.adopt?.(target);
+      this.riderIndex = Math.max(0, this.riders.indexOf(base));
+      this.characterSelect.commitRider(target);
+      this.sync();
+      return;
+    }
     Promise.resolve(this.cb.rider(target))
       .then(() => {
         this.characterSelect?.adopt?.(target);
@@ -638,7 +649,15 @@ export class OriginalUI {
       return;
     }
     this.result = result;
+    // pv mpBoard: an online race's results already up (the server's final order came first, web/mp-ui.js showResults) keep their
+    // screen and focus when this page's own show tick comes later: the board's Save Records must not take the focus
+    if (pv('mpBoard') && this.screen === 'results' && this.mpUI?.owns('results')) {
+      this.sync();
+      return;
+    }
     this.screen = 'results';
+    // pv resultsScreenAttr: #stage data-screen follows, as ui.set writes it (diagnostics.js screen events, the data-screen CSS)
+    if (pv('resultsScreenAttr')) this.stage.dataset.screen = 'results';
     this.index = 1;
     this.sync();
   }

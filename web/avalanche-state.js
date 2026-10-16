@@ -87,6 +87,13 @@ export function createAvalancheDraw({ core, group, followers, entityDrawn = new 
       for (const [r, e] of byResource) apply(r, e, e.hiddenAtStart ? !s.released.has(r) && s.pieces.has(r) && entityDrawn.has(r) : true);
     },
     reset() { resetAvalancheState(core); for (const [r, e] of byResource) apply(r, e, !e.hiddenAtStart); },
+    // pv warmVisibility (main.js warmupRender put back the visible flags of its start): the drawn state applied again
+    refresh() {
+      for (const [r, e] of byResource) {
+        if (e.hiddenAtStart || !shown.has(r)) continue;
+        for (const m of e.meshes) m.visible = shown.get(r);
+      }
+    },
     get state() { const s = cache.get(core); return { pieces: byResource.size, playing: s?.pieces.size ?? 0, released: s?.released.size ?? 0, loop: !!s?.loop }; },
   };
 }

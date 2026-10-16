@@ -116,9 +116,9 @@ try {
     const cam = await browser.evaluate('(()=>{const c=window.ssxEffects.core;return c._replay_camera_info?Array.from(new Float32Array(c.HEAPF32.buffer,c._replay_camera_info(),10)):null})()');
     // a second loop (the rewind after the finish tick), its first 600 ticks
     const loop2 = await browser.evaluate(`(()=>{const r=ssxQA.replay();let n=0;while(r.loops<1&&n<50){r.frame(1/60);n++;}const s=window.__simTrace.ticks.length-r.tick;for(let k=0;k<600;k++)r.frame(1/60);return {start:s,loops:r.loops}})()`);
-    const live = await browser.evaluate(`window.__simTrace.ticks.slice(${base},${base + F + 1})`);
-    const rep = await browser.evaluate(`window.__simTrace.ticks.slice(${repStart},${repStart + F + 1})`);
-    const rep2 = await browser.evaluate(`window.__simTrace.ticks.slice(${loop2.start},${loop2.start + 600})`);
+    const live = await browser.evaluate(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${base},${base + F + 1})`);
+    const rep = await browser.evaluate(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${repStart},${repStart + F + 1})`);
+    const rep2 = await browser.evaluate(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${loop2.start},${loop2.start + 600})`);
     const bad = (a, b, n) => { for (let i = 0; i < n; i++) if (a[i] !== b[i]) return i; return -1; };
     const m1 = rep.length === F + 1 ? bad(live, rep, F + 1) : -2, m2 = bad(live, rep2, Math.min(600, F + 1));
     if (m1 !== -1) failures.push(`${c.key}: the replay leaves the live run at tick ${m1} of ${F + 1}`);
@@ -209,8 +209,8 @@ try {
       await sleep(400);
       const repStart = await browser.evaluate('window.__simTrace.ticks.length');
       for (let i = 0; i <= F; i += 400) await browser.evaluate(`(()=>{const r=ssxQA.replay();for(let k=0;k<400&&r.tick<=${F};k++)r.frame(1/60);return r.tick})()`);
-      const live = await browser.evaluate(`window.__simTrace.ticks.slice(${base},${base + F + 1})`);
-      const rep = await browser.evaluate(`window.__simTrace.ticks.slice(${repStart},${repStart + F + 1})`);
+      const live = await browser.evaluate(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${base},${base + F + 1})`);
+      const rep = await browser.evaluate(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${repStart},${repStart + F + 1})`);
       let first = rep.length === F + 1 ? -1 : -2;
       for (let i = 0; i <= F && first === -1; i++) if (live[i] !== rep[i]) first = i;
       return { F, first, events };

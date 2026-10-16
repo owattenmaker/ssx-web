@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import { startBrowser, startServer, sleep } from './headless-chrome.mjs';
 import { startWebKit } from './webkit-driver.mjs';
 
@@ -15,6 +16,13 @@ const pick = process.env.MP_PICK || '';
 // MP_PRERACE=1 (with PAGE_PV=mpPreRace): cutscenes on; each race goes load -> intro -> card -> Continue -> GO. Player 0 presses Continue,
 // player 1 lets the card's 20 s auto-continue run in the first race and presses it in the second.
 const preRace = process.env.MP_PRERACE === '1';
+// MP_BOARD=1 (with PAGE_PV=mpBoard; docs/multiplayer.md "Multiplayer leaderboard"): both racers tuck to the finish (ssxQA.advance) instead of
+// quitting; the results, Continue, the event's online race board. Round 1: no saved Player Name, so the game keyboard asks (Clear, typed
+// on the keyboard, Done), the name lands on the profile and the run on the board. Round 2: the saved name, no keyboard, the run saved at
+// once, the board shows both racers. A records directory for the server: the board lives beside the course records.
+const boardRun = process.env.MP_BOARD === '1';
+const NAMES = ['OWEN', 'MAC2'];
+const boardDir = boardRun ? fs.mkdtempSync(`${os.tmpdir()}/ssx-mp-board-`) : null;
 const port = 23000 + Math.floor(Math.random() * 1000);
 const browsers = [];
 const shot = async (i, name) => {
@@ -130,9 +138,129 @@ async function preRaceFlow(round) {
     assert.ok(game1 - card1 >= 19000, "player 1's card waits for its 20 s auto-continue");
   }
 }
+// MP_BOARD=1: one race to the finish on both pages, then the results, Continue and the board (above)
+const boardProbe = `(()=>{const u=ssxQA.ui(),m=u.mpUI,v=m.board.view,fe=u.feScreens;
+  return {screen:u.screen,final:!!m.session.finalResults,items:u.items(),trick:m.session.trickEvent,
+    results:m.rows().map(r=>({slot:r.slot,ticks:r.ticks,score:r.score,dnf:r.dnf})),index:u.index,keyboard:fe.keyboard?.kind??null,text:fe.keyboard?.text??null,
+    profile:localStorage.getItem('ssx3.playerName'),view:v&&{status:v.status,saved:v.saved,note:v.note,key:v.key,total:v.total,
+    you:v.you&&{name:v.you.name,rank:v.you.rank},rows:v.rows.map(r=>r.name+':'+r.value),message:m.board.message()}}})()`;
+const key = (page, code, k) =>
+  page.eval(`(()=>{dispatchEvent(new KeyboardEvent('keydown',{code:${JSON.stringify(code)},key:${JSON.stringify(k)},bubbles:true}));
+    dispatchEvent(new KeyboardEvent('keyup',{code:${JSON.stringify(code)},key:${JSON.stringify(k)},bubbles:true}));return 1})()`);
+async function boardFlow(round) {
+  const t0 = Date.now();
+  // the tuck run of test-online-records (Cross held: pad[22]; a slow weave), stepped in the page until the results are up
+  await Promise.all(
+    browsers.map((page) =>
+      page.eval(`(()=>{window.__boardT=0;window.__boardPad=(t)=>{const p=new Array(24).fill(0);p[22]=1;const s=Math.sin(t/90);
+        if(s>0.6)p[21]=0.3;else if(s<-0.6)p[20]=0.3;return p;};
+        window.__boardRun=(n)=>{for(let i=0;i<n;i++){ssxQA.advance(1,window.__boardPad(window.__boardT++));if(ssxQA.ui().screen==='results')return true;}return false};return 1})()`)
+    )
+  );
+  const done = [false, false];
+  while (!done.every(Boolean)) {
+    assert.ok(Date.now() - t0 < 300000, 'both racers reach the results');
+    for (const [i, page] of browsers.entries()) if (!done[i]) done[i] = await page.eval('window.__boardRun(400)');
+  }
+  for (const page of browsers) await page.waitFor('!!ssxQA.ui().mpUI.session.finalResults', 60000);
+  console.log(`online board round ${round + 1}: both at the results in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  for (const [i, page] of browsers.entries()) {
+    const r = await page.eval(boardProbe);
+    console.log(`online board round ${round + 1}: player ${i} results`, JSON.stringify(r));
+    assert.equal(r.screen, 'results');
+    assert.deepEqual(r.items, ['Continue'], 'the results continue to the board');
+    // a trick event ranks by score (0x239EC8 -> 238B70), a race by time
+    const values = r.results.filter((x) => !x.dnf).map((x) => (r.trick ? -x.score : x.ticks));
+    assert.deepEqual(values, [...values].sort((p, q) => p - q), `the results are ordered by ${r.trick ? 'score' : 'time'}`);
+    if (r.trick) assert.ok(r.results.every((x) => x.dnf || Number.isInteger(x.score)), 'every finished trick row has its score');
+    await sleep(500);
+    await shot(i, `board-${round}-results`);
+  }
+  // Continue (Cross) on each page
+  for (const page of browsers) await key(page, 'Enter', 'Enter');
+  await sleep(800);
+  for (const [i, page] of browsers.entries()) {
+    let r = await page.eval(boardProbe);
+    console.log(`online board round ${round + 1}: player ${i} after Continue`, JSON.stringify(r));
+    assert.ok(r.view, `player ${i} sees the board`);
+    if (round === 0) {
+      assert.equal(r.keyboard, 'record', `player ${i}: no saved name, the keyboard asks for one`);
+      assert.equal(r.profile, null);
+      await shot(i, `board-${round}-keyboard`);
+      // the keyboard's Clear, then the name typed on the computer keyboard ('-' is not a key of a name), then Done (Enter)
+      await page.eval(`(()=>{ssxQA.ui().feScreens.keyPress('Clear');return 1})()`);
+      for (const ch of NAMES[i].slice(0, 2) + '-' + NAMES[i].slice(2)) {
+        const code = ch === '-' ? 'Minus' : /\d/.test(ch) ? `Digit${ch}` : `Key${ch}`;
+        await key(page, code, ch);
+      }
+      r = await page.eval(boardProbe);
+      assert.equal(r.text, NAMES[i], `player ${i} typed the name, the punctuation key refused`);
+      await shot(i, `board-${round}-typed`);
+      await key(page, 'Enter', 'Enter');
+    } else assert.equal(r.keyboard, null, `player ${i}: the saved name, no keyboard`);
+  }
+  for (const [i, page] of browsers.entries()) {
+    await page.waitFor('ssxQA.ui().mpUI.board.view?.saved===true', 15000);
+    const r = await page.eval(boardProbe);
+    console.log(`online board round ${round + 1}: player ${i} saved`, JSON.stringify(r));
+    assert.equal(r.profile, NAMES[i], `player ${i}'s name is on the profile`);
+    assert.equal(r.view.you?.name, NAMES[i], `player ${i}'s row is on the board`);
+    assert.match(r.view.message, /online|listed/, 'the message line says what happened');
+  }
+  // the second save reached the server: both racers on both boards
+  for (const [i, page] of browsers.entries()) {
+    await page.eval(`(()=>{const b=ssxQA.ui().mpUI.board;b.fetch(b.savedName());return 1})()`);
+    await page.waitFor(`ssxQA.ui().mpUI.board.view.rows.length>=2`, 10000);
+    const r = await page.eval(boardProbe);
+    for (const name of NAMES) assert.ok(r.view.rows.some((x) => x.startsWith(name + ':')), `player ${i}'s board lists ${name}`);
+    await sleep(700);
+    await shot(i, `board-${round}-saved`);
+  }
+  // Continue: back to the lobby
+  for (const page of browsers) await key(page, 'Enter', 'Enter');
+  for (const page of browsers) await page.waitFor(`ssxQA.ui().screen==='mp-lobby'`, 10000);
+  await browsers[0].waitFor('!ssxQA.ui().mpUI.client.state.lobby?.race', 10000);
+}
+// MP_BOARD=1, after the races: the main menu's Leaderboards -> Select Peak / Mode / Event (Snow Jam) -> the course records' board ->
+// Square -> the same screen with the event's online race board (both racers) -> Square -> back to the course records
+async function leaderboardsFlow(i) {
+  const page = browsers[i];
+  const probe = `(()=>{const u=ssxQA.ui(),b=u.careerUI.online.board;return {screen:u.screen,items:u.items(),
+    board:b&&{kind:b.kind,status:b.status,key:b.key,rows:b.rows.map(r=>r.name+':'+r.value)}}})()`;
+  await page.eval(`(()=>{const u=ssxQA.ui();u.mpUI.leaveToMenu();u.index=5;u.choose(5);return 1})()`);
+  const target = await page.eval(`(()=>{const s=ssxQA.ui().eventSelect;
+    for(const peak of [1,2,3])for(const mode of ['race','freestyle']){const k=s.events(peak,mode).findIndex(e=>e.code===${JSON.stringify(course)}&&e.playable&&e.mode<4);
+      if(k>=0)return {peak,mode,k};}
+    return null})()`);
+  assert.ok(target, `${course} has a board in the Leaderboards`);
+  for (const [screen, index] of [['fe-peak', 3 - target.peak], ['fe-mode', target.mode === 'race' ? 0 : 1], ['fe-event', target.k]]) {
+    await page.waitFor(`ssxQA.ui().screen===${JSON.stringify(screen)}`, 10000);
+    await sleep(500);
+    await page.eval(`(()=>{ssxQA.ui().eventSelect.choose(${index});return 1})()`);
+  }
+  await page.waitFor(`ssxQA.ui().screen==='ctm-board'&&ssxQA.ui().careerUI.online.board.status!=='loading'`, 15000);
+  let r = await page.eval(probe);
+  console.log(`online board: player ${i} Leaderboards records`, JSON.stringify(r));
+  assert.equal(r.board.kind, 'records');
+  assert.equal(r.items.length, 3, 'Watch Replay / Online Races / Return');
+  await sleep(600);
+  await shot(i, 'leaderboards-records');
+  await key(page, 'ShiftLeft', 'Shift');
+  await page.waitFor(`ssxQA.ui().careerUI.online.board.kind==='races'&&ssxQA.ui().careerUI.online.board.status==='ready'`, 10000);
+  r = await page.eval(probe);
+  console.log(`online board: player ${i} Leaderboards online races`, JSON.stringify(r));
+  for (const name of NAMES) assert.ok(r.board.rows.some((x) => x.startsWith(name + ':')), `the Leaderboards' online races list ${name}`);
+  await sleep(600);
+  await shot(i, 'leaderboards-races');
+  await key(page, 'ShiftLeft', 'Shift');
+  await page.waitFor(`ssxQA.ui().careerUI.online.board.kind==='records'`, 10000);
+  await key(page, 'Escape', 'Escape');
+  await page.waitFor(`ssxQA.ui().screen==='fe-event'`, 10000);
+}
 try {
+  const mpEnv = boardRun ? { ...process.env, MP_RECORDS_DIR: boardDir, MP_PLAUSIBILITY: 'off' } : process.env;
   mp = spawn(process.execPath, ['server/mp-server.mjs', '--port', String(port), '--host', '127.0.0.1'], {
-    cwd: new URL('.', import.meta.url), stdio: ['ignore', 'pipe', 'inherit']
+    cwd: new URL('.', import.meta.url), stdio: ['ignore', 'pipe', 'inherit'], env: mpEnv
   });
   await new Promise((resolve) => mp.stdout.once('data', resolve));
   process.env.MP_PORT = String(port);
@@ -175,6 +303,10 @@ try {
         finally { pumping = false; }
       }, 16);
       console.log('online page: WebKit uses driver-pumped rendering', await b.eval('document.visibilityState'));
+    }
+    if (boardRun) {
+      await b.eval(`(()=>{localStorage.removeItem('ssx3.playerName');const u=ssxQA.ui();u.feScreens.playerName='PLAYER 1';return 1})()`);
+      assert.ok(await b.eval('!!ssxQA.ui().mpUI.board'), 'PAGE_PV=mpBoard is on');
     }
     await b.eval('(async()=>{await ssxQA.ui().mpUI.session.connect();return 1})()');
     console.log(`online page: player ${i} connected`);
@@ -279,11 +411,17 @@ try {
       }
     }
     console.log(`online page round ${round + 1} (${useWebKit ? 'Chrome + WebKit' : 'Chrome + Chrome'}):`, JSON.stringify(states));
+    if (boardRun) {
+      await boardFlow(round);
+      continue;
+    }
     for (const page of browsers) await page.eval('ssxQA.ui().mpUI.session.quitRace()');
     await a.waitFor('!ssxQA.ui().mpUI.client.state.lobby?.race', 10000);
   }
+  if (boardRun) for (const i of [0, 1]) await leaderboardsFlow(i);
 } catch (error) {
   for (const [i, b] of browsers.entries()) console.error('online page failure', i, await b.eval(status).catch(String));
+  for (const [i, b] of browsers.entries()) console.error('online page screens', i, JSON.stringify(await b.eval('window.__screenLog?.slice(-12)').catch(String)));
   throw error;
 } finally {
   for (const b of browsers) {
@@ -292,5 +430,6 @@ try {
   }
   await server?.close();
   mp?.kill();
+  if (boardDir) fs.rmSync(boardDir, { recursive: true, force: true });
 }
 console.log('online page: two players, synchronized starts, gate collisions, streamed movement and a second race OK');

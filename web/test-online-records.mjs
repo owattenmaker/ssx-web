@@ -85,7 +85,7 @@ try {
     await browser.waitFor(`ssxQA.ui().screen==='replay' && ssxQA.replay().mode==='full'${course ? ` && ssxQA.ui().course?.code==='${course}'` : ''}`, 300000);
     await E(`(()=>{const r=ssxQA.replay();r.playPause();let n=0;while(r.tick<${N}&&n<${N}+50){r.frame(1/60);n++;}return r.tick})()`);
     if (cam) cam(await E(CAM_INFO));   // the replay view's camera state while the replay is up
-    const live = await E(`window.__simTrace.ticks.slice(${base},${base + N})`), rep = await E(`(()=>{const t=window.__simTrace.ticks;return t.slice(t.length-${N})})()`);
+    const live = await E(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${base},${base + N})`), rep = await E(`(()=>{const t=window.__simTrace[window.__simTrace.compare ?? 'ticks'];return t.slice(t.length-${N})})()`);
     let miss = rep.length === N ? -1 : -2; for (let i = 0; i < N && miss === -1; i++) if (live[i] !== rep[i]) miss = i;
     await E(`(()=>{const ui=ssxQA.ui();ui.replayUi.key({code:'Enter'});ui.replayUi.key({code:'ArrowDown'});ui.replayUi.key({code:'Space'});return 1})()`);
     await browser.waitFor(`ssxQA.ui().screen==='ctm-board'`, 20000);
@@ -131,7 +131,7 @@ try {
     check(cam?.[4] === 48 && cam?.[8] > 0, `Watch Replay's Web-cam: ARA1's 48 camera triggers loaded and firing ${JSON.stringify(cam)}`);
     await shot('5-replay');
     check(w.finish === fin.finish, `the downloaded run's finish tick ${w.finish} (live ${fin.finish})`);
-    const live = await E(`window.__simTrace.ticks.slice(${base},${base + N})`), rep = await E(`window.__simTrace.ticks.slice(${repStart},${repStart + N})`);
+    const live = await E(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${base},${base + N})`), rep = await E(`window.__simTrace[window.__simTrace.compare ?? 'ticks'].slice(${repStart},${repStart + N})`);
     let miss = -1; for (let i = 0; i < Math.min(live.length, rep.length); i++) if (live[i] !== rep[i]) { miss = i; break; }
     check(miss === -1 && rep.length === N, `Watch Replay leaves the live run at tick ${miss} of ${N} (repStart ${repStart})`);
     log(`watch trace: ${N} ticks compared, first difference ${miss}`);

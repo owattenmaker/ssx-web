@@ -20,10 +20,11 @@
 // the base rider's face, then every owned cheat character (unlock bits profile+char*0xF88+0xF57; career rewards in
 // web/career.js, the original Enter Cheat codes, or ?unlockAll=1 / localStorage in the browser).
 import { LuiScreen } from './lui-player.js';
-import { FrontEndPreview, clipSample, channelValue, afb } from './fe-preview.js';
+import { FrontEndPreview, clipSample, channelValue, afb, previewRoot } from './fe-preview.js';
 import { widescreenView } from './widescreen.js';
 import { speakFrontEnd } from './rider-speech.js';
-import { outfitPreviewEntry } from './wardrobe.js';
+import { outfitPreviewEntry, knownPreviewEntry, outfitPrepared } from './wardrobe.js';
+import { pv } from './pv-flags.js';
 
 const ROOT = '/assets/UI/';
 const FPS = 60;
@@ -32,6 +33,10 @@ const CROSSFADE = 0.23;                       // semantic 435 completion -> 434,
 const UNLOCK_KEY = 'ssx3.cheatCharacters';
 const DEG = Math.PI / 180;
 const BACK_LAYER = 9;
+// pv charselSettle: 19E588 sets the reload stamp +0xCD4 = frame + 4, and 19F138 starts the load once frame > stamp.
+const RELOAD_DELAY = 4;
+// pv charselSettle: built preview models kept (the roster of eleven, plus one: an Equip Gear outfit, a cheat skin)
+const PREVIEW_CACHE = 12;
 
 function loadImage(src) { const im = new Image(); im.src = src; return im.decode().then(() => im).catch(() => null); }
 function storage() { try { return localStorage; } catch { return null; } }
@@ -57,6 +62,12 @@ export class CharacterSelect {
     this.cheatOpen = false;
     this.cheatIndex = 0;
     this.cheat = null;
+    // pv charselSettle: the reload stamp (frame, -1 = none) and its target (19E588 +0xCD4 / +0xC24); the rider commit in flight
+    // (ui.cb.rider at the load, latest wins) and its abort controller
+    this.reloadAt = -1;
+    this.reloadTarget = null;
+    this.picking = null;
+    this.pickAbort = null;
   }
   get ready() {
     return !!this.data;
@@ -168,6 +179,16 @@ export class CharacterSelect {
     this.yaw = 0;
     this.flash = null;
     this.arrow = null;
+    if (pv('charselSettle') && pv('charselEntryOutfit')) this.entryReload();
+  }
+  // pv charselEntryOutfit: the screen's entry asks for the profile's rider (0x181308 / 0x1812A8 -> 181BD0 -> 1A0508 -> 19E588), and
+  // the slot assembles it from the profile's committed rows (19E960 -> 14AD28): its saved outfit, never a default package. Here,
+  // a rider whose outfit packages are not prepared for its saved outfit gets a reload (the stamp, then the commit); one that is
+  // prepared is 19E588's own loaded character: it shows at once.
+  entryReload() {
+    if (!this.base || (this.outfitPrepared ?? outfitPrepared)(this.ui, this.base)) return;
+    this.reloadTarget = this.human();
+    if (this.reloadAt < 0) this.reloadAt = Math.floor(this.now()) + RELOAD_DELAY;
   }
   items() {
     return [this.base?.name || ''];
@@ -184,6 +205,16 @@ export class CharacterSelect {
       at = Math.max(0, list.indexOf(this.base)),
       next = list[(at + direction + list.length) % list.length];
     this.arrow = { side: direction < 0 ? 'hll' : 'hlr', start: this.now() };
+    if (pv('charselSettle')) {
+      // the UIMenu cursor moves now (input kind 1, 0x181980); 181BD0 fills the stats, then 1A0508 -> 19E588 asks for the model
+      this.ui.riderIndex = this.ui.riders.indexOf(next);
+      this.cheat = null;
+      this.focus = this.now();
+      this.anim = null;
+      this.requestPreview(next);
+      this.ui.sync();
+      return;
+    }
     try {
       await this.ui.cb.rider(next);
       this.ui.riderIndex = this.ui.riders.indexOf(next);
@@ -197,7 +228,58 @@ export class CharacterSelect {
   }
   choose() {
     if (!this.ui.ready || this.flash) return;
+    // pv charselSettle: a reload still waiting for its frame commits the rider now; the flash then holds at white until it is in (draw)
+    if (pv('charselSettle') && this.reloadAt >= 0) this.startReload();
     this.flash = this.now(); // Cross: 0x181844 -> transition_flash, then Setup Character (09set_char)
+  }
+
+  // ---- pv charselSettle: the preview slot's reload (19E588 / 19F138 / 19E960) ----
+  // 19E588(slot, char): the same character as the slot's (loaded or loading) cancels a pending reload (+0xCD4 = -1) and shows it
+  // again; another one hides the model (+0xCC8 = 0) and, when no reload is pending, sets +0xCD4 = frame + 4. A pending reload only
+  // takes the new target +0xC24 (the stamp stays). Here the slot's character is the preview's root with no commit in flight.
+  requestPreview(entry) {
+    const same = !this.picking && previewRoot(outfitPreviewEntry(entry)) === this.preview3d.root;
+    if (same) {
+      this.reloadAt = -1;
+      this.reloadTarget = null;
+      return;
+    }
+    this.reloadTarget = entry;
+    if (this.reloadAt < 0) this.reloadAt = Math.floor(this.now()) + RELOAD_DELAY;
+  }
+  // 19F138, every frame: once frame > +0xCD4 the reload starts (19E960 with +0xC24).
+  stepReload() {
+    if (this.reloadAt >= 0 && Math.floor(this.now()) > this.reloadAt) this.startReload();
+  }
+  // 19E960 unloads the model in flight (19EBA0) and starts the new one. Here: the rider commit (main.js selectRider: its outfit,
+  // web/wardrobe.js outfitRider) with the previous commit's downloads aborted, then the preview of its outfit (previewEntry, once
+  // `picking` is clear; web/fe-preview.js supersede aborts the previous preview's).
+  startReload() {
+    const target = this.reloadTarget;
+    this.reloadAt = -1;
+    this.reloadTarget = null;
+    if (!target || !this.ui.cb?.rider) return;
+    this.pickAbort?.abort();
+    const abort = (this.pickAbort = new AbortController());
+    const job = Promise.resolve()
+      .then(() => this.ui.cb.rider(target, { signal: abort.signal }))
+      .catch((error) => {
+        if (!abort.signal.aborted) console.error(error);
+      })
+      .finally(() => {
+        if (this.picking === job) this.picking = null;
+        if (this.pickAbort === abort) this.pickAbort = null;
+      });
+    this.picking = job;
+  }
+  // the rider commit at once, no reload frame (web/ui.js restoreRider: the last rider of the save)
+  commitRider(entry) {
+    this.reloadTarget = entry;
+    this.startReload();
+  }
+  // nothing is drawn: a reload waits for its frame or for its rider commit
+  previewPending() {
+    return pv('charselSettle') && (this.reloadAt >= 0 || !!this.picking);
   }
   // The white flash is over (0x181844): Conquer the Mountain has no Setup Character. The FE controller's CharSelect case
   // (0x1A0A58, game type 0x535C11 = 0 -> 0x1A0B00) sets free ride (144DF0(4), 1451E8(12)), the start course (14 for a new
@@ -289,7 +371,8 @@ export class CharacterSelect {
   draw(c, b) {
     const now = this.now(),
       frame = now - this.enter;
-    if (this.flash && now - this.flash >= 10) {
+    // pv charselSettle: past full white the flash waits for the rider commit (previewPending: picking) before Setup Character
+    if (this.flash && now - this.flash >= 10 && !(pv('charselSettle') && this.picking)) {
       this.flash = null;
       this.selectDone();
       return;
@@ -408,7 +491,14 @@ export class CharacterSelect {
   // The original FE preview model (web/fe-preview.js, tools/export_fe_preview.py): the NIS head, eyes and hands with
   // the FE clips' morph channels and the rider's own IRR.DAT lighting. Without its package the race rider stands in.
   get preview3d() {
-    return (this._preview ??= new FrontEndPreview());
+    if (!this._preview) {
+      this._preview = new FrontEndPreview();
+      if (pv('charselSettle')) {
+        this._preview.supersede = true;
+        this._preview.cacheLimit = PREVIEW_CACHE;
+      }
+    }
+    return this._preview;
   }
   // What the preview shows: the base rider (the original keeps the base rider's preview for a cheat skin,
   // characters/<cheat>/setup.p2s), or the cheat skin's own FE package with ?feSkin=1.
@@ -421,6 +511,16 @@ export class CharacterSelect {
   // main.js, every frame: true when the FE preview replaces the race rider (drawn, or loading like the original,
   // which shows nothing until the model is loaded). Hides the preview everywhere else.
   showPreview(screen, playing) {
+    // pv charselSettle: Select Character left (Triangle) before the reload's frame: the rider under the cursor is committed now
+    if (this.reloadAt >= 0 && this.ui.screen !== 'character') this.startReload();
+    if (this.previewPending()) {
+      this.stepReload();
+      if (this.previewPending()) {
+        // 19E588 hid the model (+0xCC8 = 0): neither the preview nor the race rider shows
+        this.preview3d.show(false);
+        return !playing && ['character', 'setup', 'details'].includes(screen);
+      }
+    }
     const on =
       !playing &&
       this.ready &&
@@ -435,14 +535,20 @@ export class CharacterSelect {
       this.prefetched = true;
       const list = this.entries,
         at = Math.max(0, list.indexOf(this.base));
-      const order = list
+      const near = list
         .map((r, i) => [r, Math.min((i - at + list.length) % list.length, (at - i + list.length) % list.length)])
         .sort((a, b) => a[1] - b[1])
-        .map(([r]) => outfitPreviewEntry(r));
+        .map(([r]) => r)
+        .slice(1);
+      // pv charselSettle: only the previews known without building an outfit (a worn one, or the default package): an outfit not
+      // prepared yet loads when the cursor settles on it (before, its default package was prefetched and never shown)
+      const known = pv('charselSettle')
+        ? Promise.all(near.map((r) => knownPreviewEntry(this.ui, r).catch(() => null))).then((l) => l.filter(Boolean))
+        : Promise.resolve(near.map((r) => outfitPreviewEntry(r)));
       // Only while a rider screen is up (not on under the load screen); a stopped prefetch starts again on the next visit
       const onScreen = () => ['character', 'setup', 'details'].includes(this.ui.screen);
-      this.preview3d
-        .prefetch(this.T, order.slice(1), { active: onScreen })
+      known
+        .then((order) => this.preview3d.prefetch(this.T, order, { active: onScreen }))
         .then((done) => {
           if (done === false) this.prefetched = false;
         })
@@ -480,7 +586,7 @@ export class CharacterSelect {
     camera.position.set(0, 0, -2);
     camera.lookAt(0, 0, 0); // Rider Details shows the same spot (ARMSX2 frames)
     const yaw = this.ui.screen === 'character' ? this.yaw : 0;
-    if (this.preview3d.want(T, this.previewEntry()) && model.parent && this.preview3d.place(T, model.parent, yaw))
+    if (!this.previewPending() && this.preview3d.want(T, this.previewEntry()) && model.parent && this.preview3d.place(T, model.parent, yaw))
       this.preview3d.light(T, this.core);
     model.position.set(1.36, -0.82, 2.5);
     model.scale.setScalar(1 / (model.userData.riderScale || 1)); // the preview geometry is unscaled (geometry+0x140 = 1.0)
@@ -499,6 +605,7 @@ export class CharacterSelect {
     if (!this.ready || !['character', 'setup', 'details'].includes(this.ui.screen) || !clips || !samples) return false;
     this.T = T;
     if (core) this.core = core;
+    if (this.previewPending()) return true; // pv charselSettle: the reload has not started or its rider is not committed yet
     const preview = this.preview3d.want(T, this.previewEntry());
     if (preview && !this.preview3d.ready) return true; // loading: the original draws nothing yet
     if (this.previewHidden()) {

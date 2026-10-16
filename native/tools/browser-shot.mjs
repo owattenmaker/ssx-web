@@ -13,6 +13,10 @@
 //        [--pv LIST]                      the page's ?pv= switches (e.g. -onlineRecords: the PS2's local records table, as native keeps)
 //        [--ui-clock F] [--no-replay]     the results panels' timeline frame fixed at F (careerUI.resultsLui.clock); Replay greyed
 //                                         (native has no full replay yet)
+//        [--keys K1,K2,...]               after tick N: the menu keys (KeyboardEvent.code), each once the screen takes input (the frame
+//                                         clock runs from here on, so the UI frame counter steps)
+//        [--replay-ticks R]               after tick N: the auto replay behind the results (web/replay.js, window.__replay) stepped R ticks
+//                                         (ssx3 --shot-replay R - 1 draws the same frame)
 // Past the pad's last frame the run holds it (a replay's pad stream keeps its last values, as the native reader does).
 import fs from 'node:fs';
 import { startBrowser, startServer, sleep } from '../../web/headless-chrome.mjs';
@@ -40,6 +44,8 @@ const paced = args.includes('--paced');
 const pvList = opt('pv');
 const uiClock = opt('ui-clock');
 const noReplay = args.includes('--no-replay');
+const replayTicks = opt('replay-ticks') != null ? +opt('replay-ticks') : null;
+const keyList = (opt('keys', '') || '').split(',').filter(Boolean);
 if (riders && !['ps2', 'xbox'].includes(riders)) throw new Error('--riders ps2|xbox');
 if (bc && !['0', '1'].includes(bc)) throw new Error('--bc 0|1');
 const query = (riders ? `&riders=${riders}` : '') + (bc === '0' ? '&bc=0' : '') + (audioLog ? '&perf=1' : '') + (pvList ? `&pv=${encodeURIComponent(pvList)}` : '');
@@ -58,7 +64,7 @@ try {
   await E(`(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('ssx3.widescreen','0');return 1})()`);
   await browser.goto(`${server.origin}/?qa=1&course=${course}&rider=${rider}&cutscenes=0&quality=low&simtrace=1&mute=1${query}`);
   await browser.waitFor('!!window.ssxQA || !!document.body.dataset.loadError', 300000);
-  await E(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf(()=>cb(at));return 1})()`);
+  await E(`(()=>{const raf=window.requestAnimationFrame.bind(window),at=performance.now();window.requestAnimationFrame=cb=>raf((t)=>cb(window.__rafLive?t:at));return 1})()`);
   // the title's Press START unlocks the audio (a user gesture; the headless profile allows autoplay)
   if (audioLog) await E('(async()=>{const a=window.__perfAudio;await a.whenReady();a.unlock();return 1})()');
   if (attributes != null) {
@@ -70,7 +76,12 @@ try {
   if (audioLog) await E('(()=>{window.__perfAudio.sfx.logPlays(true);return 1})()');
   await E('(()=>{ssxQA.ui().careerUI.play();return 1})()');
   if (noReplay) await E('(()=>{ssxQA.ui().cb.replayAvailable=()=>false;return 1})()');
-  if (uiClock != null) await E(`(()=>{const rl=ssxQA.ui().careerUI.resultsLui;if(rl)rl.clock=()=>${+uiClock};return 1})()`);
+  // the panels' clock fixed; the PDA opened and its popup set at 0 on a clock at F (ssx3 --ui-clock: the same)
+  if (uiClock != null)
+    await E(`(()=>{const cu=ssxQA.ui().careerUI,rl=cu.resultsLui,pda=cu.pda;if(rl)rl.clock=()=>${+uiClock};
+      if(pda){pda.now=()=>${+uiClock};pda.opening=function(){this.opened=0;this.focus={row:-1,at:0};this.temperature=-10;};
+        const d=pda.dialog.bind(pda);pda.dialog=(c,lines,index)=>{pda.popupKey=lines.join('|');pda.popupAt=0;return d(c,lines,index);};}
+      return 1})()`);
   await sleep(300);
   const base = await E('window.__simTrace.ticks.length');
   const total = tick + 2;
@@ -88,6 +99,20 @@ try {
     const chunk = [];
     for (let i = at; i < Math.min(total, at + chunkSize); i++) chunk.push(Array.from(toChannels(frames[Math.min(i, frames.length - 1)])));
     await E(`(async()=>{for(const p of ${JSON.stringify(chunk)}){ssxQA.advance(1,p);${after}${step}}return 1})()`);
+  }
+  if (keyList.length) {
+    await E('(()=>{window.__rafLive=true;return 1})()');
+    for (const code of keyList) {
+      await browser.waitFor('ssxQA.ui().phases?.accepts?.() !== false', 20000);
+      await sleep(700);
+      await E(`(()=>{dispatchEvent(new KeyboardEvent('keydown',{code:${JSON.stringify(code)},bubbles:true,cancelable:true}));
+        dispatchEvent(new KeyboardEvent('keyup',{code:${JSON.stringify(code)},bubbles:true,cancelable:true}));return 1})()`);
+    }
+    await sleep(1000);
+  }
+  if (replayTicks != null) {
+    await browser.waitFor('!!window.__replay?.active', 60000);
+    await E(`(()=>{for(let k=0;k<${replayTicks};k++)window.__replay.step();return window.__replay.tick})()`);
   }
   if (audioLog) {
     const log = await E(`(()=>{const a=window.__perfAudio,c=window.__playCounts,t=[];

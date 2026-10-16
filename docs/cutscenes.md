@@ -251,7 +251,8 @@ alternative was rendered and the one closest to the PS2 frame (mean absolute dif
 Differences that are not the cutscene code: the actors are lit with the FE preview's IRR record + rim (bluer/darker
 than the PS2's world lighting of riders); the hut's pink floor and some light-rig beams come from the world renderer;
 the podium building streams in with the rider's section (texture chunk 27): after a real finish it is resident, the
-isolated comparisons used `?chunks=0`.
+isolated comparisons used `?chunks=0`. A podium played away from a finish (time attack) needs the stage's chunks itself: pv taPodiumWorld,
+[big-multiplayer.md](big-multiplayer.md) "The podium's world and its hand-off to the vote".
 
 ## Status and gaps
 

@@ -21,8 +21,10 @@ export const downloadState = state;
 const byteListeners = new Set();
 export function onDownloadBytes(fn) { byteListeners.add(fn); return () => byteListeners.delete(fn); }
 
+// pv charselSettle: a GET whose init holds only a signal is shared too (the signal is the caller's: see the fetch below)
+const signalOnly = (init) => !!init?.signal && pv('charselSettle') && !init.method && !init.body && !init.headers;
 function assetUrl(input, init) {
-  if (init && (init.method && init.method !== 'GET' || init.body || init.signal || init.headers)) return null;
+  if (init && (init.method && init.method !== 'GET' || init.body || (init.signal && !signalOnly(init)) || init.headers)) return null;
   const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : null; // Request objects: untouched
   if (!raw) return null;
   let url; try { url = new URL(raw, location.href); } catch { return null; }
@@ -41,10 +43,15 @@ globalThis.addEventListener?.('pageshow', () => { leaving = false; });
 const transientStatus = (status) => status === 408 || status === 429 || status >= 500;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function downloadOnce(url) {
+// stop: the shared download's own signal (pv charselSettle: every caller with a signal let go of it before it finished)
+async function downloadOnce(url, stop = null) {
   const abort = new AbortController(); let stalled = false, timer = 0;
   const watchdog = () => { clearTimeout(timer); timer = setTimeout(() => { stalled = true; abort.abort(); }, downloadRetry.stallMs); };
   watchdog();
+  if (stop) {
+    if (stop.aborted) abort.abort();
+    else stop.addEventListener('abort', () => abort.abort(), { once: true });
+  }
   let length = 0, got = 0, counted = false;
   try {
     const response = await nativeFetch(url, { signal: abort.signal });
@@ -86,6 +93,7 @@ async function downloadOnce(url) {
     return { status: response.status, statusText: response.statusText, headers: response.headers, bytes };
   } catch (e) {
     if (counted) { state.received -= got; state.expected = Math.max(0, state.expected - (length || got)); } // the retry counts again
+    if (stop?.aborted) throw abortError();
     if (stalled) throw Object.assign(Error(`no data for ${downloadRetry.stallMs / 1000} s`), { stalled: true });
     throw e;
   } finally {
@@ -94,15 +102,17 @@ async function downloadOnce(url) {
   }
 }
 
-async function download(url) {
+const abortError = () => new DOMException('The download was aborted.', 'AbortError');
+async function download(url, stop = null) {
   for (let attempt = 0; ; attempt++) {
     let failure;
     try {
-      const result = await downloadOnce(url);
+      const result = await downloadOnce(url, stop);
       if (!transientStatus(result.status) || attempt >= downloadRetry.delaysMs.length) return result;
       failure = `HTTP ${result.status}`;
     } catch (e) {
-      if (leaving) throw e;
+      // an aborted download is not retried
+      if (leaving || stop?.aborted) throw e;
       failure = e?.message || String(e);
       if (attempt >= downloadRetry.delaysMs.length) {
         const path = new URL(url).pathname;
@@ -110,6 +120,7 @@ async function download(url) {
       }
     }
     if (leaving) throw Error('page closed');
+    if (stop?.aborted) throw abortError();
     console.warn(`Download retry ${attempt + 1}/${downloadRetry.delaysMs.length}: ${new URL(url).pathname} (${failure})`);
     await sleep(downloadRetry.delaysMs[attempt]);
   }
@@ -118,17 +129,57 @@ async function download(url) {
 globalThis.fetch = function fetch(input, init) {
   const url = assetUrl(input, init);
   if (!url) return nativeFetch(input, init);
+  const signal = init?.signal || null;
+  if (signal?.aborted) return Promise.reject(abortError());
   let entry = shared.get(url);
   if (!entry) {
-    entry = download(url); shared.set(url, entry);
-    entry.then(() => setTimeout(() => shared.get(url) === entry && shared.delete(url), SHARE_MS), () => shared.delete(url));
+    // pv charselSettle: the download stops once every caller that came with a signal aborted it and no other caller wants it
+    const stop = signalOnly(init) ? new AbortController() : null;
+    entry = download(url, stop?.signal);
+    entry.stop = stop;
+    entry.holders = 0;
+    shared.set(url, entry);
+    entry.then(() => setTimeout(() => shared.get(url) === entry && shared.delete(url), SHARE_MS), () => shared.get(url) === entry && shared.delete(url));
+    entry.then(() => { entry.settled = true; }, () => { entry.settled = true; });
   } else if (entry.prefetched) { // a prefetch's first taker: from here the usual SHARE_MS
     entry.prefetched = false; entry.then(() => setTimeout(() => shared.get(url) === entry && shared.delete(url), SHARE_MS), () => {});
   }
-  return entry.then((r) => { // the Response constructor copies the bytes (each caller may transfer its buffer to a worker)
+  // a caller without a signal (or a prefetch, which never passes one) keeps the download to its end
+  if (!signal) entry.stop = null;
+  const body = entry.then((r) => { // the Response constructor copies the bytes (each caller may transfer its buffer to a worker)
     const headers = new Headers(r.headers); headers.delete('content-encoding'); headers.delete('content-length');
     if (pv('loadCopies')) return sharedResponse(r, headers);
     return new Response(r.bytes, { status: r.status, statusText: r.statusText, headers });
+  });
+  if (!signal) return body;
+  entry.holders++;
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const release = () => {
+      if (done) return;
+      done = true;
+      entry.holders--;
+      if (entry.holders > 0 || entry.settled || !entry.stop) return;
+      entry.stop.abort();
+      if (shared.get(url) === entry) shared.delete(url);
+    };
+    const onAbort = () => {
+      release();
+      reject(abortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    body.then(
+      (r) => {
+        signal.removeEventListener('abort', onAbort);
+        done = true;
+        resolve(r);
+      },
+      (e) => {
+        signal.removeEventListener('abort', onAbort);
+        done = true;
+        reject(e);
+      }
+    );
   });
 };
 

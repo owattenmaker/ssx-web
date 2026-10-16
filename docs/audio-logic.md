@@ -662,6 +662,10 @@ ARMSX2 (local/sfx-rng/, hooks on 0x3177F0 with the six words, 296310, 29F660, 29
   visual_rng_words, in the dispatchers' order with their gates. The tick's dispatch then plays them. An event the pass did not see
   (one posted in 121750 / 121818) draws when it runs, and the anticipation and finish cheers draw in the tick's audio, which is the
   per-frame 285BF8's place before the next update.
+- Replays: the PS2's replay snapshot saves and restores 0x4FF030 only (0x3178E0 / 0x317908 from 0x26D818 / 0x26DBF0), and a replay
+  takes its own audio gates (288AE0, the replay camera's listener). So with the switch on the replay start leaves 0x4FF018 as the results
+  leave it (main.js startRun), and the replay checks compare `__simTrace.sim` (game-tick.js gameSimTrace: the hash without the camera,
+  whose shake draws the stream, and without the visual words). `__simTrace.compare` names the trace those checks read.
 - Remote online racers have no core and no events, and draw nothing from the local stream. A pair hit's grunt for a remote target is
   a computer-bank grunt, with no draw. The PS2's two local humans would each draw.
 

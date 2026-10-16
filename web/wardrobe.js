@@ -440,11 +440,13 @@ function readFree(){return readJSON(FREE_KEY,v=>(v&&typeof v==='object'&&!Array.
 function writeFree(riderId,flags){const all=readFree();if(flags)all[riderId]=flags;else delete all[riderId];return writeJSON(FREE_KEY,all,saveStorage());}
 function isDefault(wd){const fresh=new Wardrobe(wd.w);const a=wd.raceEquipped().map(e=>e.item).join(','),b=fresh.raceEquipped().map(e=>e.item).join(',');return a===b;}
 function uncommitted(wd){for(const [,v] of wd.inv.f)if(!!(v&0x10)!==!!(v&4))return true;return false;}
-export async function outfitState(ui,rider){
+// signal (pv charselSettle, web/character-select.js): the wardrobe downloads stop when the caller lets go (a later rider superseded it).
+const fetcherOf = (signal) => (signal ? (url) => globalThis.fetch(url, { signal }) : globalThis.fetch);
+export async function outfitState(ui,rider,{signal=null}={}){
  // online races stream the skin palette of the rider's package (web/net): they keep the default outfit
  // online races show the worn outfit to the others too (web/net/mp-game.js outfitKey -> remoteOutfitRider)
  if(!rider||rider.kind==='cheat'||(rider.kind==='custom'&&rider.id!=='sam'))return null;   // Sam: the Sam build's wardrobe
- const w=await loadWardrobe(rider.id,globalThis.fetch,{parts:false}),career=careerOf(ui);
+ const w=await loadWardrobe(rider.id,fetcherOf(signal),{parts:false}),career=careerOf(ui);
  // free play starts from the outfit the rider already wears: its free-play save, else the career record, else an old single-event save
  if(freePlay(ui)){const wd=new Wardrobe(w,readFree()[rider.id]||(career&&career.rider(rider.id).gearFlags)||readOutfits()[rider.id]||null,{allOwned:true});if(uncommitted(wd))wd.commit();return wd;}
  if(!career)return new Wardrobe(w,readOutfits()[rider.id]||null);
@@ -474,12 +476,25 @@ export function saveOutfit(ui,rider,wd){
 // The packages of a rider's current outfit: the race package (/assets/WARDROBE/<ID>/o<hash>/) and the front-end
 // preview package (/f<hash>/, web/fe-preview.js), both served by wardrobeFile. The default outfit keeps the
 // verified RIDER_<ID> and RIDER_<ID>/fe packages.
-export async function prepareOutfit(ui,rider){
- const wd=await outfitState(ui,rider);if(!wd){if(rider)worn.delete(rider.id);return null;}
+// The outfit stamp (outfitStamp) each rider's packages were last prepared for (pv charselEntryOutfit, web/character-select.js).
+const preparedStamp = new Map();
+// true when `rider`'s preview packages are prepared for the outfit it wears now (worn holds its FE root, or it wears the default)
+export function outfitPrepared(ui, rider) {
+  if (!rider) return true;
+  const stamp = outfitStamp(ui, rider);
+  return stamp === 'fixed' || preparedStamp.get(rider.id) === stamp;
+}
+export async function prepareOutfit(ui, rider, opts = {}) {
+  const state = await prepareOutfitNow(ui, rider, opts);
+  if (rider) preparedStamp.set(rider.id, outfitStamp(ui, rider));
+  return state;
+}
+async function prepareOutfitNow(ui,rider,{signal=null}={}){
+ const wd=await outfitState(ui,rider,{signal});if(!wd){if(rider)worn.delete(rider.id);return null;}
  if(wd.w.sam&&!wd.w.parts_mode)return samOutfit(rider,wd);   // Sam in parts mode (tools/sam_wardrobe.py) takes the riders' path
  if(isDefault(wd)){worn.delete(rider.id);return {wd,default:true};}
- const w=await loadWardrobe(rider.id);
- const {root,key}=await raceRoot(w,wd,rider);
+ const w=await loadWardrobe(rider.id,fetcherOf(signal));
+ const {root,key}=await raceRoot(w,wd,rider,fetcherOf(signal));
  let feRoot=null;
  if(w.fe){
   const fasm=assembly(w,wd.feEquipped()),fkey=hash(JSON.stringify([fasm.parts.map(p=>p.resource),fasm.textures]));
@@ -574,21 +589,38 @@ export async function remoteOutfitRider(entry,key,{fetcher=globalThis.fetch}={})
 
 // The entry the FE preview (web/fe-preview.js previewRoot) loads for a rider: its outfit's FE package while one is worn.
 export function outfitPreviewEntry(entry){const s=entry&&worn.get(entry.id);return s?.feRoot?{...entry,fe_root:s.feRoot}:entry;}
+// pv charselSettle (the Select Character roster prefetch, web/character-select.js): the preview entry of `entry` when it is known
+// without building an outfit package: its worn outfit's, or the default package's when the outfit is the default one (wardrobe.json
+// only). null: an outfit not prepared yet (its preview loads when the cursor settles on it), or Sam's whole-outfit packages.
+export async function knownPreviewEntry(ui, entry) {
+  if (!entry) return null;
+  if (worn.has(entry.id)) return outfitPreviewEntry(entry);
+  const wd = await outfitState(ui, entry);
+  if (!wd) return entry;
+  if (wd.w.sam && !wd.w.parts_mode) return null;
+  return isDefault(wd) ? entry : null;
+}
 
 // The rider entry main.js selectRider loads: the default outfit keeps its verified RIDER_<ID> package; any other
 // outfit gets its generated package plus its settings. A cheat skin keeps its bucket; its base rider's outfit is
 // prepared for the front-end preview (the original shows the base rider there).
-export async function outfitRider(ui,rider){
+// hold false (pv charselSettle: main.js selectRider runs the latest pick only, so nothing loads twice): ui.ready is left alone, and
+// an aborted signal rejects (AbortError) instead of falling back to the default package.
+export async function outfitRider(ui,rider,{signal=null,hold=true}={}){
  // selectRider awaits this before it clears ui.ready itself: keep the front end from starting a second rider load
  // meanwhile (a concurrent load would leave the first model in the scene)
- const was=ui?.ready;if(ui)ui.ready=false;
+ const was=ui?.ready;if(ui&&hold)ui.ready=false;
  try{
-  if(rider?.kind==='cheat'){const base=ui?.riders?.find(r=>r.id===(rider.base||'zoe'));if(base)await prepareOutfit(ui,base);return rider;}
-  const s=await prepareOutfit(ui,rider);if(!s||s.default)return rider;
+  if(rider?.kind==='cheat'){const base=ui?.riders?.find(r=>r.id===(rider.base||'zoe'));if(base)await prepareOutfit(ui,base,{signal});return rider;}
+  const s=await prepareOutfit(ui,rider,{signal});if(!s||s.default)return rider;
   if(s.package)return {...rider,package:s.package,outfit:s.key,settings_package:s.settingsPackage};   // Sam: another whole package, Sam's settings
   return {...rider,root:s.root,outfit:s.key,outfit_settings:{original_animation:{bone_mask:s.settings.bone_mask,secondary_motion:{enabled:s.settings.secondary}}},outfit_identity:s.settings.identity};
- }catch(error){console.warn('Outfit unavailable, default package',error);return rider;}
- finally{if(ui)ui.ready=was;}
+ }catch(error){
+  if(error?.name==='AbortError'&&signal?.aborted)throw error;
+  console.warn('Outfit unavailable, default package',error);
+  return rider;
+ }
+ finally{if(ui&&hold)ui.ready=was;}
 }
 
 // ---- Equip Gear screen (FE.LUI 12equ_char, cFEStateCharEquip) ---------------------------------------------

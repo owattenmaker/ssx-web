@@ -932,6 +932,7 @@ const bool softLanding=browserSoftActive; /*control 3 (12E778) touching down: 11
 #include "presentation_core.inc" // cutscene stage calls, the painter region for located Fog / Lighting (docs/presentation.md)
 #include "impact_fx_gameplay.inc"
 #include "shared_world.inc"
+#include "net_world.inc" // M7-2: the online shared-world replication (web/net/mp-game.js, pv coreNetWorld)
 #include "audio_events.inc"
 #include "fx_puppet.inc"
 // pv animationPrepare (web/main.js prepareRiderAnimation, web/ai-racers.js configureRider): a document of init_animation / init_race

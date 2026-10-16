@@ -29,9 +29,11 @@
 //   {t:'ready'} from each racer (the card's Continue) -> once every racer is ready (or READY_TIMEOUT_MS after the intro) {t:'go', at}.
 //   A racer whose hello did not say preRace:true (a page from before the switch) counts as ready once it has loaded.
 //   {t:'finish', ticks, dnf}                     -> {t:'finished', id, slot, ticks, dnf, reason} to the lobby;
+//                                                 (score: a trick event's score, kept for the race board only, race-board.mjs)
 //                                                 {t:'results', results} once every racer finished or is DNF, or
 //                                                 FINISH_GRACE_MS after the first finisher, or RACE_LIMIT_MS after GO
 //   {t:'chat', text}                             -> {t:'chat', from, text}
+// HTTP /mp/race-board (web/server/race-board.mjs, with MP_RECORDS_DIR): the online race boards; a save names the racer by its token.
 // Server -> client extras: {t:'presence', id, slot, online} (a racer's socket dropped / came back),
 //   {t:'host', id} is folded into the lobby broadcast (host migration when the host leaves, also mid-race).
 // Binary frames (client -> server): rider packets (web/net/rider-packet.js: kind 2 state, 3 attack, 4 world) of a racer
@@ -93,6 +95,19 @@ if (process.env.MP_RECORDS_DIR) {
     RECORDS = createRecords({ dir: path.resolve(process.env.MP_RECORDS_DIR), assets: RECORDS_ASSETS, clientAddress, verifierToken: token });
   }
   catch (e) { console.warn('records: off (failed to start)', e?.message); RECORDS = null; }
+}
+// Online race boards (web/server/race-board.mjs, pv mpBoard on the page): the results of normal online races, unverified, in their own
+// file beside the records (MP_RECORDS_DIR/race-board.json); MP_RACE_BOARD=0 turns them off. Never fatal.
+let RACE_BOARD = null;
+if (RECORDS?.enabled && process.env.MP_RACE_BOARD !== '0') {
+  try {
+    const { createRaceBoard } = await import('./race-board.mjs');
+    RACE_BOARD = createRaceBoard({ dir: path.resolve(process.env.MP_RECORDS_DIR), events: RECORDS.events });
+    if (!RACE_BOARD.enabled) RACE_BOARD = null;
+  } catch (e) {
+    console.warn('race board: off (failed to start)', e?.message);
+    RACE_BOARD = null;
+  }
 }
 const MAX_PLAYERS = 6, RESUME_GRACE_MS = +(process.env.MP_RESUME_MS ?? 30000), SILENT_DROP_MS = 10000, LOAD_TIMEOUT_MS = 45000, GO_DELAY_MS = 2500;
 // pre-race: the intro instant follows the last 'loaded' by INTRO_DELAY_MS (every page gets the message first); a racer not ready
@@ -220,11 +235,17 @@ if (process.env.MP_SESSIONS === '1') {
     const options = {};
     if (process.env.MP_TA_LIMIT_MS) options.limitMs = +process.env.MP_TA_LIMIT_MS;
     if (process.env.MP_SESSION_MAX) options.maxPlayers = +process.env.MP_SESSION_MAX;
+    // the podium phase as long as the podium's scene (sessions.mjs podiumFit; its table from the assets root's CUTSCENES/index.json)
+    if (process.env.MP_TA_PODIUM_FIT === '1') options.podiumFit = true;
+    if (process.env.MP_TA_PODIUM_MARGIN_MS) options.podiumMarginMs = +process.env.MP_TA_PODIUM_MARGIN_MS;
     // tests: the phase timings (sessions.mjs DEFAULTS) as JSON
     if (process.env.MP_SESSION_OPTIONS) Object.assign(options, JSON.parse(process.env.MP_SESSION_OPTIONS));
     // the ghost bundles (sessions.mjs ghostTick): binary frames, dropped by a congested socket like the race state frames
     const sendBinary = (id, bytes) => clients.get(id)?.ws.send(bytes);
-    SESSIONS = createSessions({ events, floors: floorTable(events, RECORDS_ASSETS), send: (id, m) => send(clients.get(id), m), sendBinary, clients, verifierToken, options });
+    const { podiumScripts } = await import('./podium-scripts.mjs');
+    const podium = RECORDS_ASSETS ? podiumScripts(RECORDS_ASSETS) : null;
+    SESSIONS = createSessions({ events, floors: floorTable(events, RECORDS_ASSETS), send: (id, m) => send(clients.get(id), m), sendBinary, clients, verifierToken,
+      podiumScripts: podium, options });
     if (!SESSIONS.enabled) {
       console.warn('sessions: off (no CAREER/career.json under the assets root)');
       SESSIONS = null;
@@ -291,7 +312,9 @@ function settleClaims(l, force = false) {
 function recordFinish(l, c, { ticks, dnf, reason }, verdict = null) {
   const r = l.race; if (!r || r.finish.has(c.id) || !r.slots.has(c.id)) return;
   const f = { ticks: dnf ? 0 : Math.max(0, ticks | 0), dnf: !!dnf, reason: dnf ? String(reason ?? 'dnf').slice(0, 16) : '', at: now(),
-    ...(verdict ? { verified: verdict.ok, findings: verdict.ok ? [] : verdict.findings.map((x) => x.code) } : {}) };
+    ...(verdict ? { verified: verdict.ok, findings: verdict.ok ? [] : verdict.findings.map((x) => x.code) } : {}),
+    // a trick event's score from the finish message (pv mpBoard pages): the other pages rank their Results by it
+    ...(!dnf && r.scores?.has(c.id) ? { score: r.scores.get(c.id) } : {}) };
   r.claims.delete(c.id);
   r.finish.set(c.id, f); if (!dnf && !r.firstFinishAt) r.firstFinishAt = now();
   toLobby(l, { t: 'finished', id: c.id, slot: r.slots.get(c.id), ...f });
@@ -335,6 +358,13 @@ function maybeResults(l) {
   const results = racers.map((m) => ({ id: m, slot: r.slots.get(m), name: r.names[m], rider: r.riders[m], ...r.finish.get(m) }))
     .sort((a, b) => (a.dnf - b.dnf) || (a.ticks - b.ticks) || (a.slot - b.slot));
   toLobby(l, { t: 'results', raceId: r.id, results });
+  // the race board (race-board.mjs): this race's own finish records, for the racers' saves
+  try {
+    const racers = results.map((x) => ({ id: x.id, ticks: x.ticks, dnf: x.dnf, verified: x.verified, rider: x.rider, score: r.scores?.get(x.id) }));
+    RACE_BOARD?.raceDone({ id: r.id, course: l.course, racers });
+  } catch (e) {
+    console.warn('race board: race not kept', e?.message);
+  }
   l.race = null; for (const m of l.members) { const c = clients.get(m); if (c) { c.ready = false; c.slot = -1; } }
   broadcastLobby(l);
 }
@@ -446,7 +476,14 @@ function onMessage(c, m) {
       maybeGo(l);
     } break;
     case 'ready': if (l?.race?.preRace && l.race.slots.has(c.id) && l.race.introAt && !l.race.goAt) { l.race.ready.add(c.id); maybeGo(l); } break;
-    case 'finish': if (l?.race) { if (m.dnf) recordFinish(l, c, { ticks: 0, dnf: true, reason: m.reason || 'dnf' }); else claimFinish(l, c, m.ticks); maybeResults(l); } break;
+    case 'finish': if (l?.race) {
+      // a trick event's score (pv mpBoard pages send it; unverified, for the race board only)
+      if (!m.dnf && Number.isInteger(m.score) && m.score >= 0 && m.score <= 1e8 && l.race.slots.has(c.id) && !l.race.finish.has(c.id))
+        (l.race.scores ??= new Map()).set(c.id, m.score);
+      if (m.dnf) recordFinish(l, c, { ticks: 0, dnf: true, reason: m.reason || 'dnf' });
+      else claimFinish(l, c, m.ticks);
+      maybeResults(l);
+    } break;
     case 'chat': {
       if (!l || !take(c.limits.chat)) break;
       const text = clean(m.text, 120); if (text) toLobby(l, { t: 'chat', from: c.name, id: c.id, text });
@@ -527,7 +564,10 @@ function serveStatic(req, res) {
       return null;
     };
     // (a Range request gets its bytes of the file itself: web/audio-speech.js reads single speech lines out of a .dat, docs/audio-logic.md 9.15)
-    const ranged = /^bytes=/.test(String(req.headers.range ?? ''));
+    // ?identity=1 (web/archive-ranges.js through deploy/edge-worker.js): the file itself, never a precompressed copy, so the edge
+    // that caches it under that key cuts byte ranges of the real file
+    const identity = /[?&]identity=1(&|$)/.test(req.url);
+    const ranged = identity || /^bytes=/.test(String(req.headers.range ?? ''));
     if (PRECOMPRESSED && !ranged && /\bbr\b/.test(accepts)) gz = copy('.br', 'br');
     if (PRECOMPRESSED && !ranged && !gz && /\bgzip\b/.test(accepts)) gz = copy('.gz', 'gzip');
     // Vite's content-hashed bundles (8-character hash), top level of /assets only
@@ -618,6 +658,15 @@ const server = http.createServer((req, res) => {
       res.end('{"error":"off"}');
       return;
     }
+  }
+  // online race boards (gated): a save names the racer by its reconnect token
+  if (req.url === '/mp/race-board' || req.url.startsWith('/mp/race-board?') || req.url.startsWith('/mp/race-board/')) {
+    const clientOf = (token) => [...clients.values()].find((x) => x.token && x.token === token)?.id ?? null;
+    if (RACE_BOARD?.handle(req, res, clientOf)) return;
+    req.resume();
+    res.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end('{"error":"off"}');
+    return;
   }
   // time-attack sessions (gated)
   if (req.url.startsWith('/mp/session/')) {

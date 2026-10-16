@@ -57,6 +57,8 @@ Field report: in a normal online race "collectables not animating" and "other an
 - Result: the same players start at the same race ticks (lights, gate doors, trickboost, speedboost, snow crumbs, timers), and every
   pickup player advances exactly 1/60 s per tick, online and offline. In a Single Event the collectas are DeadNodes, hidden in both
   modes (docs/ctm-events-in-world.md 6.3).
+- (2026-10-15) Correction: the core holds them as DeadNodes in both modes, but an online race's page drew them as static props (the
+  warm-up restored their visibility: docs/set-pieces.md "Warm-up and the renderers' visibility", pv warmVisibility).
 
 **The difference is the frame clock.**
 - Since 2026-10-04, offline frames on a ~60 Hz display run exactly one tick and draw it (pv tickLock, docs/workers.md). Online frames
@@ -155,7 +157,8 @@ extracted game data from `web/public` second, plus `/mp` (WebSocket) and `/mp/st
 5. The race: each client simulates only its own rider (bit-exact core, unchanged) and streams it; the others are
    drawn from their streams, collide with it through the original pair system, and rank with it.
 6. A racer who finishes sees the original results 408 ticks after the finish (288 after a TIME'S UP), with the
-   finished racers' times and 0x122D78 estimates for racers still on course, updating as they finish. The server's
+   finished racers' times and 0x122D78 estimates for racers still on course (pv `mpEstimateClock`: no time until they finish, as the
+   PS2 never estimates a human; see "Results of racers still on course"), updated as they finish. The server's
    final order replaces the estimates once every racer finished / is DNF, or 90 s after the first finisher
    (then the rest are DNF), or 15 min after GO. **Back to Lobby** returns to the lobby for the next race.
 
@@ -416,9 +419,169 @@ drops by the award). The loser had the boost counter for one latency.
   dead-reckoned). The place drives the original place display 0x21E1B0 (0x1EA930 change animation, 1st-place glow)
   exactly as with computer riders.
 - **Results**: the original Single Event Results screen (ui.js layout, `mp-ui.js drawResults`) with every racer:
-  recorded finish times from the server, 0x122D78 estimates for racers still on course, **DNF** for racers who quit,
+  recorded finish times from the server, 0x122D78 estimates for racers still on course (pv `mpEstimateClock`: no time, see below), **DNF** for racers who quit,
   disconnected, gave up (TIME'S UP) or ran out of time. Podium screens exist only in Conquer the Mountain's final
   round in the original, so a single online race has none.
+
+### Results of racers still on course (pv mpEstimateClock, off; 2026-10-15)
+
+Field report (2026-10-14, live, a normal online lobby; the host's diag.log shows two pages through mp-lobby with mpCourseSelect and
+mpPreRace on ERA5, DBC2, ARA1, CRA3, ERA5, EBC3, DBC2; no time attack): "if Griff finishes first, Psymon's timer counts down on
+their screen until Psymon also finishes, and then it gets set to the right number". The timer is the first finisher's Results row
+for the racer still on course. It is not a HUD: the unfinished page's race clock counts up in every run below.
+
+**Cause.** No switch caused it; it dates from when the online Results were built. `mp-ui.js rows()` calls
+`mp-game.js resultRows(ui.lastState.raceTicks)`, which gave every unfinished racer the 0x122D78 estimate
+`raceTicks + remaining / max((origin - remaining) / raceTicks, 30 - slot)` on every drawn frame.
+- `raceTicks` is this page's race clock. It stops at this page's own finish: 0x113DB0 counts only in Race, and EndRace starts on
+  the finish tick.
+- `remaining` is the other racer's newest packet.
+- So the row equals T x origin / (origin - remaining). It fell toward this page's own finish time as the other racer neared the
+  line, then jumped up to the recorded time when that racer finished.
+
+**PS2 rule** (recompiled code; the vtables and strings read from SLUS_207.72):
+
+| Step | Address | Rule |
+|---|---|---|
+| finish | 125108 -> 238358 (0x1251B8) | each finish dispatches the mode handler's results slot +0x44 (handler table 0x536668[GMM+4]) |
+| race results | 0x23A760 (race, vtable 0x47CF38); 0x23AE00 (multiplayer race, handler 8, vtable 0x47CED0) | record the finisher's time (DNF 360000 and the gave-up flag 0x5366A8 for +0x480). Only if 12A250 (every human's +0x470 >= 0, at 0x23A8B4 / 0x23AF0C): 0x122D78 at 0x23A954 / 0x23AF74 for each rider with +0x470 < 0, stored in the round table once |
+| estimate | 0x122D78 | the race clock *(*(*(gp-0x848)+0x84)+0xC)+0xC and the rider's +0x4D0 at the same instant; origin 0x113130; floor 30.0 - slot (rider+0x6C0 vtable +0x3C) |
+| race clock | 0x113DB0 | +0xC += 1 per Race tick; 12A250 -> 113B10 (EndRace) and world state 5 (231250); no time-out branch |
+| Results rows | 0x1E5AA0 row loop | the time text 'timePoints%d' (0x46E638): "DNF" (0x4A2160) when 0x5366A8[slot] is set (0x1E6CF4), else the time 0x536640[slot] (0x1E6D28 -> 20A1A8), or "%d" points. No form for an unset time |
+| HUD clock | 0x1EB4F4..0x1EB650 | owner +0x17C / +0x180 / +0x184 (0x1EB63C / 0x1EB64C / 0x1EB650) = h / m / s of that clock. It counts down only through the event time limit (GMM+0xC0 -> +0x78, the freestyle clock), which races do not set |
+
+So the PS2 never estimates a human: the estimates are made once, after the last human's finish, for computer riders still on
+course. Its Results wait for every human, so it shows no countdown or time-out after the winner finishes, and no row without a time.
+
+**Port rule (switch on).** Every online racer is a human.
+- A racer still on course (no finish from the server, no final result) gets no time: `onCourse`.
+- Its row is drawn with the time left empty (`mp-ui.js drawResults`). The PS2 has no placeholder string for an unset time.
+- When its recorded time comes, the row fills in.
+- Order (`web/net/result-rows.js orderOnlineRows`): the timed rows by time (0x238BF8 order), then the racers on course in slot order,
+  then DNF. The rank column numbers the rows by position, as the PS2's row loop does.
+- A racer who never streamed stays DNF, as before.
+- Computer riders (offline, ai-race.js) keep the one-time 0x122D78 estimate, unchanged.
+- Considered and dropped (2026-10-15): an estimate made once at this page's finish from the other racer's packet of that instant.
+  In the two-page runs it held at 15331 against the real 17359 and 15979.
+
+**Proof:**
+- The setup (local/mp-clock/repro.mjs): two real pages, a local mp server, ARA1. Griff tucks from the GO, Psymon 45 s later.
+  Every drawn frame's HUD clock and Results rows are logged; analyze.mjs reads them.
+- Shots: local/mp-clock/before2/ and after4/, `*-results-r{0,1,2}-0.png` (the row while the racer is on course) and
+  `*-results-final-0.png`.
+
+| run | the first finisher's row for the other racer while on course | at its finish | unfinished page's HUD clock |
+|---|---|---|---|
+| off, Chrome + Chrome | 15004 -> 13956 ticks over 3002 frames (579 decreasing; shots 04:10, 04:04) | jumps +3403 to 17359 | 0..289 s, never decreasing |
+| off, Chrome + WebKit | 14991 -> 13065 over 2514 frames (579 decreasing) | jumps +2914 to 15979 | 0..266 s, never decreasing |
+| on, Chrome + Chrome | no time in all 3001 frames | 17359 (04:49) | 0..289 s, never decreasing |
+| on, Chrome + WebKit | no time in all 1629 frames | 15979 (04:26) | 0..266 s, never decreasing |
+
+`web/test-mp-estimate-clock.mjs` (in test:all) checks the old row's run-down on a synthetic run, the order, and the wiring.
+
+## Multiplayer leaderboard (pv mpBoard, off; 2026-10-15)
+
+The user's request: after the event results, a second screen with the event's global leaderboard. It asks for your username
+to save your score, and the name then stays on the profile. The user's decision: online race results go on their own board per
+event. That board is unverified, like the live time-attack podium: online races include contacts and knockouts from other
+players, so the replay verifier cannot re-check a run alone. The verified course records (docs/online-records.md) stay clean.
+
+**Flow** (web/mp-ui.js 'results', web/mp-board-ui.js):
+1. Single Event Results, as before. With the switch on, its item is **Continue** (0x0F3AB955), greyed until the server's final
+   results are in. Back (Triangle) still goes to the lobby.
+2. Continue opens the event's board on the same 'results' screen, so main.js keeps the finish camera behind it. The board is
+   61toptimes ("Top 5 Record Times / Scores", results-lui.js `records()`, the course records' ctm-board layout). It has the
+   event title, the subtitle "Online Races", rank numbers, and the top 5 rows. When your rank is below 5, it shows the top 4 and
+   your own row. Your row is in the record row's orange. Times have hundredths. The message line says "Your record is number N
+   online." / "Your best time under this name is already listed." / "The record could not be saved." / "Online records
+   unavailable.". The items are Continue (to the lobby) and Save Records (0x0B0BFC13), the PS2 screen's two items after a new
+   record.
+3. **First use** (no `ssx3.playerName` stored): the game keyboard opens over the board. It is cKeyboardPopup (fe-screens.js
+   `openKeyboard('record')`, the keyboard of time attack's Create Lobby Room Name), prefilled with the Player Name as Rider
+   Details opens it. Done saves the name on the profile (`ssx3.playerName`: fe-screens `playerName`, `ui.playerName`, the
+   career's) and saves the run under it. Escape closes the keyboard, and Save Records opens it again.
+4. **Later races:** the profile's name is used at once, with no keyboard. The board is shown every time, with your row
+   highlighted (the new one, or your listed best when it was not beaten). The name is edited in Rider Details > Player Name,
+   the same name the course records and time attack use (no second identity).
+
+**The name rule (PS2, local/output sub_00183238, the Player Name keyboard):**
+- 0x1837A4 sets `a1 = 8` for 1CD088, which clamps a1 to 0..63 and stores it at kb+0x60: **8 characters**.
+- 1CE3C8 turns off key 0x4B (Tab) and the keys 0x0E, 0x27, 0x28, 0x34, 0x1A, 0x19, 0x35, 0x40 ... (0x1837C4..0x1838A0), which are
+  the punctuation keys `~ - = [ ] | : " < > ?`. So a name is letters (Caps / Shift), digits, the shifted digits `! @ # $ % ^ & * (`
+  `)`, and space.
+- At the limit, a letter replaces the last character (1CD2F0).
+- An empty profile name reads as `PLAYER %d` (0x147170).
+- With the switch on, typing on the computer keyboard follows the same rule: a character the pad keyboard cannot type is
+  ignored (fe-screens.js `keyboardKey`; before, any typed character went in).
+- Not confirmed from the code: what the PS2 keyboard's Done does with an empty text. Here an invalid or empty name is not
+  saved, and the message line says so.
+
+**Server** (web/server/race-board.mjs, mounted by mp-server.mjs when the records are on, `MP_RECORDS_DIR`; `MP_RACE_BOARD=0`
+turns it off). The state file is `<MP_RECORDS_DIR>/race-board.json`, beside the records' board.json and never in the verifier's
+queue.
+- `GET /mp/race-board?event=K | course=C [&name=N][&limit=L]` -> `{event, timed, total, rows (top 10), you}`.
+- `POST /mp/race-board/save`, header `x-ssx-session` (the reconnect token), body `{race, name}`.
+- A save is only accepted when backed by a race the server ran. mp-server's `maybeResults` hands every finished race to
+  `raceDone()`: the server's own finish records (the accepted ticks, the plausibility verdict, the rider) and, for a trick event,
+  the score from the finish message (the page sends the score object's +0x198 with pv mpBoard; unverified). The server keeps
+  each race for 30 minutes, in memory only.
+- A save comes from the token of a racer of that race who finished: not DNF, not found implausible, once per race. The value is
+  the server's record, never the request's.
+- Event = career.json record_slots' first pair of the course: 0 race, 1 slope style, 2 super pipe, 3 big air, 4 Rival Time on
+  a backcountry course. These are the course records' `<mode>:<COURSE>` keys.
+- Order: races by ticks, trick events by score, a tie to the earlier entry. One entry per name (case-insensitive), the best
+  kept, at most 200 an event.
+- Names: records.mjs `cleanName` (trim, the charset above, 1..8, the small blocklist).
+- Rate limit: 6 a minute and 30 an hour per connection, keyed on the lobby client's id.
+- An entry stores {id, name, rider, value, race id, UTC day, seq}: no address, token or client id.
+- **A server restart** (a deploy) loses the races in memory. A save then gets 404 'race'; the page shows "The record could not
+  be saved." on the message line, greys Save Records and keeps the board (no hang; every request has a 6 s timeout).
+
+**Checked** (2026-10-15):
+- `node test-race-board.mjs` (in test:all) covers:
+  - the module: the event of a course, the racer checks, the value from the server, names, order, ties, one entry per name,
+    expiry, the rate limits, persistence, no address or token stored;
+  - the page side against stub servers: the keyboard on first use, the profile name, the blocklist undoing the profile change,
+    a lost race / an unreachable server on the message line, your row below the top 4;
+  - mp-server end to end: a real race of two node clients, token saves, a stranger refused, the separate board, a slope style
+    score, and a restart refusing the lost race while keeping the board.
+- `PAGE_PV=mpBoard MP_BOARD=1 node test-mp-page.mjs` (two real pages, Snow Jam, both racers tuck to the finish with
+  `ssxQA.advance`, two races):
+  - race 1: results -> Continue -> the board with the keyboard (no saved name) -> Clear, the name typed (a '-' refused), Done ->
+    saved on the profile and the board ("number 1 / 2 online");
+  - race 2: Continue -> no keyboard, saved at once under the profile name, the board lists both racers.
+  - then, on each page, Main menu > Leaderboards > Snow Jam: the records board (three items), Square -> Online Races with both
+    racers, Square back;
+  - with `MP_COURSE=CHP2` (super pipe): the Results are ordered by score with every finished row's score shown, and the board
+    ranks by score.
+  - Chrome + Chrome and Chrome + WebKit (`MP_WK_TIMER=1 ... --webkit`) pass on ARA1 and CHP2. Screenshots of each screen:
+    `MP_SHOTS=dir` (`*-board-<round>-results / keyboard / typed / saved-<player>.png`, `*-leaderboards-records / races-<player>.png`).
+- **Leaderboards (main menu):** the Select Event maps lead to an event's board, the course records ("Online Records") as before.
+  With the switch on, the board gets a third item, Online Races, and Square (Shift) switches the same 61toptimes screen to
+  the event's online race board: subtitle "Online Races", the same rows, Up / Down / paging, and the items Online Records /
+  Return. Square or Online Records switches back. This applies to modes 0-4: an event a lobby can race. The race board has no
+  replays. The item is an addition, like the records' Online Records item.
+- **Trick events on the online Results** (the coordinator's follow-up, 2026-10-15):
+  - The PS2 code. In two-player play (0x535C11 == 2), 0x238160 takes the mode through the jump table 0x47C0D0: race -> handler 8
+    (vtable 0x47CED0, results 0x23AE00); slope style / super pipe / big air -> handler 9 (vtable 0x47CE68, results +0x44 =
+    0x239EC8); Rival Time / Points -> 5 / 6.
+  - 0x239EC8 copies the score object (rider +0x790 -> +0xFC..+0x1A8) and stores its total (+0x198) in 0x536640[player]. A rider
+    with +0x480 (time up / gave up) gets 0 and the DNF flag 0x5366A8.
+  - Once every human has finished (12A250 at 0x23A00C), 238B70(results, 2) ranks them: qsort 418EF8 of the order 0x536708 with
+    0x245E30 (unsigned, the higher score first), then the places 0x536730 with 0x245EC0. The race handler 0x23AE00 ranks with
+    238BF8 / 0x245E78 (the lower time first).
+  - Not traced: which of two equal scores qsort puts first (0x245E30 returns 0); the port keeps slot order.
+  - Port (switch on): mp-game.js `resultRows` orders a trick event's rows with web/net/trick-rows.js `orderTrickRows`. The scored
+    rows go by score, then the racers still on course (no score yet, row empty), then DNF. The value column is headed Score
+    (kT_OVRCMNScore) and shows the score (0x1E5AA0 prints "%d" points).
+  - The server keeps each racer's finish-message score in its finish record, so 'finished' and 'results' carry it to the other
+    pages.
+  - A freestyle run that runs out of time is a DNF on the PS2 as well (125228 sets +0x480; 0x239EC8 gives it the DNF flag). The R&B
+    tuck in the two-page run times out at 5400 ticks, which is why the proof uses Schizophrenia (CHP2), where a tuck finishes.
+- **Late results tick** (found by the CHP2 run, switch on): when the server's final results arrive first (mp-ui `showResults`),
+  this page's own results tick (game-tick.js -> `ui.showResults`) can come while the board is up. It reset `ui.index` to 1, so
+  Cross landed on the greyed Save Records. ui.js `showResults` now leaves an online results screen's focus alone.
+- Not done: Square has no glyph on the 61toptimes item row (the screen draws the Cross glyph for the first item only).
 
 ## Robustness
 
@@ -504,11 +667,12 @@ bound (a simulated run); only a server-side simulation of each rider would.
 | `web/net/grid-seed.js`, `tools/export_grid_scales.py` | An online racer's countdown state for its slot, body scale and stance (recorded PS2 spots). |
 | `web/server/plausibility.mjs` | Server checks of claimed finish times against the streamed run. |
 | `web/server/records.mjs`, `web/server/replay-file.mjs` | Online course records and their replays (pv onlineRecords, docs/online-records.md); off without `MP_RECORDS_DIR`. |
+| `web/server/race-board.mjs`, `web/mp-board-ui.js` | The online race boards after the results (pv mpBoard, "Multiplayer leaderboard" above); off without `MP_RECORDS_DIR`. |
 | `web/net/remote-fx.js`, `web/fx_puppet.inc` | Remote riders' effects: FX records, puppet cores, effect renderers. |
 | `web/net/mp-game.js` | Game glue (main.js hooks), results rows, hidden-tab ticker, race clock pace. |
 | `web/mp-ui.js` | Lobby screens, the pre-race card (`mp-card`, pv mpPreRace) and the online Single Event Results. |
 | Core exports | `rider_skin_scale`, `race_world_pair_disable`, `race_world_pair_respond`, `shade_external_rider_lighting`, `fx_recording`, `fx_records`, `fx_record_size`, `fx_puppet_reset`, `fx_puppet_step`, `pickup_revoke` (+ `OriginalPairCallbacks::attackHit`, `OriginalRiderPairSystem::respondToAttack`). None changes single-player / AI behaviour (capture gates exact). |
-| Tests | `test-mp-grid.mjs` (grid spots per slot, scale and stance), `test-mp.mjs` (server end to end), `test-mp-prerace.mjs` (the pre-race protocol), `test-mp-page.mjs` (two pages; `MP_PICK`, `MP_PRERACE`), `test-remote-riders.mjs` (packets, bit-exact palettes, receiver), `test-mp-pairs.mjs` (rider vs rider over a link, attack reactions), `test-mp-fx.mjs` (effects replay), `test-mp-latency.mjs` (contacts at 50/100/200 ms vs zero latency), `test-mp-pickups.mjs` (pickup arbitration), `test-mp-plausibility.mjs` (finish checks: real runs and forgeries). |
+| Tests | `test-mp-grid.mjs` (grid spots per slot, scale and stance), `test-mp.mjs` (server end to end), `test-mp-prerace.mjs` (the pre-race protocol), `test-mp-page.mjs` (two pages; `MP_PICK`, `MP_PRERACE`), `test-remote-riders.mjs` (packets, bit-exact palettes, receiver), `test-mp-pairs.mjs` (rider vs rider over a link, attack reactions), `test-mp-fx.mjs` (effects replay), `test-mp-latency.mjs` (contacts at 50/100/200 ms vs zero latency), `test-mp-pickups.mjs` (pickup arbitration), `test-mp-plausibility.mjs` (finish checks: real runs and forgeries), `test-mp-estimate-clock.mjs` (Results rows of racers on course). |
 
 ## Rider speech (pv mpRiderSpeech, pv mpSpeechPlace, 2026-10-14)
 

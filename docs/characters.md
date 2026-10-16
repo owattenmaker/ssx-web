@@ -1677,6 +1677,91 @@ The user reported the whole game freezing when Select Character switched to a ri
   first ~15 s of prefetch mostly 20-40 ms with occasional 80-190 ms frames under load (was 66-548 ms on every
   first switch). Entering Select Character the first time still compiles the first preview (one 100-200 ms frame).
 
+## Select Character: cursor and preview load (2026-10-15, pv charselSettle, off)
+
+Field report (Safari, live site, a custom outfit on every rider): stepping through the riders was slow, and a press would not go
+through until the model had loaded.
+
+**Cause (measured):** `character-select.js cycle()` awaited `ui.cb.rider(next)` (main.js `selectRider` -> wardrobe.js
+`outfitRider` -> `prepareOutfit`) before it moved the cursor. `outfitRider` kept `ui.ready = false` the whole time, and `cycle()`
+returns while `!ui.ready`, so presses in between were dropped.
+- With a custom outfit, each rider's first visit fetches `WARDROBE/<ID>/wardrobe.json` (284 KB), `parts.bin` (3.2 MB) and the
+  shared `animation-samples.json` (1.4 MB) before the cursor moves.
+- The preview then loaded at once on every step and nothing cancelled it. An outfit's FE package reads `gear-xbox.tex` (~22 MB).
+- The main thread was not the bottleneck: the package builds are 2-8 ms, and the compiles are spread at 3-5 ms per part.
+
+**PS2 rule (SLUS_207.72, gp 0x4A30F0):**
+- Input: the CharSelect vtable is 0x46D000, its input handler 0x1817E8, and the jump table 0x45D6C0 by event kind.
+  - Kind 1, the UIMenu cursor move, goes to 0x181980.
+  - 181BD0 fills the name, the seven stats and the ranking at once, then calls 1A0508(slots, player, char)
+    -> 19E588(slot = *(*(gp-0x848)+0x7C) + 0xB0 + 0xCE0 x player, char, 0).
+- 19E588 writes the target +0xC24 / +0xC28. Then:
+  - Another character than the slot's +0, with no reload pending (+0xCD4 < 0): +0xCD4 = frame + 4, +0xCC4 = +0xCC8, and
+    +0xCC8 = 0 (the model is hidden). With a reload pending, nothing else changes: the stamp is not pushed back.
+  - The slot's own character with its model loaded (+0xCB8 / +0xCB4): +0xCD4 = -1 and the model shows again.
+  - The frame is the renderer's +0x5A74 (vtable 0x493260 +0x394 = 0x395510), counted at 0x382B10.
+- 19F138 (per frame): once frame > +0xCD4, it sets +0xCD4 = -1 and calls 19E960(slot, +4, +0xC24, +0xC28).
+  - 19E960 unloads the model in flight (19EBA0) and starts the load.
+  - The load is async and staged: 1A0100 (the gear data, 19E238), 19FD58, 19ED80, then 19F780 (finish, +0xCC0).
+  - +0xCC8 (drawn) is set when every stage is done. The stage polls don't run while a reload is pending.
+- So: the cursor never waits. The model hides on the change, and its load starts on the 5th frame after the first change of a
+  burst. A load in flight is dropped when the next one starts. Nothing is drawn until the model is in. (From the code only: no
+  ARMSX2 capture of a fast cycle was made.)
+
+**Port with the switch on:**
+- `character-select.js`:
+  - `cycle()` moves the cursor at once: `ui.riderIndex`, focus, stats.
+  - `requestPreview` is 19E588 (`reloadAt` = floor(now x 60) + 4, `reloadTarget`); `stepReload` is 19F138 (called from
+    `showPreview` every frame).
+  - `startReload` is 19E960. It aborts the previous commit (AbortController), calls `ui.cb.rider(target, { signal })`, and the
+    preview loads once that commit is in (`previewPending()` draws nothing meanwhile).
+  - Cross commits a pending reload at once, and the flash holds at white until the commit lands. Leaving the screen commits too.
+  - `ui.js restoreRider` puts the cursor on the saved rider at once and commits through `commitRider`.
+- `main.js selectRider(rider, { signal })`: the latest pick wins (`riderPickSeq`). `outfitRider(..., { hold: false })` leaves
+  `ui.ready` alone. `ensureRider` and the event load's rider stage `await riderPicked()`.
+- `wardrobe.js`:
+  - `outfitState / prepareOutfit / outfitRider` take `{ signal }`; the wardrobe.json, parts.bin and samples fetches use it.
+  - `knownPreviewEntry` gives the roster prefetch only the previews it knows without building an outfit: a worn outfit, or the
+    default package. Before, a rider with an unprepared outfit had its default package prefetched and never shown.
+- `fe-preview.js`, with `supersede` and `cacheLimit` (12) set by Select Character:
+  - A `want()` of another root aborts the load in flight. Its downloads stop, and a package prepared after the abort is not
+    built or compiled.
+  - Built models are kept in a least-recently-used cache of at most 12 (before: no limit, up to 22 with outfits).
+- `texture-archive.js textureArchive(url, { signal })` and `downloads.js` (a fetch whose init holds only a signal is shared):
+  - A shared download stops once every caller that passed a signal has aborted it and no caller without one wants it.
+  - A finished archive stays in the archive cache (its existing 96 MB budget).
+
+**Measured** (scratchpad `charsel/perf-charsel.mjs`; 11 Right presses 100 ms apart; the local server throttled to 40 ms +
+50 Mbit/s; the machine was loaded by other work, so frame times are noisy):
+
+| run | presses dropped | press -> cursor drawn, median / max | model after the cursor stops | MB fetched |
+|---|---|---|---|---|
+| WebKit, custom outfits, off | 9 / 11 | 591 / 1232 ms | 7.7 s | 53.4 |
+| WebKit, custom outfits, on | 0 / 11 | 10 / 76 ms | 4.5 s | 26.2 |
+| WebKit, default outfits, off | 6 / 11 | 144 / 258 ms | 0.5 s | 2.9 |
+| WebKit, default outfits, on | 0 / 11 | 15 / 71 ms | 25 ms | 0.9 |
+| Chrome, custom outfits, off | 10 / 11 | 655 / 1155 ms | 7.4 s | 43.1 |
+| Chrome, custom outfits, on | 0 / 11 | 33 / 153 ms | 4.5 s | 28.1 |
+| Chrome, default outfits, off | 8 / 11 | 176 / 556 ms | 7 ms | 1.8 |
+| Chrome, default outfits, on | 0 / 11 | 36 / 168 ms | 2 ms | 1.8 |
+| WebKit, custom outfits, 500 ms apart, off | 7 / 11 | 990 / 2259 ms | 14.3 s | 110.8 |
+| WebKit, custom outfits, 500 ms apart, on | 0 / 11 | 13 / 80 ms | 4.3 s | 47.6 |
+
+- With the switch off, the cursor ends on a different rider than the 11 presses aim for, because presses were dropped.
+- Long tasks (Chrome): one 140-160 ms task, the same with the switch on and off.
+- WebKit frames: at most 72-90 ms on the throttled cycles, with the switch on and off.
+- Second passes (models cached): 0 dropped in both browsers, median 8-24 ms.
+- What is left after the cursor stops on a custom outfit is the whole `gear-xbox.tex` download for one outfit's few textures:
+  22 MB raw on the Vite server, but 3.1 MB brotli on the live host.
+  pv `archiveRanges` reads only the entries (about 190 KB; docs/asset-formats.md "Texture archives: range reads").
+- Function check (`charsel/func-charsel.mjs`, WebKit and Chrome): three Rights then Cross moves the cursor each time, holds the
+  white flash ~0.7 s, then opens Setup Character. `ensureRider` gives the cursor's rider in its outfit. Two Lefts then Triangle
+  (before the reload frame) commits the rider under the cursor.
+- Shots in scratchpad `charsel/out/`: `func-hidden-after-presses.png` (the cursor on Griff, the model hidden),
+  `webkit-custom-net-charselSettle-loop0.png` (Zoe in her outfit after the settle), `func-setup.png`.
+- Test: `web/test-charsel-settle.mjs` (npm test): the download abort rules, and the cursor / stamp / retarget / supersede /
+  Cross / leave rules.
+
 ## Sam in the roster row (2026-09-23)
 
 The user found Sam's outline greyed out and set apart from the row. Before: the Sam PS2 build's 64x128 atlas (a

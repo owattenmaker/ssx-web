@@ -196,6 +196,12 @@ export async function createPeakSetPieces({core, parent, root = '/assets/PEAK1/S
     group,
     particles,
     halos,
+    // pv warmVisibility (main.js warmupRender put back the visible flags of its start): the DeadNode / RestoreNode / Hide states
+    // applied again (they change a mesh only when the core's state changes)
+    refreshVisibility() {
+      for (const meshes of scriptMeshes.values())
+        for (const mesh of meshes) if (mesh.userData.scriptVisible !== undefined) applyVisibility(mesh);
+    },
     // A location's draw package became available / was released (web/free-ride.js buildRender / release).
     attach(code, g) {
       if (locations.has(code)) return;

@@ -714,3 +714,56 @@ for the boot rider; see [course-switch.md](course-switch.md) "In-world Transport
   destroyed by a section leave) is the PS2's behaviour. Distant collectibles look still on both.
 - Online races step these players exactly as offline does (two-page runs, 2026-10-14). An online judder of every tick-stepped set
   piece came from the frame clock instead: docs/multiplayer.md "Frame pacing" (pv mpTickLock).
+
+## Warm-up and the renderers' visibility: static collectibles in time attack and online races (pv warmVisibility, off; 2026-10-15)
+
+Field report: "in time attack mode, the collectable pickups are just static assets in the environment and don't get picked up or
+animate at all".
+
+**What the PS2 does.** In a Single Event (0x535C11 = 1) and online (2), 30C4A8 (builtin 38, the stage's collection list) turns every
+listed collectible into a DeadNode. The memdiff of section "Collectible LiveComps" and docs/ctm-events-in-world.md 6.3 (Snow Jam
+countdown anchor: type-6 entities) show it: no draw, no contact, no award. A time-attack attempt is a Single Event run, so its
+collectibles must not be there. The boost pickups (trick / speed boost, LiveComps from their section programs) spin and can be
+collected as in any race. Not captured on the PS2: an online race's collectibles. That rule is read from the code (the 0x535C11 != 0
+test).
+
+**What the port did (reproduced; local/ta-collect/probe.mjs, online.mjs, Chrome and WebKit, local mp-server MP_SESSIONS=1):**
+
+| run | collectibles drawn (static) | the core's state for them | boost pickups |
+|---|---|---|---|
+| Single Event ARA1 / BRA2 / ASS1 | 0 of 30 / 35 / 30 | DeadNode (type 6, flags 0x210005), not drawn | spin, collectable |
+| Time attack ARA1 / BRA2 / ASS1 / DBC2 | 30 / 35 / 30 / 44 (all) | the same DeadNode | the same as the Single Event |
+| Online race ARA1 (both pages) | 30 | the same DeadNode | the same |
+| Time attack / online race with pv warmVisibility | 0 | the same DeadNode | the same |
+
+The core was right in every mode: the collectibles were DeadNodes, so no pickup and no animation. Only the page drew them.
+
+**Cause: a race between the warm-up and the set-piece renderer.**
+- main.js warmupRender saves every object's `visible` when it begins (`shown`) and puts it back in its finally.
+- set-pieces-renderer.js applies the core's instance states (`stage_world_instances`: DeadNode / RestoreNode / Hide) to the static
+  meshes only when a state changes (`scriptState`). The texture chunks (`chunkVisible`) work the same way.
+- In a Single Event, the computer riders' lineup prepare runs before the warm-up, and frames meanwhile apply the event's DeadNodes.
+  The warm-up then saves `visible = false`.
+- Time attack (the solo lineup) and online races (no computer riders) start the warm-up right after the course and rider. The DeadNodes
+  are applied during the warm frames, the restore puts back `visible = true`, and the cached state never applies them again.
+- Traced with a property trap on mdl_ARA1_collecta_1008's mesh (the warm-up's 4550 hide, 4658 / 4680 shows, 4721 restore to true,
+  `scriptVisible` false).
+- A keyed diff of every mesh's visibility between time attack and the Single Event (ARA1, tick 1200) differs only in those 31 collecta
+  meshes. The other differences are the riders (computer riders against ghosts).
+
+**Fix (pv warmVisibility).** After its restore, warmupRender calls `refreshOwnedVisibility()`. That re-applies every visibility a
+renderer owns and applies only on a change:
+- set-pieces-renderer.js `refreshVisibility()`: the script and chunk states, and avalanche-state.js draw `refresh()`;
+- peak-set-pieces.js `refreshVisibility()`, through free-ride.js `api.refreshVisibility`;
+- main.js `eventDeadMeshes` back to their startRun state (`eventDeadShown`).
+
+The per-frame owners need nothing: the boost pickups (`_pickup_visible` every frame), the moving instances, particles, halos and cables.
+No core, simulation or asset change, so replays and the records verifier are unaffected.
+
+**Checked:**
+- With the switch, time attack draws 0 collectibles on ARA1, BRA2, ASS1 and DBC2, and online races on ARA1 (Chrome + Chrome, Chrome +
+  WebKit) draw 0. The boosts are unchanged.
+- Screenshots: local/ta-collect/out/ta-0-ARA1-{chrome,webkit}[-warmVisibility]/04-near-t1650.png. The snowflake by the boost
+  meter is there without the switch and gone with it.
+- Not checked: a page whose re-warm (applyAntialias) lands during a run, and the streamed world's warm-ups. Those paths call the same
+  refresh, but no run exercised them.
